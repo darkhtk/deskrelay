@@ -319,12 +319,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   });
 
   const [showNewChat, setShowNewChat] = createSignal(false);
-  // Forks seed the composer with a prefilled preamble. Composer reads
-  // initialValue once at mount, so toggling this signal is observed
-  // through createMemo + a `key` trick: when the value changes we
-  // remount Composer (cheap: just a textarea) so the new initialValue
-  // takes effect.
-  const [composerInitial, setComposerInitial] = createSignal<string>("");
   const [activeRunId, setActiveRunId] = createSignal<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
@@ -729,20 +723,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setSelectedSession(null);
     setTranscript([]);
     setError(null);
-  }
-
-  /** "Fork from this session" — same as newChatSameFolder, but seeds
-   *  the composer with a short preamble pointing claude at the prior
-   *  context. We don't auto-summarize the transcript (that'd require a
-   *  separate behavior call); the prefill is a generic, plain-language
-   *  hint so the user can edit it before sending. */
-  function forkFromSession() {
-    const sessionTitle = selectedSession()?.title ?? "the previous session";
-    setComposerInitial(t("chat.header.fork.preamble", { title: sessionTitle }));
-    setSelectedSession(null);
-    setTranscript([]);
-    setError(null);
-    setShowNewChat(false);
   }
 
   /** Opening Settings while the mobile drawer is open leaves the drawer
@@ -1165,7 +1145,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           </Show>
         </div>
 
-        <div class="sidebar-section sidebar-section-new-chat">
+        <div class="sidebar-section">
           <button
             type="button"
             class="sidebar-action"
@@ -1190,17 +1170,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             </svg>
             <span>{t("chat.sidebar.new.button")}</span>
           </button>
-          <Show when={selectedSession()}>
-            <button
-              type="button"
-              class="sidebar-action sidebar-fork-action"
-              title={t("chat.header.fork.title")}
-              aria-label={t("chat.header.fork.aria")}
-              onClick={() => forkFromSession()}
-            >
-              {t("chat.header.fork")}
-            </button>
-          </Show>
         </div>
 
         <Show when={showNewChat()}>
@@ -1428,36 +1397,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             }}
             onChange={(items) => setAttachmentCount(items.length)}
           />
-          {/* Composer reads `initialValue` once at mount. Wrapping it in a
-              keyed <Show> on the prefill string means each fork remounts
-              the textarea with the new preamble. Empty string falls back
-              to a vanilla Composer mount. */}
-          <Show
-            when={composerInitial() || null}
-            keyed
-            fallback={
-              <Composer
-                onSend={sendMessage}
-                onInterrupt={() => void interrupt()}
-                inFlight={running()}
-                hasExtraContent={() => attachmentCount() > 0}
-                onAttachClick={handleAttachClick}
-                slashCommands={composerSlashCommands()}
-              />
-            }
-          >
-            {(initial) => (
-              <Composer
-                onSend={sendMessage}
-                onInterrupt={() => void interrupt()}
-                inFlight={running()}
-                initialValue={initial}
-                hasExtraContent={() => attachmentCount() > 0}
-                onAttachClick={handleAttachClick}
-                slashCommands={composerSlashCommands()}
-              />
-            )}
-          </Show>
+          <Composer
+            onSend={sendMessage}
+            onInterrupt={() => void interrupt()}
+            inFlight={running()}
+            hasExtraContent={() => attachmentCount() > 0}
+            onAttachClick={handleAttachClick}
+            slashCommands={composerSlashCommands()}
+          />
         </div>
       </section>
 

@@ -683,29 +683,6 @@ body.sidebar-open {
   border-color: var(--accent);
 }
 
-/* New-chat row hosts the "+ new chat" button and (when a session is
- *  selected) the fork action immediately to its right, sharing one row
- *  so the sidebar doesn't grow a half-empty extra strip when forking
- *  isn't available. The "+ new chat" button stays the dominant width
- *  via flex:1; fork compresses to fit alongside. */
-.sidebar-section-new-chat {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  gap: 6px;
-}
-.sidebar-section-new-chat > .sidebar-action {
-  flex: 1;
-  min-width: 0;
-}
-.sidebar-fork-action {
-  flex: 0 0 auto;
-  width: auto;
-  padding-left: 12px;
-  padding-right: 12px;
-  justify-content: center;
-}
-
 /* ---- session search + grouped list ---- */
 .session-search {
   margin-bottom: 6px;
