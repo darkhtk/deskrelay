@@ -128,7 +128,7 @@ body.sidebar-open {
 }
 
 .hamburger {
-  display: none;
+  display: inline-flex;
   background: transparent;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -203,6 +203,16 @@ body.sidebar-open {
   grid-template-columns: 260px minmax(0, 1fr);
   min-height: 0;
   position: relative;
+}
+
+@media (min-width: 721px) {
+  body.sidebar-collapsed .signed-in {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.sidebar-collapsed .sidebar {
+    display: none;
+  }
 }
 
 .sidebar {
@@ -1361,7 +1371,13 @@ body.sidebar-open {
 .sidebar-token {
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: var(--text);
+  color: var(--text-muted);
+}
+.sidebar-token.skill-builtin {
+  color: var(--text-muted);
+}
+.sidebar-token.skill-added {
+  color: var(--accent-coral);
 }
 .sidebar-command-list {
   display: flex;
@@ -1557,7 +1573,7 @@ select.text-input {
   overflow-x: hidden;
 }
 
-/* Chat header — only holds the mobile sidebar toggle now that the
+/* Chat header — holds the sidebar toggle now that the
  * announcement marquee + feedback link moved up to .alpha-banner. */
 .chat-header {
   display: flex;
@@ -3763,9 +3779,6 @@ dialog.approval-modal-root,
 
 /* ---- Mobile (≤720px): hamburger + sliding sidebar ---- */
 @media (max-width: 720px) {
-  .hamburger {
-    display: inline-flex;
-  }
   .signed-in {
     grid-template-columns: minmax(0, 1fr);
   }

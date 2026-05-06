@@ -268,7 +268,7 @@ describe("ChatView device refresh bridge", () => {
             JSON.stringify({
               result: {
                 slashCommands: ["/status"],
-                skills: ["deep-review"],
+                skills: ["simplify", "deep-review"],
                 model: "claude-opus",
               },
             }),
@@ -324,6 +324,20 @@ describe("ChatView device refresh bridge", () => {
     await waitFor(() => {
       expect(container.textContent).toContain("Tabbed session");
     });
+
+    const sidebarToggle = container.querySelector(
+      'button[aria-label="Toggle sidebar"]',
+    ) as HTMLButtonElement | null;
+    if (!sidebarToggle) throw new Error("sidebar toggle missing");
+    fireEvent.click(sidebarToggle);
+    await waitFor(() => {
+      expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
+    });
+    fireEvent.click(sidebarToggle);
+    await waitFor(() => {
+      expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
+    });
+
     expect(container.querySelector(".session-search")).toBeNull();
 
     const searchToggle = container.querySelector(
@@ -343,8 +357,17 @@ describe("ChatView device refresh bridge", () => {
     fireEvent.click(skillsTab);
     await waitFor(() => {
       expect(container.textContent).toContain("deep-review");
+      expect(container.textContent).toContain("simplify");
       expect(container.textContent).toContain("/status");
     });
+    const addedSkill = [...container.querySelectorAll(".sidebar-token.skill-added")].find(
+      (item) => item.textContent === "deep-review",
+    );
+    const builtinSkill = [...container.querySelectorAll(".sidebar-token.skill-builtin")].find(
+      (item) => item.textContent === "simplify",
+    );
+    expect(addedSkill).toBeTruthy();
+    expect(builtinSkill).toBeTruthy();
 
     const sessionsTab = [...container.querySelectorAll('[role="tab"]')].find(
       (button) => button.textContent === "Sessions",

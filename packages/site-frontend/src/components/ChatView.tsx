@@ -28,7 +28,11 @@ import {
   describeCliActionFromEnvelope,
   isApprovalWaitingAction,
 } from "../claude/cli-action.ts";
-import { type RuntimeSlashCommands, mergeRuntimeSlashCommands } from "../claude/slash-commands.ts";
+import {
+  type RuntimeSlashCommands,
+  isKnownClaudeCommandName,
+  mergeRuntimeSlashCommands,
+} from "../claude/slash-commands.ts";
 import {
   CLAUDE_PERMISSION_MODES,
   CLAUDE_PERMISSION_MODE_VALUES,
@@ -172,6 +176,11 @@ interface PermissionsInspectResult {
 
 interface PermissionsInspectViewResult extends PermissionsInspectResult {
   error?: string;
+}
+
+interface RuntimeSkillView {
+  name: string;
+  kind: "builtin" | "added";
 }
 
 export interface ChatViewProps {
@@ -472,6 +481,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     (runtimeSlashCommands()?.skills ?? []).filter(
       (skill): skill is string => typeof skill === "string" && skill.trim().length > 0,
     );
+  const runtimeSkillItems = (): RuntimeSkillView[] =>
+    runtimeSkills().map((name) => ({
+      name,
+      kind: isKnownClaudeCommandName(name) ? "builtin" : "added",
+    }));
 
   onCleanup(() => {
     if (sessionNoticeTimer) clearTimeout(sessionNoticeTimer);
@@ -480,6 +494,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [showNewChat, setShowNewChat] = createSignal(false);
   const [activeRunId, setActiveRunId] = createSignal<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = createSignal(false);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   let transcriptScroller!: HTMLDivElement;
 
@@ -544,12 +559,38 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   createEffect(() => {
     if (typeof document === "undefined") return;
     document.body.classList.toggle("sidebar-open", sidebarOpen());
+    document.body.classList.toggle("sidebar-collapsed", desktopSidebarCollapsed());
   });
   onCleanup(() => {
     if (typeof document !== "undefined") {
       document.body.classList.remove("sidebar-open");
+      document.body.classList.remove("sidebar-collapsed");
     }
   });
+
+  function isMobileSidebarViewport(): boolean {
+    return (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(max-width: 720px)").matches
+    );
+  }
+
+  function toggleSidebar() {
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen((v) => !v);
+      return;
+    }
+    setDesktopSidebarCollapsed((v) => !v);
+  }
+
+  function openSidebarForDevicePick() {
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(true);
+      return;
+    }
+    setDesktopSidebarCollapsed(false);
+  }
   const activeDevice = () => {
     const id = effectiveDeviceId();
     if (!id) return null;
@@ -1562,12 +1603,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                       <span class="sidebar-info-count">{runtimeSkills().length}</span>
                     </div>
                     <Show
-                      when={runtimeSkills().length > 0}
+                      when={runtimeSkillItems().length > 0}
                       fallback={<p class="sidebar-empty">{t("chat.sidebar.skills.empty")}</p>}
                     >
                       <div class="sidebar-token-list">
-                        <For each={runtimeSkills()}>
-                          {(skill) => <span class="sidebar-token">{skill}</span>}
+                        <For each={runtimeSkillItems()}>
+                          {(skill) => (
+                            <span
+                              class="sidebar-token"
+                              classList={{
+                                "skill-builtin": skill.kind === "builtin",
+                                "skill-added": skill.kind === "added",
+                              }}
+                            >
+                              {skill.name}
+                            </span>
+                          )}
                         </For>
                       </div>
                     </Show>
@@ -1666,7 +1717,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             type="button"
             class="hamburger"
             aria-label={t("chat.toggle-sidebar")}
-            onClick={() => setSidebarOpen((v) => !v)}
+            aria-expanded={isMobileSidebarViewport() ? sidebarOpen() : !desktopSidebarCollapsed()}
+            onClick={toggleSidebar}
           >
             <svg
               aria-hidden="true"
@@ -1736,7 +1788,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               <OfflineHint
                 message={msg()}
                 deviceLabel={activeDevice()?.label}
-                onPickDevice={() => setSidebarOpen(true)}
+                onPickDevice={openSidebarForDevicePick}
               />
             </div>
           )}

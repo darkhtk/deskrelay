@@ -68,6 +68,9 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze
 const BUILTIN_BY_NAME: ReadonlyMap<string, SlashCommand> = new Map(
   BUILTIN_SLASH_COMMANDS.map((command) => [command.name.toLowerCase(), command]),
 );
+const KNOWN_CLAUDE_BY_NAME: ReadonlySet<string> = new Set(
+  KNOWN_CLAUDE_COMMANDS.map((command) => command.name.toLowerCase()),
+);
 
 export function normalizeSlashCommandName(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -76,6 +79,11 @@ export function normalizeSlashCommandName(value: unknown): string | null {
   const raw = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
   if (!/^\/[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(raw)) return null;
   return raw;
+}
+
+export function isKnownClaudeCommandName(value: unknown): boolean {
+  const name = normalizeSlashCommandName(value);
+  return name !== null && KNOWN_CLAUDE_BY_NAME.has(name.toLowerCase());
 }
 
 export function mergeRuntimeSlashCommands(
