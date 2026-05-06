@@ -54,6 +54,10 @@ $root = Get-FullPathNoResolve -Path $Root -Repo $repo
 $envFile = Join-Path $root "dev.env.ps1"
 if (Test-Path $envFile) {
   . $envFile
+  $commandsScript = Join-Path $repo "scripts\write-self-commands.ps1"
+  if (Test-Path -LiteralPath $commandsScript) {
+    & $commandsScript -Root $root -RepoRoot $repo
+  }
   $frontendPort = if ($env:CR_DEV_FRONTEND_URL) {
     try { ([Uri]$env:CR_DEV_FRONTEND_URL).Port } catch { 18193 }
   } else {
@@ -63,4 +67,5 @@ if (Test-Path $envFile) {
   Write-Host "DeskRelay self PC server URLs:"
   Get-AccessUrls -Port $frontendPort | Format-Table -AutoSize
   Write-Host "Site token: $env:CR_SITE_TOKEN"
+  Write-Host "Command files: $(Join-Path $root 'commands')"
 }

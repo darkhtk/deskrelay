@@ -112,11 +112,17 @@ if (-not (Test-Path $envFile) -or $ForceInit) {
 
 . $envFile
 
+$commandsScript = Join-Path $repo "scripts\write-self-commands.ps1"
+if (Test-Path -LiteralPath $commandsScript) {
+  & $commandsScript -Root $root -RepoRoot $repo
+}
+
 Write-Host ""
 Write-Host "DeskRelay self PC server URLs:"
 Get-AccessUrls -Port $FrontendPort | Format-Table -AutoSize
 Write-Host "Site token: $env:CR_SITE_TOKEN"
 Write-Host "State root: $root"
 Write-Host "Workspace roots: $env:CR_CONNECTOR_WORKSPACE_ROOTS"
+Write-Host "Command files: $(Join-Path $root 'commands')"
 Write-Host ""
 Write-Host "Use Tailscale or LAN URLs only. Do not expose connector ports to the public internet."

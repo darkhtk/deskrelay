@@ -99,11 +99,29 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
 
 LAN 밖에서 이 PC의 DeskRelay에 접속하려면 이 PC와 접속할 기기에 Tailscale을 설치하고 로그인하세요. 그다음 `self-pc-server-start.ps1` 또는 `self-pc-server-status.ps1`가 출력하는 Tailscale URL을 사용합니다.
 
+시작/상태 명령은 복붙용 운영 명령도 `.self-server\commands\`에 생성합니다. 파일을 열어서 필요한 블록을 통째로 복사해 실행할 수 있습니다.
+
+이 폴더의 명령 파일에는 `Site token`이 포함됩니다. 내 PC 안에서 쓰는 편의 파일로 보고, 공개 저장소나 채팅에 붙여넣지 마세요.
+
+| 파일 | 목적 |
+|---|---|
+| `deskrelay-commands.txt` | 자주 쓰는 명령 전체 모음 |
+| `open-site.txt` | 접속 URL, Site token, 브라우저 로그인 helper |
+| `register-other-pc.txt` | 다른 PC에서 실행해 daemon 설치, 실행, 자동 등록 |
+| `manual-register-other-pc.txt` | 자동 등록이 실패할 때 수동 등록 값 확인 |
+| `list-devices.txt` | 등록된 디바이스 목록 조회 |
+| `unregister-device-by-id.txt` | 디바이스 id로 등록 해제 |
+| `stop-server.txt` | 이 PC의 DeskRelay 중지 |
+| `reset-server.txt` | 중지 후 `.self-server` 상태 폴더 삭제 |
+| `remove-this-pc-connector.txt` | 이 PC self connector 상태 제거 |
+
 ## 다른 디바이스 등록
 
 이 PC의 Claude CLI는 `self-pc-server-start.ps1`가 자동 등록합니다. 제어하려는 다른 PC가 있을 때만 그 PC에서 connector daemon을 실행하고, 현재 브라우저 UI의 Settings -> Devices에서 그 daemon을 디바이스로 추가합니다.
 
 이 PC와 대상 PC가 서로 접근할 수 있어야 합니다. 가장 쉬운 방식은 Tailscale 같은 사설 VPN입니다. daemon 포트는 공용 인터넷에 직접 열지 마세요.
+
+가장 쉬운 방법은 이 PC에서 생성된 `.self-server\commands\register-other-pc.txt`를 열고, 내용을 대상 PC의 PowerShell에 통째로 붙여넣는 것입니다. 이 명령은 대상 PC의 Tailscale IP를 자동 감지하고, daemon token을 읽은 뒤, 현재 DeskRelay에 디바이스를 등록합니다.
 
 대상 PC에 DeskRelay를 설치합니다.
 
