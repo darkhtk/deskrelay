@@ -35,6 +35,10 @@ export interface SessionSummary {
 export interface SessionTranscript {
   sessionId: string;
   cwd: string;
+  /** Last known permission mode from a system init event in the returned
+   *  file window. Missing when the init event is outside the readable
+   *  range or from an older CLI that did not report it. */
+  permissionMode?: string;
   /** Raw, unvalidated event objects from the .jsonl file. */
   events: unknown[];
   /** True when a large .jsonl was tailed instead of returned in full. */
@@ -197,6 +201,7 @@ export async function readSession(options: ReadSessionOptions): Promise<SessionT
       // when a session is interrupted mid-write.
     }
   }
+  const permissionMode = extractPermissionMode(events);
   const totalEvents = events.length;
   const eventLimit = normalizeEventLimit(options.eventLimit);
   const limitedEvents =
@@ -205,6 +210,7 @@ export async function readSession(options: ReadSessionOptions): Promise<SessionT
   return {
     sessionId: options.sessionId,
     cwd: options.cwd,
+    ...(permissionMode ? { permissionMode } : {}),
     events: limitedEvents,
     ...(truncated
       ? { truncated: true, totalBytes: st.size, returnedBytes: maxBytes, maxBytes }
@@ -214,6 +220,23 @@ export async function readSession(options: ReadSessionOptions): Promise<SessionT
     ...(eventLimit !== undefined ? { eventLimit } : {}),
     ...(eventsTruncated ? { eventsTruncated: true } : {}),
   };
+}
+
+function extractPermissionMode(events: unknown[]): string | undefined {
+  let found: string | undefined;
+  for (const event of events) {
+    if (!event || typeof event !== "object") continue;
+    const e = event as {
+      type?: unknown;
+      subtype?: unknown;
+      permissionMode?: unknown;
+      permission_mode?: unknown;
+    };
+    if (e.type !== "system" || e.subtype !== "init") continue;
+    const mode = e.permissionMode ?? e.permission_mode;
+    if (typeof mode === "string" && mode.trim()) found = mode;
+  }
+  return found;
 }
 
 function encodeCwd(cwd: string): string {

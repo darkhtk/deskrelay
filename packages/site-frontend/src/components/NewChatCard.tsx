@@ -1,8 +1,7 @@
 // NewChatCard — cwd picker + start button. The fs autocomplete logic
 // lives in CwdPicker (also reused by DeviceSettingsDialog). The
-// permission mode picker has been promoted to a sidebar-global control
-// (PermissionModePicker) so changing it doesn't require opening a new
-// chat card.
+// next-run permission mode picker lives in the sidebar, so the card only
+// receives the currently requested value and returns it with the cwd.
 
 import { type Component, Show, createEffect, createSignal, untrack } from "solid-js";
 import { api } from "../api.ts";
@@ -14,8 +13,8 @@ export interface NewChatCardProps {
   /** Device the autocomplete should query. Required for fs autocomplete; if
    *  omitted, the card still works as plain text input but skips fs suggestions. */
   deviceId?: string | null;
-  /** Current permission mode (lifted into the sidebar). Passed back to
-   *  onConfirm so ChatView's startSession sees a stable value. */
+  /** Requested permission mode for the next Claude run. The confirmed
+   *  current mode comes back later from Claude's system:init event. */
   permissionMode: ClaudePermissionMode;
   deviceLabel?: string | null;
   onConfirm: (input: { cwd: string; permissionMode: ClaudePermissionMode }) => void;

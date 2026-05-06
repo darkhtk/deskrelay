@@ -29,7 +29,11 @@ import {
   isApprovalWaitingAction,
 } from "../claude/cli-action.ts";
 import { type RuntimeSlashCommands, mergeRuntimeSlashCommands } from "../claude/slash-commands.ts";
-import { CLAUDE_PERMISSION_MODES, type ClaudePermissionMode } from "../claude/stream-contract.ts";
+import {
+  CLAUDE_PERMISSION_MODES,
+  CLAUDE_PERMISSION_MODE_VALUES,
+  type ClaudePermissionMode,
+} from "../claude/stream-contract.ts";
 import { type ConnectionStatusAction, deriveConnectionStatus } from "../connection-status.ts";
 import { deviceDisplayName } from "../device-display.ts";
 import {
@@ -94,6 +98,11 @@ function defaultDeviceId(list: Device[] | undefined): string | null {
   return list.find((d) => d.connectionState !== "offline")?.id ?? list[0]?.id ?? null;
 }
 
+function normalizePermissionMode(value: unknown): ClaudePermissionMode | null {
+  if (typeof value !== "string") return null;
+  return CLAUDE_PERMISSION_MODE_VALUES.has(value) ? (value as ClaudePermissionMode) : null;
+}
+
 function parsePermissionModeSlashArg(value: string): ClaudePermissionMode | null {
   const key = value
     .trim()
@@ -101,12 +110,32 @@ function parsePermissionModeSlashArg(value: string): ClaudePermissionMode | null
     .replace(/[\s_-]+/g, "");
   if (!key) return null;
   if (key === "default") return CLAUDE_PERMISSION_MODES.DEFAULT;
+  if (key === "auto") return CLAUDE_PERMISSION_MODES.AUTO;
   if (key === "plan") return CLAUDE_PERMISSION_MODES.PLAN;
   if (key === "acceptedits" || key === "accept") return CLAUDE_PERMISSION_MODES.ACCEPT_EDITS;
+  if (key === "dontask" || key === "donotask") return CLAUDE_PERMISSION_MODES.DONT_ASK;
   if (key === "bypasspermissions" || key === "bypass") {
     return CLAUDE_PERMISSION_MODES.BYPASS_PERMISSIONS;
   }
   return null;
+}
+
+function permissionModeFromSystemInit(event: unknown): ClaudePermissionMode | null {
+  if (!event || typeof event !== "object") return null;
+  const e = event as {
+    type?: unknown;
+    subtype?: unknown;
+    permissionMode?: unknown;
+    permission_mode?: unknown;
+  };
+  if (e.type !== "system" || e.subtype !== "init") return null;
+  return normalizePermissionMode(e.permissionMode ?? e.permission_mode);
+}
+
+function isClaudeSystemInit(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const e = event as { type?: unknown; subtype?: unknown };
+  return e.type === "system" && e.subtype === "init";
 }
 
 function isLocalSlashCommandText(value: string): boolean {
@@ -122,6 +151,8 @@ type DeviceSelectionRequest = {
   id: string | null;
   seq: number;
 };
+
+type PermissionModeStatus = "unconfirmed" | "pending" | "confirmed" | "mismatch" | "unknown";
 
 export interface ChatViewProps {
   me?: unknown;
@@ -185,6 +216,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setTranscript([]);
     setError(null);
     setCwd("");
+    resetConfirmedPermissionMode();
   });
 
   // Find a remote-claude instance loaded on the active device.
@@ -297,9 +329,15 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [selectedSession, setSelectedSession] = createSignal<ClaudeSessionSummary | null>(null);
   const [transcript, setTranscript] = createSignal<ClaudeStreamEvent[]>([]);
   const [cwd, setCwd] = createSignal<string>("");
-  const [permissionMode, setPermissionMode] = createSignal<ClaudePermissionMode>(
+  const [requestedPermissionMode, setRequestedPermissionMode] = createSignal<ClaudePermissionMode>(
     CLAUDE_PERMISSION_MODES.DEFAULT,
   );
+  const [confirmedPermissionMode, setConfirmedPermissionMode] =
+    createSignal<ClaudePermissionMode | null>(null);
+  const [permissionModeStatus, setPermissionModeStatus] =
+    createSignal<PermissionModeStatus>("unconfirmed");
+  const [lastPermissionModeRequest, setLastPermissionModeRequest] =
+    createSignal<ClaudePermissionMode | null>(null);
   const [running, setRunning] = createSignal(false);
   const [cliAction, setCliAction] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -312,6 +350,59 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (error() === message) setError(null);
       sessionNoticeTimer = null;
     }, SESSION_NOTICE_AUTO_DISMISS_MS);
+  }
+
+  function resetConfirmedPermissionMode() {
+    setConfirmedPermissionMode(null);
+    setPermissionModeStatus("unconfirmed");
+    setLastPermissionModeRequest(null);
+  }
+
+  function setNextPermissionMode(next: ClaudePermissionMode) {
+    setRequestedPermissionMode(next);
+    setLastPermissionModeRequest(null);
+    setPermissionModeStatus(confirmedPermissionMode() ? "confirmed" : "unconfirmed");
+  }
+
+  function confirmPermissionMode(
+    actual: ClaudePermissionMode,
+    requested: ClaudePermissionMode | null,
+  ) {
+    setConfirmedPermissionMode(actual);
+    setLastPermissionModeRequest(requested);
+    if (requested && requested !== actual) {
+      // Keep future runs aligned with the actual mode Claude reported,
+      // unless the user has already picked a different next-run request
+      // while this run was in flight.
+      if (requestedPermissionMode() === requested) setRequestedPermissionMode(actual);
+      setPermissionModeStatus("mismatch");
+      return;
+    }
+    if (!requested || requestedPermissionMode() === requested) setRequestedPermissionMode(actual);
+    setPermissionModeStatus("confirmed");
+  }
+
+  function permissionModeStatusText(): string {
+    const requested = requestedPermissionMode();
+    const confirmed = confirmedPermissionMode();
+    const lastRequested = lastPermissionModeRequest();
+    const state = permissionModeStatus();
+    if (state === "pending") {
+      return t("pm.status.checking", { mode: lastRequested ?? requested });
+    }
+    if (state === "unknown") {
+      return t("pm.status.unknown", { mode: lastRequested ?? requested });
+    }
+    if (state === "mismatch" && confirmed && lastRequested) {
+      return t("pm.status.mismatch", { requested: lastRequested, actual: confirmed });
+    }
+    if (confirmed) {
+      if (requested !== confirmed) {
+        return t("pm.status.confirmed-next", { actual: confirmed, next: requested });
+      }
+      return t("pm.status.confirmed", { mode: confirmed });
+    }
+    return t("pm.status.pending-next", { mode: requested });
   }
 
   onCleanup(() => {
@@ -570,6 +661,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (selectedSession()?.sessionId === id) {
       setSelectedSession(null);
       setTranscript([]);
+      resetConfirmedPermissionMode();
     }
     mutateSessions((current) => (current ?? []).filter((session) => session.sessionId !== id));
     try {
@@ -648,6 +740,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setSelectedSession(null);
       setTranscript([]);
       setCwd("");
+      resetConfirmedPermissionMode();
     }
     mutateSessions((current) => (current ?? []).filter((session) => session.cwd !== cwdToDelete));
     try {
@@ -670,6 +763,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return;
     }
     setCwd(summary.cwd);
+    resetConfirmedPermissionMode();
     const dev = effectiveDeviceId();
     const inst = remoteClaudeInstance();
     if (!dev || !inst) return;
@@ -683,12 +777,23 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (res.error) throw new Error(res.error.message);
       const rawEvents = (res.result?.events ?? []) as ClaudeStreamEvent[];
       const latestRawEvents = latestTranscriptEvents(rawEvents);
+      const latestWindowPermissionMode = latestRawEvents.reduce<ClaudePermissionMode | null>(
+        (mode, event) => permissionModeFromSystemInit(event) ?? mode,
+        null,
+      );
+      const transcriptPermissionMode =
+        normalizePermissionMode(res.result?.permissionMode) ?? latestWindowPermissionMode;
       const latestEvents = latestRawEvents.flatMap((event) => {
         const transcriptEvent = claudeEventForTranscript(event);
         return transcriptEvent ? [transcriptEvent] : [];
       });
       const locallyEventsTruncated = latestRawEvents.length < rawEvents.length;
       setTranscript(latestEvents);
+      if (transcriptPermissionMode) {
+        confirmPermissionMode(transcriptPermissionMode, transcriptPermissionMode);
+      } else {
+        resetConfirmedPermissionMode();
+      }
       scrollTranscriptToBottom();
       if (res.result?.eventsTruncated || locallyEventsTruncated) {
         setTransientSessionNotice(
@@ -705,6 +810,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         setSelectedSession(null);
         setTranscript([]);
         setCwd("");
+        resetConfirmedPermissionMode();
         void refetchSessions();
         setTransientSessionNotice(t("chat.error.session-missing"));
         return;
@@ -723,6 +829,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setSelectedSession(null);
     setTranscript([]);
     setError(null);
+    resetConfirmedPermissionMode();
   }
 
   /** Opening Settings while the mobile drawer is open leaves the drawer
@@ -748,11 +855,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   function startSession(input: { cwd: string; permissionMode: ClaudePermissionMode }) {
     setCwd(input.cwd);
-    setPermissionMode(input.permissionMode);
+    setNextPermissionMode(input.permissionMode);
     setShowNewChat(false);
     setTranscript([]);
     setError(null);
     setSelectedSession(null);
+    resetConfirmedPermissionMode();
     // User has committed to a chat — collapse the drawer so the
     // composer + transcript take the full mobile viewport.
     setSidebarOpen(false);
@@ -792,6 +900,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (command === "clear") {
       setTranscript([]);
       setError(null);
+      resetConfirmedPermissionMode();
       appendLocalAssistantMessage("Transcript cleared.");
       return true;
     }
@@ -839,12 +948,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (command === "permissions") {
       const mode = parsePermissionModeSlashArg(arg);
       if (!arg) {
+        const confirmed = confirmedPermissionMode();
         appendLocalAssistantMessage(
           [
-            `Permission mode: ${permissionMode()}`,
+            `Confirmed permission mode: ${confirmed ?? "not confirmed"}`,
+            `Next run permission mode: ${requestedPermissionMode()}`,
             `Security profile: ${dev ? getDeviceSecurityProfile(dev) : "unknown"}`,
             "",
-            "Use `/permissions default`, `/permissions plan`, `/permissions acceptEdits`, or `/permissions bypassPermissions` to set the Claude permission mode.",
+            "Use `/permissions default`, `/permissions auto`, `/permissions plan`, `/permissions acceptEdits`, `/permissions dontAsk`, or `/permissions bypassPermissions` to set the next Claude run's requested permission mode.",
             "Use `/permissions settings` to open device security settings.",
           ].join("\n"),
         );
@@ -857,12 +968,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       }
       if (!mode) {
         appendLocalAssistantMessage(
-          "Unknown permission mode. Use default, plan, acceptEdits, or bypassPermissions.",
+          "Unknown permission mode. Use default, auto, plan, acceptEdits, dontAsk, or bypassPermissions.",
         );
         return true;
       }
-      setPermissionMode(mode);
-      appendLocalAssistantMessage(`Permission mode set to ${mode}.`);
+      setNextPermissionMode(mode);
+      appendLocalAssistantMessage(
+        `Next run permission mode set to ${mode}. The current mode will update after Claude reports system:init.permissionMode.`,
+      );
       return true;
     }
 
@@ -874,7 +987,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         `CWD: ${cwd().trim() || "not set"}`,
         `Session: ${selectedSession()?.sessionId ?? "new chat"}`,
         `Model: ${selectedClaudeModel() ?? runtimeSlashCommands()?.model ?? "Claude CLI default"}`,
-        `Permission mode: ${permissionMode()}`,
+        `Confirmed permission mode: ${confirmedPermissionMode() ?? "not confirmed"}`,
+        `Next run permission mode: ${requestedPermissionMode()}`,
         `Run state: ${running() ? (cliAction() ?? "running") : "idle"}`,
       ];
       appendLocalAssistantMessage(lines.join("\n"));
@@ -924,9 +1038,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setCliAction(t("cli.action.starting"));
 
     const runId = `r${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const requestedModeForRun = requestedPermissionMode();
     const space = `remote-claude.run:${runId}`;
     const abort = new AbortController();
     setActiveRunId(runId);
+    setLastPermissionModeRequest(requestedModeForRun);
+    setPermissionModeStatus("pending");
 
     let markStreamReady = () => {};
     const streamReady = new Promise<void>((resolve) => {
@@ -934,6 +1051,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     });
     let streamSawRun = false;
     let chatAccepted = false;
+    let streamSawSystemInit = false;
 
     const streamPromise = (async () => {
       try {
@@ -953,6 +1071,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             streamSawRun = true;
           }
           if (e.kind === "claude.event" && e.content) {
+            if (activeRunId() === runId && isClaudeSystemInit(e.content)) {
+              streamSawSystemInit = true;
+              const actualMode = permissionModeFromSystemInit(e.content);
+              if (actualMode) {
+                confirmPermissionMode(actualMode, requestedModeForRun);
+              } else {
+                setLastPermissionModeRequest(requestedModeForRun);
+                setPermissionModeStatus("unknown");
+              }
+            }
             const transcriptEvent = claudeEventForTranscript(e.content);
             if (transcriptEvent) appendTranscriptEvent(transcriptEvent);
           } else if (e.kind === "run.error") {
@@ -985,7 +1113,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           message,
           attachments: pendingAttachments,
           runId,
-          permissionMode: permissionMode(),
+          permissionMode: requestedModeForRun,
           ...(selectedClaudeModel() ? { model: selectedClaudeModel() } : {}),
           // Per-device fail-policy hint for the PreToolUse hook. Persisted
           // in localStorage via Settings → Devices → device-prefs.
@@ -1017,6 +1145,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     } finally {
       if (!chatAccepted && !streamSawRun) abort.abort();
       await streamPromise;
+      if (chatAccepted && !streamSawSystemInit && activeRunId() === runId) {
+        setLastPermissionModeRequest(requestedModeForRun);
+        setPermissionModeStatus("unknown");
+      }
       abort.abort();
       setRunning(false);
       setCliAction(null);
@@ -1112,6 +1244,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   setSelectedDeviceId(v || null);
                   setSelectedSession(null);
                   setTranscript([]);
+                  resetConfirmedPermissionMode();
                   void refetchBehaviors();
                 }
               }}
@@ -1177,7 +1310,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             <NewChatCard
               deviceId={effectiveDeviceId()}
               deviceLabel={activeDevice()?.label ?? null}
-              permissionMode={permissionMode()}
+              permissionMode={requestedPermissionMode()}
               onConfirm={startSession}
               onCancel={() => setShowNewChat(false)}
               initialCwd={newChatCwd()}
@@ -1208,8 +1341,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         </div>
 
         <div class="sidebar-section sidebar-section-bottom">
-          <PermissionModePicker value={permissionMode()} onChange={setPermissionMode} />
-          <CapabilitiesBadge events={transcript()} />
+          <PermissionModePicker
+            value={requestedPermissionMode()}
+            onChange={setNextPermissionMode}
+          />
+          <CapabilitiesBadge events={transcript()} permissionMode={confirmedPermissionMode()} />
         </div>
 
         <div class="profile-card" id="profile-card">
@@ -1378,7 +1514,9 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             aria-live="polite"
           >
             <span class="composer-status-main">{t(connectionStatus().mainKey)}</span>
-            <span class="composer-status-detail">{connectionStatusDetail()}</span>
+            <span class="composer-status-detail">
+              {connectionStatusDetail()} · {permissionModeStatusText()}
+            </span>
             <Show when={connectionStatus().action}>
               {(action) => (
                 <button

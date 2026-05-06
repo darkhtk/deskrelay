@@ -19,6 +19,9 @@ export interface CapabilitiesBadgeProps {
   /** Same events array the Transcript renders from — we re-parse the
    *  init event to extract metadata. Cheap (one event lookup). */
   events: ClaudeStreamEvent[];
+  /** Confirmed mode from the active run/session. When present, this wins
+   *  over older transcript init metadata. */
+  permissionMode?: string | null;
 }
 
 type ChipKind = "model" | "mode" | "tools" | "mcp";
@@ -41,16 +44,17 @@ export const CapabilitiesBadge: Component<CapabilitiesBadgeProps> = (props) => {
 
   const chips = (): Chip[] => {
     const m = meta();
-    if (!m) return [];
+    const permissionMode = props.permissionMode ?? m?.permissionMode;
+    if (!m && !permissionMode) return [];
     const out: Chip[] = [];
-    if (m.model) out.push({ kind: "model", label: t("cb.model"), value: m.model });
-    if (m.permissionMode) {
-      out.push({ kind: "mode", label: t("cb.mode"), value: String(m.permissionMode) });
+    if (m?.model) out.push({ kind: "model", label: t("cb.model"), value: m.model });
+    if (permissionMode) {
+      out.push({ kind: "mode", label: t("cb.mode"), value: String(permissionMode) });
     }
-    if (typeof m.tools === "number" && m.tools > 0) {
+    if (typeof m?.tools === "number" && m.tools > 0) {
       out.push({ kind: "tools", label: t("cb.tools"), value: String(m.tools) });
     }
-    if (typeof m.mcpServers === "number" && m.mcpServers > 0) {
+    if (typeof m?.mcpServers === "number" && m.mcpServers > 0) {
       out.push({ kind: "mcp", label: t("cb.mcp"), value: String(m.mcpServers) });
     }
     return out;

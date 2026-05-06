@@ -93,6 +93,7 @@ export interface ClaudeSessionSummary {
 export interface ClaudeSessionTranscript {
   sessionId: string;
   cwd: string;
+  permissionMode?: string;
   events: ClaudeStreamEvent[];
   truncated?: boolean;
   totalBytes?: number;

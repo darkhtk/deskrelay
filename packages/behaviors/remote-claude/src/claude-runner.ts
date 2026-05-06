@@ -44,10 +44,9 @@ export interface ClaudeRunOptions {
   attachments?: ClaudeRunAttachment[];
   /** Resume an existing claude session. */
   resumeSessionId?: string;
-  /** claude `--permission-mode` value: "default" | "acceptEdits" |
-   *  "bypassPermissions" | "plan". When unset, claude's own default
-   *  ("default") applies. Validated by the caller (remote-claude
-   *  index.ts) — we just forward as a literal flag. */
+  /** claude `--permission-mode` value. When unset, claude's own default
+   *  applies. Validated by the caller (remote-claude index.ts) — we just
+   *  forward as a literal flag. */
   permissionMode?: string;
   /** claude `--model` value. Validated by the caller; forwarded as one
    *  argv element so it cannot inject extra flags. */

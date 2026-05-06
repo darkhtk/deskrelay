@@ -385,7 +385,7 @@ describe("readSession", () => {
   test("returns parsed events for a known session", async () => {
     await mkdir(join(projectsDir, "C--proj"));
     const events = [
-      { type: "system", subtype: "init" },
+      { type: "system", subtype: "init", permissionMode: "plan" },
       { type: "user", message: { content: "hi" } },
       { type: "assistant", message: { content: "hello back" } },
       { type: "result", success: true },
@@ -399,6 +399,7 @@ describe("readSession", () => {
     });
     expect(transcript.sessionId).toBe("s1");
     expect(transcript.cwd).toBe(cwd);
+    expect(transcript.permissionMode).toBe("plan");
     expect(transcript.events).toEqual(events);
   });
 

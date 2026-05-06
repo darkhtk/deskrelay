@@ -71,9 +71,9 @@ describe("CLAUDE_RESULT_SUBTYPES", () => {
 });
 
 describe("CLAUDE_PERMISSION_MODES", () => {
-  test("matches the four CLI flag values", () => {
+  test("matches the CLI flag values", () => {
     expect(CLAUDE_PERMISSION_MODE_VALUES).toEqual(
-      new Set(["default", "plan", "acceptEdits", "bypassPermissions"]),
+      new Set(["default", "auto", "plan", "acceptEdits", "dontAsk", "bypassPermissions"]),
     );
   });
 });

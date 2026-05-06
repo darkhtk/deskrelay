@@ -38,6 +38,7 @@ function pasteImage(target: Element, file: File) {
 interface ChatRequestParams {
   message?: string;
   attachments?: Array<{ name?: string }>;
+  permissionMode?: string;
 }
 
 beforeEach(() => {
@@ -1234,6 +1235,11 @@ describe("ChatView device refresh bridge", () => {
           chatParams = body.params as ChatRequestParams;
           streamController?.enqueue(
             encoder.encode(
+              'data: {"kind":"claude.event","content":{"type":"system","subtype":"init","permissionMode":"default","session_id":"sess_live","model":"claude-test"}}\n\n',
+            ),
+          );
+          streamController?.enqueue(
+            encoder.encode(
               'data: {"kind":"claude.event","content":{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"live chunk"}}}}\n\n',
             ),
           );
@@ -1270,6 +1276,12 @@ describe("ChatView device refresh bridge", () => {
       expect(behaviorRequests).toBeGreaterThan(0);
       expect(sessionsListRequests).toBeGreaterThan(0);
     });
+
+    const permissionSelect = container.querySelector(
+      "#permission-mode",
+    ) as HTMLSelectElement | null;
+    if (!permissionSelect) throw new Error("permission mode picker missing");
+    fireEvent.change(permissionSelect, { target: { value: "plan" } });
 
     const newChat = [...container.querySelectorAll("button")].find((b) =>
       /new chat/i.test(b.textContent ?? ""),
@@ -1317,8 +1329,12 @@ describe("ChatView device refresh bridge", () => {
     expect(order.indexOf("sse-open")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("sse-open")).toBeLessThan(order.indexOf("chat-request"));
     expect(chatParams?.attachments?.[0]?.name).toBe("dog.png");
+    expect(chatParams?.permissionMode).toBe("plan");
     await waitFor(() => {
       expect(container.textContent).toContain("final string live");
+      expect(container.textContent).toContain("permission mode: default");
+      expect(container.textContent).toContain("requested plan");
+      expect(permissionSelect.value).toBe("default");
       expect(scroller.scrollTop).toBe(987);
     });
   });

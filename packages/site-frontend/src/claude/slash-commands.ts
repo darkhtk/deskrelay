@@ -35,7 +35,7 @@ export const LOCAL_SLASH_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze([
   { name: "/clear", hint: "Clear the visible transcript" },
   { name: "/status", hint: "Show DeskRelay connection and session status" },
   { name: "/model", hint: "Show or set the model for new Claude turns" },
-  { name: "/permissions", hint: "Show or set the Claude permission mode" },
+  { name: "/permissions", hint: "Show confirmed mode or set the next run permission mode" },
 ]);
 
 export const KNOWN_CLAUDE_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze([

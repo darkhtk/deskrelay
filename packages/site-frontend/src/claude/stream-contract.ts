@@ -65,8 +65,10 @@ export type ClaudeResultSubtype =
  *  `system` init events. */
 export const CLAUDE_PERMISSION_MODES = {
   DEFAULT: "default",
+  AUTO: "auto",
   PLAN: "plan",
   ACCEPT_EDITS: "acceptEdits",
+  DONT_ASK: "dontAsk",
   BYPASS_PERMISSIONS: "bypassPermissions",
 } as const;
 

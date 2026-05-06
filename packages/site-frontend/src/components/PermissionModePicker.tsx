@@ -2,8 +2,8 @@
 // (above the profile card). Replaces the per-NewChatCard permission
 // mode selector so the user can switch modes without opening a new chat.
 //
-// The mode applies to the next chat that's started; existing in-flight
-// runs aren't affected (claude-runner only reads the mode at spawn).
+// This is a request for the next Claude run, not the confirmed current
+// mode. The confirmed mode comes back from Claude's system:init event.
 
 import { type Component, For } from "solid-js";
 import { CLAUDE_PERMISSION_MODES, type ClaudePermissionMode } from "../claude/stream-contract.ts";
@@ -11,7 +11,9 @@ import { t } from "../i18n.ts";
 
 const OPTIONS: Array<{ value: ClaudePermissionMode; key: string }> = [
   { value: CLAUDE_PERMISSION_MODES.DEFAULT, key: "pm.option.default" },
+  { value: CLAUDE_PERMISSION_MODES.AUTO, key: "pm.option.auto" },
   { value: CLAUDE_PERMISSION_MODES.ACCEPT_EDITS, key: "pm.option.accept-edits" },
+  { value: CLAUDE_PERMISSION_MODES.DONT_ASK, key: "pm.option.dont-ask" },
   { value: CLAUDE_PERMISSION_MODES.BYPASS_PERMISSIONS, key: "pm.option.bypass" },
   { value: CLAUDE_PERMISSION_MODES.PLAN, key: "pm.option.plan" },
 ];

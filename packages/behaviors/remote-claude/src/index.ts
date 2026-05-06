@@ -51,8 +51,7 @@ interface ChatParams {
   attachments?: ChatAttachment[];
   sessionId?: string;
   runId?: string;
-  /** claude `--permission-mode` value. One of "default" / "acceptEdits"
-   *  / "bypassPermissions" / "plan". Unknown values are dropped (we
+  /** claude `--permission-mode` value. Unknown values are dropped (we
    *  fall back to claude's default rather than passing garbage to the
    *  CLI). */
   permissionMode?: string;
@@ -78,7 +77,14 @@ interface ChatAttachment {
   dataBase64: string;
 }
 
-const VALID_PERMISSION_MODES = new Set(["default", "acceptEdits", "bypassPermissions", "plan"]);
+const VALID_PERMISSION_MODES = new Set([
+  "default",
+  "auto",
+  "acceptEdits",
+  "dontAsk",
+  "bypassPermissions",
+  "plan",
+]);
 const VALID_SECURITY_PROFILES = new Set(["relaxed", "normal", "strict"]);
 
 interface SessionsListParams {

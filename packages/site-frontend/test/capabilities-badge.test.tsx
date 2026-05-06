@@ -44,6 +44,17 @@ describe("CapabilitiesBadge", () => {
     expect(container.querySelector(".cap-chip-mode")).toBeTruthy();
   });
 
+  test("uses confirmed permission mode over older init metadata", () => {
+    const { container } = render(() => (
+      <CapabilitiesBadge
+        events={[initEvent({ permissionMode: "default" })]}
+        permissionMode="plan"
+      />
+    ));
+    expect(container.textContent).toContain("plan");
+    expect(container.textContent).not.toContain("default");
+  });
+
   test("ignores non-init events (no session metadata)", () => {
     const userEvent: ClaudeStreamEvent = {
       type: "user",
