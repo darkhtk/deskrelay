@@ -1,15 +1,6 @@
 import { type Component, Show, createSignal } from "solid-js";
 import { type Device, api } from "../api.ts";
-import {
-  type SecurityProfile,
-  clearAlwaysAllowed,
-  clearDevicePrefs,
-  getAlwaysAllowedTools,
-  getDeviceDefaultCwd,
-  getDeviceSecurityProfile,
-  setDeviceDefaultCwd,
-  setDeviceSecurityProfile,
-} from "../device-prefs.ts";
+import { clearDevicePrefs, getDeviceDefaultCwd, setDeviceDefaultCwd } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { CwdPicker } from "./CwdPicker.tsx";
 
@@ -35,24 +26,6 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
 
   const [unpairBusy, setUnpairBusy] = createSignal(false);
   const [unpairError, setUnpairError] = createSignal<string | null>(null);
-
-  const [allowedTools, setAllowedTools] = createSignal<string[]>(
-    [...getAlwaysAllowedTools(props.device.id)].sort(),
-  );
-  const [securityProfile, setSecurityProfileState] = createSignal<SecurityProfile>(
-    getDeviceSecurityProfile(props.device.id),
-  );
-
-  function pickProfile(next: SecurityProfile): void {
-    setDeviceSecurityProfile(props.device.id, next);
-    setSecurityProfileState(next);
-  }
-
-  function clearApprovals() {
-    if (!confirm(t("dsd.approval.clear.confirm"))) return;
-    clearAlwaysAllowed(props.device.id);
-    setAllowedTools([]);
-  }
 
   async function saveLabel() {
     const next = label().trim();
@@ -126,7 +99,9 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
         <Show when={labelSaved()}>
           <span class="settings-saved">{t("dsd.saved")}</span>
         </Show>
-        <Show when={labelError()}>{(message) => <span class="settings-error">{message()}</span>}</Show>
+        <Show when={labelError()}>
+          {(message) => <span class="settings-error">{message()}</span>}
+        </Show>
       </section>
 
       <section class="settings-card">
@@ -152,62 +127,6 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
       </section>
 
       <section class="settings-card">
-        <h3 class="settings-card-title">{t("dsd.section.approval")}</h3>
-        <p class="settings-card-help">{t("dsd.approval.help")}</p>
-        <Show
-          when={allowedTools().length > 0}
-          fallback={<p class="settings-card-help">{t("dsd.approval.empty")}</p>}
-        >
-          <div class="settings-meta">
-            <code>{allowedTools().join(", ")}</code>
-          </div>
-          <div class="settings-row">
-            <button type="button" class="secondary-button" onClick={clearApprovals}>
-              {t("dsd.approval.clear")}
-            </button>
-          </div>
-        </Show>
-      </section>
-
-      <section class="settings-card">
-        <h3 class="settings-card-title">{t("dsd.section.security-profile")}</h3>
-        <p class="settings-card-help">{t("dsd.security-profile.help")}</p>
-        <div class="settings-row" role="radiogroup" aria-label={t("dsd.section.security-profile")}>
-          <button
-            type="button"
-            class={`secondary-button${securityProfile() === "relaxed" ? " primary-button" : ""}`}
-            aria-pressed={securityProfile() === "relaxed"}
-            onClick={() => pickProfile("relaxed")}
-          >
-            {t("dsd.security-profile.relaxed")}
-          </button>
-          <button
-            type="button"
-            class={`secondary-button${securityProfile() === "normal" ? " primary-button" : ""}`}
-            aria-pressed={securityProfile() === "normal"}
-            onClick={() => pickProfile("normal")}
-          >
-            {t("dsd.security-profile.normal")}
-          </button>
-          <button
-            type="button"
-            class={`secondary-button${securityProfile() === "strict" ? " primary-button" : ""}`}
-            aria-pressed={securityProfile() === "strict"}
-            onClick={() => pickProfile("strict")}
-          >
-            {t("dsd.security-profile.strict")}
-          </button>
-        </div>
-        <p class="settings-meta">
-          {securityProfile() === "relaxed"
-            ? t("dsd.security-profile.relaxed.note")
-            : securityProfile() === "normal"
-              ? t("dsd.security-profile.normal.note")
-              : t("dsd.security-profile.strict.note")}
-        </p>
-      </section>
-
-      <section class="settings-card">
         <h3 class="settings-card-title danger">{t("dsd.section.danger")}</h3>
         <p class="settings-card-help">{t("dsd.danger.help")}</p>
         <div class="settings-row">
@@ -220,7 +139,9 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
             {unpairBusy() ? t("dsd.unpair.busy") : t("dsd.unpair")}
           </button>
         </div>
-        <Show when={unpairError()}>{(message) => <span class="settings-error">{message()}</span>}</Show>
+        <Show when={unpairError()}>
+          {(message) => <span class="settings-error">{message()}</span>}
+        </Show>
       </section>
     </div>
   );
