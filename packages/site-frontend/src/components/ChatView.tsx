@@ -153,6 +153,26 @@ type DeviceSelectionRequest = {
 };
 
 type PermissionModeStatus = "unconfirmed" | "pending" | "confirmed" | "mismatch" | "unknown";
+type SidebarTab = "sessions" | "permissions" | "skills";
+
+interface PermissionSourceSummary {
+  label: string;
+  path: string;
+  exists: boolean;
+  allow: string[];
+  deny: string[];
+  ask: string[];
+  defaultMode?: string;
+  error?: string;
+}
+
+interface PermissionsInspectResult {
+  sources: PermissionSourceSummary[];
+}
+
+interface PermissionsInspectViewResult extends PermissionsInspectResult {
+  error?: string;
+}
 
 export interface ChatViewProps {
   me?: unknown;
@@ -312,6 +332,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   );
   const [sessionSearch, setSessionSearch] = createSignal("");
   const [showSessionSearch, setShowSessionSearch] = createSignal(false);
+  const [selectedSidebarTab, setSelectedSidebarTab] = createSignal<SidebarTab>("sessions");
   let sessionSearchInput: HTMLInputElement | undefined;
   const sessionEntries = (): SessionEntry[] => {
     const all = (sessions() ?? []).map((s) => ({
@@ -416,6 +437,41 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
     return t("pm.status.pending-next", { mode: requested });
   }
+
+  const [cliPermissions] = createResource(
+    () => {
+      if (selectedSidebarTab() !== "permissions") return null;
+      const d = effectiveDeviceId();
+      const i = remoteClaudeInstance();
+      if (!d || !i) return null;
+      return { deviceId: d, instanceId: i, cwd: cwd().trim() || getDeviceDefaultCwd(d) || "." };
+    },
+    async (input) => {
+      if (!input) return null;
+      try {
+        const res = await api.callBehavior<PermissionsInspectResult>(
+          input.deviceId,
+          input.instanceId,
+          "permissions.inspect",
+          { cwd: input.cwd },
+        );
+        if (res.error) return { error: res.error.message, sources: [] };
+        return res.result ?? { sources: [] };
+      } catch (err) {
+        return { error: (err as Error).message, sources: [] };
+      }
+    },
+  );
+
+  const permissionEntryCount = (source: PermissionSourceSummary): number =>
+    source.allow.length + source.deny.length + source.ask.length + (source.defaultMode ? 1 : 0);
+  const cliPermissionsResult = () => cliPermissions() as PermissionsInspectViewResult | null;
+  const cliPermissionSources = () => cliPermissionsResult()?.sources ?? [];
+  const cliPermissionsError = () => cliPermissionsResult()?.error ?? null;
+  const runtimeSkills = () =>
+    (runtimeSlashCommands()?.skills ?? []).filter(
+      (skill): skill is string => typeof skill === "string" && skill.trim().length > 0,
+    );
 
   onCleanup(() => {
     if (sessionNoticeTimer) clearTimeout(sessionNoticeTimer);
@@ -1290,88 +1346,253 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           </Show>
         </div>
 
-        <div class="sidebar-section">
-          <div class="sidebar-primary-row">
-            <button
-              type="button"
-              class="sidebar-action sidebar-new-chat-action"
-              onClick={openNewChat}
-              disabled={!effectiveDeviceId()}
-              aria-label={t("chat.sidebar.new.button")}
-              title={
-                effectiveDeviceId()
-                  ? t("chat.sidebar.new.title.ready")
-                  : t("chat.sidebar.new.title.no-device")
-              }
-            >
-              <span aria-hidden="true" class="sidebar-action-plus">
-                +
-              </span>
-            </button>
-            <button
-              type="button"
-              class="sidebar-action sidebar-icon-action"
-              classList={{ "is-active": showSessionSearch() }}
-              onClick={toggleSessionSearch}
-              aria-label={t("chat.sidebar.search.toggle")}
-              aria-pressed={showSessionSearch()}
-              title={t("chat.sidebar.search.toggle")}
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <circle cx="11" cy="11" r="7" />
-                <line x1="16.5" y1="16.5" x2="21" y2="21" />
-              </svg>
-            </button>
-          </div>
+        <div class="sidebar-tabs" role="tablist" aria-label={t("chat.sidebar.tabs.aria")}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={selectedSidebarTab() === "sessions"}
+            class="sidebar-tab"
+            classList={{ "is-active": selectedSidebarTab() === "sessions" }}
+            onClick={() => setSelectedSidebarTab("sessions")}
+          >
+            {t("chat.sidebar.tab.sessions")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={selectedSidebarTab() === "permissions"}
+            class="sidebar-tab"
+            classList={{ "is-active": selectedSidebarTab() === "permissions" }}
+            onClick={() => setSelectedSidebarTab("permissions")}
+          >
+            {t("chat.sidebar.tab.permissions")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={selectedSidebarTab() === "skills"}
+            class="sidebar-tab"
+            classList={{ "is-active": selectedSidebarTab() === "skills" }}
+            onClick={() => setSelectedSidebarTab("skills")}
+          >
+            {t("chat.sidebar.tab.skills")}
+          </button>
         </div>
 
-        <Show when={showNewChat()}>
-          <div class="new-chat-card">
-            <NewChatCard
-              deviceId={effectiveDeviceId()}
-              deviceLabel={activeDevice()?.label ?? null}
-              permissionMode={requestedPermissionMode()}
-              onConfirm={startSession}
-              onCancel={() => setShowNewChat(false)}
-              initialCwd={newChatCwd()}
+        <Show when={selectedSidebarTab() === "sessions"}>
+          <div class="sidebar-section">
+            <div class="sidebar-primary-row">
+              <button
+                type="button"
+                class="sidebar-action sidebar-new-chat-action"
+                onClick={openNewChat}
+                disabled={!effectiveDeviceId()}
+                aria-label={t("chat.sidebar.new.button")}
+                title={
+                  effectiveDeviceId()
+                    ? t("chat.sidebar.new.title.ready")
+                    : t("chat.sidebar.new.title.no-device")
+                }
+              >
+                <span aria-hidden="true" class="sidebar-action-plus">
+                  +
+                </span>
+              </button>
+              <button
+                type="button"
+                class="sidebar-action sidebar-icon-action"
+                classList={{ "is-active": showSessionSearch() }}
+                onClick={toggleSessionSearch}
+                aria-label={t("chat.sidebar.search.toggle")}
+                aria-pressed={showSessionSearch()}
+                title={t("chat.sidebar.search.toggle")}
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <line x1="16.5" y1="16.5" x2="21" y2="21" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <Show when={showNewChat()}>
+            <div class="new-chat-card">
+              <NewChatCard
+                deviceId={effectiveDeviceId()}
+                deviceLabel={activeDevice()?.label ?? null}
+                permissionMode={requestedPermissionMode()}
+                onConfirm={startSession}
+                onCancel={() => setShowNewChat(false)}
+                initialCwd={newChatCwd()}
+              />
+            </div>
+          </Show>
+
+          <div class="sidebar-section sidebar-section-list">
+            <span class="sidebar-label">{t("chat.sidebar.recent")}</span>
+            <Show when={showSessionSearch()}>
+              <input
+                ref={(el) => {
+                  sessionSearchInput = el;
+                }}
+                type="search"
+                class="text-input session-search"
+                placeholder={t("chat.sidebar.search.placeholder")}
+                aria-label={t("chat.sidebar.search.placeholder")}
+                value={sessionSearch()}
+                onInput={(e) => setSessionSearch(e.currentTarget.value)}
+              />
+            </Show>
+            <SessionList
+              entries={sessionEntries()}
+              selectedId={selectedSession()?.sessionId ?? null}
+              onSelect={selectSession}
+              onDelete={(id) => void handleSessionDelete(id)}
+              deletingIds={deletingSessionIds()}
+              onDeleteGroup={(cwdToDelete, rows) =>
+                void handleSessionGroupDelete(cwdToDelete, rows)
+              }
+              deletingGroups={deletingSessionGroups()}
+              groupByCwd={true}
             />
           </div>
         </Show>
 
-        <div class="sidebar-section sidebar-section-list">
-          <span class="sidebar-label">{t("chat.sidebar.recent")}</span>
-          <Show when={showSessionSearch()}>
-            <input
-              ref={(el) => {
-                sessionSearchInput = el;
-              }}
-              type="search"
-              class="text-input session-search"
-              placeholder={t("chat.sidebar.search.placeholder")}
-              aria-label={t("chat.sidebar.search.placeholder")}
-              value={sessionSearch()}
-              onInput={(e) => setSessionSearch(e.currentTarget.value)}
-            />
-          </Show>
-          <SessionList
-            entries={sessionEntries()}
-            selectedId={selectedSession()?.sessionId ?? null}
-            onSelect={selectSession}
-            onDelete={(id) => void handleSessionDelete(id)}
-            deletingIds={deletingSessionIds()}
-            onDeleteGroup={(cwdToDelete, rows) => void handleSessionGroupDelete(cwdToDelete, rows)}
-            deletingGroups={deletingSessionGroups()}
-            groupByCwd={true}
-          />
-        </div>
+        <Show when={selectedSidebarTab() === "permissions"}>
+          <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
+            <span class="sidebar-label">{t("chat.sidebar.permissions.title")}</span>
+            <Show
+              when={effectiveDeviceId() && remoteClaudeInstance()}
+              fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.not-ready")}</p>}
+            >
+              <Show
+                when={!cliPermissions.loading}
+                fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.loading")}</p>}
+              >
+                <Show
+                  when={!cliPermissionsError()}
+                  fallback={<p class="sidebar-empty">{cliPermissionsError()}</p>}
+                >
+                  <div class="sidebar-flat-list">
+                    <For each={cliPermissionSources()}>
+                      {(source) => (
+                        <div class="sidebar-info-block">
+                          <div class="sidebar-info-title">
+                            <span>{source.label}</span>
+                            <span class="sidebar-info-count">
+                              {source.exists
+                                ? t("chat.sidebar.permissions.count", {
+                                    count: String(permissionEntryCount(source)),
+                                  })
+                                : t("chat.sidebar.permissions.missing")}
+                            </span>
+                          </div>
+                          <div class="sidebar-info-path" title={source.path}>
+                            {source.path}
+                          </div>
+                          <Show when={source.error}>
+                            <p class="sidebar-empty">{source.error}</p>
+                          </Show>
+                          <Show when={source.exists && permissionEntryCount(source) === 0}>
+                            <p class="sidebar-empty">{t("chat.sidebar.permissions.empty")}</p>
+                          </Show>
+                          <Show when={source.defaultMode}>
+                            <div class="sidebar-permission-row">
+                              <span class="sidebar-permission-kind">mode</span>
+                              <span>{source.defaultMode}</span>
+                            </div>
+                          </Show>
+                          <For each={source.allow}>
+                            {(item) => (
+                              <div class="sidebar-permission-row">
+                                <span class="sidebar-permission-kind">allow</span>
+                                <span>{item}</span>
+                              </div>
+                            )}
+                          </For>
+                          <For each={source.ask}>
+                            {(item) => (
+                              <div class="sidebar-permission-row">
+                                <span class="sidebar-permission-kind">ask</span>
+                                <span>{item}</span>
+                              </div>
+                            )}
+                          </For>
+                          <For each={source.deny}>
+                            {(item) => (
+                              <div class="sidebar-permission-row">
+                                <span class="sidebar-permission-kind">deny</span>
+                                <span>{item}</span>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Show>
+            </Show>
+          </div>
+        </Show>
+
+        <Show when={selectedSidebarTab() === "skills"}>
+          <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
+            <span class="sidebar-label">{t("chat.sidebar.skills.title")}</span>
+            <Show
+              when={effectiveDeviceId() && remoteClaudeInstance()}
+              fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.not-ready")}</p>}
+            >
+              <Show
+                when={!runtimeSlashCommands.loading}
+                fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.loading")}</p>}
+              >
+                <div class="sidebar-flat-list">
+                  <div class="sidebar-info-block">
+                    <div class="sidebar-info-title">
+                      <span>{t("chat.sidebar.skills.claude")}</span>
+                      <span class="sidebar-info-count">{runtimeSkills().length}</span>
+                    </div>
+                    <Show
+                      when={runtimeSkills().length > 0}
+                      fallback={<p class="sidebar-empty">{t("chat.sidebar.skills.empty")}</p>}
+                    >
+                      <div class="sidebar-token-list">
+                        <For each={runtimeSkills()}>
+                          {(skill) => <span class="sidebar-token">{skill}</span>}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                  <div class="sidebar-info-block">
+                    <div class="sidebar-info-title">
+                      <span>{t("chat.sidebar.skills.commands")}</span>
+                      <span class="sidebar-info-count">{composerSlashCommands().length}</span>
+                    </div>
+                    <div class="sidebar-command-list">
+                      <For each={composerSlashCommands()}>
+                        {(command) => (
+                          <div class="sidebar-command-row">
+                            <span>{command.name}</span>
+                            <small>{command.hint}</small>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </div>
+              </Show>
+            </Show>
+          </div>
+        </Show>
 
         <div class="sidebar-section sidebar-section-bottom">
           <PermissionModePicker

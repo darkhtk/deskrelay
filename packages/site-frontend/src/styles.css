@@ -1265,6 +1265,122 @@ body.sidebar-open {
 .sidebar-icon-action.is-active svg {
   color: currentColor;
 }
+.sidebar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+.sidebar-tab {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 4px;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+.sidebar-tab:hover {
+  color: var(--text);
+}
+.sidebar-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent-coral);
+}
+.sidebar-tab-panel {
+  gap: 10px;
+}
+.sidebar-empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.sidebar-flat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sidebar-info-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.sidebar-info-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.sidebar-info-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.sidebar-info-path {
+  color: var(--text-faint);
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-permission-row,
+.sidebar-command-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.sidebar-permission-row span:last-child,
+.sidebar-command-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-permission-kind {
+  flex: 0 0 40px;
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.sidebar-token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sidebar-token {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+.sidebar-command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.sidebar-command-row {
+  flex-direction: column;
+  gap: 1px;
+}
+.sidebar-command-row span {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+.sidebar-command-row small {
+  color: var(--text-faint);
+  font-size: 11px;
+}
 
 /* Capabilities strip at the bottom of the sidebar — flat row of icon +
    value pairs with no card / border / background, so the panel doesn't

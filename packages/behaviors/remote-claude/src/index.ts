@@ -24,6 +24,9 @@
 // listing/monitoring, future sessions space TBD.
 
 import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type RunBehaviorOptions, runBehavior } from "@claude-remote/behavior-sdk/runtime";
 import manifest from "../manifest.json" with { type: "json" };
 import { ClaudeRunError, probeClaudeSlashCommands, runClaude } from "./claude-runner.ts";
@@ -145,6 +148,25 @@ interface SlashCommandsResult {
   model?: string;
 }
 
+interface PermissionsInspectParams {
+  cwd?: string;
+}
+
+interface PermissionSourceSummary {
+  label: string;
+  path: string;
+  exists: boolean;
+  allow: string[];
+  deny: string[];
+  ask: string[];
+  defaultMode?: string;
+  error?: string;
+}
+
+interface PermissionsInspectResult {
+  sources: PermissionSourceSummary[];
+}
+
 // Per-run abort registry. Each in-flight `chat` call registers its
 // AbortController under runId; the `interrupt` JSON-RPC method looks it
 // up and aborts. When the chat completes (success or error) we
@@ -259,6 +281,22 @@ export const behaviorDef: RunBehaviorOptions = {
         },
       });
     });
+
+    ctx.onRequest<PermissionsInspectParams, PermissionsInspectResult>(
+      "permissions.inspect",
+      async (params) => {
+        const cwd =
+          typeof params?.cwd === "string" && params.cwd.trim() ? params.cwd : process.cwd();
+        const sources = [
+          { label: "User settings", path: join(homedir(), ".claude", "settings.json") },
+          { label: "Project settings", path: join(cwd, ".claude", "settings.json") },
+          { label: "Project local settings", path: join(cwd, ".claude", "settings.local.json") },
+        ];
+        return {
+          sources: await Promise.all(sources.map((source) => readPermissionSource(source))),
+        };
+      },
+    );
 
     ctx.onRequest<SessionsDeleteParams, DeleteSessionResult>("sessions.delete", async (params) => {
       if (!params || typeof params.cwd !== "string" || typeof params.sessionId !== "string") {
@@ -412,4 +450,45 @@ export const behaviorDef: RunBehaviorOptions = {
 // InProcessBehaviorHost with `behaviorDef` directly.
 if (import.meta.main) {
   await runBehavior(behaviorDef);
+}
+
+async function readPermissionSource(source: {
+  label: string;
+  path: string;
+}): Promise<PermissionSourceSummary> {
+  try {
+    const raw = await readFile(source.path, "utf8");
+    const parsed = JSON.parse(raw) as { permissions?: unknown };
+    const permissions =
+      parsed.permissions && typeof parsed.permissions === "object"
+        ? (parsed.permissions as Record<string, unknown>)
+        : {};
+    return {
+      label: source.label,
+      path: source.path,
+      exists: true,
+      allow: stringList(permissions.allow),
+      deny: stringList(permissions.deny),
+      ask: stringList(permissions.ask),
+      ...(typeof permissions.defaultMode === "string"
+        ? { defaultMode: permissions.defaultMode }
+        : {}),
+    };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      label: source.label,
+      path: source.path,
+      exists: false,
+      allow: [],
+      deny: [],
+      ask: [],
+      ...(code === "ENOENT" ? {} : { error: (err as Error).message }),
+    };
+  }
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }

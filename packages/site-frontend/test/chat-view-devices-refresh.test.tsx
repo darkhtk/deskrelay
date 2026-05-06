@@ -235,6 +235,137 @@ describe("ChatView device refresh bridge", () => {
     });
   });
 
+  test("keeps session search state while switching sidebar tabs and shows read-only CLI data", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${DEV.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.0-test",
+              loadedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        if (body.method === "slashCommands") {
+          return new Response(
+            JSON.stringify({
+              result: {
+                slashCommands: ["/status"],
+                skills: ["deep-review"],
+                model: "claude-opus",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (body.method === "permissions.inspect") {
+          return new Response(
+            JSON.stringify({
+              result: {
+                sources: [
+                  {
+                    label: "User settings",
+                    path: "C:\\Users\\darkh\\.claude\\settings.json",
+                    exists: true,
+                    allow: ["Bash(git status:*)"],
+                    deny: [],
+                    ask: [],
+                    defaultMode: "default",
+                  },
+                ],
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            result: [
+              {
+                sessionId: "sess_tab_1",
+                cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+                title: "Tabbed session",
+                modifiedAt: "2026-04-30T00:00:00.000Z",
+                fileSize: 512,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Tabbed session");
+    });
+    expect(container.querySelector(".session-search")).toBeNull();
+
+    const searchToggle = container.querySelector(
+      'button[aria-label="Toggle session search"]',
+    ) as HTMLButtonElement | null;
+    if (!searchToggle) throw new Error("session search toggle missing");
+    fireEvent.click(searchToggle);
+
+    const searchInput = container.querySelector(".session-search") as HTMLInputElement | null;
+    if (!searchInput) throw new Error("session search input missing");
+    fireEvent.input(searchInput, { target: { value: "Tabbed" } });
+
+    const skillsTab = [...container.querySelectorAll('[role="tab"]')].find(
+      (button) => button.textContent === "Skills",
+    ) as HTMLButtonElement | undefined;
+    if (!skillsTab) throw new Error("skills tab missing");
+    fireEvent.click(skillsTab);
+    await waitFor(() => {
+      expect(container.textContent).toContain("deep-review");
+      expect(container.textContent).toContain("/status");
+    });
+
+    const sessionsTab = [...container.querySelectorAll('[role="tab"]')].find(
+      (button) => button.textContent === "Sessions",
+    ) as HTMLButtonElement | undefined;
+    if (!sessionsTab) throw new Error("sessions tab missing");
+    fireEvent.click(sessionsTab);
+    const restoredSearch = container.querySelector(".session-search") as HTMLInputElement | null;
+    expect(restoredSearch?.value).toBe("Tabbed");
+
+    const permissionsTab = [...container.querySelectorAll('[role="tab"]')].find(
+      (button) => button.textContent === "Permissions",
+    ) as HTMLButtonElement | undefined;
+    if (!permissionsTab) throw new Error("permissions tab missing");
+    fireEvent.click(permissionsTab);
+    await waitFor(() => {
+      expect(container.textContent).toContain("User settings");
+      expect(container.textContent).toContain("Bash(git status:*)");
+      expect(container.textContent).toContain("default");
+    });
+  });
+
   test("deletes every session in a cwd group from the grouped session list", async () => {
     const cwd = "C:\\Users\\darkh\\Projects\\alpha";
     let sessionRows = [
