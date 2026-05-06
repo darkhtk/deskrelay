@@ -4,16 +4,30 @@ import { LoginCard } from "./LoginCard.tsx";
 
 export interface LandingProps {
   onTokenLogin: (token: string) => void | Promise<void>;
+  onLocalAccessLogin?: () => boolean | Promise<boolean>;
   authed?: boolean;
   onProceed?: () => void;
 }
 
 export const Landing: Component<LandingProps> = (props) => {
   const [accessOpen, setAccessOpen] = createSignal(false);
-  const open = () => {
+  const [opening, setOpening] = createSignal(false);
+  const open = async () => {
+    if (opening()) return;
     if (props.authed) {
       props.onProceed?.();
       return;
+    }
+    setOpening(true);
+    try {
+      if (await props.onLocalAccessLogin?.()) {
+        props.onProceed?.();
+        return;
+      }
+    } catch {
+      // Fall back to manual Site token entry.
+    } finally {
+      setOpening(false);
     }
     setAccessOpen(true);
   };
@@ -41,7 +55,12 @@ export const Landing: Component<LandingProps> = (props) => {
           <h1 class="landing-headline" innerHTML={t("landing.headline").replace(/\n/g, "<br/>")} />
           <p class="landing-subhead">{t("landing.subhead")}</p>
           <div class="landing-cta-row">
-            <button type="button" class="primary-button landing-cta" onClick={open}>
+            <button
+              type="button"
+              class="primary-button landing-cta"
+              onClick={() => void open()}
+              disabled={opening()}
+            >
               {t("landing.cta.start")}
             </button>
             <a class="secondary-button landing-cta" href="#how">
@@ -74,7 +93,12 @@ export const Landing: Component<LandingProps> = (props) => {
           <li innerHTML={renderMarkdown(t("landing.how.step3"))} />
         </ol>
         <div class="landing-cta-row" style={{ "justify-content": "center" }}>
-          <button type="button" class="primary-button landing-cta" onClick={open}>
+          <button
+            type="button"
+            class="primary-button landing-cta"
+            onClick={() => void open()}
+            disabled={opening()}
+          >
             {t("landing.how.cta")}
           </button>
         </div>

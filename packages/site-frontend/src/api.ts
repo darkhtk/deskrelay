@@ -180,6 +180,24 @@ async function requestBlob(path: string): Promise<Blob> {
   return await res.blob();
 }
 
+async function readLocalSiteToken(): Promise<string | null> {
+  try {
+    const res = await fetch(`${resolveBaseUrl()}/__deskrelay/local-site-token`, {
+      method: "GET",
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const parsed = await readResponse(res);
+    if (parsed && typeof parsed === "object" && "token" in parsed) {
+      const token = (parsed as { token?: unknown }).token;
+      return typeof token === "string" && token.trim() ? token.trim() : null;
+    }
+  } catch {
+    // Non-local access, static builds, or older dev servers simply fall back to manual entry.
+  }
+  return null;
+}
+
 async function readResponse(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!text) return undefined;
@@ -192,6 +210,7 @@ async function readResponse(res: Response): Promise<unknown> {
 
 export const api = {
   health: () => request<{ ok: true; version: string; devices: number }>("GET", "/healthz"),
+  localSiteToken: () => readLocalSiteToken(),
 
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>

@@ -50,7 +50,7 @@ describe("App landing flow", () => {
     render(() => <App />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
-    fireEvent.input(screen.getByPlaceholderText("CR_SITE_TOKEN"), {
+    fireEvent.input(await screen.findByPlaceholderText("CR_SITE_TOKEN"), {
       target: { value: "tok-abc" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -64,5 +64,30 @@ describe("App landing flow", () => {
       expect(heading).toContain("for your own PCs");
     });
     expect(screen.queryByRole("button", { name: "Back to main screen" })).toBeNull();
+  });
+
+  test("local server users can open the app without typing the Site token", async () => {
+    window.localStorage.setItem("cr.locale", "en");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/__deskrelay/local-site-token")) {
+        return new Response(JSON.stringify({ token: "tok-local" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("[]", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    render(() => <App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("cr.site-token")).toBe("tok-local");
+    });
+    expect(screen.queryByPlaceholderText("CR_SITE_TOKEN")).toBeNull();
   });
 });

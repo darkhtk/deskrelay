@@ -83,6 +83,8 @@ http://<내-PC-Tailscale-IP>:18193
 
 이 PC의 daemon은 자동으로 등록됩니다. 로그인 후 바로 이 PC의 Claude CLI를 사용할 수 있습니다. 다른 PC도 연결하려면 그 PC에서 connector daemon을 실행한 뒤, Settings -> Devices에서 해당 daemon URL과 token을 추가합니다.
 
+이 PC에서 `http://127.0.0.1:18193`로 접속해 `앱 열기`를 누르면 Site token을 직접 입력하지 않고 바로 들어갑니다. 다른 PC나 모바일 기기에서 Tailscale/LAN URL로 접속할 때는 계속 Site token이 필요합니다.
+
 중지:
 
 ```powershell
@@ -96,6 +98,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
 ```
 
 상태 명령은 접속 URL과 현재 `Site token`을 다시 출력합니다. 브라우저 로그인 토큰을 잃어버렸다면 이 명령으로 다시 확인하세요.
+
+Site token은 `.self-server\site-token.txt`에도 따로 저장됩니다.
 
 LAN 밖에서 이 PC의 DeskRelay에 접속하려면 이 PC와 접속할 기기에 Tailscale을 설치하고 로그인하세요. 그다음 `self-pc-server-start.ps1` 또는 `self-pc-server-status.ps1`가 출력하는 Tailscale URL을 사용합니다.
 

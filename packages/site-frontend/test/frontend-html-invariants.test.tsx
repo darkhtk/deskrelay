@@ -101,7 +101,7 @@ describe("settings and chrome invariants", () => {
   test("self-host token can move from Landing into the app flow", async () => {
     render(() => <App />);
     fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
-    fireEvent.input(screen.getByPlaceholderText("CR_SITE_TOKEN"), {
+    fireEvent.input(await screen.findByPlaceholderText("CR_SITE_TOKEN"), {
       target: { value: "tok-1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));

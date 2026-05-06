@@ -64,6 +64,7 @@ foreach ($dir in @($root, $stateRoot, $connectorState, $identityDir, $logsDir, $
 }
 
 $envFile = Join-Path $root "dev.env.ps1"
+$siteTokenFile = Join-Path $root "site-token.txt"
 $readmeFile = Join-Path $root "README.md"
 $startWrapper = Join-Path $root "start-dev.ps1"
 $stopWrapper = Join-Path $root "stop-dev.ps1"
@@ -90,6 +91,7 @@ if ((Test-Path $envFile) -and -not $Force) {
 `$env:CR_SITE_HOST = $(Quote-PsString $SiteHost)
 `$env:CR_SITE_PORT = '$SitePort'
 `$env:CR_SITE_TOKEN = $(Quote-PsString $SiteToken)
+`$env:CR_SITE_TOKEN_FILE = $(Quote-PsString $siteTokenFile)
 `$env:CR_SITE_AUTH_OPTIONAL = '0'
 `$env:CR_SITE_USAGE_DISABLED = '1'
 `$env:CR_SITE_BACKEND_URL = $(Quote-PsString $siteUrl)
@@ -117,6 +119,7 @@ if ((Test-Path $envFile) -and -not $Force) {
 `$env:TEMP = $(Quote-PsString $tmpDir)
 `$env:TMP = $(Quote-PsString $tmpDir)
 "@ | Set-Content -Encoding utf8 -Path $envFile
+  $SiteToken | Set-Content -Encoding utf8 -Path $siteTokenFile
 }
 
 @"
@@ -143,6 +146,12 @@ Token login:
 
 ~~~text
 $SiteToken
+~~~
+
+Token file:
+
+~~~text
+$siteTokenFile
 ~~~
 
 If the app is already open, paste the contents of browser-login.js into the browser console once.

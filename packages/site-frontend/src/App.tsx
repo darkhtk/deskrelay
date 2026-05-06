@@ -42,6 +42,17 @@ export const App: Component = () => {
     }
   };
 
+  const handleLocalAccessLogin = async () => {
+    const token = await api.localSiteToken();
+    if (!token) return false;
+    try {
+      await handleTokenLogin(token);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleClearAccess = () => {
     clearToken();
     setLocalToken(null);
@@ -55,6 +66,7 @@ export const App: Component = () => {
 
   const dismissLanding = () => {
     setLandingReopened(false);
+    setPickedLocale(true);
     setLandingDismissed(true);
   };
 
@@ -130,7 +142,12 @@ export const App: Component = () => {
       </Show>
 
       <Show when={landingReopened() || !landingDismissed() || !hasAccess()}>
-        <Landing onTokenLogin={handleTokenLogin} authed={hasAccess()} onProceed={dismissLanding} />
+        <Landing
+          onTokenLogin={handleTokenLogin}
+          onLocalAccessLogin={handleLocalAccessLogin}
+          authed={hasAccess()}
+          onProceed={dismissLanding}
+        />
       </Show>
 
       <Show when={!landingReopened() && landingDismissed() && hasAccess() && !pickedLocale()}>

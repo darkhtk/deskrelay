@@ -81,6 +81,13 @@ if (-not (Test-Path -LiteralPath $envFile)) {
 
 . $envFile
 
+$siteTokenFile = if ($env:CR_SITE_TOKEN_FILE) {
+  [System.IO.Path]::GetFullPath($env:CR_SITE_TOKEN_FILE)
+} else {
+  Join-Path $root "site-token.txt"
+}
+$env:CR_SITE_TOKEN | Set-Content -Encoding utf8 -Path $siteTokenFile
+
 $frontendPort = if ($env:CR_DEV_FRONTEND_URL) {
   try { ([Uri]$env:CR_DEV_FRONTEND_URL).Port } catch { 18193 }
 } else {
@@ -207,6 +214,9 @@ $urlsText
 Site token:
 $($env:CR_SITE_TOKEN)
 
+Site token file:
+$siteTokenFile
+
 Browser login helper:
 localStorage.setItem("cr.site-token", "$($env:CR_SITE_TOKEN)");
 localStorage.removeItem("cr.site-base-url");
@@ -278,6 +288,7 @@ $all = @"
 # Generated from:
 #   Repo: $repo
 #   State: $root
+#   Site token file: $siteTokenFile
 #
 # Files in this folder:
 #   open-site.txt
