@@ -28,14 +28,14 @@ export interface OfflineHintProps {
   showSourceCommand?: boolean;
 }
 
-const PRIMARY_COMMAND = "cr-connector";
+const PRIMARY_COMMAND =
+  "bun run packages/pc-connector-daemon/src/bin.ts login-task install --start";
 const SOURCE_COMMAND = "bun run packages/pc-connector-daemon/src/bin.ts";
-/** Windows recovery hint: with the packaged connector flow the daemon auto-starts on
- *  every login, so "daemon offline" usually means the
- *  process is wedged or the user terminated it. Restarting the binary
- *  in any open terminal is enough — the install dir is on PATH already.
- *  No PowerShell admin dance needed. */
-const WINDOWS_BINARY_RUN_COMMAND = "cr-connector";
+/** Windows recovery hint for the self-host source flow. The command
+ *  assumes the user runs it from the DeskRelay repo root, which matches
+ *  the README and generated command files. */
+const WINDOWS_BINARY_RUN_COMMAND =
+  "bun run packages/pc-connector-daemon/src/bin.ts login-task install --start";
 
 /** True iff the message looks like the be.daemon.offline error. The
  *  string "connector daemon" stays in every locale (only translation
@@ -47,9 +47,7 @@ export function isDaemonOfflineMessage(message: string | null | undefined): bool
 }
 
 export function daemonOfflineBannerMessage(deviceLabel?: string | null): string {
-  return deviceLabel
-    ? t("offline.banner.device", { label: deviceLabel })
-    : t("offline.banner");
+  return deviceLabel ? t("offline.banner.device", { label: deviceLabel }) : t("offline.banner");
 }
 
 export function daemonOfflineHelpMessage(deviceLabel?: string | null): string {

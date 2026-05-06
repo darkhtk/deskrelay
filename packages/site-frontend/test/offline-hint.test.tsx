@@ -92,7 +92,7 @@ describe("<OfflineHint />", () => {
     expect(onPickDevice).toHaveBeenCalledTimes(1);
   });
 
-  test("clicking the primary copy button writes `cr-connector` to the clipboard", async () => {
+  test("clicking the primary copy button writes the self-host login-task command", async () => {
     const { container } = render(() => (
       <OfflineHint message="device offline — start the connector daemon on this PC" />
     ));
@@ -102,10 +102,12 @@ describe("<OfflineHint />", () => {
     fireEvent.click(btn);
     // Wait one microtask for the async clipboard call.
     await new Promise((r) => setTimeout(r, 0));
-    expect(writeText).toHaveBeenCalledWith("cr-connector");
+    expect(writeText).toHaveBeenCalledWith(
+      "bun run packages/pc-connector-daemon/src/bin.ts login-task install --start",
+    );
   });
 
-  test("on Windows, primary copy writes the packaged connector restart command", async () => {
+  test("on Windows, primary copy writes the self-host login-task command", async () => {
     Object.defineProperty(navigator, "userAgent", {
       configurable: true,
       value:
@@ -122,9 +124,9 @@ describe("<OfflineHint />", () => {
     fireEvent.click(btn);
     await new Promise((r) => setTimeout(r, 0));
     const copied = writeText.mock.calls[0]?.[0] as string;
-    // Packaged connector flow: install dir is on PATH so `cr-connector` alone
-    // restarts the daemon. No PowerShell preamble.
-    expect(copied).toBe("cr-connector");
+    expect(copied).toBe(
+      "bun run packages/pc-connector-daemon/src/bin.ts login-task install --start",
+    );
   });
 
   test("clicking the source copy button writes the source-mode `bun run` command", async () => {

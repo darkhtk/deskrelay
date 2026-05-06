@@ -17,7 +17,7 @@ export type BackendLocaleId = (typeof BACKEND_LOCALES)[number];
 
 const DICT: Record<BackendLocaleId, Record<string, string>> = {
   en: {
-    "be.quota.exhausted": "alpha composer limit reached",
+    "be.quota.exhausted": "request limit reached",
     "be.daemon.offline":
       "device offline — start the connector daemon on that PC so the site can reach it",
     "be.daemon.fetch-failed": "cannot reach daemon: {error}",
@@ -36,7 +36,7 @@ const DICT: Record<BackendLocaleId, Record<string, string>> = {
     "be.label.too-long": "label is too long (max 80 chars)",
   },
   ko: {
-    "be.quota.exhausted": "알파 컴포저 한도 초과",
+    "be.quota.exhausted": "요청 한도 초과",
     "be.daemon.offline": "디바이스 오프라인 — 해당 PC 에서 connector daemon 을 실행하세요",
     "be.daemon.fetch-failed": "daemon 도달 실패: {error}",
     "be.device.duplicate": "이미 등록된 디바이스: {url}",
@@ -54,7 +54,7 @@ const DICT: Record<BackendLocaleId, Record<string, string>> = {
     "be.label.too-long": "라벨이 너무 깁니다 (최대 80자)",
   },
   ja: {
-    "be.quota.exhausted": "アルファのコンポーザー上限に到達",
+    "be.quota.exhausted": "リクエスト上限に到達しました",
     "be.daemon.offline": "デバイスがオフライン — その PC で connector daemon を起動してください",
     "be.daemon.fetch-failed": "daemon に到達できません: {error}",
     "be.device.duplicate": "すでに登録済みのデバイス: {url}",
@@ -72,7 +72,7 @@ const DICT: Record<BackendLocaleId, Record<string, string>> = {
     "be.label.too-long": "ラベルが長すぎます (最大 80 文字)",
   },
   ru: {
-    "be.quota.exhausted": "Достигнут лимит композера alpha",
+    "be.quota.exhausted": "Достигнут лимит запросов",
     "be.daemon.offline": "Устройство офлайн — запустите connector daemon на том ПК",
     "be.daemon.fetch-failed": "Не удаётся связаться с daemon: {error}",
     "be.device.duplicate": "Устройство уже зарегистрировано: {url}",
