@@ -57,8 +57,10 @@ bun install
 PC 서버 모드를 시작합니다.
 
 ```powershell
-.\scripts\self-pc-server-start.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```
+
+Windows에서 `.ps1` 실행 정책 오류가 나지 않도록, README의 PowerShell 스크립트 예시는 현재 명령에만 `ExecutionPolicy Bypass`를 적용합니다. 시스템 설정은 바꾸지 않습니다.
 
 이 스크립트는 다음 세 가지를 한 번에 실행합니다.
 
@@ -81,13 +83,13 @@ http://<내-PC-Tailscale-IP>:18193
 중지:
 
 ```powershell
-.\scripts\self-pc-server-stop.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
 ```
 
 상태 확인:
 
 ```powershell
-.\scripts\self-pc-server-status.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
 ```
 
 상태 명령은 접속 URL과 현재 `Site token`을 다시 출력합니다. 브라우저 로그인 토큰을 잃어버렸다면 이 명령으로 다시 확인하세요.
@@ -233,7 +235,7 @@ bun run packages/pc-connector-daemon/src/bin.ts
 격리된 로컬 스택을 빠르게 실행하려면:
 
 ```powershell
-.\scripts\dev-local-start.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local-start.ps1
 ```
 
 실행되는 항목:
@@ -245,7 +247,7 @@ bun run packages/pc-connector-daemon/src/bin.ts
 중지:
 
 ```powershell
-.\scripts\dev-local-stop.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local-stop.ps1
 ```
 
 ## 보안 모델
