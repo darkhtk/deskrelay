@@ -72,6 +72,7 @@
   "chat.sidebar.new.title.ready": "新しい会話を開始",
   "chat.sidebar.recent": "最近",
   "chat.sidebar.search.placeholder": "セッションを検索…",
+  "chat.sidebar.search.toggle": "????????????",
   "chat.toggle-sidebar": "サイドバー切替",
   "cli.action.error": "Claude CLI エラー",
   "cli.action.finished": "Claude CLI 完了",

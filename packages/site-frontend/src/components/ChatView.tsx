@@ -311,6 +311,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     },
   );
   const [sessionSearch, setSessionSearch] = createSignal("");
+  const [showSessionSearch, setShowSessionSearch] = createSignal(false);
+  let sessionSearchInput: HTMLInputElement | undefined;
   const sessionEntries = (): SessionEntry[] => {
     const all = (sessions() ?? []).map((s) => ({
       sessionId: s.sessionId,
@@ -325,6 +327,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       (e) => (e.title ?? "").toLowerCase().includes(q) || (e.cwd ?? "").toLowerCase().includes(q),
     );
   };
+
+  function toggleSessionSearch() {
+    if (showSessionSearch()) {
+      setShowSessionSearch(false);
+      setSessionSearch("");
+      return;
+    }
+    setShowSessionSearch(true);
+    setTimeout(() => sessionSearchInput?.focus(), 0);
+  }
 
   const [selectedSession, setSelectedSession] = createSignal<ClaudeSessionSummary | null>(null);
   const [transcript, setTranscript] = createSignal<ClaudeStreamEvent[]>([]);
@@ -1279,30 +1291,46 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         </div>
 
         <div class="sidebar-section">
-          <button
-            type="button"
-            class="sidebar-action"
-            onClick={openNewChat}
-            disabled={!effectiveDeviceId()}
-            title={
-              effectiveDeviceId()
-                ? t("chat.sidebar.new.title.ready")
-                : t("chat.sidebar.new.title.no-device")
-            }
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
+          <div class="sidebar-primary-row">
+            <button
+              type="button"
+              class="sidebar-action sidebar-new-chat-action"
+              onClick={openNewChat}
+              disabled={!effectiveDeviceId()}
+              aria-label={t("chat.sidebar.new.button")}
+              title={
+                effectiveDeviceId()
+                  ? t("chat.sidebar.new.title.ready")
+                  : t("chat.sidebar.new.title.no-device")
+              }
             >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <span>{t("chat.sidebar.new.button")}</span>
-          </button>
+              <span aria-hidden="true" class="sidebar-action-plus">
+                +
+              </span>
+            </button>
+            <button
+              type="button"
+              class="sidebar-action sidebar-icon-action"
+              classList={{ "is-active": showSessionSearch() }}
+              onClick={toggleSessionSearch}
+              aria-label={t("chat.sidebar.search.toggle")}
+              aria-pressed={showSessionSearch()}
+              title={t("chat.sidebar.search.toggle")}
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <line x1="16.5" y1="16.5" x2="21" y2="21" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <Show when={showNewChat()}>
@@ -1320,14 +1348,19 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
         <div class="sidebar-section sidebar-section-list">
           <span class="sidebar-label">{t("chat.sidebar.recent")}</span>
-          <input
-            type="search"
-            class="text-input session-search"
-            placeholder={t("chat.sidebar.search.placeholder")}
-            aria-label={t("chat.sidebar.search.placeholder")}
-            value={sessionSearch()}
-            onInput={(e) => setSessionSearch(e.currentTarget.value)}
-          />
+          <Show when={showSessionSearch()}>
+            <input
+              ref={(el) => {
+                sessionSearchInput = el;
+              }}
+              type="search"
+              class="text-input session-search"
+              placeholder={t("chat.sidebar.search.placeholder")}
+              aria-label={t("chat.sidebar.search.placeholder")}
+              value={sessionSearch()}
+              onInput={(e) => setSessionSearch(e.currentTarget.value)}
+            />
+          </Show>
           <SessionList
             entries={sessionEntries()}
             selectedId={selectedSession()?.sessionId ?? null}

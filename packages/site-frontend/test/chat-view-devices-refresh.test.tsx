@@ -223,9 +223,9 @@ describe("ChatView device refresh bridge", () => {
     if (!oldSession) throw new Error("old session row missing");
     fireEvent.click(oldSession);
 
-    const newChat = [...container.querySelectorAll("button")].find((b) =>
-      /new chat/i.test(b.textContent ?? ""),
-    ) as HTMLButtonElement | undefined;
+    const newChat = container.querySelector(
+      'button[aria-label="New chat"]',
+    ) as HTMLButtonElement | null;
     if (!newChat) throw new Error("new chat button missing");
     fireEvent.click(newChat);
 
@@ -952,9 +952,9 @@ describe("ChatView device refresh bridge", () => {
       expect(container.textContent).not.toContain(OTHER_DEV.label);
     });
 
-    const newChat = [...container.querySelectorAll("button")].find((b) =>
-      /new chat/i.test(b.textContent ?? ""),
-    ) as HTMLButtonElement | undefined;
+    const newChat = container.querySelector(
+      'button[aria-label="New chat"]',
+    ) as HTMLButtonElement | null;
     if (!newChat) throw new Error("new chat button missing");
     fireEvent.click(newChat);
 
@@ -1283,9 +1283,9 @@ describe("ChatView device refresh bridge", () => {
     if (!permissionSelect) throw new Error("permission mode picker missing");
     fireEvent.change(permissionSelect, { target: { value: "plan" } });
 
-    const newChat = [...container.querySelectorAll("button")].find((b) =>
-      /new chat/i.test(b.textContent ?? ""),
-    ) as HTMLButtonElement | undefined;
+    const newChat = container.querySelector(
+      'button[aria-label="New chat"]',
+    ) as HTMLButtonElement | null;
     if (!newChat) throw new Error("new chat button missing");
     fireEvent.click(newChat);
 

@@ -72,6 +72,7 @@
   "chat.sidebar.new.title.ready": "새 대화 시작",
   "chat.sidebar.recent": "최근",
   "chat.sidebar.search.placeholder": "세션 검색…",
+  "chat.sidebar.search.toggle": "?? ?? ??",
   "chat.toggle-sidebar": "사이드바 토글",
   "cli.action.error": "Claude CLI 오류",
   "cli.action.finished": "Claude CLI 완료",

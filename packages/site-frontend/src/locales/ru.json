@@ -72,6 +72,7 @@
   "chat.sidebar.new.title.ready": "Начать новую беседу",
   "chat.sidebar.recent": "Недавние",
   "chat.sidebar.search.placeholder": "Поиск сессий…",
+  "chat.sidebar.search.toggle": "??????????? ????? ??????",
   "chat.toggle-sidebar": "Переключить боковую панель",
   "cli.action.error": "Ошибка Claude CLI",
   "cli.action.finished": "Claude CLI завершен",

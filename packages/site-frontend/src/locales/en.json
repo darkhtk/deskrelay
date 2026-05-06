@@ -72,6 +72,7 @@
   "chat.sidebar.new.title.ready": "Start a new conversation",
   "chat.sidebar.recent": "Recent",
   "chat.sidebar.search.placeholder": "Search sessions…",
+  "chat.sidebar.search.toggle": "Toggle session search",
   "chat.toggle-sidebar": "Toggle sidebar",
   "cli.action.error": "Claude CLI error",
   "cli.action.finished": "Claude CLI finished",
