@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DeskRelay</string>
+    <string name="title_activity_main">DeskRelay</string>
+    <string name="package_name">com.semibanbi.clauderemote</string>
+    <string name="custom_url_scheme">com.semibanbi.clauderemote</string>
+</resources>

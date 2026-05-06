@@ -1,0 +1,23 @@
+{
+  "name": "@claude-remote/pc-connector-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CLI for the PC connector daemon. Talks to the daemon's local HTTP API.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "bin": {
+    "cr-connector": "./src/bin.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@claude-remote/pc-connector-daemon": "workspace:*",
+    "@claude-remote/shared": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}

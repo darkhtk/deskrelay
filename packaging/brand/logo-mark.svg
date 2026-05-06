@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="DeskRelay">
+  <!-- Concept: a sparkle (Claude's familiar identity) with two
+       symmetrical arcs around it, like wifi/broadcast waves
+       emanating outward — ((✦)). The arcs are the "remote" half;
+       the sparkle is "Claude". Single coral so the file works as
+       light- and dark-theme app icon, favicon, store badge. -->
+
+  <!-- Left wave -->
+  <path d="M 64 88 A 40 40 0 0 0 64 168"
+        fill="none"
+        stroke="#d24e3a"
+        stroke-width="14"
+        stroke-linecap="round" />
+
+  <!-- Right wave -->
+  <path d="M 192 88 A 40 40 0 0 1 192 168"
+        fill="none"
+        stroke="#d24e3a"
+        stroke-width="14"
+        stroke-linecap="round" />
+
+  <!-- Sparkle: 4-spoke star centered. Vertical + horizontal cross
+       plus two diagonals. Slightly shorter diagonals so the
+       silhouette reads as a sparkle rather than a plus + an X. -->
+  <g stroke="#d24e3a" stroke-width="14" stroke-linecap="round">
+    <line x1="128" y1="84" x2="128" y2="172" />
+    <line x1="84" y1="128" x2="172" y2="128" />
+    <line x1="100" y1="100" x2="156" y2="156" />
+    <line x1="156" y1="100" x2="100" y2="156" />
+  </g>
+</svg>

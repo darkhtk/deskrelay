@@ -1,0 +1,201 @@
+import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
+import { ApiError, type Device, api } from "../api.ts";
+import { clearDevicePrefs } from "../device-prefs.ts";
+import { t } from "../i18n.ts";
+import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
+
+export interface DeviceShellProps {
+  onDevicesChanged?: () => void | Promise<void>;
+  onDeviceSelected?: (id: string | null) => void;
+  initialSelectedDeviceId?: string | null;
+}
+
+export const DeviceShell: Component<DeviceShellProps> = (props) => {
+  const [devices, { refetch, mutate }] = createResource(() => api.listDevices());
+  const [selected, setSelected] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [removingIds, setRemovingIds] = createSignal<Set<string>>(new Set());
+
+  const notifyDevicesChanged = async () => {
+    await refetch();
+    await props.onDevicesChanged?.();
+  };
+
+  const markRemoving = (id: string, removing: boolean) => {
+    setRemovingIds((current) => {
+      const next = new Set(current);
+      if (removing) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const handleAdded = (device: Device) => {
+    setError(null);
+    mutate((current) => {
+      const list = current ?? [];
+      return [...list.filter((item) => item.id !== device.id), device];
+    });
+    setSelected(device.id);
+    props.onDeviceSelected?.(device.id);
+    void notifyDevicesChanged().catch((err) => {
+      setError((err as Error).message);
+    });
+  };
+
+  createEffect(() => {
+    const list = devices();
+    if (!list) return;
+    if (list.length === 0) {
+      if (selected() !== null) setSelected(null);
+      return;
+    }
+    const current = selected();
+    if (current && list.some((device) => device.id === current)) return;
+    const initial = props.initialSelectedDeviceId;
+    const next = initial && list.some((device) => device.id === initial) ? initial : list[0]?.id;
+    setSelected(next ?? null);
+  });
+
+  const selectedDevice = () => {
+    const id = selected();
+    if (!id) return null;
+    return (devices() ?? []).find((device) => device.id === id) ?? null;
+  };
+
+  const remove = async (id: string) => {
+    if (removingIds().has(id)) return;
+    if (!confirm(t("ds.devices.remove.confirm"))) return;
+    setError(null);
+    markRemoving(id, true);
+    try {
+      await api.unregisterDevice(id);
+      clearDevicePrefs(id);
+      if (selected() === id) setSelected(null);
+      mutate((current) => (current ?? []).filter((device) => device.id !== id));
+      void notifyDevicesChanged().catch((err) => {
+        setError((err as Error).message);
+      });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      markRemoving(id, false);
+    }
+  };
+
+  return (
+    <div class="settings-stack">
+      <section class="settings-card">
+        <h3 class="settings-card-title">{t("ds.section.devices")}</h3>
+        <Show
+          when={(devices() ?? []).length > 0}
+          fallback={<p class="settings-card-help">{t("ds.devices.empty")}</p>}
+        >
+          <For each={devices() ?? []}>
+            {(device: Device) => (
+              <div class="settings-list-item">
+                <button
+                  type="button"
+                  class="settings-list-item-main"
+                  style={{
+                    background: "transparent",
+                    border: "0",
+                    padding: "0",
+                    cursor: "pointer",
+                    "text-align": "left",
+                  }}
+                  aria-pressed={selected() === device.id}
+                  onClick={() => setSelected(device.id)}
+                >
+                  <span class="settings-list-item-title">
+                    {device.label}
+                    <Show when={selected() === device.id}>
+                      <span style={{ color: "var(--accent-coral)", "margin-left": "8px" }}>*</span>
+                    </Show>
+                  </span>
+                  <span class="settings-list-item-meta">{device.daemonUrl}</span>
+                </button>
+                <button
+                  type="button"
+                  class="danger-button"
+                  onClick={() => void remove(device.id)}
+                  disabled={removingIds().has(device.id)}
+                >
+                  {removingIds().has(device.id) ? t("dsd.unpair.busy") : t("ds.devices.remove")}
+                </button>
+              </div>
+            )}
+          </For>
+        </Show>
+        <Show when={error()}>{(message) => <span class="settings-error">{message()}</span>}</Show>
+      </section>
+
+      <AddDeviceCard onAdded={handleAdded} />
+
+      <Show when={selectedDevice()} keyed>
+        {(device) => (
+          <DeviceSettingsPanel
+            device={device}
+            onChanged={() => void notifyDevicesChanged()}
+            onUnpaired={(id) => {
+              if (selected() === id) setSelected(null);
+              void notifyDevicesChanged();
+            }}
+          />
+        )}
+      </Show>
+    </div>
+  );
+};
+
+const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<void> }> = (props) => {
+  const [newUrl, setNewUrl] = createSignal("http://127.0.0.1:18091");
+  const [newLabel, setNewLabel] = createSignal("");
+  const [error, setError] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false);
+
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const device = await api.registerDevice(newUrl().trim(), newLabel().trim() || undefined);
+      setNewLabel("");
+      await props.onAdded(device);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section class="settings-card">
+      <h3 class="settings-card-title">{t("ds.section.add")}</h3>
+      <form onSubmit={submit} style={{ display: "flex", "flex-direction": "column", gap: "10px" }}>
+        <p class="settings-card-help">{t("ds.add.selfhost.help")}</p>
+        <div class="settings-row">
+          <input
+            type="url"
+            class="text-input"
+            placeholder={t("ds.add.selfhost.url.placeholder")}
+            value={newUrl()}
+            onInput={(event) => setNewUrl(event.currentTarget.value)}
+          />
+          <input
+            type="text"
+            class="text-input"
+            placeholder={t("ds.add.selfhost.label.placeholder")}
+            value={newLabel()}
+            onInput={(event) => setNewLabel(event.currentTarget.value)}
+            style={{ "max-width": "200px" }}
+          />
+          <button type="submit" class="primary-button" disabled={busy()}>
+            {busy() ? t("ds.add.selfhost.busy") : t("ds.add.selfhost.submit")}
+          </button>
+        </div>
+        <Show when={error()}>{(message) => <span class="settings-error">{message()}</span>}</Show>
+      </form>
+    </section>
+  );
+};

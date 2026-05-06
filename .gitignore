@@ -1,0 +1,84 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+bun.lockb.bak
+.bun-cache/
+
+# build artifacts
+dist/
+build/
+out/
+release-out/
+.output/
+.vinxi/
+.solid/
+.tauri/
+target/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+!.env.template
+secrets/
+.secrets/
+*.pem
+*.key
+client_secret_*.json
+# Tester / allow-list rosters (PII — emails) live next to the secret
+# they map to, never committed. The .example template IS committed.
+.allowed-emails.txt
+# Operator-pushed banner text — not secret per se, but operational state
+# that doesn't belong in git history. Mirror of the SITE_ANNOUNCEMENT
+# Worker secret. The .example template IS committed.
+.site-announcement.txt
+# Headless screenshot drops — local debugging only.
+packaging/screenshots/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
+# Claude Code per-session local state (lock files, scheduled-task pids,
+# session metadata). Never machine-portable.
+.claude/
+
+# logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# test / coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# tmp
+tmp-*
+.tmp-*
+*.tmp
+.local-dev/
+.self-server/
+
+# Local backend/dev runtime
+.dev.vars
+
+# Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# misc
+*.tar
+*.zip
+.turbo/

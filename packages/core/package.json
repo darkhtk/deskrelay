@@ -1,0 +1,19 @@
+{
+  "name": "@claude-remote/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kernel: space-addressed pub/sub broker with cursor-based replay.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./broker": "./src/broker.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@claude-remote/shared": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}

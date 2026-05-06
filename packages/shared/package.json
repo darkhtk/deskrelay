@@ -1,0 +1,21 @@
+{
+  "name": "@claude-remote/shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript types, JSON schemas, and constants used across all packages.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./device-key": "./src/device-key.ts",
+    "./event": "./src/event.ts",
+    "./manifest": "./src/manifest.ts",
+    "./space": "./src/space.ts",
+    "./license": "./src/license.ts",
+    "./license-jwt": "./src/license-jwt.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "license": "Apache-2.0"
+}

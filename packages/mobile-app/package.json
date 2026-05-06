@@ -1,0 +1,28 @@
+{
+  "name": "@claude-remote/mobile-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Capacitor wrapper for the site-frontend — Android + (later) iOS native shell published as 'DeskRelay' on Google Play.",
+  "type": "module",
+  "scripts": {
+    "build:web": "bun run scripts/build-web.ts",
+    "sync": "bun x cap sync",
+    "open:android": "bun x cap open android",
+    "build": "bun run build:web && bun run sync",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'mobile-app has no JS tests; Capacitor lifecycle is verified via the Android Studio build' && exit 0"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/preferences": "^6.0.3",
+    "@capacitor/splash-screen": "^6.0.3",
+    "@capacitor/status-bar": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "typescript": "^5.7.2"
+  },
+  "license": "AGPL-3.0-or-later"
+}
