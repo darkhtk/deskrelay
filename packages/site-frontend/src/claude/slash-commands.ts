@@ -4,7 +4,7 @@
 // or plugin skills aren't surfaced yet — when the daemon exposes a
 // capabilities endpoint that lists them, merge in.
 //
-// Ported from claude-remote/public/slash-commands.js with four entries
+// Ported from claude-remote/public/slash-commands.js with five entries
 // dropped (they target the local claude CLI / Claude Code harness rather
 // than the remote site context):
 //   - /login, /logout — claude CLI's Anthropic re-auth; user is already
@@ -12,6 +12,9 @@
 //     CLI mid-session
 //   - /keybindings-help, /update-config — target Claude Code's terminal
 //     harness, not our browser/mobile shell
+//   - /skills — currently returns "isn't available in this environment"
+//     in the connector-run Claude Code environment, so advertising it is
+//     misleading until daemon-side capability discovery exists.
 //
 // /cost is a local Claude Code concern, not a DeskRelay feature.
 // so cost-to-the-user is not the right framing — it's just usage stats
@@ -37,7 +40,6 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze
   { name: "/mcp", hint: "Inspect / restart MCP servers" },
   { name: "/hooks", hint: "List configured hooks" },
   { name: "/agents", hint: "List installed sub-agents" },
-  { name: "/skills", hint: "List installed skills" },
   { name: "/doctor", hint: "Diagnose CLI / config issues" },
   // Built-in skills
   { name: "/init", hint: "Generate a CLAUDE.md for this repo" },

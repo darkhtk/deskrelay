@@ -1,6 +1,6 @@
 // Tests ported from claude-remote/test/slash-commands.test.js, adjusted for
 // the platform's filtered list (no /login /logout /keybindings-help
-// /update-config; /cost hint changed; planned flag added on /loop /schedule).
+// /update-config /skills; /cost hint changed; planned flag added on /loop /schedule).
 
 import { describe, expect, test } from "vitest";
 import {
@@ -21,6 +21,11 @@ describe("BUILTIN_SLASH_COMMANDS", () => {
     const names = BUILTIN_SLASH_COMMANDS.map((c) => c.name);
     expect(names).not.toContain("/keybindings-help");
     expect(names).not.toContain("/update-config");
+  });
+
+  test("excludes /skills until the connector can prove it is available", () => {
+    const names = BUILTIN_SLASH_COMMANDS.map((c) => c.name);
+    expect(names).not.toContain("/skills");
   });
 
   test("/cost is kept but with usage-stats wording (not dollar cost)", () => {
@@ -69,6 +74,10 @@ describe("filterSlashCommands", () => {
     expect(r.length).toBeGreaterThan(0);
     expect(r.every((c) => c.name.toLowerCase().startsWith("/he"))).toBe(true);
     expect(r.find((c) => c.name === "/help")).toBeTruthy();
+  });
+
+  test("/skills prefix stays empty when the runtime does not support it", () => {
+    expect(filterSlashCommands("/ski")).toEqual([]);
   });
 
   test("space after command name → empty (user is typing args)", () => {
