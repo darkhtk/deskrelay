@@ -155,6 +155,10 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
   const [error, setError] = createSignal<string | null>(null);
   const [success, setSuccess] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
+  const [commandBusy, setCommandBusy] = createSignal(false);
+  const [commandError, setCommandError] = createSignal<string | null>(null);
+  const [commandText, setCommandText] = createSignal("");
+  const [commandCopied, setCommandCopied] = createSignal(false);
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -178,11 +182,69 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
     }
   };
 
+  const copyRegisterCommand = async () => {
+    setCommandBusy(true);
+    setCommandError(null);
+    setCommandCopied(false);
+    setCommandText("");
+    try {
+      const result = await api.registerOtherPcCommand();
+      if (!navigator.clipboard?.writeText) {
+        setCommandText(result.command);
+        setCommandError(t("ds.add.command.copy-unavailable"));
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(result.command);
+      } catch {
+        setCommandText(result.command);
+        setCommandError(t("ds.add.command.copy-unavailable"));
+        return;
+      }
+      setCommandCopied(true);
+      setTimeout(() => setCommandCopied(false), 1800);
+    } catch (err) {
+      setCommandError(err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      setCommandBusy(false);
+    }
+  };
+
   return (
     <section class="settings-card">
       <h3 class="settings-card-title">{t("ds.section.add")}</h3>
       <form onSubmit={submit} style={{ display: "flex", "flex-direction": "column", gap: "10px" }}>
         <p class="settings-card-help">{t("ds.add.selfhost.help")}</p>
+        <div class="settings-command-copy">
+          <div class="settings-command-copy-text">
+            <span class="settings-command-copy-title">{t("ds.add.command.title")}</span>
+            <span class="settings-command-copy-help">{t("ds.add.command.help")}</span>
+          </div>
+          <button
+            type="button"
+            class="secondary-button"
+            onClick={() => void copyRegisterCommand()}
+            disabled={commandBusy()}
+          >
+            {commandBusy() ? t("ds.add.command.busy") : t("ds.add.command.copy")}
+          </button>
+        </div>
+        <Show when={commandCopied()}>
+          <span class="settings-success">{t("ds.add.command.copied")}</span>
+        </Show>
+        <Show when={commandError()}>
+          {(message) => <span class="settings-error">{message()}</span>}
+        </Show>
+        <Show when={commandText()}>
+          {(value) => (
+            <textarea
+              class="settings-command-textarea"
+              readOnly
+              value={value()}
+              aria-label={t("ds.add.command.fallback-label")}
+            />
+          )}
+        </Show>
         <div class="settings-row">
           <input
             type="url"

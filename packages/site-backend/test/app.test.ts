@@ -96,6 +96,40 @@ describe("/api/* auth gate", () => {
   });
 });
 
+describe("self-host command helper", () => {
+  test("requires auth", async () => {
+    const res = await setup.app.fetch(
+      new Request("http://site.local/api/self/register-other-pc-command"),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test("returns a copy-paste command containing this server token", async () => {
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      selfHostUrl: "http://127.0.0.1:18193",
+    });
+    const res = await app.fetch(
+      new Request("http://site.local/api/self/register-other-pc-command", {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      preferredUrl: string;
+      urls: Array<{ kind: string; url: string }>;
+      command: string;
+    };
+    expect(body.command).toContain("git clone https://github.com/darkhtk/deskrelay.git");
+    expect(body.command).toContain("login-task install --start");
+    expect(body.command).toContain("Invoke-RestMethod -Method Post");
+    expect(body.command).toContain(`Authorization = 'Bearer ${TOKEN}'`);
+    expect(body.preferredUrl).toMatch(/^http:\/\//);
+    expect(body.urls.length).toBeGreaterThan(0);
+  });
+});
+
 describe("device CRUD", () => {
   test("POST /api/devices registers and returns 201", async () => {
     const res = await setup.app.fetch(

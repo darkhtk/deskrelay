@@ -132,6 +132,12 @@ export interface FsRootsResponse {
   roots: string[];
 }
 
+export interface RegisterOtherPcCommandResponse {
+  preferredUrl: string;
+  urls: Array<{ kind: string; url: string }>;
+  command: string;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -213,6 +219,8 @@ export const api = {
   localSiteToken: () => readLocalSiteToken(),
 
   listDevices: () => request<Device[]>("GET", "/api/devices"),
+  registerOtherPcCommand: () =>
+    request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>
     request<Device>("POST", "/api/devices", {
       daemonUrl,

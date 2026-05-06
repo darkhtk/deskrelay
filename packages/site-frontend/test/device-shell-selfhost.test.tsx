@@ -16,6 +16,8 @@ const NEW_DEVICE = {
   registeredAt: "2026-04-30T00:01:00.000Z",
 };
 
+const originalClipboard = navigator.clipboard;
+
 beforeEach(() => {
   Object.defineProperty(window, "location", {
     configurable: true,
@@ -26,6 +28,10 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: originalClipboard,
+  });
   localStorage.clear();
 });
 
@@ -102,6 +108,60 @@ describe("DeviceShell self-host registration UX", () => {
         authToken: "daemon-token-2",
       });
       expect(container.textContent).toContain("connected and ready");
+    });
+  });
+
+  test("copies the generated other-PC registration command from settings", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([OLD_DEVICE]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/self/register-other-pc-command") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            preferredUrl: "http://100.64.0.1:18193",
+            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
+            command: "powershell register command",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
+        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => <DeviceShell />);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Register another PC by copy-paste");
+    });
+
+    const copyButton = [...container.querySelectorAll("button")].find((button) =>
+      /copy registration command/i.test(button.textContent ?? ""),
+    ) as HTMLButtonElement | undefined;
+    if (!copyButton) throw new Error("copy command button missing");
+    fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("powershell register command");
+      expect(container.textContent).toContain("Registration command copied");
+      expect(container.querySelector("textarea")).toBeNull();
     });
   });
 

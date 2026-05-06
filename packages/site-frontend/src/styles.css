@@ -3135,6 +3135,43 @@ dialog.approval-modal-root,
   flex: 1;
   min-width: 160px;
 }
+.settings-command-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-command-copy-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  flex: 1;
+}
+.settings-command-copy-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-command-copy-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.settings-command-textarea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 10px;
+}
 .settings-toggle-row {
   display: flex;
   align-items: center;

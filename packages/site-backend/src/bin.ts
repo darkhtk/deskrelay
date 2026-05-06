@@ -24,6 +24,7 @@ const app = createSiteApp({
   ...(token ? { token } : {}),
   ...(process.env.SITE_ANNOUNCEMENT ? { announcement: process.env.SITE_ANNOUNCEMENT } : {}),
   ...(localDaemonToken ? { localDaemonToken } : {}),
+  ...(process.env.CR_DEV_FRONTEND_URL ? { selfHostUrl: process.env.CR_DEV_FRONTEND_URL } : {}),
 });
 
 const server = Bun.serve({

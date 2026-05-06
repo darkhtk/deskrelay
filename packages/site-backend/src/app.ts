@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
+import { networkInterfaces } from "node:os";
 import {
   type Device,
   type DeviceRegistry,
@@ -15,6 +16,7 @@ export interface SiteAppOptions {
   version?: string;
   announcement?: string;
   localDaemonToken?: string;
+  selfHostUrl?: string;
 }
 
 export function createSiteApp(options: SiteAppOptions): Hono {
@@ -68,6 +70,22 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   }
 
   app.get("/api/devices", (c) => c.json(registry.list().map(toPublicDevice)));
+
+  app.get("/api/self/register-other-pc-command", (c) => {
+    if (!options.token) {
+      return c.json({ error: "Site token is not configured" }, 404);
+    }
+    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
+    const preferredUrl = pickPreferredUrl(urls);
+    return c.json({
+      preferredUrl,
+      urls,
+      command: buildRegisterOtherPcCommand({
+        siteUrl: preferredUrl,
+        siteToken: options.token,
+      }),
+    });
+  });
 
   app.post("/api/devices", async (c) => {
     let body: unknown;
@@ -340,6 +358,129 @@ function toPublicDevice(device: Device): Omit<Device, "authToken"> & { connectio
     registeredAt: device.registeredAt,
     connectionState: "online" as const,
   };
+}
+
+type AccessUrl = {
+  kind: "This PC" | "Current URL" | "Tailscale" | "LAN";
+  url: string;
+};
+
+function getAccessUrls(baseUrl: string): AccessUrl[] {
+  const base = new URL(baseUrl);
+  const port = explicitPort(base);
+  const rows: AccessUrl[] = [{ kind: "This PC", url: `http://127.0.0.1:${port}` }];
+  const currentHost = base.hostname.replace(/^\[|\]$/g, "");
+  if (!isLocalHost(currentHost) && currentHost !== "0.0.0.0") {
+    rows.push({ kind: "Current URL", url: base.origin });
+  }
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== "IPv4") continue;
+      if (entry.internal) continue;
+      if (entry.address.startsWith("169.254.")) continue;
+      const kind = entry.address.startsWith("100.") ? "Tailscale" : "LAN";
+      rows.push({ kind, url: `http://${entry.address}:${port}` });
+    }
+  }
+  return dedupeUrls(rows);
+}
+
+function explicitPort(url: URL): number {
+  if (url.port) return Number(url.port);
+  return url.protocol === "https:" ? 443 : 80;
+}
+
+function isLocalHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function dedupeUrls(rows: AccessUrl[]): AccessUrl[] {
+  const seen = new Set<string>();
+  const out: AccessUrl[] = [];
+  for (const row of rows) {
+    if (seen.has(row.url)) continue;
+    seen.add(row.url);
+    out.push(row);
+  }
+  return out;
+}
+
+function pickPreferredUrl(rows: AccessUrl[]): string {
+  return (
+    rows.find((row) => row.kind === "Current URL") ??
+    rows.find((row) => row.kind === "Tailscale") ??
+    rows.find((row) => row.kind === "LAN") ??
+    rows[0] ??
+    { kind: "This PC", url: "http://127.0.0.1:18193" }
+  ).url;
+}
+
+function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string }): string {
+  const siteUrl = input.siteUrl.replace(/\/+$/, "");
+  const devicesUrl = `${siteUrl}/api/devices`;
+  return [
+    "# DeskRelay - register another PC",
+    "# Paste this whole block into PowerShell on the PC you want to control.",
+    "# It installs DeskRelay under $HOME\\deskrelay, starts the connector as a",
+    "# Windows login task, then registers that PC in this DeskRelay instance.",
+    "",
+    "$ErrorActionPreference = 'Stop'",
+    "$repo = Join-Path $HOME 'deskrelay'",
+    "if (-not (Test-Path -LiteralPath $repo)) {",
+    "  git clone https://github.com/darkhtk/deskrelay.git $repo",
+    "} elseif (-not (Test-Path -LiteralPath (Join-Path $repo '.git'))) {",
+    '  throw "Path exists but is not a git repo: $repo"',
+    "}",
+    "Set-Location -LiteralPath $repo",
+    "git pull --ff-only",
+    "bun install",
+    "",
+    "$targetHost = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |",
+    "  Where-Object { $_.InterfaceAlias -like '*Tailscale*' -and $_.IPAddress -notlike '127.*' } |",
+    "  Select-Object -First 1 -ExpandProperty IPAddress)",
+    "if (-not $targetHost) {",
+    "  $targetHost = Read-Host 'Enter this PC Tailscale/LAN IP or hostname'",
+    "}",
+    "if (-not $targetHost) {",
+    "  throw 'A Tailscale/LAN IP or hostname is required.'",
+    "}",
+    "",
+    "$workspaceRoots = Join-Path $HOME 'Projects'",
+    "if (-not (Test-Path -LiteralPath $workspaceRoots)) {",
+    "  New-Item -ItemType Directory -Force -Path $workspaceRoots | Out-Null",
+    "}",
+    "",
+    "$env:CR_CONNECTOR_HOST = $targetHost",
+    "$env:CR_CONNECTOR_PORT = '18091'",
+    "$env:CR_CONNECTOR_WORKSPACE_ROOTS = $workspaceRoots",
+    "[Environment]::SetEnvironmentVariable('CR_CONNECTOR_HOST', $targetHost, 'User')",
+    "[Environment]::SetEnvironmentVariable('CR_CONNECTOR_PORT', '18091', 'User')",
+    "[Environment]::SetEnvironmentVariable('CR_CONNECTOR_WORKSPACE_ROOTS', $workspaceRoots, 'User')",
+    "",
+    "$tokenText = bun run packages/pc-connector-daemon/src/bin.ts auth-token | Out-String",
+    "if ($tokenText -notmatch 'token:\\s*(\\S+)') {",
+    '  throw "Could not read daemon token. Output:`n$tokenText"',
+    "}",
+    "$daemonToken = $Matches[1]",
+    "",
+    "bun run packages/pc-connector-daemon/src/bin.ts login-task install --start",
+    "Start-Sleep -Seconds 3",
+    "",
+    '$daemonUrl = "http://${targetHost}:18091"',
+    '$label = "$env:COMPUTERNAME"',
+    "$body = @{ daemonUrl = $daemonUrl; label = $label; authToken = $daemonToken } | ConvertTo-Json -Compress",
+    `Invoke-RestMethod -Method Post -Uri ${quotePs(devicesUrl)} -Headers @{`,
+    `  Authorization = ${quotePs(`Bearer ${input.siteToken}`)}`,
+    "  'content-type' = 'application/json'",
+    "} -Body $body -TimeoutSec 15 | Out-Null",
+    "",
+    'Write-Host "Registered $label at $daemonUrl"',
+    `Write-Host ${quotePs(`Open DeskRelay: ${siteUrl}`)}`,
+  ].join("\n");
+}
+
+function quotePs(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 async function probeDaemonStatus(
