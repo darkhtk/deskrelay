@@ -6,6 +6,7 @@
 //   cr-connector login-task install --start  install Windows login task
 //   cr-connector login-task status     print Windows login task status
 //   cr-connector login-task remove     remove Windows login task
+//   cr-connector auth-token            print this PC's daemon API token
 //   cr-connector uninstall             remove all local connector state, exit
 //   cr-connector --help                show usage
 //
@@ -62,6 +63,7 @@ Usage:
   cr-connector login-task install --start install and start Windows login task
   cr-connector login-task status        print Windows login task status
   cr-connector login-task remove        remove Windows login task
+  cr-connector auth-token               print this PC's daemon API token
   cr-connector uninstall                remove local connector state
   cr-connector remove                   alias for uninstall
   cr-connector --help                   show this help
@@ -225,12 +227,20 @@ if (command === "doctor") {
 if (command === "identity") {
   const identity = await readDeviceIdentity().catch(() => undefined);
   if (!identity) {
-    process.stdout.write("(not paired — run `cr-connector pair ABC123` first, replacing ABC123 with the site code)\n");
+    process.stdout.write(
+      "(not paired — run `cr-connector pair ABC123` first, replacing ABC123 with the site code)\n",
+    );
     process.exit(0);
   }
   process.stdout.write(
     `deviceId: ${identity.deviceId}\nsite: ${identity.siteUrl}\nlabel: ${identity.label ?? "(none)"}\npaired at: ${identity.pairedAt}\nconnectionToken: ${identity.connectionToken ? "present" : "MISSING — re-pair to get one"}\n`,
   );
+  process.exit(0);
+}
+
+if (command === "auth-token" || command === "token") {
+  const auth = await loadOrCreateAuthToken();
+  process.stdout.write(`token: ${auth.token}\npath: ${auth.path}\n`);
   process.exit(0);
 }
 
@@ -270,9 +280,7 @@ if (command === "pair") {
     // running daemon is wedged or predates /pairing/reload.
     const reloaded = await maybeReloadRunningDaemon();
     if (reloaded && !loginTask) {
-      process.stdout.write(
-        "✓ existing daemon picked up the new identity — no restart needed.\n",
-      );
+      process.stdout.write("✓ existing daemon picked up the new identity — no restart needed.\n");
       process.exit(0);
     }
     if (reloaded && loginTask) {
@@ -397,7 +405,8 @@ const daemon = new Daemon({
   bunPath,
   fetcher,
   workspaceRoots,
-  authToken: auth.token,
+  authToken: auth.token,
+
   getPairingStatus,
   reloadSiteWsClient,
   onLog: (record) => {

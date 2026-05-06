@@ -17,12 +17,15 @@ export interface Device {
   label: string;
   /** Daemon URL, e.g. "http://127.0.0.1:18091". No trailing slash. */
   daemonUrl: string;
+  /** Bearer token used by the site backend when proxying to this daemon. */
+  authToken?: string;
   registeredAt: string;
 }
 
 export interface RegisterDeviceInput {
   daemonUrl: string;
   label?: string;
+  authToken?: string;
 }
 
 export class DeviceRegistryError extends Error {
@@ -67,6 +70,7 @@ export class InMemoryDeviceRegistry implements DeviceRegistry {
       id: randomDeviceId(),
       label: input.label?.trim() || hostFromUrl(url),
       daemonUrl: url,
+      ...(input.authToken?.trim() ? { authToken: input.authToken.trim() } : {}),
       registeredAt: new Date().toISOString(),
     };
     this.#devices.set(device.id, device);
@@ -93,7 +97,7 @@ export class InMemoryDeviceRegistry implements DeviceRegistry {
   }
 }
 
-function normalizeDaemonUrl(raw: string): string {
+export function normalizeDaemonUrl(raw: string): string {
   let url: URL;
   try {
     url = new URL(raw);

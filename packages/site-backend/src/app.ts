@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
-import { type Device, type DeviceRegistry, DeviceRegistryError } from "./device-registry.ts";
+import {
+  type Device,
+  type DeviceRegistry,
+  DeviceRegistryError,
+  normalizeDaemonUrl,
+} from "./device-registry.ts";
 import { loc } from "./i18n.ts";
 
 export interface SiteAppOptions {
@@ -62,14 +67,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     });
   }
 
-  app.get("/api/devices", (c) =>
-    c.json(
-      registry.list().map((device) => ({
-        ...device,
-        connectionState: "online" as const,
-      })),
-    ),
-  );
+  app.get("/api/devices", (c) => c.json(registry.list().map(toPublicDevice)));
 
   app.post("/api/devices", async (c) => {
     let body: unknown;
@@ -86,11 +84,21 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return c.json({ error: "daemonUrl is required" }, 400);
     }
     try {
+      const daemonUrl = normalizeDaemonUrl(input.daemonUrl);
+      const authToken =
+        typeof input.authToken === "string" && input.authToken.trim()
+          ? input.authToken.trim()
+          : localToken;
+      const probe = await probeDaemonStatus(fetchImpl, daemonUrl, authToken);
+      if (!probe.ok) {
+        return c.json({ error: probe.error }, probe.status as never);
+      }
       const device = registry.register({
-        daemonUrl: input.daemonUrl,
+        daemonUrl,
         ...(typeof input.label === "string" ? { label: input.label } : {}),
+        ...(authToken ? { authToken } : {}),
       });
-      return c.json({ ...device, connectionState: "online" as const }, 201);
+      return c.json(toPublicDevice(device), 201);
     } catch (err) {
       if (err instanceof DeviceRegistryError) {
         return c.json({ error: err.message }, err.status as never);
@@ -112,7 +120,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     try {
       const updated = registry.rename(id, label);
       if (!updated) return c.json({ error: `unknown device: ${id}` }, 404);
-      return c.json({ ...updated, connectionState: "online" as const });
+      return c.json(toPublicDevice(updated));
     } catch (err) {
       if (err instanceof DeviceRegistryError) {
         return c.json({ error: err.message }, err.status as never);
@@ -130,7 +138,13 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.get("/api/devices/:id/behaviors", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
-    return proxyJson(fetchImpl, "GET", `${device.daemonUrl}/behaviors`, undefined, localToken);
+    return proxyJson(
+      fetchImpl,
+      "GET",
+      `${device.daemonUrl}/behaviors`,
+      undefined,
+      daemonToken(device, localToken),
+    );
   });
 
   app.post("/api/devices/:id/behaviors/load", async (c) => {
@@ -141,7 +155,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "POST",
       `${device.daemonUrl}/behaviors/load`,
       await c.req.text(),
-      localToken,
+      daemonToken(device, localToken),
     );
   });
 
@@ -153,7 +167,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "DELETE",
       `${device.daemonUrl}/behaviors/${encodeURIComponent(c.req.param("instance"))}`,
       undefined,
-      localToken,
+      daemonToken(device, localToken),
     );
   });
 
@@ -165,7 +179,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "POST",
       `${device.daemonUrl}/behaviors/${encodeURIComponent(c.req.param("instance"))}/request`,
       await c.req.text(),
-      localToken,
+      daemonToken(device, localToken),
     );
   });
 
@@ -175,7 +189,8 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const headers: Record<string, string> = {};
     const lastEventId = c.req.header("Last-Event-ID");
     if (lastEventId) headers["Last-Event-ID"] = lastEventId;
-    if (localToken) headers.authorization = `Bearer ${localToken}`;
+    const authToken = daemonToken(device, localToken);
+    if (authToken) headers.authorization = `Bearer ${authToken}`;
 
     let upstream: Response;
     try {
@@ -188,7 +203,12 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
     if (!upstream.ok || !upstream.body) {
       return c.json(
-        { error: upstream.status === 503 ? loc(c.req.header("accept-language"), "be.daemon.offline") : `upstream daemon returned ${upstream.status}` },
+        {
+          error:
+            upstream.status === 503
+              ? loc(c.req.header("accept-language"), "be.daemon.offline")
+              : `upstream daemon returned ${upstream.status}`,
+        },
         upstream.status as never,
       );
     }
@@ -211,20 +231,32 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "GET",
       `${device.daemonUrl}/fs/list?path=${encodeURIComponent(c.req.query("path") ?? "")}`,
       undefined,
-      localToken,
+      daemonToken(device, localToken),
     );
   });
 
   app.post("/api/devices/:id/fs/mkdir", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
-    return proxyJson(fetchImpl, "POST", `${device.daemonUrl}/fs/mkdir`, await c.req.text(), localToken);
+    return proxyJson(
+      fetchImpl,
+      "POST",
+      `${device.daemonUrl}/fs/mkdir`,
+      await c.req.text(),
+      daemonToken(device, localToken),
+    );
   });
 
   app.get("/api/devices/:id/fs/roots", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
-    return proxyJson(fetchImpl, "GET", `${device.daemonUrl}/fs/roots`, undefined, localToken);
+    return proxyJson(
+      fetchImpl,
+      "GET",
+      `${device.daemonUrl}/fs/roots`,
+      undefined,
+      daemonToken(device, localToken),
+    );
   });
 
   app.get("/api/devices/:id/files/preview", async (c) => {
@@ -234,7 +266,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     qs.set("path", c.req.query("path") ?? "");
     const cwd = c.req.query("cwd") ?? "";
     if (cwd) qs.set("cwd", cwd);
-    return proxyBinary(fetchImpl, `${device.daemonUrl}/files/preview?${qs.toString()}`, localToken);
+    return proxyBinary(
+      fetchImpl,
+      `${device.daemonUrl}/files/preview?${qs.toString()}`,
+      daemonToken(device, localToken),
+    );
   });
 
   app.get("/api/devices/:id/git/status", async (c) => {
@@ -245,14 +281,20 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "GET",
       `${device.daemonUrl}/git/status?cwd=${encodeURIComponent(c.req.query("cwd") ?? "")}`,
       undefined,
-      localToken,
+      daemonToken(device, localToken),
     );
   });
 
   app.get("/api/devices/:id/diagnostics", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
-    return proxyJson(fetchImpl, "GET", `${device.daemonUrl}/status`, undefined, localToken);
+    return proxyJson(
+      fetchImpl,
+      "GET",
+      `${device.daemonUrl}/status`,
+      undefined,
+      daemonToken(device, localToken),
+    );
   });
 
   app.post("/api/devices/:id/approvals/respond", async (c) => {
@@ -263,7 +305,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "POST",
       `${device.daemonUrl}/hooks/pretooluse/respond`,
       await c.req.text(),
-      localToken,
+      daemonToken(device, localToken),
     );
   });
 
@@ -275,7 +317,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "POST",
       `${device.daemonUrl}/hooks/pretooluse/simulate`,
       await c.req.text(),
-      localToken,
+      daemonToken(device, localToken),
     );
   });
 
@@ -284,6 +326,58 @@ export function createSiteApp(options: SiteAppOptions): Hono {
 
 function resolveDevice(id: string, registry: DeviceRegistry): Device | undefined {
   return registry.get(id);
+}
+
+function daemonToken(device: Device, fallback?: string): string | undefined {
+  return device.authToken ?? fallback;
+}
+
+function toPublicDevice(device: Device): Omit<Device, "authToken"> & { connectionState: "online" } {
+  return {
+    id: device.id,
+    label: device.label,
+    daemonUrl: device.daemonUrl,
+    registeredAt: device.registeredAt,
+    connectionState: "online" as const,
+  };
+}
+
+async function probeDaemonStatus(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  daemonUrl: string,
+  authToken?: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const headers: Record<string, string> = {};
+  if (authToken) headers.authorization = `Bearer ${authToken}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(`${daemonUrl}/status`, {
+      method: "GET",
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      status: 502,
+      error: `cannot reach daemon status at ${daemonUrl}: ${(err as Error).message}`,
+    };
+  }
+  if (res.status === 401) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        "daemon rejected the token. Enter that PC's connector daemon token, or run the daemon with a shared CR_CONNECTOR_AUTH_FILE token.",
+    };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: 502,
+      error: `daemon status check failed (${res.status}) at ${daemonUrl}`,
+    };
+  }
+  return { ok: true };
 }
 
 async function proxyJson(

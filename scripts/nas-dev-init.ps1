@@ -129,29 +129,29 @@ It keeps local dev state isolated from the user's normal connector.
 
 From the repository:
 
-````powershell
+~~~powershell
 .\scripts\dev-local-start.ps1 -NasRoot "$root"
-````
+~~~
 
 Open:
 
-````text
+~~~text
 http://127.0.0.1:$FrontendPort
-````
+~~~
 
 Token login:
 
-````text
+~~~text
 $SiteToken
-````
+~~~
 
-If the app is already open, paste the contents of `browser-login.js` into the browser console once.
+If the app is already open, paste the contents of browser-login.js into the browser console once.
 
 ## Stop
 
-````powershell
+~~~powershell
 .\scripts\dev-local-stop.ps1 -NasRoot "$root"
-````
+~~~
 
 ## What stays local
 

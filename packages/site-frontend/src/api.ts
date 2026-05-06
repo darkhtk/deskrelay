@@ -194,8 +194,12 @@ export const api = {
   health: () => request<{ ok: true; version: string; devices: number }>("GET", "/healthz"),
 
   listDevices: () => request<Device[]>("GET", "/api/devices"),
-  registerDevice: (daemonUrl: string, label?: string) =>
-    request<Device>("POST", "/api/devices", label ? { daemonUrl, label } : { daemonUrl }),
+  registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>
+    request<Device>("POST", "/api/devices", {
+      daemonUrl,
+      ...(label ? { label } : {}),
+      ...(authToken ? { authToken } : {}),
+    }),
   unregisterDevice: (id: string) => request<{ ok: true }>("DELETE", `/api/devices/${id}`),
   renameDevice: (id: string, label: string) =>
     request<Device>("PATCH", `/api/devices/${id}`, { label }),

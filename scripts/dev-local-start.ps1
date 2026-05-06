@@ -232,7 +232,7 @@ if (-not $NoRegisterDevice -and -not $NoDaemon -and -not $NoBackend -and -not $P
   $existingDevice = $devices | Where-Object { $_.daemonUrl -eq $env:CR_DEV_DAEMON_URL } | Select-Object -First 1
   if (-not $existingDevice) {
     $label = "Local dev ($env:COMPUTERNAME)"
-    $body = @{ daemonUrl = $env:CR_DEV_DAEMON_URL; label = $label } | ConvertTo-Json -Compress
+    $body = @{ daemonUrl = $env:CR_DEV_DAEMON_URL; label = $label; authToken = $auth.token } | ConvertTo-Json -Compress
     Invoke-RestMethod -Method Post -Uri "$env:CR_DEV_SITE_URL/api/devices" -Headers $headers -Body $body -TimeoutSec 10 | Out-Null
   }
 }

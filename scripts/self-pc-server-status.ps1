@@ -62,4 +62,5 @@ if (Test-Path $envFile) {
   Write-Host ""
   Write-Host "DeskRelay self PC server URLs:"
   Get-AccessUrls -Port $frontendPort | Format-Table -AutoSize
+  Write-Host "Site token: $env:CR_SITE_TOKEN"
 }

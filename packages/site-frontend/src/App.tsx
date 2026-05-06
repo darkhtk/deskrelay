@@ -1,5 +1,5 @@
 import { type Component, For, Show, createSignal } from "solid-js";
-import { clearToken, getToken, setToken } from "./api.ts";
+import { ApiError, api, clearToken, getToken, setToken } from "./api.ts";
 import { AnnouncementBanner } from "./components/AnnouncementBanner.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
@@ -25,9 +25,21 @@ export const App: Component = () => {
   const [localToken, setLocalToken] = createSignal<string | null>(getToken());
   const hasAccess = () => Boolean(localToken());
 
-  const handleTokenLogin = (value: string) => {
+  const handleTokenLogin = async (value: string) => {
+    const previousToken = getToken();
     setToken(value);
-    setLocalToken(value);
+    try {
+      await api.listDevices();
+      setLocalToken(value);
+    } catch (err) {
+      if (previousToken) setToken(previousToken);
+      else clearToken();
+      setLocalToken(previousToken);
+      if (err instanceof ApiError && err.status === 401) {
+        throw new Error(t("login.token.invalid"));
+      }
+      throw err;
+    }
   };
 
   const handleClearAccess = () => {
@@ -56,8 +68,10 @@ export const App: Component = () => {
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
   const [settingsDeviceId, setSettingsDeviceId] = createSignal<string | null>(null);
   const [devicesRevision, setDevicesRevision] = createSignal(0);
-  const [deviceSelectionRequest, setDeviceSelectionRequest] =
-    createSignal<DeviceSelectionRequest>({ id: null, seq: 0 });
+  const [deviceSelectionRequest, setDeviceSelectionRequest] = createSignal<DeviceSelectionRequest>({
+    id: null,
+    seq: 0,
+  });
 
   const notifyDevicesChanged = () => {
     setDevicesRevision((value) => value + 1);

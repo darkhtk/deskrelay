@@ -34,6 +34,7 @@ describe("DeviceShell self-host registration UX", () => {
     let listedDevices = [OLD_DEVICE];
     const onDevicesChanged = vi.fn();
     const onDeviceSelected = vi.fn();
+    let postedBody: unknown;
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -45,6 +46,7 @@ describe("DeviceShell self-host registration UX", () => {
         });
       }
       if (url.endsWith("/api/devices") && method === "POST") {
+        postedBody = JSON.parse(String(init?.body ?? "{}"));
         listedDevices = [OLD_DEVICE, NEW_DEVICE];
         return new Response(JSON.stringify(NEW_DEVICE), {
           status: 201,
@@ -68,16 +70,18 @@ describe("DeviceShell self-host registration UX", () => {
       expect(container.textContent).toContain("Old desktop");
     });
 
-    const urlInput = container.querySelector(
-      'input[type="url"]',
-    ) as HTMLInputElement | null;
+    const urlInput = container.querySelector('input[type="url"]') as HTMLInputElement | null;
     const labelInput = container.querySelector(
       'input[placeholder="Label"]',
     ) as HTMLInputElement | null;
-    if (!urlInput || !labelInput) throw new Error("add device inputs missing");
+    const tokenInput = container.querySelector(
+      'input[placeholder="daemon token"]',
+    ) as HTMLInputElement | null;
+    if (!urlInput || !labelInput || !tokenInput) throw new Error("add device inputs missing");
 
     fireEvent.input(urlInput, { target: { value: NEW_DEVICE.daemonUrl } });
     fireEvent.input(labelInput, { target: { value: NEW_DEVICE.label } });
+    fireEvent.input(tokenInput, { target: { value: "daemon-token-2" } });
 
     const addButton = [...container.querySelectorAll("button")].find((button) =>
       /add device/i.test(button.textContent ?? ""),
@@ -92,6 +96,12 @@ describe("DeviceShell self-host registration UX", () => {
       expect(selected?.textContent).toContain(NEW_DEVICE.label);
       expect(onDevicesChanged).toHaveBeenCalled();
       expect(onDeviceSelected).toHaveBeenCalledWith(NEW_DEVICE.id);
+      expect(postedBody).toEqual({
+        daemonUrl: NEW_DEVICE.daemonUrl,
+        label: NEW_DEVICE.label,
+        authToken: "daemon-token-2",
+      });
+      expect(container.textContent).toContain("connected and ready");
     });
   });
 

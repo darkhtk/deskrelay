@@ -211,16 +211,12 @@ describe("M2.3 browser → site → daemon → echo (full chain)", () => {
     expect(res.status).toBe(401);
   });
 
-  test("registering an unreachable daemon URL succeeds, but proxy returns 502", async () => {
+  test("registering an unreachable daemon URL is rejected before it reaches the list", async () => {
     const reg = await authedFetch("/api/devices", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ daemonUrl: "http://127.0.0.1:1" }),
     });
-    expect(reg.status).toBe(201);
-    const device = await reg.json();
-
-    const proxied = await authedFetch(`/api/devices/${device.id}/behaviors`);
-    expect(proxied.status).toBe(502);
+    expect(reg.status).toBe(502);
   });
 });

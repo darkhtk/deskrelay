@@ -151,17 +151,26 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
 const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<void> }> = (props) => {
   const [newUrl, setNewUrl] = createSignal("http://127.0.0.1:18091");
   const [newLabel, setNewLabel] = createSignal("");
+  const [newToken, setNewToken] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
+  const [success, setSuccess] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
 
   const submit = async (event: Event) => {
     event.preventDefault();
     setError(null);
+    setSuccess(null);
     setBusy(true);
     try {
-      const device = await api.registerDevice(newUrl().trim(), newLabel().trim() || undefined);
+      const device = await api.registerDevice(
+        newUrl().trim(),
+        newLabel().trim() || undefined,
+        newToken().trim() || undefined,
+      );
       setNewLabel("");
+      setNewToken("");
       await props.onAdded(device);
+      setSuccess(t("ds.add.selfhost.success", { label: device.label }));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
@@ -183,6 +192,15 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
             onInput={(event) => setNewUrl(event.currentTarget.value)}
           />
           <input
+            type="password"
+            class="text-input"
+            placeholder={t("ds.add.selfhost.token.placeholder")}
+            value={newToken()}
+            onInput={(event) => setNewToken(event.currentTarget.value)}
+            autocomplete="off"
+            spellcheck={false}
+          />
+          <input
             type="text"
             class="text-input"
             placeholder={t("ds.add.selfhost.label.placeholder")}
@@ -194,7 +212,11 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
             {busy() ? t("ds.add.selfhost.busy") : t("ds.add.selfhost.submit")}
           </button>
         </div>
+        <p class="settings-card-help">{t("ds.add.selfhost.token.help")}</p>
         <Show when={error()}>{(message) => <span class="settings-error">{message()}</span>}</Show>
+        <Show when={success()}>
+          {(message) => <span class="settings-success">{message()}</span>}
+        </Show>
       </form>
     </section>
   );

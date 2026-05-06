@@ -114,7 +114,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [devices, { refetch: refetchDevices }] = createResource(async () => {
     try {
       return await api.listDevices();
-    } catch {
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        queueMicrotask(() => props.onClearAccess?.());
+      }
       return [] as Device[];
     }
   });

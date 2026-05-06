@@ -90,6 +90,8 @@ http://<내-PC-Tailscale-IP>:18193
 .\scripts\self-pc-server-status.ps1
 ```
 
+상태 명령은 접속 URL과 현재 `Site token`을 다시 출력합니다. 브라우저 로그인 토큰을 잃어버렸다면 이 명령으로 다시 확인하세요.
+
 ## 여러 PC 연결
 
 사이트 백엔드와 브라우저 UI는 원격에서 접근 가능한 한 대의 머신에서 실행합니다. 제어하려는 각 PC에서는 connector daemon을 실행합니다.
@@ -105,7 +107,13 @@ bun run packages/pc-connector-daemon/src/bin.ts
 
 daemon은 사설 네트워크에서만 접근 가능하게 만드세요. 예를 들어 Tailscale을 사용하면 각 PC는 안정적인 사설 호스트 이름이나 IP를 갖습니다.
 
-그다음 Settings -> Devices에서 각 daemon URL을 추가합니다.
+대상 PC의 daemon token을 확인합니다.
+
+```powershell
+bun run packages/pc-connector-daemon/src/bin.ts auth-token
+```
+
+그다음 Settings -> Devices에서 각 daemon URL과 daemon token을 추가합니다. 같은 PC 서버에서 자동 등록된 로컬 daemon은 token 입력이 필요 없지만, 다른 PC daemon은 해당 PC의 token이 필요합니다.
 
 ```text
 http://100.x.y.z:18091

@@ -110,6 +110,42 @@ describe("device CRUD", () => {
     expect(device.daemonUrl).toBe(DAEMON_URL);
   });
 
+  test("POST /api/devices stores daemon token without exposing it", async () => {
+    const res = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        label: "Office",
+        authToken: "daemon-token",
+      }),
+    );
+    expect(res.status).toBe(201);
+    const device = await res.json();
+    expect(device.authToken).toBeUndefined();
+    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/status`);
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+
+    await setup.app.fetch(authedRequest("GET", `/api/devices/${device.id}/behaviors`));
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+  });
+
+  test("POST /api/devices rejects daemon token failures before saving", async () => {
+    setup.setMockResponse(
+      () =>
+        new Response(JSON.stringify({ error: "invalid token" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const res = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        authToken: "wrong-token",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(setup.registry.list()).toHaveLength(0);
+  });
+
   test("POST without daemonUrl returns 400", async () => {
     const res = await setup.app.fetch(authedRequest("POST", "/api/devices", { label: "x" }));
     expect(res.status).toBe(400);

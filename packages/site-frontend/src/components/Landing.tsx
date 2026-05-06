@@ -3,7 +3,7 @@ import { LOCALES, LOCALE_LABELS, locale, setLocale, t } from "../i18n.ts";
 import { LoginCard } from "./LoginCard.tsx";
 
 export interface LandingProps {
-  onTokenLogin: (token: string) => void;
+  onTokenLogin: (token: string) => void | Promise<void>;
   authed?: boolean;
   onProceed?: () => void;
 }
@@ -119,8 +119,8 @@ export const Landing: Component<LandingProps> = (props) => {
               </button>
             </div>
             <LoginCard
-              onTokenLogin={(token) => {
-                props.onTokenLogin(token);
+              onTokenLogin={async (token) => {
+                await props.onTokenLogin(token);
                 props.onProceed?.();
               }}
             />
