@@ -67,6 +67,22 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     });
   });
 
+  app.get("/api/self/remove-other-pc-command", (c) => {
+    if (!options.token) {
+      return c.json({ error: "Site token is not configured" }, 404);
+    }
+    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
+    const preferredUrl = pickPreferredUrl(urls);
+    return c.json({
+      preferredUrl,
+      urls,
+      command: buildRemoveOtherPcCommand({
+        siteUrl: preferredUrl,
+        siteToken: options.token,
+      }),
+    });
+  });
+
   app.post("/api/devices", async (c) => {
     let body: unknown;
     try {
@@ -546,6 +562,53 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
     "",
     'Write-Host "Registered $label at $daemonUrl"',
     `Write-Host ${quotePs(`Open DeskRelay: ${siteUrl}`)}`,
+  ].join("\n");
+}
+
+function buildRemoveOtherPcCommand(input: { siteUrl: string; siteToken: string }): string {
+  const siteUrl = input.siteUrl.replace(/\/+$/, "");
+  const devicesUrl = `${siteUrl}/api/devices`;
+  return [
+    "# DeskRelay - remove this PC from a self-host server",
+    "# Paste this whole block into PowerShell on the PC you want to remove.",
+    "# It unregisters the matching daemon URL from this DeskRelay server,",
+    "# removes the connector login task, and clears local connector state.",
+    "",
+    "$ErrorActionPreference = 'Stop'",
+    "$repo = Join-Path $HOME 'deskrelay'",
+    "$targetHost = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |",
+    "  Where-Object { $_.InterfaceAlias -like '*Tailscale*' -and $_.IPAddress -notlike '127.*' } |",
+    "  Select-Object -First 1 -ExpandProperty IPAddress)",
+    "if (-not $targetHost) {",
+    "  $targetHost = Read-Host 'Enter this PC Tailscale/LAN IP or hostname used when registered'",
+    "}",
+    "if (-not $targetHost) {",
+    "  throw 'A Tailscale/LAN IP or hostname is required.'",
+    "}",
+    "",
+    '$daemonUrl = "http://${targetHost}:18091"',
+    `$devices = Invoke-RestMethod -Method Get -Uri ${quotePs(devicesUrl)} -Headers @{`,
+    `  Authorization = ${quotePs(`Bearer ${input.siteToken}`)}`,
+    "}",
+    "$device = @($devices | Where-Object { $_.daemonUrl -eq $daemonUrl } | Select-Object -First 1)",
+    "if (-not $device) {",
+    '  Write-Host "No registered device matched $daemonUrl. Server registration may already be gone."',
+    "} else {",
+    `  Invoke-RestMethod -Method Delete -Uri "${devicesUrl}/$($device.id)" -Headers @{`,
+    `    Authorization = ${quotePs(`Bearer ${input.siteToken}`)}`,
+    "  } | Out-Null",
+    '  Write-Host "Unregistered $($device.label) at $daemonUrl"',
+    "}",
+    "",
+    "if (Test-Path -LiteralPath $repo) {",
+    "  Set-Location -LiteralPath $repo",
+    "  try { bun run packages/pc-connector-daemon/src/bin.ts login-task remove } catch { Write-Warning $_ }",
+    "  try { bun run packages/pc-connector-daemon/src/bin.ts uninstall } catch { Write-Warning $_ }",
+    "} else {",
+    '  Write-Host "DeskRelay repo was not found at $repo; skipped local connector cleanup."',
+    "}",
+    "",
+    'Write-Host "DeskRelay removal command finished."',
   ].join("\n");
 }
 

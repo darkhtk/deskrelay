@@ -139,6 +139,12 @@ export interface RegisterOtherPcCommandResponse {
   command: string;
 }
 
+export interface RemoveOtherPcCommandResponse {
+  preferredUrl: string;
+  urls: Array<{ kind: string; url: string }>;
+  command: string;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -222,6 +228,8 @@ export const api = {
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerOtherPcCommand: () =>
     request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),
+  removeOtherPcCommand: () =>
+    request<RemoveOtherPcCommandResponse>("GET", "/api/self/remove-other-pc-command"),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>
     request<Device>("POST", "/api/devices", {
       daemonUrl,

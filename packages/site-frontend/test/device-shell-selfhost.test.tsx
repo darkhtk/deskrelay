@@ -165,6 +165,60 @@ describe("DeviceShell self-host registration UX", () => {
     });
   });
 
+  test("copies the generated other-PC removal command from settings", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([OLD_DEVICE]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/self/remove-other-pc-command") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            preferredUrl: "http://100.64.0.1:18193",
+            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
+            command: "powershell remove command",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
+        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => <DeviceShell />);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Register another PC by copy-paste");
+    });
+
+    const copyButton = [...container.querySelectorAll("button")].find((button) =>
+      /copy removal command/i.test(button.textContent ?? ""),
+    ) as HTMLButtonElement | undefined;
+    if (!copyButton) throw new Error("copy removal command button missing");
+    fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("powershell remove command");
+      expect(container.textContent).toContain("Removal command copied");
+      expect(container.querySelector("textarea")).toBeNull();
+    });
+  });
+
   test("removes a device optimistically and ignores duplicate remove clicks", async () => {
     let listedDevices = [OLD_DEVICE];
     let deleteCalls = 0;

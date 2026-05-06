@@ -5,6 +5,8 @@ import { clearDevicePrefs } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
 
+type DeviceCommandKind = "register" | "remove";
+
 export interface DeviceShellProps {
   onDevicesChanged?: () => void | Promise<void>;
   onDeviceSelected?: (id: string | null) => void;
@@ -156,10 +158,11 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
   const [error, setError] = createSignal<string | null>(null);
   const [success, setSuccess] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
-  const [commandBusy, setCommandBusy] = createSignal(false);
+  const [commandBusy, setCommandBusy] = createSignal<DeviceCommandKind | null>(null);
   const [commandError, setCommandError] = createSignal<string | null>(null);
   const [commandText, setCommandText] = createSignal("");
-  const [commandCopied, setCommandCopied] = createSignal(false);
+  const [commandTextKind, setCommandTextKind] = createSignal<DeviceCommandKind>("register");
+  const [commandCopied, setCommandCopied] = createSignal<DeviceCommandKind | null>(null);
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -183,13 +186,15 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
     }
   };
 
-  const copyRegisterCommand = async () => {
-    setCommandBusy(true);
+  const copyDeviceCommand = async (kind: DeviceCommandKind) => {
+    setCommandBusy(kind);
     setCommandError(null);
-    setCommandCopied(false);
+    setCommandCopied(null);
     setCommandText("");
+    setCommandTextKind(kind);
     try {
-      const result = await api.registerOtherPcCommand();
+      const result =
+        kind === "register" ? await api.registerOtherPcCommand() : await api.removeOtherPcCommand();
       if (!navigator.clipboard?.writeText) {
         setCommandText(result.command);
         setCommandError(t("ds.add.command.copy-unavailable"));
@@ -202,12 +207,12 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
         setCommandError(t("ds.add.command.copy-unavailable"));
         return;
       }
-      setCommandCopied(true);
-      setTimeout(() => setCommandCopied(false), 1800);
+      setCommandCopied(kind);
+      setTimeout(() => setCommandCopied((current) => (current === kind ? null : current)), 1800);
     } catch (err) {
       setCommandError(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {
-      setCommandBusy(false);
+      setCommandBusy(null);
     }
   };
 
@@ -224,14 +229,28 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
           <button
             type="button"
             class="secondary-button"
-            onClick={() => void copyRegisterCommand()}
-            disabled={commandBusy()}
+            onClick={() => void copyDeviceCommand("register")}
+            disabled={Boolean(commandBusy())}
           >
-            {commandBusy() ? t("ds.add.command.busy") : t("ds.add.command.copy")}
+            {commandBusy() === "register" ? t("ds.add.command.busy") : t("ds.add.command.copy")}
+          </button>
+          <button
+            type="button"
+            class="secondary-button"
+            onClick={() => void copyDeviceCommand("remove")}
+            disabled={Boolean(commandBusy())}
+          >
+            {commandBusy() === "remove"
+              ? t("ds.add.command.busy")
+              : t("ds.add.command.remove-copy")}
           </button>
         </div>
         <Show when={commandCopied()}>
-          <span class="settings-success">{t("ds.add.command.copied")}</span>
+          {(kind) => (
+            <span class="settings-success">
+              {kind() === "remove" ? t("ds.add.command.remove-copied") : t("ds.add.command.copied")}
+            </span>
+          )}
         </Show>
         <Show when={commandError()}>
           {(message) => <span class="settings-error">{message()}</span>}
@@ -242,7 +261,11 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
               class="settings-command-textarea"
               readOnly
               value={value()}
-              aria-label={t("ds.add.command.fallback-label")}
+              aria-label={
+                commandTextKind() === "remove"
+                  ? t("ds.add.command.remove-fallback-label")
+                  : t("ds.add.command.fallback-label")
+              }
             />
           )}
         </Show>
