@@ -92,20 +92,34 @@ http://<내-PC-Tailscale-IP>:18193
 
 상태 명령은 접속 URL과 현재 `Site token`을 다시 출력합니다. 브라우저 로그인 토큰을 잃어버렸다면 이 명령으로 다시 확인하세요.
 
-## 여러 PC 연결
+## 다른 디바이스 등록
 
-사이트 백엔드와 브라우저 UI는 원격에서 접근 가능한 한 대의 머신에서 실행합니다. 제어하려는 각 PC에서는 connector daemon을 실행합니다.
+사이트 백엔드와 브라우저 UI는 원격에서 접근 가능한 한 대의 PC 서버에서 실행합니다. 제어하려는 다른 PC에서는 connector daemon만 실행하고, PC 서버의 Settings -> Devices에서 그 daemon을 디바이스로 추가합니다.
 
-각 대상 PC에서:
+PC 서버와 대상 PC가 서로 접근할 수 있어야 합니다. 가장 쉬운 방식은 Tailscale 같은 사설 VPN입니다. daemon 포트는 공용 인터넷에 직접 열지 마세요.
+
+대상 PC에 DeskRelay를 설치합니다.
 
 ```powershell
 git clone https://github.com/darkhtk/deskrelay.git
 cd deskrelay
 bun install
+```
+
+대상 PC의 daemon을 사설 네트워크 주소에 바인딩해서 실행합니다. `100.x.y.z`는 대상 PC의 Tailscale IP 또는 사설 LAN IP로 바꿉니다.
+
+```powershell
+$env:CR_CONNECTOR_HOST = "100.x.y.z"
+$env:CR_CONNECTOR_PORT = "18091"
+$env:CR_CONNECTOR_WORKSPACE_ROOTS = "C:\Users\me\Projects"
 bun run packages/pc-connector-daemon/src/bin.ts
 ```
 
-daemon은 사설 네트워크에서만 접근 가능하게 만드세요. 예를 들어 Tailscale을 사용하면 각 PC는 안정적인 사설 호스트 이름이나 IP를 갖습니다.
+같은 터미널을 닫으면 daemon도 종료됩니다. Windows에서 계속 실행하려면 로그인 작업으로 등록할 수 있습니다.
+
+```powershell
+bun run packages/pc-connector-daemon/src/bin.ts login-task install --start
+```
 
 대상 PC의 daemon token을 확인합니다.
 
@@ -113,7 +127,19 @@ daemon은 사설 네트워크에서만 접근 가능하게 만드세요. 예를 
 bun run packages/pc-connector-daemon/src/bin.ts auth-token
 ```
 
-그다음 Settings -> Devices에서 각 daemon URL과 daemon token을 추가합니다. 같은 PC 서버에서 자동 등록된 로컬 daemon은 token 입력이 필요 없지만, 다른 PC daemon은 해당 PC의 token이 필요합니다.
+PC 서버의 브라우저 UI에서 Settings -> Devices를 열고 Add device에 다음 값을 입력합니다.
+
+| 입력값 | 예시 | 설명 |
+|---|---|---|
+| Daemon URL | `http://100.x.y.z:18091` | PC 서버에서 접근 가능한 대상 PC daemon 주소입니다. |
+| Label | `work-laptop` | 선택 사항입니다. 비워두면 daemon이 알려주는 이름을 사용합니다. |
+| Daemon token | `auth-token` 명령이 출력한 token | 대상 PC daemon의 API 토큰입니다. |
+
+저장을 누르면 사이트 백엔드가 해당 daemon의 `/status`를 먼저 확인합니다. URL에 접근할 수 없거나 token이 틀리면 디바이스를 저장하지 않고 오류를 보여줍니다. 검증이 성공하면 디바이스 목록이 갱신되고, 사이드바에서 해당 디바이스를 선택해 사용할 수 있습니다.
+
+PC 서버에서 자동 등록된 로컬 daemon은 별도 등록이 필요 없습니다. 다른 PC를 추가할 때만 그 PC의 daemon URL과 daemon token을 입력합니다.
+
+등록 예시:
 
 ```text
 http://100.x.y.z:18091
@@ -121,7 +147,7 @@ http://my-laptop:18091
 http://my-desktop:18091
 ```
 
-DeskRelay는 디바이스 목록을 사이트 백엔드 프로세스에 저장합니다. 브라우저에서는 사이드바에서 등록된 디바이스를 전환할 수 있습니다.
+DeskRelay는 디바이스 목록을 PC 서버의 사이트 백엔드 프로세스에 저장합니다. 브라우저에서는 사이드바에서 등록된 디바이스를 전환할 수 있습니다.
 
 ## 외부 접속과 SSH key
 
