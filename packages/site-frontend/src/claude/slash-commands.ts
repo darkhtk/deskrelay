@@ -25,30 +25,28 @@ const HIDDEN_REMOTE_COMMANDS: ReadonlySet<string> = new Set([
   "/login",
   "/logout",
   "/keybindings-help",
-  "/update-config",
   "/skills",
 ]);
 
-export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze([
+export const LOCAL_SLASH_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze([
   // DeskRelay-local commands. Claude Code's --print IPC currently reports
   // these as unavailable, so the app handles them before spawning claude.
+  { name: "/help", hint: "Show available DeskRelay and Claude commands" },
+  { name: "/clear", hint: "Clear the visible transcript" },
   { name: "/status", hint: "Show DeskRelay connection and session status" },
   { name: "/model", hint: "Show or set the model for new Claude turns" },
-  // CLI commands
-  { name: "/help", hint: "Show built-in command list" },
-  { name: "/clear", hint: "Clear the conversation transcript" },
+  { name: "/permissions", hint: "Show or set the Claude permission mode" },
+]);
+
+export const KNOWN_CLAUDE_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze([
+  // Print-mode Claude commands and built-in skills. The runtime init event
+  // wins when available, but this fallback keeps useful skills visible while
+  // discovery is still loading.
   { name: "/compact", hint: "Summarize older turns to free context" },
-  { name: "/cost", hint: "Token usage stats" },
-  { name: "/resume", hint: "Resume a recent session" },
-  { name: "/permissions", hint: "Edit allow/deny tool rules" },
-  { name: "/mcp", hint: "Inspect / restart MCP servers" },
-  { name: "/hooks", hint: "List configured hooks" },
-  { name: "/agents", hint: "List installed sub-agents" },
-  { name: "/doctor", hint: "Diagnose CLI / config issues" },
-  // Built-in skills
+  { name: "/context", hint: "Inspect context usage" },
+  { name: "/usage", hint: "Token usage stats" },
+  { name: "/extra-usage", hint: "Detailed token usage stats" },
   { name: "/init", hint: "Generate a CLAUDE.md for this repo" },
-  { name: "/loop", hint: "Run a prompt or slash command on a recurring interval", paid: true },
-  { name: "/schedule", hint: "Schedule remote agents on a cron schedule", paid: true },
   { name: "/review", hint: "Review a pull request" },
   { name: "/security-review", hint: "Security review of pending changes" },
   { name: "/simplify", hint: "Review changed code for reuse, quality, efficiency" },
@@ -57,6 +55,14 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze
     name: "/fewer-permission-prompts",
     hint: "Trim repeated permission prompts via allowlist",
   },
+  { name: "/batch", hint: "Run a batch Claude workflow" },
+  { name: "/loop", hint: "Run a prompt or slash command on a recurring interval", paid: true },
+  { name: "/schedule", hint: "Schedule remote agents on a cron schedule", paid: true },
+]);
+
+export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<SlashCommand> = Object.freeze([
+  ...LOCAL_SLASH_COMMANDS,
+  ...KNOWN_CLAUDE_COMMANDS,
 ]);
 
 const BUILTIN_BY_NAME: ReadonlyMap<string, SlashCommand> = new Map(
@@ -76,8 +82,15 @@ export function mergeRuntimeSlashCommands(
   runtime: RuntimeSlashCommands | null | undefined,
 ): SlashCommand[] {
   const merged = new Map<string, SlashCommand>();
-  for (const command of BUILTIN_SLASH_COMMANDS) {
+  for (const command of LOCAL_SLASH_COMMANDS) {
     merged.set(command.name.toLowerCase(), command);
+  }
+  const hasRuntimeList =
+    (runtime?.slashCommands?.length ?? 0) > 0 || (runtime?.skills?.length ?? 0) > 0;
+  if (!hasRuntimeList) {
+    for (const command of KNOWN_CLAUDE_COMMANDS) {
+      merged.set(command.name.toLowerCase(), command);
+    }
   }
 
   const runtimeSkills = new Set<string>();

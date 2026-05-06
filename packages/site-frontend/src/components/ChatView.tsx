@@ -94,6 +94,25 @@ function defaultDeviceId(list: Device[] | undefined): string | null {
   return list.find((d) => d.connectionState !== "offline")?.id ?? list[0]?.id ?? null;
 }
 
+function parsePermissionModeSlashArg(value: string): ClaudePermissionMode | null {
+  const key = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  if (!key) return null;
+  if (key === "default") return CLAUDE_PERMISSION_MODES.DEFAULT;
+  if (key === "plan") return CLAUDE_PERMISSION_MODES.PLAN;
+  if (key === "acceptedits" || key === "accept") return CLAUDE_PERMISSION_MODES.ACCEPT_EDITS;
+  if (key === "bypasspermissions" || key === "bypass") {
+    return CLAUDE_PERMISSION_MODES.BYPASS_PERMISSIONS;
+  }
+  return null;
+}
+
+function isLocalSlashCommandText(value: string): boolean {
+  return /^\/(?:help|clear|model|permissions|status)(?:\s+.*)?$/i.test(value.trim());
+}
+
 type SettingsOpenOptions = {
   tab?: "general" | "devices" | "diagnostics";
   deviceId?: string | null;
@@ -771,12 +790,31 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   function handleLocalSlashCommand(message: string): boolean {
     const trimmed = message.trim();
-    const match = trimmed.match(/^\/(model|status)(?:\s+(.+))?$/i);
+    const match = trimmed.match(/^\/(help|clear|model|permissions|status)(?:\s+(.+))?$/i);
     if (!match) return false;
     const command = match[1]?.toLowerCase();
     const arg = (match[2] ?? "").trim();
     const dev = effectiveDeviceId();
     const device = (devices() ?? []).find((d) => d.id === dev);
+
+    if (command === "help") {
+      const commands = composerSlashCommands();
+      appendLocalAssistantMessage(
+        [
+          "Available slash commands:",
+          "",
+          ...commands.map((item) => `- \`${item.name}\` - ${item.hint}`),
+        ].join("\n"),
+      );
+      return true;
+    }
+
+    if (command === "clear") {
+      setTranscript([]);
+      setError(null);
+      appendLocalAssistantMessage("Transcript cleared.");
+      return true;
+    }
 
     if (command === "model") {
       if (!dev) {
@@ -818,6 +856,36 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return true;
     }
 
+    if (command === "permissions") {
+      const mode = parsePermissionModeSlashArg(arg);
+      if (!arg) {
+        appendLocalAssistantMessage(
+          [
+            `Permission mode: ${permissionMode()}`,
+            `Security profile: ${dev ? getDeviceSecurityProfile(dev) : "unknown"}`,
+            "",
+            "Use `/permissions default`, `/permissions plan`, `/permissions acceptEdits`, or `/permissions bypassPermissions` to set the Claude permission mode.",
+            "Use `/permissions settings` to open device security settings.",
+          ].join("\n"),
+        );
+        return true;
+      }
+      if (/^(open|settings|security)$/i.test(arg)) {
+        openSettingsOverlay({ tab: "devices", deviceId: dev });
+        appendLocalAssistantMessage("Opened device settings for permission and security controls.");
+        return true;
+      }
+      if (!mode) {
+        appendLocalAssistantMessage(
+          "Unknown permission mode. Use default, plan, acceptEdits, or bypassPermissions.",
+        );
+        return true;
+      }
+      setPermissionMode(mode);
+      appendLocalAssistantMessage(`Permission mode set to ${mode}.`);
+      return true;
+    }
+
     if (command === "status") {
       const lines = [
         `Device: ${device ? deviceDisplayName(device) : "none selected"}`,
@@ -838,16 +906,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   async function sendMessage(message: string) {
     setError(null);
-    const dev = effectiveDeviceId();
-    const inst = remoteClaudeInstance();
-    if (!dev || !inst) {
-      setError(t("chat.error.no-device"));
-      return;
-    }
-    if (!cwd().trim()) {
-      setError(t("chat.error.no-cwd"));
-      return;
-    }
     if (!message.trim() && (!attachmentsApi || attachmentsApi.list().length === 0)) return;
     const pendingAttachments = attachmentsApi?.list() ?? [];
     const content = [
@@ -862,12 +920,25 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       type: "user",
       message: { role: "user", content },
     };
-    appendTranscriptEvent(userEvent, { forceScroll: scrollToBottomOnSend() });
-    attachmentsApi?.clear();
 
-    if (pendingAttachments.length === 0 && handleLocalSlashCommand(message)) {
+    if (pendingAttachments.length === 0 && isLocalSlashCommandText(message)) {
+      appendTranscriptEvent(userEvent, { forceScroll: scrollToBottomOnSend() });
+      attachmentsApi?.clear();
+      if (handleLocalSlashCommand(message)) return;
+    }
+
+    const dev = effectiveDeviceId();
+    const inst = remoteClaudeInstance();
+    if (!dev || !inst) {
+      setError(t("chat.error.no-device"));
       return;
     }
+    if (!cwd().trim()) {
+      setError(t("chat.error.no-cwd"));
+      return;
+    }
+    appendTranscriptEvent(userEvent, { forceScroll: scrollToBottomOnSend() });
+    attachmentsApi?.clear();
 
     setRunning(true);
     setCliAction(t("cli.action.starting"));

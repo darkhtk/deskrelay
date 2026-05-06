@@ -1,6 +1,6 @@
 // Tests ported from claude-remote/test/slash-commands.test.js, adjusted for
 // the platform's filtered list (no /login /logout /keybindings-help
-// /update-config /skills; /cost hint changed; planned flag added on /loop /schedule).
+// /skills; runtime-discovered skills are merged from Claude init).
 
 import { describe, expect, test } from "vitest";
 import {
@@ -32,14 +32,21 @@ describe("BUILTIN_SLASH_COMMANDS", () => {
 
   test("keeps DeskRelay-local basic commands", () => {
     const names = BUILTIN_SLASH_COMMANDS.map((c) => c.name);
+    expect(names).toContain("/help");
+    expect(names).toContain("/clear");
     expect(names).toContain("/model");
+    expect(names).toContain("/permissions");
     expect(names).toContain("/status");
   });
 
-  test("/cost is kept but with usage-stats wording (not dollar cost)", () => {
-    const cost = BUILTIN_SLASH_COMMANDS.find((c) => c.name === "/cost");
-    expect(cost?.hint).toContain("usage");
-    expect(cost?.hint).not.toContain("$");
+  test("excludes unsupported terminal-only commands unless runtime reports them", () => {
+    const names = BUILTIN_SLASH_COMMANDS.map((c) => c.name);
+    expect(names).not.toContain("/mcp");
+    expect(names).not.toContain("/hooks");
+    expect(names).not.toContain("/agents");
+    expect(names).not.toContain("/doctor");
+    expect(names).not.toContain("/resume");
+    expect(names).not.toContain("/cost");
   });
 
   test("/loop and /schedule are flagged planned", () => {
@@ -92,8 +99,8 @@ describe("mergeRuntimeSlashCommands", () => {
       skills: ["update-config"],
     }).map((c) => c.name);
     expect(names).not.toContain("/skills");
-    expect(names).not.toContain("/update-config");
     expect(names).not.toContain("/login");
+    expect(names).toContain("/update-config");
     expect(names).toContain("/status");
   });
 });
