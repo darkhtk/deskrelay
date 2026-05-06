@@ -1,0 +1,24 @@
+{
+  "name": "echo",
+  "version": "0.0.1",
+  "runtime": "pc",
+  "entry": "./src/index.ts",
+  "permissions": [],
+  "ipc": "jsonrpc-2.0",
+  "minConnectorVersion": "0.0.0",
+  "license": "Apache-2.0",
+  "publisher": {
+    "id": "claude-remote",
+    "name": "Claude Remote",
+    "key": "did:web:claude-remote.dev"
+  },
+  "displayName": "Echo",
+  "description": "Trivial echo behavior. Demonstrates the behavior-sdk request/response and event-publish APIs end-to-end.",
+  "categories": ["demo"],
+  "i18n": {
+    "ko": {
+      "displayName": "에코",
+      "description": "behavior-sdk 의 요청/응답 + 이벤트 publish 를 처음부터 끝까지 보여주는 데모용 behavior."
+    }
+  }
+}

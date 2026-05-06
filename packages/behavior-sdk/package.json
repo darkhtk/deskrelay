@@ -1,0 +1,23 @@
+{
+  "name": "@claude-remote/behavior-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SDK for authoring β behaviors and hosting them from the PC connector. JSONRPC 2.0 over NDJSON stdio.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./src/runtime.ts",
+    "./host": "./src/host.ts",
+    "./ipc": "./src/ipc.ts",
+    "./manifest-loader": "./src/manifest-loader.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@claude-remote/shared": "workspace:*",
+    "@claude-remote/core": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}

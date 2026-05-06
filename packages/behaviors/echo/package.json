@@ -1,0 +1,15 @@
+{
+  "name": "@claude-remote/behavior-echo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Trivial echo behavior — used as the platform's 'hello world' demo and as the e2e test target for the PC connector.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@claude-remote/behavior-sdk": "workspace:*",
+    "@claude-remote/shared": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}

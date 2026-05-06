@@ -1,0 +1,3874 @@
+/* DeskRelay light theme. Tokens mirror the warm, quiet Claude.ai
+   surface: cream background, coral accent, and restrained borders. */
+
+:root {
+  color-scheme: light;
+  --bg: #faf9f5;
+  --bg-soft: #f5f3ec;
+  --surface-card: #ffffff;
+  --surface-raised: #ffffff;
+  --text: #1f1d1a;
+  --text-muted: #7a7570;
+  --text-faint: #a8a29a;
+  --border-subtle: #e8e6e0;
+  --border-strong: #d6d2c9;
+  --accent-coral: #cc7a55;
+  --accent-coral-strong: #b86847;
+  --accent-soft: rgba(204, 122, 85, 0.1);
+  --accent-soft-strong: rgba(204, 122, 85, 0.18);
+  --ink-button: #1f1d1a;
+  --ink-button-hover: #3a332d;
+  --code-chip: #f0eee8;
+  --code-bg: #f5f3ec;
+  --danger: #c44747;
+  --danger-soft: rgba(196, 71, 71, 0.1);
+  --success: #2f8a4f;
+  --shadow-sm: 0 1px 2px rgba(20, 16, 10, 0.04), 0 1px 3px rgba(20, 16, 10, 0.06);
+  --shadow-md: 0 8px 24px rgba(20, 16, 10, 0.08);
+  --shadow-lg: 0 24px 60px rgba(20, 16, 10, 0.18);
+  --chat-transcript-max: 760px;
+  font-family: "Tiempos Headline", "Charter", "Iowan Old Style", Georgia, "Pretendard",
+    "Noto Sans KR", serif;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --chat-transcript-max: min(1120px, 100%);
+  }
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: "Söhne", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Inter", "Pretendard",
+    "Noto Sans KR", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Honor the `hidden` attribute on every element. Without this, my
+   `.signed-out { display: grid }` rule overrides the user-agent's default
+   `[hidden] { display: none }` (equal specificity, later author rule wins)
+   and the sign-in card stays visible after sign-in. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  /* Prevent iOS overscroll bounce that exposes white background and feels
+     like layout jitter on the chat surface. */
+  overscroll-behavior: none;
+}
+
+/* When the mobile sidebar is open, freeze the body so the underlying chat
+   doesn't scroll behind the drawer (iOS bug). */
+body.sidebar-open {
+  overflow: hidden;
+}
+
+#app-root {
+  display: flex;
+  flex-direction: column;
+  /* Use the dynamic viewport height where supported (iOS Safari 15.4+,
+     Chromium-based browsers). 100vh is the static viewport that does NOT
+     shrink when the address bar appears, causing the composer to be hidden
+     under the bar; 100dvh tracks the actual visible area. */
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* ---- Header ---- */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  /* Honor iOS notch / Android cutout on the top edge. */
+  padding-top: calc(14px + env(safe-area-inset-top, 0px));
+  background: var(--bg);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.header-left,
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  font-family: "Tiempos Headline", "Charter", "Iowan Old Style", Georgia, serif;
+  font-weight: 600;
+  font-size: 18px;
+  gap: 5px;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.brand-mark {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+.hamburger {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text);
+}
+.hamburger:hover {
+  background: var(--bg-soft);
+}
+.hamburger svg {
+  width: 18px;
+  height: 18px;
+}
+/* ---- Signed-out pane ---- */
+.signed-out {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.signed-out-card {
+  width: min(440px, 100%);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  padding: 32px;
+  text-align: center;
+  box-shadow: var(--shadow-md);
+}
+
+.signed-out-card h1 {
+  margin: 0 0 12px;
+  font-size: 22px;
+  font-weight: 600;
+  font-family: "Tiempos Headline", "Charter", Georgia, serif;
+  color: var(--text);
+}
+
+.signed-out-card p {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+}
+
+.signed-out-card code {
+  background: var(--code-chip);
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.signed-out-help {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---- Signed-in pane ---- */
+.signed-in {
+  flex: 1;
+  display: grid;
+  /* IMPORTANT: minmax(0, 1fr) — without the explicit 0 minimum, a grid
+     track defaults to `auto` minimum which means it grows to fit its
+     children's intrinsic width. On mobile, that lets the chat column
+     extend past the viewport whenever a single message contains an
+     unbreakable string, producing a horizontal pan surface. */
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 0;
+  position: relative;
+}
+
+.sidebar {
+  background: var(--bg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-brand {
+  padding: 4px 8px 18px;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+.sidebar-section-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-section-list .session-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  /* Hide cosmetic scrollbar track until hovered (light theme polish). */
+  scrollbar-gutter: stable;
+}
+
+.sidebar-section-bottom {
+  margin-top: auto;
+}
+
+/* ---- Phase 5 — session list ---- */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.session-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 8px 6px;
+}
+.session-item-row {
+  display: flex;
+  align-items: stretch;
+  border-radius: 8px;
+  position: relative;
+}
+.session-item-row:hover {
+  background: var(--bg-soft);
+}
+.session-item-row-armed {
+  background: var(--danger-soft);
+}
+.session-item-row-armed:hover {
+  background: var(--danger-soft);
+}
+.session-item-row-deleting {
+  opacity: 0.55;
+}
+.session-item-row-deleting:hover {
+  background: transparent;
+}
+
+.session-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  color: var(--text);
+}
+
+.session-item-delete {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 0 10px;
+  cursor: pointer;
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  flex-shrink: 0;
+}
+.session-item-row:hover .session-item-delete {
+  opacity: 1;
+}
+.session-item-delete:hover {
+  color: var(--danger);
+}
+.session-item-delete-armed {
+  opacity: 1 !important;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+}
+.session-item-delete-armed:hover {
+  background: #a73e3e;
+  color: #fff;
+}
+.session-item-delete-deleting {
+  opacity: 1;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: progress;
+}
+.session-item:disabled,
+.session-item-delete:disabled {
+  cursor: progress;
+}
+.session-item-selected {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.session-item-selected:hover {
+  background: var(--accent-soft-strong);
+}
+.session-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Phase 9b — web vs cli origin badge on each session entry */
+.session-item-via {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  font-family: ui-monospace, monospace;
+}
+.session-item-via-web {
+  background: var(--accent-soft-strong);
+  color: var(--accent-coral-strong);
+}
+.session-item-via-cli {
+  background: var(--bg-soft);
+  color: var(--text-faint);
+}
+.session-item-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-faint);
+  gap: 8px;
+}
+.session-item-cwd {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+  font-family: ui-monospace, monospace;
+}
+.session-item-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Phase 5 — new chat card (inline) ---- */
+.new-chat-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.new-chat-card-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.new-chat-card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---- Composer status bar (connection / Claude run state) ---- */
+.composer-status {
+  max-width: 760px;
+  margin: 0 auto 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 5px 10px;
+  width: 100%;
+  min-height: 30px;
+  min-width: 0;
+  line-height: 1.3;
+  overflow: hidden;
+}
+.composer-status::before {
+  content: "";
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4f8f64;
+}
+.composer-status-main {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.composer-status-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-status-action {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-card);
+  color: var(--text);
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.composer-status-action:hover {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+}
+.composer-status-pending::before,
+.composer-status-thinking::before {
+  background: var(--accent-coral);
+  animation: composer-status-pulse 1.4s ease-in-out infinite;
+}
+.composer-status-warning::before,
+.composer-status-queued::before {
+  background: #c49a47;
+}
+.composer-status-danger::before {
+  background: var(--danger);
+}
+.composer-status-offline::before,
+.composer-status-context::before {
+  background: var(--text-muted);
+}
+@keyframes composer-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---- Image attachments (composer + transcript) ---- */
+.attachment-bar {
+  max-width: 760px;
+  margin: 0 auto 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text);
+  max-width: 240px;
+}
+.attachment-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.attachment-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attachment-remove {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 14px;
+  padding: 0 4px;
+}
+.attachment-remove:hover {
+  color: var(--danger);
+}
+
+.block-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  margin: 6px 0;
+}
+
+/* ---- Phase 9b — new folder mkdir form ---- */
+.new-chat-mkdir-open {
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.new-chat-mkdir-open:hover {
+  color: var(--accent-coral);
+}
+.new-chat-mkdir-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-soft);
+  border-radius: 8px;
+}
+.new-chat-mkdir-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+.new-chat-mkdir-name-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.new-chat-mkdir-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+/* Legacy single-row layout (still used elsewhere by codex). */
+.new-chat-mkdir-row {
+  display: flex;
+  gap: 6px;
+}
+.new-chat-mkdir-row .text-input {
+  flex: 1;
+}
+.new-chat-mkdir-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+/* ---- Phase 7 — cwd autocomplete ---- */
+.new-chat-suggest {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+.new-chat-suggest-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 6px 10px;
+  color: var(--text);
+}
+.new-chat-suggest-item:hover {
+  background: var(--bg-soft);
+}
+.new-chat-suggest-active {
+  background: var(--accent-soft);
+}
+.new-chat-suggest-active:hover {
+  background: var(--accent-soft-strong);
+}
+.new-chat-suggest-status {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.new-chat-suggest-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.new-chat-suggest-path {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.cwd-roots-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.cwd-roots-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
+}
+.cwd-roots-chip {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-soft);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  cursor: pointer;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cwd-roots-chip:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* New-chat row hosts the "+ new chat" button and (when a session is
+ *  selected) the fork action immediately to its right, sharing one row
+ *  so the sidebar doesn't grow a half-empty extra strip when forking
+ *  isn't available. The "+ new chat" button stays the dominant width
+ *  via flex:1; fork compresses to fit alongside. */
+.sidebar-section-new-chat {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
+}
+.sidebar-section-new-chat > .sidebar-action {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar-fork-action {
+  flex: 0 0 auto;
+  width: auto;
+  padding-left: 12px;
+  padding-right: 12px;
+  justify-content: center;
+}
+
+/* ---- session search + grouped list ---- */
+.session-search {
+  margin-bottom: 6px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.session-list-group-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  padding: 4px 8px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.session-list-group-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-group-delete {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  flex-shrink: 0;
+}
+.session-list-group-header:hover .session-group-delete {
+  opacity: 1;
+}
+.session-group-delete:hover {
+  color: var(--danger);
+}
+.session-group-delete:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+.session-group-delete-armed {
+  opacity: 1 !important;
+  color: var(--danger);
+  font-weight: 700;
+}
+.session-group-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 1px 8px 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.session-group-progress-label {
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--text-faint);
+}
+.session-group-progress-line {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: var(--border-subtle);
+}
+.session-group-progress-fill {
+  height: 100%;
+  background: var(--accent-coral);
+  transition: width 140ms ease;
+}
+.session-group-progress-fill-busy {
+  width: 35%;
+  animation: session-group-progress-busy 900ms ease-in-out infinite;
+}
+@keyframes session-group-progress-busy {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-group-progress-fill-busy {
+    width: 100%;
+    animation: none;
+  }
+}
+
+/* ---- OfflineHint (inline action row attached to daemon-offline errors) ---- */
+.offline-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  /* Reset the parent <output>'s default white-space so wrapping works
+     inside the upstream-banner consumer. */
+  font: inherit;
+  color: var(--text);
+}
+.offline-hint-message {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.offline-hint-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.offline-hint-copy,
+.offline-hint-retry {
+  /* 36px tall — slightly tighter than the modal primary button so a
+     dense error banner doesn't grow into a visual centerpiece. */
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-card);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.offline-hint-copy:hover,
+.offline-hint-retry:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.offline-hint-copy-secondary {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.offline-hint-retry {
+  margin-left: auto;
+}
+
+/* ---- LoginCard (mounted inside .approval-card; no nested panel) ---- */
+.login-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.login-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Banner shown when the OAuth callback redirects back with
+ * `?login_error=...` — handles the "you got bounced because you're not
+ * on the test list" UX hole. Soft warning style (not catastrophic),
+ * with the bold title to anchor the eye and a help line for the
+ * contact CTA. */
+.login-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(220, 100, 80, 0.4);
+  border-radius: 8px;
+  background: rgba(220, 100, 80, 0.06);
+  color: var(--text);
+  font-size: 13px;
+}
+.login-error strong {
+  color: var(--accent-coral, #d24e3a);
+}
+.login-error p {
+  margin: 0;
+  line-height: 1.4;
+}
+.login-provider-btn {
+  /* primary-button defaults to fit-content; provider buttons want full
+     width so the modal doesn't get a ragged right edge. */
+  width: 100%;
+  min-height: 40px;
+  justify-content: center;
+}
+.login-token-toggle {
+  /* Subtle "advanced" affordance — secondary-button styling but a touch
+     smaller than the providers since it's a dev-mode escape hatch. */
+  align-self: flex-start;
+  font-size: 12px;
+  min-height: 36px;
+}
+.login-token-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.login-token-form .text-input {
+  flex: 1;
+  min-width: 0;
+}
+.login-token-form .primary-button {
+  min-height: 40px;
+}
+@media (max-width: 480px) {
+  .login-token-form {
+    flex-direction: column;
+  }
+  .login-token-form .primary-button {
+    width: 100%;
+  }
+}
+
+/* ---- DeviceSettingsDialog diagnostics card ---- */
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+.diagnostics-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px dotted var(--border-subtle);
+  padding: 2px 0;
+  font-size: 12px;
+}
+.diagnostics-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.diagnostics-value {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.diagnostics-ok .diagnostics-value {
+  color: #4caf50;
+}
+.diagnostics-bad .diagnostics-value {
+  color: #c66;
+}
+.diagnostics-roots {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+.diagnostics-roots ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.diagnostics-roots code {
+  font-size: 11px;
+}
+.primary-button {
+  background: var(--ink-button);
+  color: #ffffff;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+.primary-button:hover {
+  background: var(--ink-button-hover);
+}
+.secondary-button {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.secondary-button:hover {
+  background: var(--bg-soft);
+}
+
+.sidebar-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+/* ---- Phase 6a — device picker (browser-side multi-device) ---- */
+.sidebar-section-devices {
+  gap: 6px;
+  position: relative;
+}
+.device-status-icon {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.device-status-icon:hover {
+  background: var(--bg-soft);
+  color: var(--text-muted);
+}
+.device-status-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.device-status-icon::after {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--bg-soft);
+  border-radius: 999px;
+  background: var(--text-faint);
+  content: "";
+}
+.device-status-online::after {
+  background: #23865c;
+}
+.device-status-pending::after {
+  background: #c49a47;
+}
+.device-status-action::after {
+  background: var(--danger);
+}
+.device-status-offline::after {
+  background: var(--text-faint);
+}
+.device-picker-root {
+  position: relative;
+}
+.device-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-card);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+}
+.device-pill:hover {
+  background: var(--bg-soft);
+}
+.device-pill-open {
+  border-color: var(--accent-coral);
+}
+.device-pill-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.device-pill-add {
+  font-size: 16px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+.device-chev {
+  width: 10px;
+  height: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.device-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+.device-dot-online {
+  background: #4ca36c;
+}
+.device-dot-offline {
+  background: var(--danger);
+}
+.device-dot-unknown {
+  background: var(--text-faint);
+}
+
+.device-dropdown {
+  margin-top: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.device-row {
+  display: flex;
+  align-items: stretch;
+}
+.device-row:hover {
+  background: var(--bg-soft);
+}
+.device-row-active {
+  background: var(--accent-soft);
+}
+.device-row-active:hover {
+  background: var(--accent-soft-strong);
+}
+.device-row-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+}
+.device-row-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.device-row-status {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.device-row-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 16px;
+  font-family: inherit;
+}
+.device-row-remove:hover {
+  color: var(--danger);
+}
+.device-dropdown-add {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.device-dropdown-add:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.device-add-card {
+  margin-top: 6px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.device-add-help {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+.device-add-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.device-add-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.sidebar-help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.sidebar-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: transparent;
+  border: 0;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.sidebar-action:hover {
+  background: var(--bg-soft);
+}
+.sidebar-action svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* Capabilities strip at the bottom of the sidebar — flat row of icon +
+   value pairs with no card / border / background, so the panel doesn't
+   gain extra visual depth. The icon carries the meaning; the textual
+   label moves into the chip's title attribute (tooltip). */
+.capabilities-badge {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 2px 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+.cap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.cap-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.cap-chip-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Model name is the longest field — let it shrink before the others. */
+.cap-chip-model .cap-chip-value {
+  font-size: 10.5px;
+  letter-spacing: -0.01em;
+  min-width: 0;
+}
+.cap-chip-model .cap-chip-icon {
+  color: var(--accent-coral);
+}
+
+/* First-run language chooser buttons. Flat row, full-width, no panel
+   nesting — matches the secondary-button visual but with a left/right
+   layout that pairs the native language label with a Latin-script hint. */
+.locale-chooser-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.locale-chooser-btn:hover {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+}
+.locale-chooser-btn-active {
+  border-color: var(--accent-coral);
+  background: var(--accent-soft);
+}
+
+.profile-card {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+.profile-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--accent-soft-strong);
+  color: var(--accent-coral);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.profile-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.profile-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-tag {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.text-input {
+  width: 100%;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  color: var(--text);
+  /* Western monospace first so backslashes in Windows paths render as `\`,
+     not as `₩` (Korean font fallback that maps U+005C to the won sign on
+     KR Windows). The Korean fallbacks at the tail still cover Korean
+     glyphs in placeholders / mkdir prompts. */
+  font-family: Consolas, "Cascadia Code", "Liberation Mono", Menlo, ui-monospace, "Pretendard",
+    "Noto Sans KR", monospace;
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+.text-input:focus {
+  border-color: var(--accent-coral);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.text-input-error {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 3px var(--danger-soft) !important;
+  animation: text-input-shake 200ms ease;
+}
+@keyframes text-input-shake {
+  0% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+select.text-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%237a7570'><path d='M3 5l3 3 3-3'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px;
+  padding-right: 28px;
+}
+
+/* ---- Chat ---- */
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Mirrors the grid track's minmax(0, 1fr) — without min-width:0, the
+     flex child sizes to its intrinsic width and overflows narrow viewports. */
+  min-width: 0;
+  background: var(--bg);
+  /* Belt + suspenders: even if a child somehow escapes both clips, this
+     hard-clips horizontal overflow at the chat boundary. */
+  overflow-x: hidden;
+}
+
+/* Chat header — only holds the mobile sidebar toggle now that the
+ * announcement marquee + feedback link moved up to .alpha-banner. */
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 8px 24px 0;
+}
+
+/* Right-to-left marquee for operator announcements. Sits in the
+ * middle of .alpha-banner (between the legal links and the feedback
+ * link) — fills the empty space via flex: 1 1 auto. The viewport is
+ * the .announcement-marquee element (clips overflow); the
+ * .announcement-marquee-track is the moving inner box, animated so
+ * the text enters from the right and exits on the left.
+ *
+ * Animation duration scales with text length implicitly: the longer
+ * the text, the longer the track is, so the px/sec speed feels even.
+ * (We don't try to compute exact text width — a fixed 30s round-trip
+ * matches typical 1–2 sentence announcements.) */
+.announcement-marquee {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  margin-right: auto;
+  border-radius: 6px;
+  padding: 4px 0;
+}
+.announcement-marquee-info {
+  background: var(--bg-soft);
+  color: var(--text-muted);
+}
+.announcement-marquee-warning {
+  background: rgba(220, 100, 80, 0.1);
+  color: var(--accent-coral, #d24e3a);
+}
+.announcement-marquee-track {
+  display: inline-block;
+  white-space: nowrap;
+  /* The padding-left:100% trick: the track starts inset by the FULL
+   * width of the container, so its first character begins exactly at
+   * the container's right edge regardless of how short the message is.
+   * Then translateX(-100%) of the track's own (now content + 100%
+   * padding) width pulls it all the way off the left edge. Without
+   * this trick, translateX(100%) is relative to the track's own width,
+   * so short messages end up parked near the middle of the strip and
+   * never enter from the right — which is what the user was seeing. */
+  padding-left: 100%;
+  animation: announcement-marquee-scroll 30s linear infinite;
+  will-change: transform;
+}
+.announcement-marquee:hover .announcement-marquee-track {
+  animation-play-state: paused;
+}
+.announcement-marquee-text {
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  padding: 0 24px;
+}
+@keyframes announcement-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Honor OS-level "reduce motion" — keep the message visible but
+   * static so users sensitive to scrolling text aren't trapped with
+   * the animation they can't disable. */
+  .announcement-marquee-track {
+    animation: none;
+    transform: none;
+    /* Drop the offset that the marquee uses to start the track outside
+     * the viewport — without animation we want the text inside. */
+    padding-left: 0;
+    /* And let the track itself ellipsize when content overflows. */
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .announcement-marquee-text {
+    padding: 0 12px;
+  }
+}
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  /* Hard cap horizontal overflow so a stray wide block (long URL, debug
+     line, asterisk pseudo-element, etc.) cannot turn the whole transcript
+     into a horizontally pannable surface on mobile. */
+  overflow-x: hidden;
+  padding: 8px 32px 12px;
+}
+
+.transcript-inner {
+  max-width: var(--chat-transcript-max);
+  margin: 0 auto;
+  width: 100%;
+  /* Same min-width:0 trick we use elsewhere — without this, flex children
+     grow to fit their content even past their declared width. */
+  min-width: 0;
+}
+
+.empty-chat {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  font-size: 14px;
+}
+
+/* First-run state inside .empty-chat — signed in but no PC paired.
+   Bigger / louder than the generic empty-chat so users know what to
+   click next instead of staring at "Send a message…". Stays flat (no
+   nested card) per the existing UX preference. */
+.empty-chat-no-device {
+  flex-direction: column;
+  text-align: center;
+  gap: 14px;
+  padding: 32px 24px;
+  color: var(--text);
+}
+.empty-chat-no-device h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.empty-chat-no-device p {
+  margin: 0;
+  max-width: 480px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+.empty-chat-no-device .primary-button {
+  margin-top: 6px;
+  padding: 10px 20px;
+  font-size: 14px;
+}
+
+.session-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 12px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--text-faint);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+}
+.session-strip .session-id {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Messages ---- */
+.message {
+  margin: 22px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-user .block-text {
+  align-self: flex-end;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 10px 14px;
+  max-width: 80%;
+  white-space: pre-wrap;
+  /* Long URL / path / hash strings should wrap rather than push the bubble
+     past the screen edge. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.message-pending {
+  opacity: 0.65;
+}
+.message-pending .block-text {
+  border-style: dashed;
+}
+.message-pending::after {
+  content: "전송됨 · claude 가 아직 안 읽음";
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: -4px;
+}
+
+/* Same wrap-anywhere policy on every block of message text so paths like
+   "C:\Users\darkh\Projects\very-long-name\inside\file.js" can break. */
+.block-text,
+.tool-result {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.message-assistant {
+  position: relative;
+  /* Reserve room for the ✻ asterisk on the LEFT inside the message itself.
+     Previously the asterisk lived at left:-22px (outside the box) which on
+     narrow viewports poked past the transcript's left edge and forced
+     horizontal scroll. */
+  padding-left: 24px;
+}
+.message-assistant::before {
+  content: "✻";
+  color: var(--accent-coral);
+  font-size: 14px;
+  position: absolute;
+  left: 0;
+  top: 4px;
+}
+.message-assistant .block-text {
+  background: transparent;
+  padding: 0;
+}
+
+.message-user .block-text p:first-child {
+  margin-top: 0;
+}
+.message-user .block-text p:last-child {
+  margin-bottom: 0;
+}
+
+.message p {
+  margin: 0.5em 0;
+}
+
+.message h1,
+.message h2,
+.message h3 {
+  font-family: "Tiempos Headline", "Charter", Georgia, serif;
+  font-weight: 600;
+  margin: 1.2em 0 0.4em;
+}
+.message h1 {
+  font-size: 1.4em;
+}
+.message h2 {
+  font-size: 1.2em;
+}
+.message h3 {
+  font-size: 1.05em;
+}
+
+/* ---- Code blocks ---- */
+pre {
+  position: relative;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 14px;
+  /* Internal horizontal scroll only — never push the parent column wider. */
+  overflow-x: auto;
+  max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 10px 0;
+  color: var(--text);
+}
+
+/* Markdown tables can also push the column out — wrap them in a horizontal
+   scroller so the surface stays bounded by its parent. */
+.message table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+/* Inline images max out at the column width — long screenshots no longer
+   create a horizontal pan surface on phones. */
+.message img,
+.message-assistant img,
+.message-user img {
+  max-width: 100%;
+  height: auto;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+p > code,
+li > code {
+  background: var(--code-chip);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--text);
+}
+
+pre .copy-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--surface-card);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+pre .copy-button:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* ---- Tool traces ---- */
+.tool-trace {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text);
+  margin: 6px 0;
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+.tool-header::-webkit-details-marker {
+  display: none;
+}
+.tool-header::marker {
+  display: none;
+  content: "";
+}
+.tool-trace[open] > .tool-header {
+  margin-bottom: 8px;
+}
+.tool-icon {
+  color: var(--accent-coral);
+  flex-shrink: 0;
+}
+.tool-name {
+  font-family: ui-monospace, monospace;
+  flex-shrink: 0;
+}
+.tool-peek {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.tool-trace[open] > .tool-header > .tool-peek {
+  display: none;
+}
+
+.tool-body {
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.tool-field {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.tool-field-label {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  flex-shrink: 0;
+  width: 80px;
+}
+.tool-field-value {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.tool-command,
+.tool-content,
+.tool-input {
+  margin: 6px 0 0;
+  background: var(--bg-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  border: 1px solid var(--border-subtle);
+}
+
+.tool-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.tool-diff-old {
+  background: rgba(196, 71, 71, 0.06);
+  border: 1px solid rgba(196, 71, 71, 0.2);
+  border-radius: 6px;
+  padding: 8px;
+}
+.tool-diff-new {
+  background: rgba(82, 153, 100, 0.06);
+  border: 1px solid rgba(82, 153, 100, 0.2);
+  border-radius: 6px;
+  padding: 8px;
+}
+.tool-diff-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+.tool-diff pre {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.tool-result {
+  background: var(--bg-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 6px;
+}
+.tool-result-error {
+  border-color: rgba(196, 71, 71, 0.4);
+  background: rgba(196, 71, 71, 0.04);
+}
+.tool-result-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+.tool-result-summary::-webkit-details-marker {
+  display: none;
+}
+.tool-result-summary::marker {
+  display: none;
+  content: "";
+}
+.tool-result[open] > .tool-result-summary {
+  margin-bottom: 6px;
+}
+.tool-result-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tool-result-peek {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.tool-result[open] > .tool-result-summary > .tool-result-peek {
+  display: none;
+}
+
+.tool-result-body {
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.tool-todos {
+  margin: 0;
+  padding-left: 18px;
+}
+.tool-todos li.todo-completed {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+.tool-todos li.todo-in_progress {
+  color: var(--accent-coral);
+}
+
+/* ---- Block thinking ---- */
+.block-thinking {
+  background: var(--surface-card);
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.block-thinking summary {
+  cursor: pointer;
+  font-style: italic;
+}
+
+/* ---- Result + exit footers ---- */
+.result-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+  margin-top: 12px;
+}
+.result-footer.result-error {
+  color: var(--danger);
+}
+.result-status {
+  font-weight: 600;
+}
+
+.result-error-body {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--danger);
+  background: rgba(196, 71, 71, 0.06);
+  border: 1px solid rgba(196, 71, 71, 0.25);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.adapter-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.adapter-error-severity-error {
+  color: var(--danger);
+  background: rgba(196, 71, 71, 0.06);
+  border: 1px solid rgba(196, 71, 71, 0.25);
+}
+.adapter-error-severity-warn {
+  color: var(--warn, #b08b1a);
+  background: rgba(176, 139, 26, 0.06);
+  border: 1px solid rgba(176, 139, 26, 0.3);
+}
+.adapter-error-status {
+  font-weight: 600;
+}
+.adapter-error-line {
+  flex-basis: 100%;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.exit-footer {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: center;
+  margin-top: 16px;
+  padding: 6px;
+}
+.exit-footer.exit-footer-error {
+  color: var(--danger);
+}
+.exit-footer-stderr {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  text-align: left;
+  margin: 6px auto 0;
+  padding: 6px 8px;
+  max-width: 100%;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(196, 71, 71, 0.06);
+  border: 1px solid rgba(196, 71, 71, 0.2);
+  border-radius: 4px;
+}
+
+/* ---- Composer (white card, rounded, shadow, footer with + + Send) ---- */
+.composer-shell {
+  padding: 12px 32px 22px;
+  background: var(--bg);
+  flex-shrink: 0;
+  position: relative;
+}
+.scroll-to-bottom-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 8px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text-muted);
+  box-shadow: 0 1px 3px rgba(28, 23, 18, 0.08);
+  cursor: pointer;
+}
+.scroll-to-bottom-button:hover {
+  color: var(--accent-coral);
+  border-color: rgba(204, 122, 85, 0.32);
+  background: #fff;
+}
+.scroll-to-bottom-button svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.9;
+}
+
+/* ---- Phase 8 — capabilities badge (sidebar) ---- */
+.capabilities-root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.capabilities-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-card);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.capabilities-pill:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.capabilities-pill-summary {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.capabilities-chev {
+  width: 10px;
+  height: 10px;
+  color: var(--text-faint);
+}
+.capabilities-pill-loading {
+  color: var(--text-faint);
+  cursor: wait;
+}
+.capabilities-pill-error {
+  color: var(--danger);
+}
+.capabilities-detail {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.capabilities-group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: 4px 6px;
+  display: flex;
+  justify-content: space-between;
+}
+.capabilities-group-count {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.capabilities-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 4px 6px;
+}
+.capabilities-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.capabilities-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.capabilities-item:hover {
+  background: var(--bg-soft);
+}
+.capabilities-item-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.capabilities-item-source {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Phase 8 — slash command picker ---- */
+.slash-picker-root {
+  max-width: 760px;
+  margin: 0 auto 8px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.slash-suggest-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text);
+}
+.slash-suggest-item:hover {
+  background: var(--bg-soft);
+}
+.slash-suggest-active {
+  background: var(--accent-soft);
+}
+.slash-suggest-active:hover {
+  background: var(--accent-soft-strong);
+}
+.slash-suggest-name {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-coral);
+  flex-shrink: 0;
+  min-width: 110px;
+}
+.slash-suggest-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-card {
+  max-width: 760px;
+  margin: 0 auto;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  padding: 12px 12px 8px;
+  box-shadow: var(--shadow-sm);
+}
+.composer-card:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.composer-input {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  padding: 8px 8px;
+  resize: none;
+  min-height: 44px;
+  max-height: 240px;
+  outline: none;
+  line-height: 1.5;
+}
+.composer-input:focus,
+.composer-input:focus-visible {
+  outline: 0;
+}
+.composer-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.composer-input::placeholder {
+  color: var(--text-faint);
+}
+
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 4px 0;
+}
+
+.composer-attach {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
+}
+.composer-attach:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.composer-stop {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text-muted);
+}
+.composer-stop:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.composer-stop[hidden] {
+  display: none;
+}
+
+.composer-send {
+  background: var(--accent-coral);
+  color: #ffffff;
+  border: 0;
+  border-radius: 999px;
+  /* 40px hits the touch-target floor; the icon stays 16px so the disc
+     reads as a "send pill" rather than a chunky button. */
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.composer-send svg {
+  width: 16px;
+  height: 16px;
+}
+.composer-send:hover {
+  filter: brightness(0.95);
+}
+.composer-send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: none;
+}
+
+/* ---- Mode banner (Phase 4a, restyled for light) ---- */
+/* Mode + upstream banners: aligned with the composer-card width and using
+ * the same surface-card aesthetic (subtle border, soft tinted background)
+ * so they sit naturally in the light interface. */
+.mode-banner {
+  max-width: 760px;
+  margin: 8px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+}
+.mode-banner-hidden {
+  display: none;
+}
+.mode-banner-plan {
+  background: var(--accent-soft);
+  color: var(--accent-coral);
+  border-color: rgba(204, 122, 85, 0.25);
+}
+.mode-banner-bypass {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: rgba(196, 71, 71, 0.25);
+}
+.mode-banner-icon {
+  font-weight: 700;
+}
+
+.upstream-banner {
+  max-width: 760px;
+  margin: 8px auto 0;
+  display: flex;
+  /* The banner now hosts the message + an optional OfflineHint block,
+     so we stack vertically with the icon riding on top. align-items:
+     flex-start keeps the icon from centering itself against tall
+     children like the offline-hint button row. */
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0;
+  font-size: 13px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--danger);
+  border: 0;
+}
+.upstream-banner[hidden] {
+  display: none;
+}
+.upstream-banner-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.upstream-banner-message::before {
+  content: "⚠";
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Free-tier compose quota — small pill above the composer showing how
+ * many messages remain this month. Coral when the user has hit the cap. */
+/* Landing — marketing entry for signed-out visitors. Three-section
+ * scroll: hero → feature grid → 3-step how-it-works. Sign-in is a
+ * dialog overlay triggered by the CTAs so the landing copy stays the
+ * focal point. */
+.landing-hero {
+  padding: 64px 24px 48px;
+  background: var(--bg);
+}
+.landing-hero-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: center;
+}
+.landing-language-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+}
+.landing-language-btn {
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.landing-language-btn:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.landing-language-btn-active {
+  border-color: rgba(204, 122, 85, 0.45);
+  background: var(--accent-soft);
+  color: var(--accent-coral-strong);
+}
+.landing-headline {
+  font-size: clamp(32px, 6vw, 56px);
+  font-weight: 600;
+  line-height: 1.1;
+  margin: 0 0 20px 0;
+  color: var(--text);
+  letter-spacing: 0;
+}
+.landing-subhead {
+  font-size: 16px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0 auto 28px auto;
+  max-width: 560px;
+}
+.landing-cta-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.landing-cta {
+  font-size: 14px;
+  padding: 10px 20px;
+}
+.landing-features {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+.landing-feature {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 20px 22px;
+}
+.landing-feature h3 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+  color: var(--text);
+}
+.landing-feature p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.landing-how {
+  background: var(--bg-soft);
+  padding: 48px 24px 56px;
+}
+.landing-h2 {
+  text-align: center;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 24px 0;
+}
+.landing-steps {
+  max-width: 640px;
+  margin: 0 auto 28px auto;
+  padding-left: 20px;
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+.landing-steps li {
+  margin-bottom: 12px;
+}
+.landing-steps strong {
+  color: var(--text);
+}
+.landing-steps code {
+  background: var(--code-chip);
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+.landing-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 24px;
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border-subtle);
+}
+.landing-footer-links {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.landing-footer a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.landing-footer a:hover {
+  color: var(--accent-coral);
+}
+
+/* Static legal pages (privacy, terms) — long-form content with relaxed
+ * reading width, used by /privacy and /terms client-side routes. */
+.legal-page {
+  max-width: 720px;
+  margin: 32px auto;
+  padding: 0 20px 64px;
+  color: var(--text);
+  line-height: 1.55;
+}
+.legal-page h1 {
+  font-size: 28px;
+  margin-bottom: 12px;
+}
+.legal-updated {
+  color: var(--text-faint);
+}
+.legal-page h2 {
+  font-size: 16px;
+  margin-top: 28px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+.legal-page p {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 8px 0;
+}
+.legal-page ul {
+  font-size: 14px;
+  color: var(--text-muted);
+  padding-left: 20px;
+  line-height: 1.6;
+}
+.legal-page strong {
+  color: var(--text);
+}
+.legal-page code {
+  background: var(--code-chip);
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+.legal-back {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  display: inline-block;
+  margin-bottom: 16px;
+}
+.legal-back:hover {
+  color: var(--accent-coral);
+}
+.legal-foot {
+  margin-top: 32px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* Top bar — slim strip at the very top of every view. Three slots:
+ *   [legal links] · [operator announcement marquee, fills] · [feedback]
+ * Class name kept as `alpha-banner` for backward compat with selectors
+ * elsewhere in this file even though the alpha disclaimer text was
+ * dropped per operator request. */
+.alpha-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 6px 16px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+.alpha-banner-legal {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.alpha-banner-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.alpha-banner-back:hover {
+  background: var(--surface-card);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.alpha-banner-back svg {
+  width: 14px;
+  height: 14px;
+}
+.alpha-banner-legal-link {
+  color: inherit;
+  text-decoration: underline;
+}
+.alpha-banner-legal-text {
+  color: inherit;
+}
+.alpha-banner-legal-sep {
+  opacity: 0.5;
+}
+.alpha-banner-feedback {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  /* Pin to the right when the marquee is hidden; the marquee's
+   * flex: 1 1 auto eats the slack when it's rendered. */
+  margin-left: auto;
+}
+.alpha-banner-feedback:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+/* Permission mode picker — sits at the sidebar bottom (above the
+ * profile card) so the user can switch modes without opening a new
+ * chat card. */
+.permission-mode-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+}
+.permission-mode-picker .text-input {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.quota-pill {
+  max-width: 760px;
+  margin: 6px auto 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.quota-pill-exhausted {
+  background: var(--accent-soft);
+  color: var(--accent-coral);
+  border-color: rgba(204, 122, 85, 0.25);
+}
+/* 1–2 remaining: amber/yellow soft warning so the user sees the
+ * cliff coming a couple of prompts in advance and isn't surprised
+ * by the next 402 mid-conversation. Distinct color from exhausted
+ * so the difference reads at a glance. */
+.quota-pill-warning {
+  background: rgba(220, 165, 60, 0.12);
+  color: #b8830f;
+  border-color: rgba(220, 165, 60, 0.4);
+}
+.quota-pill-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--accent-coral);
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+/* ---- Quota-exhausted modal (C2) ---------------------------------
+ * Appears when a /behaviors/.../request returns 402. Distinct from
+ * the inline pill: the pill is passive awareness ("you're at 5/5"),
+ * the modal is the active "you can't continue without acting" UX. */
+dialog.quota-modal-root,
+.quota-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: inherit;
+}
+.quota-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  /* Warm cream backdrop to match the rest of the light theme — the
+   * project's convention bans pure-black overlays. */
+  background: rgba(60, 50, 40, 0.4);
+  cursor: default;
+}
+.quota-modal {
+  position: relative;
+  z-index: 1;
+  max-width: 420px;
+  width: calc(100% - 32px);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.quota-modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent-coral, #d24e3a);
+}
+.quota-modal-body {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--text);
+}
+.quota-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+/* ---- Approval modal (Phase 4a, restyled for light) ---- */
+.approval-modal-root[hidden] {
+  display: none;
+}
+/* dialog.* selector wins over the user-agent `dialog[open] { display: block }`,
+ * so the modal actually fills the viewport instead of shrink-wrapping the card.
+ * That's what lets click-outside-the-card hit the backdrop. */
+dialog.approval-modal-root,
+.approval-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  /* Reset browser default <dialog> styling — no gray surface, no border. */
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  max-width: none;
+  max-height: none;
+}
+.approval-backdrop {
+  position: absolute;
+  inset: 0;
+  /* Restrained light scrim — same warm-dark family as --shadow-sm so
+     it reads as page dimming, not as dark-mode. Sits outside the
+     near-black tints that the light-theme-chrome guard test forbids
+     (see test/light-theme-chrome.test.ts). */
+  background: rgba(20, 16, 10, 0.08);
+  border: 0;
+  cursor: default;
+}
+.approval-card {
+  position: relative;
+  background: var(--surface-card);
+  /* 1px border + a tiny shadow draws the dialog out from the scrim
+     without "card-floating-on-page" depth. No nested cards inside. */
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  padding: 24px 26px;
+  min-width: 380px;
+  max-width: 520px;
+  width: min(520px, calc(100vw - 32px));
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.approval-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+}
+.approval-mark {
+  color: var(--accent-coral);
+  font-size: 20px;
+}
+.approval-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.approval-title code {
+  background: var(--code-chip);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.95em;
+}
+.approval-risk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.approval-risk-flag {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid rgba(196, 71, 71, 0.3);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.approval-input {
+  background: var(--bg-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 12px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  color: var(--text);
+}
+/* Auto-deny countdown shown in the approval modal — passive at first
+ * (text-muted), turns the warning amber when ≤ 10s left so the user
+ * sees the cliff coming. The actual auto-deny fires from the modal
+ * component's interval; this is just the visual cue. */
+.approval-countdown {
+  font-size: 12px;
+  color: var(--text-muted);
+  align-self: flex-end;
+}
+.approval-countdown-urgent {
+  color: #b8830f;
+  font-weight: 500;
+}
+.approval-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.approval-btn {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.approval-btn:hover {
+  background: var(--bg-soft);
+}
+.approval-btn kbd {
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted);
+}
+.approval-btn-allow {
+  background: var(--ink-button);
+  color: #ffffff;
+  border-color: var(--ink-button);
+}
+.approval-btn-allow:hover {
+  background: var(--ink-button-hover);
+}
+.approval-btn-allow kbd {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.approval-btn-deny:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.approval-btn-session:hover {
+  border-color: var(--accent-coral);
+  color: var(--accent-coral);
+}
+.approval-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: ui-monospace, monospace;
+}
+
+/* ---- Image rendering ---- */
+.message-image {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  margin: 10px 0;
+}
+.local-image-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  width: min(100%, 520px);
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-card);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.local-image-preview[data-preview-state="ready"] {
+  display: block;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.local-image-preview-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.local-image-preview-retry {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.local-image-preview-retry:hover {
+  border-color: var(--border-strong);
+}
+.markdown-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-card);
+}
+.markdown-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.markdown-table-wrap th,
+.markdown-table-wrap td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.markdown-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+.markdown-table-wrap th {
+  color: var(--text);
+  font-weight: 650;
+  background: var(--surface);
+}
+.markdown-table-wrap .align-center {
+  text-align: center;
+}
+.markdown-table-wrap .align-right {
+  text-align: right;
+}
+.tool-result-image {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  margin: 6px 0;
+}
+
+/* ---- Settings cards (chat-aesthetic) ---- */
+/* Used by DeviceSettingsDialog and the device-management tab so both
+ * surfaces share the same look as the chat sidebar — soft cards with
+ * subtle borders, uppercase tiny labels, pill buttons. */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 4px 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-card + .settings-card {
+  padding-top: 10px;
+  margin-top: 2px;
+}
+.settings-card-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin: 0;
+  font-weight: 600;
+}
+.settings-card-title.danger {
+  color: var(--danger);
+}
+.settings-card-help {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.45;
+}
+.settings-card-help code {
+  background: var(--code-chip);
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 0.95em;
+}
+.settings-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.settings-row > .text-input {
+  flex: 1;
+  min-width: 160px;
+}
+.settings-command-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-command-copy-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  flex: 1;
+}
+.settings-command-copy-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-command-copy-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.settings-command-textarea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 10px;
+}
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  padding-top: 4px;
+}
+.settings-toggle-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-toggle-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-toggle-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.settings-toggle-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-coral);
+}
+.settings-add-device-row {
+  padding-top: 8px;
+}
+.settings-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.settings-saved {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.settings-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+.settings-success {
+  font-size: 12px;
+  color: var(--success);
+}
+.settings-list-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-list-item:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+.settings-list-item-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-list-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-list-item-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-family: ui-monospace, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.settings-tab {
+  background: transparent;
+  color: var(--text-muted);
+  border: 0;
+  border-radius: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.settings-tab.active {
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-tab:hover {
+  color: var(--text);
+}
+.text-button {
+  background: transparent;
+  border: 0;
+  color: var(--accent-coral);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.text-button:hover {
+  color: var(--text);
+}
+.connection-diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.connection-diagnostics-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.connection-diagnostics-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.connection-diagnostics-header .text-button {
+  margin-left: auto;
+}
+.connection-diagnostics-updated {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.connection-diagnostics-device {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.connection-diagnostics-device label {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.connection-diagnostics-device .text-input {
+  max-width: 260px;
+}
+.connection-diagnostics-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+.connection-diagnostics-metric-label,
+.connection-diagnostics-list-title {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.connection-diagnostics-metric-value {
+  margin-top: 5px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.connection-diagnostics-rows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 28px;
+}
+.connection-diagnostics-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+.connection-diagnostics-row-main {
+  min-width: 0;
+}
+.connection-diagnostics-row-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.connection-diagnostics-row-detail {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connection-diagnostics-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: 0 0 auto;
+}
+.connection-diagnostics-dot.tone-ok {
+  background: #23865c;
+}
+.connection-diagnostics-dot.tone-pending,
+.connection-diagnostics-dot.tone-warning {
+  background: #c49a47;
+}
+.connection-diagnostics-dot.tone-bad {
+  background: var(--danger);
+}
+.connection-diagnostics-dot.tone-offline {
+  background: var(--text-faint);
+}
+.connection-diagnostics-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  align-items: baseline;
+}
+.connection-diagnostics-list code {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+@media (max-width: 760px) {
+  .connection-diagnostics-header,
+  .connection-diagnostics-device {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .connection-diagnostics-header .text-button {
+    margin-left: 0;
+  }
+  .connection-diagnostics-summary,
+  .connection-diagnostics-rows {
+    grid-template-columns: 1fr;
+  }
+  .connection-diagnostics-device .text-input {
+    max-width: none;
+    width: 100%;
+  }
+}
+.danger-button {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid rgba(196, 71, 71, 0.3);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.danger-button:hover {
+  background: var(--danger-soft);
+}
+.danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Pricing tier cards (rendered in the pricing tab) — flat surfaces with
+ * a hairline border, coral accent on the highlighted tier. */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.pricing-tier {
+  position: relative;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pricing-tier-highlight {
+  border-color: var(--accent-coral);
+}
+.pricing-tier-badge {
+  position: absolute;
+  top: -10px;
+  right: 12px;
+  background: var(--accent-coral);
+  color: #ffffff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.pricing-tier-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pricing-tier-price {
+  font-size: 20px;
+  color: var(--accent-coral);
+  font-weight: 600;
+}
+.pricing-tier-features {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* Marketplace rows — flat list items, not boxed cards */
+.marketplace-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.marketplace-row:first-of-type {
+  border-top: 0;
+  padding-top: 4px;
+}
+.marketplace-row-soon {
+  opacity: 0.55;
+}
+.marketplace-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.marketplace-row-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.marketplace-row-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Tag pills shared between marketplace and account licenses */
+.pricing-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 11px;
+  border: 1px solid var(--border-subtle);
+}
+.pricing-tag-paid {
+  background: rgba(204, 122, 85, 0.12);
+  color: var(--accent-coral);
+  border-color: rgba(204, 122, 85, 0.3);
+}
+.pricing-tag-soon {
+  background: var(--bg-soft);
+  color: var(--text-faint);
+}
+.category-tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  border: 1px solid var(--border-subtle);
+}
+.license-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 11px;
+  border: 1px solid var(--border-subtle);
+}
+
+.pairing-code-card {
+  background: var(--bg-soft);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+.pairing-code-value {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 32px;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+  color: var(--accent-coral);
+}
+
+/* ---- Scrollbar — handle only, no track / buttons / arrows ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece {
+  background: transparent;
+  border: 0;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-button:start,
+::-webkit-scrollbar-button:end {
+  display: none;
+  width: 0;
+  height: 0;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---- Toast (Phase 4b) ---- */
+.toast-root {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  background: var(--ink-button);
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: auto;
+}
+.toast.toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- Mobile (≤720px): hamburger + sliding sidebar ---- */
+@media (max-width: 720px) {
+  .hamburger {
+    display: inline-flex;
+  }
+  .signed-in {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Header is cramped at 320-390px wide. Keep the brand on one line. */
+  .brand {
+    font-size: 16px;
+    white-space: nowrap;
+  }
+
+  /* Composer placeholder text is too long for 320px. The mobile
+     keyboard hint ("Enter / Shift+Enter") doesn't apply on touch
+     keyboards anyway -- swap to a short label. */
+  .composer-input {
+    /* Browser-side placeholder swap via a CSS-only data-attr trick is
+       fragile; we just visually shrink the existing one. The mobile
+       breakpoint has no Shift+Enter UX so the verbose hint is wasted
+       vertical space. */
+  }
+  /* Not all browsers support ::placeholder selectors fully -- this is
+     a reasonable compromise that keeps the hint readable but on a
+     single line at most viewports. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 220ms ease;
+    box-shadow: var(--shadow-lg);
+    border-right: 1px solid var(--border-subtle);
+    /* Honor the notch on the leading edge. */
+    padding-left: calc(16px + env(safe-area-inset-left, 0px));
+    /* GPU-accelerate the slide so the transition stays smooth on weaker
+       phones; otherwise WebKit can paint each frame on the CPU and the
+       drawer "judders" perceptibly. */
+    will-change: transform;
+  }
+  body.sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(250, 249, 245, 0.82);
+    z-index: 40;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 220ms ease;
+  }
+  body.sidebar-open .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .transcript {
+    padding: 8px 16px;
+  }
+  .composer-shell {
+    padding: 12px 16px 16px;
+  }
+  .chat-header {
+    display: flex;
+    padding: 8px 16px 0;
+  }
+  /* Top bar on narrow viewports — squeeze padding + font, and hide the
+     feedback email tail (the mailto: still works via the legal links
+     section if the operator wants to surface contact elsewhere). On a
+     320px screen, legal+marquee+feedback together can't fit a single
+     row; the feedback link is the most expendable. */
+  .alpha-banner {
+    padding: 4px 12px;
+    font-size: 11px;
+    line-height: 1.3;
+    gap: 8px;
+  }
+  .alpha-banner-feedback {
+    display: none;
+  }
+  .mode-banner {
+    margin: 8px 16px 0;
+  }
+  .message-user .block-text {
+    max-width: 92%;
+  }
+
+  /* Phase 9 — narrow-width tweaks for the new sidebar widgets. */
+  .device-pill,
+  .capabilities-pill {
+    font-size: 12px;
+    padding: 5px 8px;
+  }
+  .device-dropdown,
+  .capabilities-detail {
+    max-height: 240px;
+  }
+  .new-chat-suggest {
+    max-height: 200px;
+  }
+
+  /* Slash picker fits the inner composer width; keep its left/right gutters
+     identical to the .composer-shell padding so it doesn't visually pop out. */
+  .slash-picker-root {
+    margin-left: 0;
+    margin-right: 0;
+    max-width: 100%;
+  }
+
+  /* Honor iOS / Android safe-area on the bottom edge so the composer isn't
+     covered by the home indicator. */
+  .composer-shell {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* iOS Safari auto-zooms whenever a focused input has font-size < 16px,
+     which itself triggers a viewport "jump" that looks like layout jitter.
+     Force 16px+ on every focusable text surface inside the mobile breakpoint. */
+  .text-input,
+  .composer-input,
+  select.text-input,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* Composer line-height stays tight even at the bumped font-size. */
+  .composer-input {
+    line-height: 1.4;
+  }
+
+  /* Contain scroll within scrollable regions; keeps the body from rubber-
+     banding when the user reaches the top/bottom of a list. */
+  .session-list,
+  .transcript,
+  .device-dropdown,
+  .new-chat-suggest,
+  .capabilities-detail {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---- Landing page mobile polish ----
+     The features grid uses auto-fit minmax(240px, 1fr) which works on
+     most screens but renders 3-across on tablets / foldables / desktop-
+     site mode. Force a single column at this breakpoint regardless. */
+  .landing-hero {
+    padding: 32px 16px 24px;
+  }
+  .landing-headline {
+    /* clamp() upper bound (56px) is too large at narrow widths and
+       wraps awkwardly. Cap it here. */
+    font-size: clamp(26px, 7vw, 36px);
+  }
+  .landing-subhead {
+    font-size: 15px;
+  }
+  .landing-features {
+    padding: 16px 16px 32px;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .landing-feature {
+    padding: 16px 18px;
+  }
+  .landing-how {
+    padding: 28px 16px 36px;
+  }
+  .landing-h2 {
+    font-size: 20px;
+  }
+  .landing-steps {
+    padding-left: 18px;
+    font-size: 14px;
+  }
+  .landing-footer {
+    padding: 16px;
+    font-size: 11px;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .composer-send,
+  .composer-stop {
+    width: 44px;
+    height: 44px;
+  }
+  /* Modal close button + sidebar actions inside dialogs need to clear
+     the touch floor too; reuse one rule rather than per-component. */
+  .approval-header .sidebar-action,
+  .sidebar-action[data-mobile-tap="40"] {
+    min-height: 40px;
+    min-width: 40px;
+  }
+  .app-header {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+}
+
+/* `:hover` is unreliable on touch devices — once tapped, the hover state
+   sticks until the user taps elsewhere, which makes the delete × flicker.
+   Make it always visible on coarse pointers. */
+@media (hover: none) {
+  .session-item-delete {
+    opacity: 1;
+  }
+}
+
+/* Hide backdrop on desktop */
+@media (min-width: 721px) {
+  .sidebar-backdrop {
+    display: none;
+  }
+}
+
+button:focus-visible,
+.text-input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-coral);
+  outline-offset: 2px;
+}
+
+/* ---- Compatibility aliases ---- */
+/* Older platform components (DeviceShell, Marketplace, Pricing, Account)
+   still use legacy variable names. Map them onto the current light tokens
+   so existing inline styles render correctly without per-component rewrites. */
+:root {
+  --panel: var(--bg);
+  --panel-2: var(--surface-card);
+  --text-dim: var(--text-muted);
+  --border: var(--border-subtle);
+  --accent: var(--accent-coral);
+}

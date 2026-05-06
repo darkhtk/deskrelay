@@ -1,0 +1,30 @@
+{
+  "name": "remote-claude",
+  "version": "0.0.1",
+  "runtime": "pc",
+  "entry": "./src/index.ts",
+  "permissions": [
+    "shell:exec:claude",
+    "filesystem:read:user.home",
+    "filesystem:write:user.home",
+    "network:outbound:anthropic.com"
+  ],
+  "ipc": "jsonrpc-2.0",
+  "minConnectorVersion": "0.0.0",
+  "license": "Apache-2.0",
+  "publisher": {
+    "id": "claude-remote",
+    "name": "Claude Remote",
+    "key": "did:web:claude-remote.dev"
+  },
+  "displayName": "Claude Code",
+  "description": "Run the claude CLI on your PC and stream its output to the browser. Free, open-source, the foundation behavior of the platform.",
+  "categories": ["coding-agent", "claude"],
+  "metered": { "kind": "compose" },
+  "i18n": {
+    "ko": {
+      "displayName": "클로드 코드",
+      "description": "PC 의 claude CLI 를 실행하고 출력을 브라우저로 스트리밍합니다. 무료, 오픈소스, 플랫폼의 기본 behavior."
+    }
+  }
+}
