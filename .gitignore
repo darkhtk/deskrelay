@@ -71,6 +71,10 @@ tmp-*
 .local-dev/
 .self-server/
 
+# self-host generated quick-copy files; these contain local Site tokens.
+DESKRELAY-SERVER-CODE.txt
+REGISTER-OTHER-PC.txt
+
 # Local backend/dev runtime
 .dev.vars
 

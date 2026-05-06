@@ -223,6 +223,31 @@ localStorage.removeItem("cr.site-base-url");
 location.reload();
 "@
 
+$topLevelCode = @"
+# DeskRelay server code
+# This file is generated when the self-host server starts or when status runs.
+# Keep it private. It contains the Site token for this DeskRelay server.
+
+Open DeskRelay on this PC:
+http://127.0.0.1:$frontendPort
+
+Recommended URL for another device:
+$preferredUrl
+
+All URLs:
+$urlsText
+
+Site token:
+$($env:CR_SITE_TOKEN)
+
+Full command folder:
+$commandsDir
+
+To register another PC, open this file in the DeskRelay folder root and
+copy the whole PowerShell block into the PC you want to control:
+REGISTER-OTHER-PC.txt
+"@
+
 $listDevices = @"
 # DeskRelay - list registered devices
 `$site = $frontendUrlQ
@@ -341,4 +366,10 @@ Write-TextFile -Path (Join-Path $commandsDir "remove-this-pc-connector.txt") -Co
 Write-TextFile -Path (Join-Path $commandsDir "show-this-pc-daemon-token.txt") -Content $showThisPcDaemonToken
 Write-TextFile -Path (Join-Path $commandsDir "deskrelay-commands.txt") -Content $all
 
+Write-TextFile -Path (Join-Path $repo "DESKRELAY-SERVER-CODE.txt") -Content $topLevelCode
+Write-TextFile -Path (Join-Path $repo "REGISTER-OTHER-PC.txt") -Content $registerOtherPc
+
 Write-Host "Command files: $commandsDir"
+Write-Host "Top-level quick files:"
+Write-Host "  $(Join-Path $repo 'DESKRELAY-SERVER-CODE.txt')"
+Write-Host "  $(Join-Path $repo 'REGISTER-OTHER-PC.txt')"
