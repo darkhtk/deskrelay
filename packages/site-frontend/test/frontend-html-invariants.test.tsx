@@ -10,6 +10,7 @@ import { App } from "../src/App.tsx";
 import { ChatView } from "../src/components/ChatView.tsx";
 import { LoginCard } from "../src/components/LoginCard.tsx";
 import { OfflineHint } from "../src/components/OfflineHint.tsx";
+import { setLocale } from "../src/i18n.ts";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -35,6 +36,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setLocale("en");
   window.localStorage.clear();
 });
 
@@ -98,11 +100,52 @@ describe("settings and chrome invariants", () => {
     });
   });
 
-  test("self-host privacy and terms links are available from app chrome", async () => {
+  test("self-host privacy and terms links are available from main app chrome", async () => {
     const { container } = render(() => <App />);
     await waitFor(() => {
-      expect(container.querySelector('a[href="/privacy"]')?.textContent).toMatch(/privacy/i);
-      expect(container.querySelector('a[href="/terms"]')?.textContent).toMatch(/terms/i);
+      expect(container.querySelector('.alpha-banner a[href="/privacy"]')?.textContent).toMatch(
+        /privacy/i,
+      );
+      expect(container.querySelector('.alpha-banner a[href="/terms"]')?.textContent).toMatch(
+        /terms/i,
+      );
+    });
+  });
+
+  test("privacy and terms links are hidden once the chat app is open", async () => {
+    window.localStorage.setItem("cr.locale", "en");
+    const { container } = render(() => <App />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
+    fireEvent.input(await screen.findByPlaceholderText("CR_SITE_TOKEN"), {
+      target: { value: "tok-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Back to main screen" })).toBeTruthy();
+      expect(container.querySelector('a[href="/privacy"]')).toBeNull();
+      expect(container.querySelector('a[href="/terms"]')).toBeNull();
+    });
+  });
+
+  test("privacy and terms links are hidden on legal routes", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        href: "http://test.local/privacy",
+        pathname: "/privacy",
+        origin: "http://test.local",
+        replace: vi.fn(),
+        assign: vi.fn(),
+      },
+    });
+
+    const { container } = render(() => <App />);
+    await waitFor(() => {
+      expect(container.textContent).toContain("Privacy for self-hosted DeskRelay");
+      expect(container.querySelector('a[href="/privacy"]')).toBeNull();
+      expect(container.querySelector('a[href="/terms"]')).toBeNull();
     });
   });
 
@@ -123,6 +166,28 @@ describe("settings and chrome invariants", () => {
       const text = container.textContent ?? "";
       expect(text).toContain("Privacy for self-hosted DeskRelay");
       expect(text).toContain("do not receive, store, or process your chats");
+      expect(text).toContain("Site token");
+    });
+  });
+
+  test("privacy route follows the selected language", async () => {
+    setLocale("ko");
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        href: "http://test.local/privacy",
+        pathname: "/privacy",
+        origin: "http://test.local",
+        replace: vi.fn(),
+        assign: vi.fn(),
+      },
+    });
+
+    const { container } = render(() => <App />);
+    await waitFor(() => {
+      const text = container.textContent ?? "";
+      expect(text).toContain("Self-hosted DeskRelay 개인정보");
+      expect(text).toContain("DeskRelay 관리자는 사용자의 채팅");
       expect(text).toContain("Site token");
     });
   });

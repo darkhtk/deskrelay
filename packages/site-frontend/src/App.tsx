@@ -108,6 +108,7 @@ export const App: Component = () => {
   };
 
   const chatReady = () => !landingReopened() && landingDismissed() && hasAccess() && pickedLocale();
+  const mainPageChrome = () => !legalPage() && !chatReady();
 
   return (
     <main id="app-root">
@@ -136,15 +137,17 @@ export const App: Component = () => {
               </svg>
             </button>
           </Show>
-          <span class="alpha-banner-legal-text">{t("app.self-host")}</span>
-          <span class="alpha-banner-legal-sep">·</span>
-          <a class="alpha-banner-legal-link" href="/privacy">
-            {t("app.alpha-banner.privacy")}
-          </a>
-          <span class="alpha-banner-legal-sep">·</span>
-          <a class="alpha-banner-legal-link" href="/terms">
-            {t("app.alpha-banner.terms")}
-          </a>
+          <Show when={mainPageChrome()}>
+            <span class="alpha-banner-legal-text">{t("app.self-host")}</span>
+            <span class="alpha-banner-legal-sep">·</span>
+            <a class="alpha-banner-legal-link" href="/privacy">
+              {t("app.alpha-banner.privacy")}
+            </a>
+            <span class="alpha-banner-legal-sep">·</span>
+            <a class="alpha-banner-legal-link" href="/terms">
+              {t("app.alpha-banner.terms")}
+            </a>
+          </Show>
         </div>
         <AnnouncementBanner />
       </div>
