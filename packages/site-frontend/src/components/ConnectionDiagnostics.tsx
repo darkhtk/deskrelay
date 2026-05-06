@@ -1,5 +1,6 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
 import { type Device, api } from "../api.ts";
+import { deviceDisplayName } from "../device-display.ts";
 import { t } from "../i18n.ts";
 
 export interface ConnectionDiagnosticsProps {
@@ -119,7 +120,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         label: t("conn-diag.row.installed"),
         detail: device
           ? t("conn-diag.installed.detail", {
-              label: device.label,
+              label: deviceDisplayName(device),
               registered: formatTime(device.registeredAt),
             })
           : t("conn-diag.no-device"),
@@ -219,7 +220,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
             onChange={(e) => setSelectedDeviceId(e.currentTarget.value || null)}
           >
             <For each={devices() ?? []}>
-              {(device: Device) => <option value={device.id}>{device.label}</option>}
+              {(device: Device) => <option value={device.id}>{deviceDisplayName(device)}</option>}
             </For>
           </select>
         </div>

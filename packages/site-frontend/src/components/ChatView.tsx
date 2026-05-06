@@ -30,6 +30,7 @@ import {
 } from "../claude/cli-action.ts";
 import { CLAUDE_PERMISSION_MODES, type ClaudePermissionMode } from "../claude/stream-contract.ts";
 import { type ConnectionStatusAction, deriveConnectionStatus } from "../connection-status.ts";
+import { deviceDisplayName } from "../device-display.ts";
 import { getDeviceDefaultCwd, getDeviceSecurityProfile } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { scrollToBottomOnSend } from "../ui-prefs.ts";
@@ -398,7 +399,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const deviceStatusLabel = () => {
     const device = activeDevice();
     if (!device) return t("chat.sidebar.device.status.none");
-    return `${device.label}: ${t(connectionStatus().mainKey)} - ${connectionStatusDetail()}`;
+    return `${deviceDisplayName(device)}: ${t(connectionStatus().mainKey)} - ${connectionStatusDetail()}`;
   };
 
   const newChatCwd = () => {
@@ -951,8 +952,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   {(d) => (
                     <option value={d.id}>
                       {d.connectionState === "offline"
-                        ? t("chat.sidebar.device.offline-prefix", { label: d.label })
-                        : d.label}
+                        ? t("chat.sidebar.device.offline-prefix", { label: deviceDisplayName(d) })
+                        : deviceDisplayName(d)}
                     </option>
                   )}
                 </For>

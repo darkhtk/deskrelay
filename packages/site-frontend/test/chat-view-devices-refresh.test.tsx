@@ -777,7 +777,7 @@ describe("ChatView device refresh bridge", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Fresh Laptop (offline)");
+      expect(container.textContent).toContain("Fresh Laptop (Local) (offline)");
     });
     expect(sessionsRequests).toBe(0);
 
@@ -789,7 +789,7 @@ describe("ChatView device refresh bridge", () => {
       expect(behaviorRequests).toBeGreaterThan(1);
       expect(sessionsRequests).toBeGreaterThan(0);
       expect(container.textContent).toContain("Fresh Laptop");
-      expect(container.textContent).not.toContain("Fresh Laptop (offline)");
+      expect(container.textContent).not.toContain("Fresh Laptop (Local) (offline)");
     });
   });
 

@@ -1,5 +1,6 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
 import { ApiError, type Device, api } from "../api.ts";
+import { deviceDisplayName } from "../device-display.ts";
 import { clearDevicePrefs } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
@@ -108,7 +109,7 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
                   onClick={() => setSelected(device.id)}
                 >
                   <span class="settings-list-item-title">
-                    {device.label}
+                    {deviceDisplayName(device)}
                     <Show when={selected() === device.id}>
                       <span style={{ color: "var(--accent-coral)", "margin-left": "8px" }}>*</span>
                     </Show>
