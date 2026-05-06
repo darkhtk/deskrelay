@@ -86,6 +86,183 @@ function isMissingSessionFileError(message: string): boolean {
   return /\bENOENT\b/.test(message) && /\.jsonl\b/i.test(message);
 }
 
+export interface ContextUsageSnapshot {
+  remainingPercent: number;
+  usedPercent: number;
+  source: "event" | "text";
+}
+
+function latestContextUsageSnapshot(events: ClaudeStreamEvent[]): ContextUsageSnapshot | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const snapshot = contextUsageFromEvent(events[i]);
+    if (snapshot) return snapshot;
+  }
+  return null;
+}
+
+function contextUsageFromEvent(event: unknown): ContextUsageSnapshot | null {
+  const record = asRecord(event);
+  if (!record) return null;
+  const message = asRecord(record.message);
+  const candidates = [
+    record,
+    asRecord(record.usage),
+    asRecord(record.context),
+    asRecord(record.result),
+    message,
+    message ? asRecord(message.usage) : null,
+    message ? asRecord(message.context) : null,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const snapshot = contextUsageFromRecord(candidate);
+    if (snapshot) return snapshot;
+  }
+  return contextUsageFromText(messageText(record));
+}
+
+function contextUsageFromRecord(record: Record<string, unknown>): ContextUsageSnapshot | null {
+  const remaining = firstPercent(record, [
+    "context_remaining_percent",
+    "contextRemainingPercent",
+    "remaining_context_percent",
+    "remainingContextPercent",
+    "remaining_percent",
+    "remainingPercent",
+  ]);
+  if (remaining !== null) return usageFromRemaining(remaining, "event");
+
+  const used = firstPercent(record, [
+    "context_usage_percent",
+    "contextUsagePercent",
+    "context_used_percent",
+    "contextUsedPercent",
+    "used_percent",
+    "usedPercent",
+    "percent_used",
+    "percentUsed",
+  ]);
+  if (used !== null) return usageFromUsed(used, "event");
+
+  const maxTokens = firstNumber(record, [
+    "context_window",
+    "contextWindow",
+    "context_window_tokens",
+    "contextWindowTokens",
+    "max_context_tokens",
+    "maxContextTokens",
+    "max_tokens",
+    "maxTokens",
+    "limit",
+  ]);
+  if (!maxTokens || maxTokens <= 0) return null;
+
+  const remainingTokens = firstNumber(record, [
+    "remaining_tokens",
+    "remainingTokens",
+    "context_remaining_tokens",
+    "contextRemainingTokens",
+  ]);
+  if (remainingTokens !== null)
+    return usageFromRemaining((remainingTokens / maxTokens) * 100, "event");
+
+  const usedTokens = firstNumber(record, [
+    "used_tokens",
+    "usedTokens",
+    "context_used_tokens",
+    "contextUsedTokens",
+    "input_tokens",
+    "inputTokens",
+    "total_tokens",
+    "totalTokens",
+  ]);
+  return usedTokens !== null ? usageFromUsed((usedTokens / maxTokens) * 100, "event") : null;
+}
+
+function contextUsageFromText(text: string): ContextUsageSnapshot | null {
+  if (!text || !/\bcontext\b/i.test(text) || !/%/.test(text)) return null;
+  const normalized = text.replace(/\s+/g, " ");
+  const remainingMatch =
+    normalized.match(/(?:remaining|left|available|free)[^0-9%]{0,48}(\d{1,3}(?:\.\d+)?)\s*%/i) ??
+    normalized.match(/(\d{1,3}(?:\.\d+)?)\s*%[^.]{0,48}(?:remaining|left|available|free)/i);
+  if (remainingMatch?.[1]) return usageFromRemaining(Number(remainingMatch[1]), "text");
+
+  const usedMatch =
+    normalized.match(/(?:used|usage|full)[^0-9%]{0,48}(\d{1,3}(?:\.\d+)?)\s*%/i) ??
+    normalized.match(/(\d{1,3}(?:\.\d+)?)\s*%[^.]{0,48}(?:used|usage|full)/i);
+  return usedMatch?.[1] ? usageFromUsed(Number(usedMatch[1]), "text") : null;
+}
+
+function messageText(record: Record<string, unknown>): string {
+  const message = asRecord(record.message);
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => {
+      const item = asRecord(block);
+      return typeof item?.text === "string" ? item.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function firstPercent(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numericValue(record[key]);
+    if (value !== null) return clampPercent(value);
+  }
+  return null;
+}
+
+function firstNumber(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numericValue(record[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return null;
+  const parsed = Number(value.replace(/%$/, "").trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function usageFromRemaining(
+  value: number,
+  source: ContextUsageSnapshot["source"],
+): ContextUsageSnapshot {
+  const remainingPercent = clampPercent(value);
+  return {
+    remainingPercent,
+    usedPercent: clampPercent(100 - remainingPercent),
+    source,
+  };
+}
+
+function usageFromUsed(
+  value: number,
+  source: ContextUsageSnapshot["source"],
+): ContextUsageSnapshot {
+  const usedPercent = clampPercent(value);
+  return {
+    usedPercent,
+    remainingPercent: clampPercent(100 - usedPercent),
+    source,
+  };
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
 function isBehaviorMethodNotFound(
   error: { code?: number; message?: string } | undefined,
   method: string,
@@ -195,6 +372,7 @@ export interface ChatViewProps {
   /** One-shot request from Settings -> Devices to activate a newly
    *  registered device once it appears in the refreshed sidebar list. */
   requestedDeviceSelection?: DeviceSelectionRequest;
+  onContextUsageChange?: (usage: ContextUsageSnapshot | null) => void;
 }
 
 export const ChatView: Component<ChatViewProps> = (props) => {
@@ -370,6 +548,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   const [selectedSession, setSelectedSession] = createSignal<ClaudeSessionSummary | null>(null);
   const [transcript, setTranscript] = createSignal<ClaudeStreamEvent[]>([]);
+  const contextUsage = createMemo(() => latestContextUsageSnapshot(transcript()));
   const [cwd, setCwd] = createSignal<string>("");
   const [requestedPermissionMode, setRequestedPermissionMode] = createSignal<ClaudePermissionMode>(
     CLAUDE_PERMISSION_MODES.DEFAULT,
@@ -384,6 +563,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [cliAction, setCliAction] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   let sessionNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  createEffect(() => {
+    props.onContextUsageChange?.(contextUsage());
+  });
+
+  onCleanup(() => {
+    props.onContextUsageChange?.(null);
+  });
 
   function setTransientSessionNotice(message: string) {
     if (sessionNoticeTimer) clearTimeout(sessionNoticeTimer);
@@ -1727,10 +1914,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               stroke="currentColor"
               stroke-width="2"
               stroke-linecap="round"
+              stroke-linejoin="round"
             >
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <line x1="4" y1="12" x2="20" y2="12" />
-              <line x1="4" y1="18" x2="20" y2="18" />
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <line x1="9" y1="4" x2="9" y2="20" />
             </svg>
           </button>
         </div>

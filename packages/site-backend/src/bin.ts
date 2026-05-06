@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry } from "./device-registry.ts";
 
+const DEFAULT_ANNOUNCEMENT_URL =
+  "https://raw.githubusercontent.com/darkhtk/deskrelay/main/ANNOUNCEMENT.txt";
 const port = process.env.CR_SITE_PORT ? Number(process.env.CR_SITE_PORT) : 18092;
 const host = process.env.CR_SITE_HOST ?? "127.0.0.1";
 
@@ -18,11 +20,16 @@ if (!token && process.env.CR_SITE_AUTH_OPTIONAL !== "1") {
 }
 
 const localDaemonToken = process.env.CR_CONNECTOR_DAEMON_TOKEN ?? (await readLocalDaemonToken());
+const announcementUrl = resolveAnnouncementUrl();
 
 const app = createSiteApp({
   registry: new InMemoryDeviceRegistry(),
   ...(token ? { token } : {}),
   ...(process.env.SITE_ANNOUNCEMENT ? { announcement: process.env.SITE_ANNOUNCEMENT } : {}),
+  ...(announcementUrl ? { announcementUrl } : {}),
+  ...(process.env.SITE_ANNOUNCEMENT_POLL_MS
+    ? { announcementPollMs: Number(process.env.SITE_ANNOUNCEMENT_POLL_MS) }
+    : {}),
   ...(localDaemonToken ? { localDaemonToken } : {}),
   ...(process.env.CR_DEV_FRONTEND_URL ? { selfHostUrl: process.env.CR_DEV_FRONTEND_URL } : {}),
 });
@@ -77,6 +84,14 @@ async function readLocalDaemonToken(): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+function resolveAnnouncementUrl(): string | undefined {
+  const raw = process.env.SITE_ANNOUNCEMENT_URL;
+  if (raw === undefined) return DEFAULT_ANNOUNCEMENT_URL;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "0" || trimmed.toLowerCase() === "false") return undefined;
+  return trimmed;
 }
 
 function defaultAuthFilePath(): string {

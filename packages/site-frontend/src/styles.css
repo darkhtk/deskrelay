@@ -130,10 +130,10 @@ body.sidebar-open {
 .hamburger {
   display: inline-flex;
   background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  width: 36px;
-  height: 36px;
+  border: 0;
+  border-radius: 0;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   cursor: pointer;
@@ -141,11 +141,12 @@ body.sidebar-open {
   color: var(--text);
 }
 .hamburger:hover {
-  background: var(--bg-soft);
+  background: transparent;
+  color: var(--accent-coral);
 }
 .hamburger svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 /* ---- Signed-out pane ---- */
 .signed-out {
@@ -2844,6 +2845,75 @@ pre .copy-button:hover {
   background: var(--bg-soft);
   color: var(--text);
 }
+.alpha-banner-right {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.context-battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 86px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.context-battery-label {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.context-battery-shell {
+  position: relative;
+  width: 28px;
+  height: 13px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 2px;
+  color: var(--text-faint);
+}
+.context-battery-shell::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: -4px;
+  width: 2px;
+  height: 5px;
+  border-radius: 0 2px 2px 0;
+  background: currentColor;
+}
+.context-battery-fill {
+  display: block;
+  height: 100%;
+  max-width: 100%;
+  border-radius: 1px;
+  background: #2f9e44;
+  transition: width 160ms ease, background-color 160ms ease;
+}
+.context-battery-good .context-battery-fill {
+  background: #2f9e44;
+}
+.context-battery-warn .context-battery-fill {
+  background: #d99a26;
+}
+.context-battery-danger .context-battery-fill {
+  background: #d24e3a;
+}
+.context-battery-unknown {
+  opacity: 0.58;
+}
+.context-battery-unknown .context-battery-fill {
+  background: transparent;
+}
+.context-battery-value {
+  min-width: 28px;
+  text-align: right;
+  color: var(--text-muted);
+}
 
 /* Permission mode picker — sits at the sidebar bottom (above the
  * profile card) so the user can switch modes without opening a new
@@ -3859,6 +3929,16 @@ dialog.approval-modal-root,
   }
   .alpha-banner-feedback {
     display: none;
+  }
+  .context-battery {
+    min-width: 62px;
+    gap: 4px;
+  }
+  .context-battery-label {
+    display: none;
+  }
+  .context-battery-shell {
+    width: 24px;
   }
   .mode-banner {
     margin: 8px 16px 0;

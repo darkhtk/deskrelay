@@ -1,6 +1,6 @@
+import { networkInterfaces } from "node:os";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
-import { networkInterfaces } from "node:os";
 import {
   type Device,
   type DeviceRegistry,
@@ -15,6 +15,8 @@ export interface SiteAppOptions {
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   version?: string;
   announcement?: string;
+  announcementUrl?: string;
+  announcementPollMs?: number;
   localDaemonToken?: string;
   selfHostUrl?: string;
 }
@@ -25,6 +27,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     options.fetchImpl ?? ((input, init) => fetch(input, init));
   const registry = options.registry;
   const localToken = options.localDaemonToken;
+  const announcements = createAnnouncementSource(options, fetchImpl);
 
   app.get("/healthz", (c) =>
     c.json({
@@ -34,31 +37,8 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }),
   );
 
-  app.get("/api/announcement", (c) => {
-    const empty = { message: "" };
-    const raw = (options.announcement ?? "").trim();
-    if (!raw) return c.json(empty);
-
-    let parsed: { message?: unknown; until?: unknown; level?: unknown } | null = null;
-    if (raw.startsWith("{")) {
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = null;
-      }
-    }
-
-    const message = parsed && typeof parsed.message === "string" ? parsed.message.trim() : raw;
-    if (!message) return c.json(empty);
-    const level =
-      parsed && (parsed.level === "info" || parsed.level === "warning") ? parsed.level : "info";
-
-    if (parsed && typeof parsed.until === "string") {
-      const expiry = Date.parse(parsed.until);
-      if (Number.isFinite(expiry) && expiry <= Date.now()) return c.json(empty);
-      return c.json({ message, level, until: parsed.until });
-    }
-    return c.json({ message, level });
+  app.get("/api/announcement", async (c) => {
+    return c.json(announcementPayload(await announcements.read()));
   });
 
   if (options.token) {
@@ -342,6 +322,97 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   return app;
 }
 
+interface AnnouncementPayload {
+  message: string;
+  level?: "info" | "warning";
+  until?: string;
+}
+
+interface AnnouncementSource {
+  read: () => Promise<string>;
+}
+
+const DEFAULT_ANNOUNCEMENT_POLL_MS = 5 * 60 * 1000;
+const MAX_ANNOUNCEMENT_CHARS = 2000;
+
+function createAnnouncementSource(
+  options: SiteAppOptions,
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+): AnnouncementSource {
+  const inlineAnnouncement = (options.announcement ?? "").trim();
+  const url = (options.announcementUrl ?? "").trim();
+  const pollMs =
+    typeof options.announcementPollMs === "number" && options.announcementPollMs > 0
+      ? options.announcementPollMs
+      : DEFAULT_ANNOUNCEMENT_POLL_MS;
+  let cachedRemoteAnnouncement = "";
+  let inflight: Promise<void> | null = null;
+
+  async function refreshRemoteAnnouncement(): Promise<void> {
+    if (!url) return;
+    if (inflight) return await inflight;
+    inflight = (async () => {
+      try {
+        const res = await fetchImpl(url, {
+          method: "GET",
+          headers: { accept: "application/json, text/plain, */*" },
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const text = (await res.text()).trim();
+        cachedRemoteAnnouncement = text.slice(0, MAX_ANNOUNCEMENT_CHARS);
+      } catch {
+        // Keep the last successful announcement. A failed poll should not
+        // blank the banner while the user's self-host server is offline.
+      } finally {
+        inflight = null;
+      }
+    })();
+    return await inflight;
+  }
+
+  if (url) {
+    void refreshRemoteAnnouncement();
+    const timer = setInterval(() => void refreshRemoteAnnouncement(), pollMs);
+    (timer as { unref?: () => void }).unref?.();
+  }
+
+  return {
+    read: async () => {
+      if (inlineAnnouncement) return inlineAnnouncement;
+      if (url && !cachedRemoteAnnouncement) await refreshRemoteAnnouncement();
+      return cachedRemoteAnnouncement;
+    },
+  };
+}
+
+function announcementPayload(rawInput: string): AnnouncementPayload {
+  const empty = { message: "" };
+  const raw = rawInput.trim();
+  if (!raw) return empty;
+
+  let parsed: { message?: unknown; until?: unknown; level?: unknown } | null = null;
+  if (raw.startsWith("{")) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = null;
+    }
+  }
+
+  const message = parsed && typeof parsed.message === "string" ? parsed.message.trim() : raw;
+  if (!message) return empty;
+  const level =
+    parsed && (parsed.level === "info" || parsed.level === "warning") ? parsed.level : "info";
+
+  if (parsed && typeof parsed.until === "string") {
+    const expiry = Date.parse(parsed.until);
+    if (Number.isFinite(expiry) && expiry <= Date.now()) return empty;
+    return { message, level, until: parsed.until };
+  }
+  return { message, level };
+}
+
 function resolveDevice(id: string, registry: DeviceRegistry): Device | undefined {
   return registry.get(id);
 }
@@ -410,8 +481,7 @@ function pickPreferredUrl(rows: AccessUrl[]): string {
     rows.find((row) => row.kind === "Current URL") ??
     rows.find((row) => row.kind === "Tailscale") ??
     rows.find((row) => row.kind === "LAN") ??
-    rows[0] ??
-    { kind: "This PC", url: "http://127.0.0.1:18193" }
+    rows[0] ?? { kind: "This PC", url: "http://127.0.0.1:18193" }
   ).url;
 }
 

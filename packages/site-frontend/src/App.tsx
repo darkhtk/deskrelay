@@ -1,7 +1,7 @@
 import { type Component, For, Show, createSignal } from "solid-js";
 import { ApiError, api, clearToken, getToken, setToken } from "./api.ts";
 import { AnnouncementBanner } from "./components/AnnouncementBanner.tsx";
-import { ChatView } from "./components/ChatView.tsx";
+import { ChatView, type ContextUsageSnapshot } from "./components/ChatView.tsx";
 import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
@@ -20,6 +20,49 @@ type OpenSettingsOptions = {
 type DeviceSelectionRequest = {
   id: string | null;
   seq: number;
+};
+
+const ContextUsageBattery: Component<{ usage: ContextUsageSnapshot | null; visible: boolean }> = (
+  props,
+) => {
+  const remaining = () => props.usage?.remainingPercent ?? null;
+  const known = () => remaining() !== null;
+  const level = () => {
+    const value = remaining();
+    if (value === null) return "unknown";
+    if (value >= 70) return "good";
+    if (value >= 40) return "warn";
+    return "danger";
+  };
+  const percentText = () => {
+    const value = remaining();
+    return value === null ? "--%" : `${Math.round(value)}%`;
+  };
+  const title = () => {
+    const value = remaining();
+    return value === null ? "Context remaining unavailable" : `Context remaining ${percentText()}`;
+  };
+  const fillWidth = () => {
+    const value = remaining();
+    return value === null ? "0%" : `${Math.round(value)}%`;
+  };
+
+  return (
+    <Show when={props.visible}>
+      <output
+        class={`context-battery context-battery-${level()}`}
+        aria-label={title()}
+        title={title()}
+        data-known={known() ? "true" : "false"}
+      >
+        <span class="context-battery-label">ctx</span>
+        <span class="context-battery-shell" aria-hidden="true">
+          <span class="context-battery-fill" style={{ width: fillWidth() }} />
+        </span>
+        <span class="context-battery-value">{percentText()}</span>
+      </output>
+    </Show>
+  );
 };
 
 export const App: Component = () => {
@@ -92,6 +135,7 @@ export const App: Component = () => {
     id: null,
     seq: 0,
   });
+  const [contextUsage, setContextUsage] = createSignal<ContextUsageSnapshot | null>(null);
 
   const notifyDevicesChanged = () => {
     setDevicesRevision((value) => value + 1);
@@ -150,6 +194,9 @@ export const App: Component = () => {
           </Show>
         </div>
         <AnnouncementBanner />
+        <div class="alpha-banner-right">
+          <ContextUsageBattery usage={contextUsage()} visible={chatReady()} />
+        </div>
       </div>
 
       <Show when={legalPage()} keyed>
@@ -184,6 +231,7 @@ export const App: Component = () => {
             onOpenSettings={openSettings}
             devicesRevision={devicesRevision()}
             requestedDeviceSelection={deviceSelectionRequest()}
+            onContextUsageChange={setContextUsage}
           />
         </Show>
       </Show>

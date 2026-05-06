@@ -90,4 +90,25 @@ describe("GET /api/announcement", () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as Body).message).toBe("hi");
   });
+
+  test("remote URL is fetched through the server and cached", async () => {
+    let calls = 0;
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      announcementUrl: "https://example.test/ANNOUNCEMENT.txt",
+      announcementPollMs: 60_000,
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response("Remote repository notice", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      },
+    });
+
+    const res = await app.fetch(new Request("http://site.local/api/announcement"));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Body).message).toBe("Remote repository notice");
+    expect(calls).toBe(1);
+  });
 });
