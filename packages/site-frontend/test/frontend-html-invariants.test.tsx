@@ -98,6 +98,56 @@ describe("settings and chrome invariants", () => {
     });
   });
 
+  test("self-host privacy and terms links are available from app chrome", async () => {
+    const { container } = render(() => <App />);
+    await waitFor(() => {
+      expect(container.querySelector('a[href="/privacy"]')?.textContent).toMatch(/privacy/i);
+      expect(container.querySelector('a[href="/terms"]')?.textContent).toMatch(/terms/i);
+    });
+  });
+
+  test("privacy route describes local self-host data handling", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        href: "http://test.local/privacy",
+        pathname: "/privacy",
+        origin: "http://test.local",
+        replace: vi.fn(),
+        assign: vi.fn(),
+      },
+    });
+
+    const { container } = render(() => <App />);
+    await waitFor(() => {
+      const text = container.textContent ?? "";
+      expect(text).toContain("Privacy for self-hosted DeskRelay");
+      expect(text).toContain("do not receive, store, or process your chats");
+      expect(text).toContain("Site token");
+    });
+  });
+
+  test("terms route is written for self-host operation", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        href: "http://test.local/terms",
+        pathname: "/terms",
+        origin: "http://test.local",
+        replace: vi.fn(),
+        assign: vi.fn(),
+      },
+    });
+
+    const { container } = render(() => <App />);
+    await waitFor(() => {
+      const text = container.textContent ?? "";
+      expect(text).toContain("Terms for self-hosted DeskRelay");
+      expect(text).toContain("do not provide a hosted service");
+      expect(text).toContain("Do not expose connector or site ports");
+    });
+  });
+
   test("self-host token can move from Landing into the app flow", async () => {
     render(() => <App />);
     fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);

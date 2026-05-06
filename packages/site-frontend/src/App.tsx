@@ -5,6 +5,7 @@ import { ChatView } from "./components/ChatView.tsx";
 import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
+import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
 import { LocaleChooser } from "./components/LocaleChooser.tsx";
 import { LOCALES, LOCALE_LABELS, hasExplicitLocale, locale, setLocale, t } from "./i18n.ts";
 import { scrollToBottomOnSend, setScrollToBottomOnSend } from "./ui-prefs.ts";
@@ -63,6 +64,13 @@ export const App: Component = () => {
   const [pickedLocale, setPickedLocale] = createSignal(hasExplicitLocale());
   const [landingDismissed, setLandingDismissed] = createSignal(false);
   const [landingReopened, setLandingReopened] = createSignal(false);
+
+  const legalPage = (): LegalPageKind | null => {
+    const path = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (path === "/privacy" || path === "/privacy.html") return "privacy";
+    if (path === "/terms" || path === "/terms.html") return "terms";
+    return null;
+  };
 
   const dismissLanding = () => {
     setLandingReopened(false);
@@ -128,42 +136,56 @@ export const App: Component = () => {
               </svg>
             </button>
           </Show>
-          <span class="alpha-banner-legal-link">{t("app.self-host")}</span>
+          <span class="alpha-banner-legal-text">{t("app.self-host")}</span>
+          <span class="alpha-banner-legal-sep">·</span>
+          <a class="alpha-banner-legal-link" href="/privacy">
+            {t("app.alpha-banner.privacy")}
+          </a>
+          <span class="alpha-banner-legal-sep">·</span>
+          <a class="alpha-banner-legal-link" href="/terms">
+            {t("app.alpha-banner.terms")}
+          </a>
         </div>
         <AnnouncementBanner />
       </div>
 
-      <Show when={!chatReady()}>
-        <header class="app-header">
-          <div class="header-left">
-            <h1>{t("app.title")}</h1>
-          </div>
-        </header>
+      <Show when={legalPage()} keyed>
+        {(kind) => <LegalPage kind={kind} />}
       </Show>
 
-      <Show when={landingReopened() || !landingDismissed() || !hasAccess()}>
-        <Landing
-          onTokenLogin={handleTokenLogin}
-          onLocalAccessLogin={handleLocalAccessLogin}
-          authed={hasAccess()}
-          onProceed={dismissLanding}
-        />
+      <Show when={!legalPage()}>
+        <Show when={!chatReady()}>
+          <header class="app-header">
+            <div class="header-left">
+              <h1>{t("app.title")}</h1>
+            </div>
+          </header>
+        </Show>
+
+        <Show when={landingReopened() || !landingDismissed() || !hasAccess()}>
+          <Landing
+            onTokenLogin={handleTokenLogin}
+            onLocalAccessLogin={handleLocalAccessLogin}
+            authed={hasAccess()}
+            onProceed={dismissLanding}
+          />
+        </Show>
+
+        <Show when={!landingReopened() && landingDismissed() && hasAccess() && !pickedLocale()}>
+          <LocaleChooser onPicked={() => setPickedLocale(true)} />
+        </Show>
+
+        <Show when={chatReady()}>
+          <ChatView
+            onClearAccess={handleClearAccess}
+            onOpenSettings={openSettings}
+            devicesRevision={devicesRevision()}
+            requestedDeviceSelection={deviceSelectionRequest()}
+          />
+        </Show>
       </Show>
 
-      <Show when={!landingReopened() && landingDismissed() && hasAccess() && !pickedLocale()}>
-        <LocaleChooser onPicked={() => setPickedLocale(true)} />
-      </Show>
-
-      <Show when={chatReady()}>
-        <ChatView
-          onClearAccess={handleClearAccess}
-          onOpenSettings={openSettings}
-          devicesRevision={devicesRevision()}
-          requestedDeviceSelection={deviceSelectionRequest()}
-        />
-      </Show>
-
-      <Show when={settingsOpen()}>
+      <Show when={!legalPage() && settingsOpen()}>
         <dialog
           open
           class="approval-modal-root"

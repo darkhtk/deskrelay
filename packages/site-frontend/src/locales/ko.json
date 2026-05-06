@@ -1,5 +1,5 @@
 {
-  "app.alpha-banner": "Alpha · 업데이트 보장 없음 · 채팅 저장 안 함, 보안 검사 환영 · 맘대로 써도 됨 · ",
+  "app.alpha-banner": "Self-host · 로컬 데이터 · 중앙 계정 없음 · ",
   "app.alpha-banner.privacy": "개인정보",
   "app.alpha-banner.terms": "이용약관",
   "app.auth.self-host": "self-host",

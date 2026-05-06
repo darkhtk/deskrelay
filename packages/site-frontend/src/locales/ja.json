@@ -1,5 +1,5 @@
 {
-  "app.alpha-banner": "Alpha · アップデート保証なし · チャットは保存せず、セキュリティ監査歓迎 · 自由にお使いください · ",
+  "app.alpha-banner": "Self-host · ローカルデータ · ホスト型アカウントなし · ",
   "app.alpha-banner.privacy": "プライバシー",
   "app.alpha-banner.terms": "利用規約",
   "app.auth.self-host": "セルフホスト",

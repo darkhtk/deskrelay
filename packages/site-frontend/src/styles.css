@@ -2556,6 +2556,12 @@ pre .copy-button:hover {
   color: var(--text-faint);
   border-top: 1px solid var(--border-subtle);
 }
+.landing-footer-links {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
 .landing-footer a {
   color: var(--text-muted);
   text-decoration: none;
@@ -2577,6 +2583,9 @@ pre .copy-button:hover {
   font-size: 28px;
   margin-bottom: 12px;
 }
+.legal-updated {
+  color: var(--text-faint);
+}
 .legal-page h2 {
   font-size: 16px;
   margin-top: 28px;
@@ -2596,6 +2605,12 @@ pre .copy-button:hover {
 }
 .legal-page strong {
   color: var(--text);
+}
+.legal-page code {
+  background: var(--code-chip);
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 13px;
 }
 .legal-back {
   font-size: 12px;
@@ -2661,6 +2676,9 @@ pre .copy-button:hover {
 .alpha-banner-legal-link {
   color: inherit;
   text-decoration: underline;
+}
+.alpha-banner-legal-text {
+  color: inherit;
 }
 .alpha-banner-legal-sep {
   opacity: 0.5;

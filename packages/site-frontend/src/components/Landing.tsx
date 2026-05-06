@@ -105,7 +105,11 @@ export const Landing: Component<LandingProps> = (props) => {
       </section>
 
       <footer class="landing-footer">
-        <span>{t("landing.footer.legal")}</span>
+        <span class="landing-footer-links">
+          <span>{t("landing.footer.legal")}</span>
+          <a href="/privacy">{t("app.alpha-banner.privacy")}</a>
+          <a href="/terms">{t("app.alpha-banner.terms")}</a>
+        </span>
         <span style={{ "font-size": "12px", opacity: "0.7" }}>
           {t("landing.footer.disclaimer")}
         </span>
