@@ -255,7 +255,7 @@
   "landing.headline": "DeskRelay\nfor your own PCs",
   "landing.how.cta": "Open app",
   "landing.how.step1": "Start **DeskRelay** on this PC. Its connector daemon is registered automatically.",
-  "landing.how.step2": "Open the printed URL, enter the **Site token**, and use this PC's Claude Code right away.",
+  "landing.how.step2": "On this PC, click **Open app** to enter without typing the Site token. From another device, open the printed URL and paste the **Site token**.",
   "landing.how.step3": "To use another PC, run the connector there and add its daemon URL + token in **Settings -> Devices**.",
   "landing.how.title": "Self-host in three steps",
   "landing.signin.title": "Enter Site token",

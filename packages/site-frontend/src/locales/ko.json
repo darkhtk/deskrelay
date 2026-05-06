@@ -255,7 +255,7 @@
   "landing.headline": "내 PC를 브라우저에서\nDeskRelay",
   "landing.how.cta": "앱 열기",
   "landing.how.step1": "이 PC에서 **DeskRelay**를 시작합니다. 이 PC의 connector daemon은 자동 등록됩니다.",
-  "landing.how.step2": "출력된 URL을 열고 **Site token**을 입력하면 바로 이 PC의 Claude Code를 사용할 수 있습니다.",
+  "landing.how.step2": "이 PC에서는 **앱 열기**를 누르면 Site token 입력 없이 들어갑니다. 다른 기기에서는 출력된 URL을 열고 **Site token**을 입력하세요.",
   "landing.how.step3": "다른 PC도 쓰려면 그 PC에서 connector를 실행한 뒤 **Settings -> Devices**에 daemon URL과 token을 추가합니다.",
   "landing.how.title": "세 단계로 self-host",
   "landing.signin.title": "Site token 입력",

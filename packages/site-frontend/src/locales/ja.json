@@ -255,7 +255,7 @@
   "landing.headline": "DeskRelay\nfor your own PCs",
   "landing.how.cta": "アプリを開く",
   "landing.how.step1": "この PC で **DeskRelay** を起動します。この PC の connector daemon は自動登録されます。",
-  "landing.how.step2": "表示された URL を開き、**Site token** を入力すると、この PC の Claude Code をすぐに使えます。",
+  "landing.how.step2": "この PC では **Open app** を押すと Site token を入力せずに入れます。別の端末からは表示された URL を開き、**Site token** を入力してください。",
   "landing.how.step3": "別の PC も使う場合は、その PC で connector を実行し、**Settings -> Devices** に daemon URL と token を追加します。",
   "landing.how.title": "3 ステップで self-host",
   "landing.signin.title": "Site token を入力",
