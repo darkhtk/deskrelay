@@ -135,4 +135,75 @@ describe("registerSelf", () => {
       "POST http://deskrelay.test:18193/api/devices",
     ]);
   });
+
+  test("removes an existing registration for the same daemon URL before posting a replacement", async () => {
+    const port = 19093;
+    const calls: Array<{ method: string; url: string; body?: string; authorization?: string }> = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const call: { method: string; url: string; body?: string; authorization?: string } = {
+        method: init?.method ?? "GET",
+        url,
+      };
+      if (typeof init?.body === "string") call.body = init.body;
+      const authorization = (init?.headers as Record<string, string> | undefined)?.authorization;
+      if (authorization) call.authorization = authorization;
+      calls.push(call);
+      if (url.endsWith("/status")) return Response.json({ ok: true });
+      if (init?.method === "GET" && url.endsWith("/api/devices")) {
+        return Response.json([
+          {
+            id: "dev_old",
+            daemonUrl: `http://100.64.1.2:${port}`,
+          },
+          {
+            id: "dev_other",
+            daemonUrl: "http://100.64.1.3:18091",
+          },
+        ]);
+      }
+      if (init?.method === "DELETE" && url.endsWith("/api/devices/dev_old")) {
+        return Response.json({ ok: true });
+      }
+      if (init?.method === "POST" && url.endsWith("/api/devices")) {
+        return Response.json({ id: "dev_new" }, { status: 201 });
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`);
+    }) as typeof fetch;
+
+    await registerSelf({
+      serverUrl: "http://deskrelay.test:18193/",
+      siteToken: "site-token",
+      port,
+      advertiseHost: "100.64.1.2",
+      label: "Replacement",
+      fetchImpl,
+      installTask: async () => ({
+        supported: true,
+        installed: true,
+        started: true,
+        taskName: "DeskRelay Connector",
+      }),
+      loadAuthToken: async () => ({ token: "daemon-token", path: "auth.json", created: false }),
+      stopRecordedDaemon: async () => undefined,
+      stopPortOwner: async () => false,
+      timeoutMs: 10,
+    });
+
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://100.64.1.2:${port}/status`,
+      "GET http://deskrelay.test:18193/api/devices",
+      "DELETE http://deskrelay.test:18193/api/devices/dev_old",
+      "POST http://deskrelay.test:18193/api/devices",
+    ]);
+    expect(calls.at(-1)?.body).toBe(
+      JSON.stringify({
+        daemonUrl: `http://100.64.1.2:${port}`,
+        label: "Replacement",
+        authToken: "daemon-token",
+      }),
+    );
+  });
 });

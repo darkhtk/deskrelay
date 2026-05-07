@@ -57,7 +57,7 @@
 | 케이스 | 절차 | 기대 결과 | 비고 |
 |---|---|---|---|
 | 정상 등록 | `/api/devices` POST 또는 등록 명령 | list에 즉시 표시, token은 응답에 노출 안 됨 | 자동화됨 |
-| 중복 daemon URL 등록 | 같은 daemon URL 재등록 | 중복 저장 없음, 기존 row 교체 또는 명확한 409 정책 유지 | 자동 보강 |
+| 중복 daemon URL 등록 | 같은 daemon URL 재등록 | 기존 같은 daemon URL row 삭제 후 새 row 등록 | 자동화됨 |
 | 등록 직후 offline badge | 등록 후 health poll 확인 | reachable이면 offline 표시 자동 제거 | UI 자동/수동 |
 | 선택된 디바이스 삭제 | 현재 선택 디바이스 삭제 | selected id 보정, 삭제 id로 요청 안 함 | UI 자동 보강 |
 | 삭제 후 refetch 실패 | DELETE 성공 후 list refetch 실패 유도 | local optimistic removal 유지, 오류는 별도 표시 | UI 자동 보강 |
@@ -71,10 +71,10 @@
 |---|---|---|---|
 | workspace root 조회 | `/fs/roots` 호출 | 허용 root만 표시 | 자동화됨 |
 | root 밖 `/fs/list` | 허용 root 밖 경로 조회 | 403 forbidden | 자동화됨 |
-| 파일 경로 `/fs/list` | 파일 경로를 list에 전달 | not directory 오류 | 자동 보강 |
+| 파일 경로 `/fs/list` | 파일 경로를 list에 전달 | not directory 오류 | 자동화됨 |
 | cwd picker listing | root 안에 파일/폴더 생성 후 조회 | 디렉터리만 표시 | 자동화됨 |
 | `/fs/mkdir` 정상 | root 안에 폴더 생성 | 생성 후 목록 반영 | 자동화됨 |
-| `/fs/mkdir` root 밖 | parent를 root 밖으로 전달 | 403, 폴더 생성 없음 | 자동 보강 |
+| `/fs/mkdir` root 밖 | parent를 root 밖으로 전달 | 403, 폴더 생성 없음 | 자동화됨 |
 | 세션 파일 없음 | jsonl 삭제 후 session list 요청 | 목록에 올리지 않음, toast 없음 | 자동/수동 |
 | 같은 session id 중복 | 같은 session id 파일 여러 개 | 최신 1개만 표시 옵션 동작 | 자동 보강 |
 | 개별 세션 삭제 | row 삭제 클릭 | 삭제 중 표시 후 목록 제거 | UI 자동/수동 |
@@ -116,7 +116,7 @@
 |---|---|---|---|
 | README 설치 명령 | 새 clone에서 README 순서 실행 | 서버 실행 가능 | manual |
 | 다른 PC 등록 문서 | `REGISTER-OTHER-PC.txt`와 README 비교 | 실제 명령과 설명 일치 | 자동/수동 |
-| self 문서 금지어 | Cloudflare/MSIX/Lemon 등 product 흔적 검색 | self 문서에 없음 | 자동 보강 |
+| self 문서 금지어 | product 배포/결제/관리형 릴레이 흔적 검색 | self 문서에 없음 | 자동화됨 |
 | release notes | 앱 release notes 확인 | 현재 self-host 기능과 일치 | 수동 |
 | defects 문서 | 테스트 후 갱신 | 발견 결함/조치/남은 한계 기록 | 수동 |
 | package scripts | README/development와 `package.json` 비교 | smoke 명령 이름 일치 | 자동 보강 |

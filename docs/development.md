@@ -50,6 +50,7 @@ bun run test:selfhost-failures
 
 ```powershell
 bunx biome check package.json scripts/selfhost-virtual-e2e.ts scripts/selfhost-install-failure-smoke.ts
+bun run test:selfhost-docs
 bun --filter @deskrelay/pc-connector-daemon test self-register.test.ts
 bun --filter @deskrelay/site-backend test
 bun --filter @deskrelay/pc-connector-daemon typecheck
@@ -83,3 +84,4 @@ scripts/*smoke*.ts               smoke/e2e checks
 - [Self-host 테스트 케이스](SELFHOST_TEST_CASES.md)
 - [Self-host 테스트 한계](SELFHOST_TEST_GAPS.md)
 - [최근 테스트 결함](SELFHOST_DEFECTS.md)
+- [테스트 결과 기록](test-results/2026-05-08-selfhost-improvement/INDEX.md)
