@@ -128,7 +128,8 @@ const ContextUsageMeters: Component<{ usage: ContextUsageOverview; visible: bool
 );
 
 export const App: Component = () => {
-  const [localToken, setLocalToken] = createSignal<string | null>(getToken());
+  const initialToken = getToken();
+  const [localToken, setLocalToken] = createSignal<string | null>(initialToken);
   const hasAccess = () => Boolean(localToken());
 
   const handleTokenLogin = async (value: string) => {
@@ -167,7 +168,7 @@ export const App: Component = () => {
   };
 
   const [pickedLocale, setPickedLocale] = createSignal(true);
-  const [landingDismissed, setLandingDismissed] = createSignal(false);
+  const [landingDismissed, setLandingDismissed] = createSignal(Boolean(initialToken));
   const [landingReopened, setLandingReopened] = createSignal(false);
 
   const legalPage = (): LegalPageKind | null => {

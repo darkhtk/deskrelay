@@ -1,4 +1,5 @@
-const TOKEN_KEY = "cr.site-token";
+const LEGACY_TOKEN_KEY = "cr.site-token";
+const TOKEN_KEY_PREFIX = "cr.site-token:";
 const BASE_URL_KEY = "cr.site-base-url";
 
 function resolveBaseUrl(): string {
@@ -34,9 +35,24 @@ export function clearBaseUrl(): void {
   }
 }
 
+function currentTokenKey(): string {
+  const baseUrl = resolveBaseUrl();
+  const scope =
+    baseUrl ||
+    (typeof window !== "undefined" && window.location?.origin ? window.location.origin : "local");
+  return `${TOKEN_KEY_PREFIX}${scope}`;
+}
+
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const key = currentTokenKey();
+    const scoped = localStorage.getItem(key);
+    if (scoped) return scoped;
+    const legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
+    if (!legacy) return null;
+    localStorage.setItem(key, legacy);
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
+    return legacy;
   } catch {
     return null;
   }
@@ -44,7 +60,8 @@ export function getToken(): string | null {
 
 export function setToken(value: string): void {
   try {
-    localStorage.setItem(TOKEN_KEY, value);
+    localStorage.setItem(currentTokenKey(), value);
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
   } catch {
     // ignore
   }
@@ -52,7 +69,8 @@ export function setToken(value: string): void {
 
 export function clearToken(): void {
   try {
-    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(currentTokenKey());
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
   } catch {
     // ignore
   }

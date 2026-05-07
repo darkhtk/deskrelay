@@ -1,5 +1,6 @@
 import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { Device } from "../src/api.ts";
 import { DeviceShell } from "../src/components/DeviceShell.tsx";
 import { t } from "../src/i18n.ts";
 
@@ -15,6 +16,19 @@ const NEW_DEVICE = {
   label: "New laptop",
   daemonUrl: "http://127.0.0.1:18092",
   registeredAt: "2026-04-30T00:01:00.000Z",
+};
+
+const EXISTING_OTHER_OFFLINE = {
+  id: "dev_other",
+  label: "Other PC",
+  daemonUrl: "http://127.0.0.1:18093",
+  registeredAt: "2026-04-30T00:02:00.000Z",
+  connectionState: "offline" as const,
+};
+
+const EXISTING_OTHER_ONLINE = {
+  ...EXISTING_OTHER_OFFLINE,
+  connectionState: "online" as const,
 };
 
 const originalClipboard = navigator.clipboard;
@@ -234,6 +248,78 @@ describe("DeviceShell self-host registration UX", () => {
         expect(onDevicesChanged).toHaveBeenCalled();
         expect(onDeviceSelected).toHaveBeenCalledWith(NEW_DEVICE.id);
         expect(container.textContent).toContain("등록 완료");
+      },
+      { timeout: 2500 },
+    );
+  });
+
+  test("refreshes and selects an existing other PC when the copied command brings it online", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    let listedDevices: Device[] = [OLD_DEVICE, EXISTING_OTHER_OFFLINE];
+    const onDevicesChanged = vi.fn();
+    const onDeviceSelected = vi.fn();
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify(listedDevices), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/self/register-other-pc-command") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            preferredUrl: "http://100.64.0.1:18193",
+            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
+            command: "powershell register command",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
+        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <DeviceShell onDevicesChanged={onDevicesChanged} onDeviceSelected={onDeviceSelected} />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(EXISTING_OTHER_OFFLINE.label);
+    });
+
+    const copyButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === t("ds.add.command.copy"),
+    ) as HTMLButtonElement | undefined;
+    if (!copyButton) throw new Error("copy command button missing");
+    fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("powershell register command");
+      expect(container.textContent).toContain(t("ds.add.command.waiting"));
+    });
+
+    listedDevices = [OLD_DEVICE, EXISTING_OTHER_ONLINE];
+
+    await waitFor(
+      () => {
+        const selected = container.querySelector(
+          '.settings-list-item-main[aria-pressed="true"]',
+        ) as HTMLButtonElement | null;
+        expect(selected?.textContent).toContain(EXISTING_OTHER_ONLINE.label);
+        expect(onDevicesChanged).toHaveBeenCalled();
+        expect(onDeviceSelected).toHaveBeenCalledWith(EXISTING_OTHER_ONLINE.id);
       },
       { timeout: 2500 },
     );

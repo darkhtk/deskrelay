@@ -18,7 +18,7 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     async () =>
-      new Response("{}", {
+      new Response("[]", {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -42,14 +42,13 @@ describe("App landing flow", () => {
     expect(document.body.textContent).toContain("CLI 권한을 편집할 수 있습니다");
   });
 
-  test("a stored token still lets the user review the landing screen first", async () => {
-    window.localStorage.setItem("cr.site-token", "tok-abc");
+  test("a stored token for this self-host server opens the chat directly", async () => {
+    window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     render(() => <App />);
     await waitFor(() => {
-      expect(
-        screen.getAllByRole("button", { name: t("landing.cta.start") }).length,
-      ).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: t("app.back-home") })).toBeTruthy();
     });
+    expect(screen.queryByRole("button", { name: t("landing.cta.start") })).toBeNull();
   });
 
   test("chat top-bar back button reopens the main landing screen", async () => {
@@ -94,7 +93,7 @@ describe("App landing flow", () => {
     fireEvent.click(openButton);
 
     await waitFor(() => {
-      expect(window.localStorage.getItem("cr.site-token")).toBe("tok-local");
+      expect(window.localStorage.getItem("cr.site-token:http://test.local")).toBe("tok-local");
     });
     expect(screen.queryByPlaceholderText(t("login.token.placeholder"))).toBeNull();
   });

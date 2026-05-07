@@ -143,7 +143,11 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
         <Show when={error()}>{(message) => <span class="settings-error">{message()}</span>}</Show>
       </section>
 
-      <AddDeviceCard onAdded={handleAdded} />
+      <AddDeviceCard
+        devices={() => devices() ?? []}
+        onDevicesSnapshot={(snapshot) => mutate(snapshot)}
+        onAdded={handleAdded}
+      />
 
       <Show when={selectedDevice()} keyed>
         {(device) => (
@@ -161,7 +165,11 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
   );
 };
 
-const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<void> }> = (props) => {
+const AddDeviceCard: Component<{
+  devices: () => Device[];
+  onDevicesSnapshot?: (devices: Device[]) => void;
+  onAdded: (device: Device) => void | Promise<void>;
+}> = (props) => {
   const [newUrl, setNewUrl] = createSignal("http://127.0.0.1:18091");
   const [newLabel, setNewLabel] = createSignal("");
   const [newToken, setNewToken] = createSignal("");
@@ -242,18 +250,37 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
   async function startRegistrationWatch() {
     stopRegistrationWatch();
     setSuccess(t("ds.add.command.waiting"));
-    const known = new Set((await safeListDevices()).map((device) => device.id));
+    const initialList = (await safeListDevices()) ?? props.devices();
+    const knownFingerprints = new Map(
+      initialList.map((device) => [device.id, deviceRegistrationFingerprint(device)]),
+    );
+    const knownStates = new Map(initialList.map((device) => [device.id, device.connectionState]));
     const deadline = Date.now() + REGISTER_COMMAND_WATCH_MS;
     setRegistrationWatchActive(true);
 
     const poll = async () => {
       const list = await safeListDevices();
-      const added = list.find((device) => !known.has(device.id));
-      if (added) {
-        stopRegistrationWatch();
-        await props.onAdded(added);
-        setSuccess(t("ds.add.command.detected", { label: deviceDisplayName(added) }));
-        return;
+      if (list) {
+        props.onDevicesSnapshot?.(list);
+        const added = list.find((device) => !knownFingerprints.has(device.id));
+        const changed = list.find(
+          (device) =>
+            knownFingerprints.has(device.id) &&
+            knownFingerprints.get(device.id) !== deviceRegistrationFingerprint(device),
+        );
+        const becameOnline = list.find(
+          (device) =>
+            knownStates.has(device.id) &&
+            knownStates.get(device.id) !== "online" &&
+            device.connectionState === "online",
+        );
+        const detected = added ?? changed ?? becameOnline;
+        if (detected) {
+          stopRegistrationWatch();
+          await props.onAdded(detected);
+          setSuccess(t("ds.add.command.detected", { label: deviceDisplayName(detected) }));
+          return;
+        }
       }
       if (Date.now() >= deadline) {
         stopRegistrationWatch();
@@ -266,11 +293,22 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
     registrationWatchTimer = setTimeout(() => void poll(), REGISTER_COMMAND_POLL_MS);
   }
 
-  async function safeListDevices(): Promise<Device[]> {
+  function deviceRegistrationFingerprint(device: Device): string {
+    return [
+      device.id,
+      device.label,
+      device.daemonUrl,
+      device.registeredAt,
+      device.hostname ?? "",
+      device.os ?? "",
+    ].join("\u001f");
+  }
+
+  async function safeListDevices(): Promise<Device[] | null> {
     try {
       return await api.listDevices();
     } catch {
-      return [];
+      return null;
     }
   }
 

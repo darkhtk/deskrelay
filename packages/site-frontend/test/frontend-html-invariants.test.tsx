@@ -253,7 +253,7 @@ describe("settings and chrome invariants", () => {
     fireEvent.click(screen.getByRole("button", { name: t("login.token.submit") }));
 
     await waitFor(() => {
-      expect(window.localStorage.getItem("cr.site-token")).toBe("tok-1");
+      expect(window.localStorage.getItem("cr.site-token:http://test.local")).toBe("tok-1");
     });
     void ChatView;
   });
