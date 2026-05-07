@@ -8,7 +8,8 @@ param(
   [int]$DaemonPort = 18191,
   [string]$WorkspaceRoots = "",
   [switch]$ForceInit,
-  [switch]$NoRegisterDevice
+  [switch]$NoRegisterDevice,
+  [switch]$NoOpenBrowser
 )
 
 $ErrorActionPreference = "Stop"
@@ -111,6 +112,7 @@ if (-not (Test-Path $envFile) -or $ForceInit) {
   -NoRegisterDevice:$NoRegisterDevice
 
 . $envFile
+$localFrontendUrl = "http://127.0.0.1:$FrontendPort"
 
 $commandsScript = Join-Path $repo "scripts\write-self-commands.ps1"
 if (Test-Path -LiteralPath $commandsScript) {
@@ -126,3 +128,12 @@ Write-Host "Workspace roots: $env:CR_CONNECTOR_WORKSPACE_ROOTS"
 Write-Host "Command files: $(Join-Path $root 'commands')"
 Write-Host ""
 Write-Host "Use Tailscale or LAN URLs only. Do not expose connector ports to the public internet."
+
+if (-not $NoOpenBrowser) {
+  try {
+    Start-Process $localFrontendUrl
+    Write-Host "Opened DeskRelay in the default browser: $localFrontendUrl"
+  } catch {
+    Write-Host "Could not open the default browser automatically. Open this URL manually: $localFrontendUrl"
+  }
+}

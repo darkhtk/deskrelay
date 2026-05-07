@@ -22,7 +22,7 @@ bun install
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```
 
-실행이 끝나면 터미널에 접속 URL, Site token, command 파일 위치가 출력된다. 같은 정보는 저장소 최상위의 `DESKRELAY-SERVER-CODE.txt`와 `REGISTER-OTHER-PC.txt`에도 생성된다.
+실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 터미널에는 접속 URL, Site token, command 파일 위치가 출력된다. 같은 정보는 저장소 최상위의 `DESKRELAY-SERVER-CODE.txt`와 `REGISTER-OTHER-PC.txt`에도 생성된다.
 
 서버를 중지하려면:
 
