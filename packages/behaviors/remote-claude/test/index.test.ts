@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,5 +77,58 @@ describe("remote-claude behavior chat request", () => {
 
     await interrupt({ runId });
     await waitFor(() => events.some((event) => event.kind === "run.finished"));
+  });
+
+  test("updates a known Claude settings allow list without dropping other fields", async () => {
+    const { ctx, handlers } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const update = handlers.get("permissions.update");
+    if (!update) throw new Error("permissions.update handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-permissions-"));
+    tempDirs.push(cwd);
+    const settingsDir = join(cwd, ".claude");
+    const settingsPath = join(settingsDir, "settings.local.json");
+    await mkdir(settingsDir, { recursive: true });
+    await writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          model: "claude-opus",
+          permissions: {
+            allow: ["Bash(git status:*)"],
+            deny: ["WebFetch(*)"],
+            ask: ["Edit(*)"],
+            defaultMode: "default",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = (await update({
+      cwd,
+      path: settingsPath,
+      allow: ["Bash(*)", "Grep(*)", "Bash(*)"],
+    })) as {
+      source: { allow: string[]; deny: string[]; ask: string[]; defaultMode?: string };
+    };
+
+    expect(result.source.allow).toEqual(["Bash(*)", "Grep(*)"]);
+    expect(result.source.deny).toEqual(["WebFetch(*)"]);
+    expect(result.source.ask).toEqual(["Edit(*)"]);
+    expect(result.source.defaultMode).toBe("default");
+
+    const saved = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      model?: string;
+      permissions?: { allow?: string[]; deny?: string[]; ask?: string[]; defaultMode?: string };
+    };
+    expect(saved.model).toBe("claude-opus");
+    expect(saved.permissions?.allow).toEqual(["Bash(*)", "Grep(*)"]);
+    expect(saved.permissions?.deny).toEqual(["WebFetch(*)"]);
+    expect(saved.permissions?.ask).toEqual(["Edit(*)"]);
+    expect(saved.permissions?.defaultMode).toBe("default");
   });
 });

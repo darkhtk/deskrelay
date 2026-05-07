@@ -351,6 +351,10 @@ interface PermissionsInspectResult {
   sources: PermissionSourceSummary[];
 }
 
+interface PermissionsUpdateResult {
+  source: PermissionSourceSummary;
+}
+
 interface PermissionsInspectViewResult extends PermissionsInspectResult {
   error?: string;
 }
@@ -358,6 +362,60 @@ interface PermissionsInspectViewResult extends PermissionsInspectResult {
 interface RuntimeSkillView {
   name: string;
   kind: "builtin" | "added";
+}
+
+const ALL_PERMISSION_ENTRY = "*";
+const AVAILABLE_PERMISSION_TOOLS = [
+  "Bash",
+  "Grep",
+  "Glob",
+  "LS",
+  "Read",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "NotebookRead",
+  "NotebookEdit",
+  "WebFetch",
+  "WebSearch",
+  "TodoWrite",
+  "Task",
+];
+
+function permissionToolEntry(tool: string): string {
+  return `${tool}(*)`;
+}
+
+function permissionEntryLabel(entry: string): string {
+  return entry === ALL_PERMISSION_ENTRY ? "All" : entry;
+}
+
+function uniquePermissionList(items: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const entry = item.trim();
+    if (!entry || seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  return out;
+}
+
+function samePermissionList(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((item, index) => item === b[index]);
+}
+
+function updatePermissionSourceResult(
+  current: PermissionsInspectViewResult | null | undefined,
+  updated: PermissionSourceSummary,
+): PermissionsInspectViewResult {
+  if (!current || current.error) return { sources: [updated] };
+  return {
+    ...current,
+    sources: current.sources.map((source) => (source.path === updated.path ? updated : source)),
+  };
 }
 
 export interface ChatViewProps {
@@ -634,36 +692,124 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     return t("pm.status.pending-next", { mode: requested });
   }
 
-  const [cliPermissions] = createResource(
-    () => {
-      if (selectedSidebarTab() !== "permissions") return null;
-      const d = effectiveDeviceId();
-      const i = remoteClaudeInstance();
-      if (!d || !i) return null;
-      return { deviceId: d, instanceId: i, cwd: cwd().trim() || getDeviceDefaultCwd(d) || "." };
-    },
-    async (input) => {
-      if (!input) return null;
-      try {
-        const res = await api.callBehavior<PermissionsInspectResult>(
-          input.deviceId,
-          input.instanceId,
-          "permissions.inspect",
-          { cwd: input.cwd },
-        );
-        if (res.error) return { error: res.error.message, sources: [] };
-        return res.result ?? { sources: [] };
-      } catch (err) {
-        return { error: (err as Error).message, sources: [] };
-      }
-    },
-  );
+  const [cliPermissions, { refetch: refetchCliPermissions, mutate: mutateCliPermissions }] =
+    createResource(
+      () => {
+        if (selectedSidebarTab() !== "permissions") return null;
+        const d = effectiveDeviceId();
+        const i = remoteClaudeInstance();
+        if (!d || !i) return null;
+        return { deviceId: d, instanceId: i, cwd: cwd().trim() || getDeviceDefaultCwd(d) || "." };
+      },
+      async (input) => {
+        if (!input) return null;
+        try {
+          const res = await api.callBehavior<PermissionsInspectResult>(
+            input.deviceId,
+            input.instanceId,
+            "permissions.inspect",
+            { cwd: input.cwd },
+          );
+          if (res.error) return { error: res.error.message, sources: [] };
+          return res.result ?? { sources: [] };
+        } catch (err) {
+          return { error: (err as Error).message, sources: [] };
+        }
+      },
+    );
 
   const permissionEntryCount = (source: PermissionSourceSummary): number =>
     source.allow.length + source.deny.length + source.ask.length + (source.defaultMode ? 1 : 0);
   const cliPermissionsResult = () => cliPermissions() as PermissionsInspectViewResult | null;
   const cliPermissionSources = () => cliPermissionsResult()?.sources ?? [];
   const cliPermissionsError = () => cliPermissionsResult()?.error ?? null;
+  const [permissionDrafts, setPermissionDrafts] = createSignal<Record<string, string[]>>({});
+  const [savingPermissionPath, setSavingPermissionPath] = createSignal<string | null>(null);
+  const [permissionEditStatus, setPermissionEditStatus] = createSignal<{
+    path: string;
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+  createEffect(() => {
+    const result = cliPermissionsResult();
+    if (!result || result.error) return;
+    const next: Record<string, string[]> = {};
+    for (const source of result.sources) {
+      next[source.path] = [...source.allow];
+    }
+    setPermissionDrafts(next);
+  });
+  const permissionDraftAllow = (source: PermissionSourceSummary): string[] =>
+    permissionDrafts()[source.path] ?? source.allow;
+  const permissionDraftDirty = (source: PermissionSourceSummary): boolean =>
+    !samePermissionList(permissionDraftAllow(source), source.allow);
+  const setPermissionDraftAllow = (source: PermissionSourceSummary, allow: string[]) => {
+    setPermissionEditStatus(null);
+    setPermissionDrafts((current) => ({
+      ...current,
+      [source.path]: uniquePermissionList(allow),
+    }));
+  };
+  const addPermissionTool = (source: PermissionSourceSummary, tool: string) => {
+    const entry = permissionToolEntry(tool);
+    const current = permissionDraftAllow(source);
+    if (current.includes(ALL_PERMISSION_ENTRY) || current.includes(entry)) return;
+    setPermissionDraftAllow(source, [...current, entry]);
+  };
+  const removePermissionEntry = (source: PermissionSourceSummary, entry: string) => {
+    setPermissionDraftAllow(
+      source,
+      permissionDraftAllow(source).filter((item) => item !== entry),
+    );
+  };
+  const replacePermissionWithAll = (source: PermissionSourceSummary) => {
+    setPermissionDraftAllow(source, [ALL_PERMISSION_ENTRY]);
+  };
+  const clearPermissionAllow = (source: PermissionSourceSummary) => {
+    setPermissionDraftAllow(source, []);
+  };
+  const resetPermissionDraft = (source: PermissionSourceSummary) => {
+    setPermissionEditStatus(null);
+    setPermissionDraftAllow(source, source.allow);
+  };
+  const savePermissionSource = async (source: PermissionSourceSummary) => {
+    const deviceId = effectiveDeviceId();
+    const instanceId = remoteClaudeInstance();
+    if (!deviceId || !instanceId) return;
+    setSavingPermissionPath(source.path);
+    setPermissionEditStatus(null);
+    try {
+      const res = await api.callBehavior<PermissionsUpdateResult>(
+        deviceId,
+        instanceId,
+        "permissions.update",
+        {
+          cwd: cwd().trim() || getDeviceDefaultCwd(deviceId) || ".",
+          path: source.path,
+          allow: permissionDraftAllow(source),
+        },
+      );
+      if (res.error) throw new Error(res.error.message);
+      const updated = res.result?.source;
+      if (updated) {
+        mutateCliPermissions((current) => updatePermissionSourceResult(current, updated));
+      }
+      await refetchCliPermissions();
+      setPermissionEditStatus({
+        path: source.path,
+        kind: "success",
+        message: t("chat.sidebar.permissions.saved"),
+      });
+    } catch (err) {
+      setPermissionEditStatus({
+        path: source.path,
+        kind: "error",
+        message: (err as Error).message,
+      });
+    } finally {
+      setSavingPermissionPath(null);
+    }
+  };
   const runtimeSkills = () =>
     (runtimeSlashCommands()?.skills ?? []).filter(
       (skill): skill is string => typeof skill === "string" && skill.trim().length > 0,
@@ -1738,14 +1884,58 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                               <span>{source.defaultMode}</span>
                             </div>
                           </Show>
-                          <For each={source.allow}>
-                            {(item) => (
-                              <div class="sidebar-permission-row">
-                                <span class="sidebar-permission-kind">allow</span>
-                                <span>{item}</span>
-                              </div>
-                            )}
-                          </For>
+                          <div class="sidebar-permission-actions">
+                            <button
+                              type="button"
+                              class="sidebar-inline-button"
+                              onClick={() => replacePermissionWithAll(source)}
+                              disabled={savingPermissionPath() === source.path}
+                            >
+                              {t("chat.sidebar.permissions.all")}
+                            </button>
+                            <button
+                              type="button"
+                              class="sidebar-inline-button"
+                              onClick={() => clearPermissionAllow(source)}
+                              disabled={
+                                savingPermissionPath() === source.path ||
+                                permissionDraftAllow(source).length === 0
+                              }
+                            >
+                              {t("chat.sidebar.permissions.clear")}
+                            </button>
+                          </div>
+                          <Show
+                            when={permissionDraftAllow(source).length > 0}
+                            fallback={
+                              <p class="sidebar-empty">
+                                {t("chat.sidebar.permissions.allow-empty")}
+                              </p>
+                            }
+                          >
+                            <For each={permissionDraftAllow(source)}>
+                              {(item) => (
+                                <div class="sidebar-permission-row editable">
+                                  <span class="sidebar-permission-kind">allow</span>
+                                  <span title={item}>{permissionEntryLabel(item)}</span>
+                                  <button
+                                    type="button"
+                                    class="sidebar-icon-button"
+                                    onClick={() => removePermissionEntry(source, item)}
+                                    disabled={savingPermissionPath() === source.path}
+                                    aria-label={t("chat.sidebar.permissions.remove", {
+                                      item: permissionEntryLabel(item),
+                                    })}
+                                    title={t("chat.sidebar.permissions.remove", {
+                                      item: permissionEntryLabel(item),
+                                    })}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              )}
+                            </For>
+                          </Show>
                           <For each={source.ask}>
                             {(item) => (
                               <div class="sidebar-permission-row">
@@ -1762,6 +1952,65 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                               </div>
                             )}
                           </For>
+                          <div class="sidebar-permission-add">
+                            <span class="sidebar-info-count">
+                              {t("chat.sidebar.permissions.add")}
+                            </span>
+                            <div class="sidebar-token-list">
+                              <For each={AVAILABLE_PERMISSION_TOOLS}>
+                                {(tool) => {
+                                  const entry = permissionToolEntry(tool);
+                                  const added = () =>
+                                    permissionDraftAllow(source).includes(ALL_PERMISSION_ENTRY) ||
+                                    permissionDraftAllow(source).includes(entry);
+                                  return (
+                                    <button
+                                      type="button"
+                                      class="sidebar-token-button"
+                                      classList={{ "is-added": added() }}
+                                      onClick={() => addPermissionTool(source, tool)}
+                                      disabled={savingPermissionPath() === source.path || added()}
+                                    >
+                                      {tool}
+                                    </button>
+                                  );
+                                }}
+                              </For>
+                            </div>
+                          </div>
+                          <Show when={permissionEditStatus()?.path === source.path}>
+                            <p
+                              classList={{
+                                "sidebar-empty": permissionEditStatus()?.kind !== "error",
+                                "settings-error": permissionEditStatus()?.kind === "error",
+                                "settings-success": permissionEditStatus()?.kind === "success",
+                              }}
+                            >
+                              {permissionEditStatus()?.message}
+                            </p>
+                          </Show>
+                          <Show when={permissionDraftDirty(source)}>
+                            <div class="sidebar-permission-actions">
+                              <button
+                                type="button"
+                                class="sidebar-inline-button"
+                                onClick={() => resetPermissionDraft(source)}
+                                disabled={savingPermissionPath() === source.path}
+                              >
+                                {t("chat.sidebar.permissions.revert")}
+                              </button>
+                              <button
+                                type="button"
+                                class="sidebar-inline-button primary"
+                                onClick={() => void savePermissionSource(source)}
+                                disabled={savingPermissionPath() === source.path}
+                              >
+                                {savingPermissionPath() === source.path
+                                  ? t("chat.sidebar.permissions.saving")
+                                  : t("chat.sidebar.permissions.save")}
+                              </button>
+                            </div>
+                          </Show>
                         </div>
                       )}
                     </For>

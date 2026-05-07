@@ -171,7 +171,10 @@ describe("ChatView device refresh bridge", () => {
         url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
         method === "POST"
       ) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          method?: string;
+          params?: unknown;
+        };
         if (body.method === "sessions.list") {
           return new Response(
             JSON.stringify({
@@ -235,7 +238,8 @@ describe("ChatView device refresh bridge", () => {
     });
   });
 
-  test("keeps session search state while switching sidebar tabs and shows read-only CLI data", async () => {
+  test("keeps session search state while switching sidebar tabs and edits CLI permissions", async () => {
+    let permissionUpdateParams: { path?: string; allow?: string[] } | null = null;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -262,7 +266,10 @@ describe("ChatView device refresh bridge", () => {
         url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
         method === "POST"
       ) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          method?: string;
+          params?: unknown;
+        };
         if (body.method === "slashCommands") {
           return new Response(
             JSON.stringify({
@@ -290,6 +297,25 @@ describe("ChatView device refresh bridge", () => {
                     defaultMode: "default",
                   },
                 ],
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (body.method === "permissions.update") {
+          permissionUpdateParams = body.params as { path?: string; allow?: string[] };
+          return new Response(
+            JSON.stringify({
+              result: {
+                source: {
+                  label: "User settings",
+                  path: "C:\\Users\\darkh\\.claude\\settings.json",
+                  exists: true,
+                  allow: permissionUpdateParams.allow ?? [],
+                  deny: [],
+                  ask: [],
+                  defaultMode: "default",
+                },
               },
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -386,6 +412,29 @@ describe("ChatView device refresh bridge", () => {
       expect(container.textContent).toContain("User settings");
       expect(container.textContent).toContain("Bash(git status:*)");
       expect(container.textContent).toContain("default");
+    });
+    const removePermission = container.querySelector(
+      'button[aria-label="Remove Bash(git status:*)"]',
+    ) as HTMLButtonElement | null;
+    if (!removePermission) throw new Error("remove permission button missing");
+    fireEvent.click(removePermission);
+    const grepPermission = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Grep",
+    ) as HTMLButtonElement | undefined;
+    if (!grepPermission) throw new Error("grep permission button missing");
+    fireEvent.click(grepPermission);
+    const savePermission = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Save",
+    ) as HTMLButtonElement | undefined;
+    if (!savePermission) throw new Error("save permission button missing");
+    fireEvent.click(savePermission);
+    await waitFor(() => {
+      expect(permissionUpdateParams).toEqual({
+        cwd: ".",
+        path: "C:\\Users\\darkh\\.claude\\settings.json",
+        allow: ["Grep(*)"],
+      });
+      expect(container.textContent).toContain("Permissions saved.");
     });
   });
 

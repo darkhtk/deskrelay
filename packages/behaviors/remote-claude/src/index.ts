@@ -24,9 +24,9 @@
 // listing/monitoring, future sessions space TBD.
 
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { type RunBehaviorOptions, runBehavior } from "@claude-remote/behavior-sdk/runtime";
 import manifest from "../manifest.json" with { type: "json" };
 import { ClaudeRunError, probeClaudeSlashCommands, runClaude } from "./claude-runner.ts";
@@ -152,6 +152,12 @@ interface PermissionsInspectParams {
   cwd?: string;
 }
 
+interface PermissionsUpdateParams {
+  cwd?: string;
+  path?: string;
+  allow?: unknown;
+}
+
 interface PermissionSourceSummary {
   label: string;
   path: string;
@@ -165,6 +171,10 @@ interface PermissionSourceSummary {
 
 interface PermissionsInspectResult {
   sources: PermissionSourceSummary[];
+}
+
+interface PermissionsUpdateResult {
+  source: PermissionSourceSummary;
 }
 
 // Per-run abort registry. Each in-flight `chat` call registers its
@@ -287,14 +297,28 @@ export const behaviorDef: RunBehaviorOptions = {
       async (params) => {
         const cwd =
           typeof params?.cwd === "string" && params.cwd.trim() ? params.cwd : process.cwd();
-        const sources = [
-          { label: "User settings", path: join(homedir(), ".claude", "settings.json") },
-          { label: "Project settings", path: join(cwd, ".claude", "settings.json") },
-          { label: "Project local settings", path: join(cwd, ".claude", "settings.local.json") },
-        ];
+        const sources = permissionSourcesForCwd(cwd);
         return {
           sources: await Promise.all(sources.map((source) => readPermissionSource(source))),
         };
+      },
+    );
+
+    ctx.onRequest<PermissionsUpdateParams, PermissionsUpdateResult>(
+      "permissions.update",
+      async (params) => {
+        const cwd =
+          typeof params?.cwd === "string" && params.cwd.trim() ? params.cwd : process.cwd();
+        if (!params || typeof params.path !== "string" || !params.path.trim()) {
+          throw new Error("permissions.update: path is required");
+        }
+        const target = matchingPermissionSource(cwd, params.path);
+        if (!target) {
+          throw new Error("permissions.update: path is not a known Claude settings file");
+        }
+        const allow = normalizePermissionUpdateList(params.allow);
+        await writePermissionSourceAllow(target.path, allow);
+        return { source: await readPermissionSource(target) };
       },
     );
 
@@ -452,6 +476,32 @@ if (import.meta.main) {
   await runBehavior(behaviorDef);
 }
 
+function permissionSourcesForCwd(cwd: string): Array<{ label: string; path: string }> {
+  return [
+    { label: "User settings", path: join(homedir(), ".claude", "settings.json") },
+    { label: "Project settings", path: join(cwd, ".claude", "settings.json") },
+    { label: "Project local settings", path: join(cwd, ".claude", "settings.local.json") },
+  ];
+}
+
+function matchingPermissionSource(
+  cwd: string,
+  path: string,
+): { label: string; path: string } | null {
+  const requested = resolve(path);
+  return (
+    permissionSourcesForCwd(cwd).find((source) => sameFilesystemPath(source.path, requested)) ??
+    null
+  );
+}
+
+function sameFilesystemPath(a: string, b: string): boolean {
+  const left = resolve(a);
+  const right = resolve(b);
+  if (process.platform === "win32") return left.toLowerCase() === right.toLowerCase();
+  return left === right;
+}
+
 async function readPermissionSource(source: {
   label: string;
   path: string;
@@ -486,6 +536,54 @@ async function readPermissionSource(source: {
       ...(code === "ENOENT" ? {} : { error: (err as Error).message }),
     };
   }
+}
+
+async function writePermissionSourceAllow(path: string, allow: string[]): Promise<void> {
+  let parsed: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(path, "utf8");
+    const value = JSON.parse(raw) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("settings file must be a JSON object");
+    }
+    parsed = value as Record<string, unknown>;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw err;
+  }
+
+  const permissions =
+    parsed.permissions &&
+    typeof parsed.permissions === "object" &&
+    !Array.isArray(parsed.permissions)
+      ? { ...(parsed.permissions as Record<string, unknown>) }
+      : {};
+  permissions.allow = allow;
+  parsed.permissions = permissions;
+
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+}
+
+function normalizePermissionUpdateList(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error("permissions.update: allow must be an array");
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") {
+      throw new Error("permissions.update: allow entries must be strings");
+    }
+    const entry = item.trim();
+    if (!entry) throw new Error("permissions.update: allow entries cannot be empty");
+    if (entry.length > 200) {
+      throw new Error("permissions.update: allow entries must be 200 characters or less");
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  if (out.length > 100) throw new Error("permissions.update: allow list is too large");
+  return out;
 }
 
 function stringList(value: unknown): string[] {

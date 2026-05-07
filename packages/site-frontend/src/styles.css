@@ -1348,6 +1348,7 @@ body.sidebar-open {
 .sidebar-permission-row,
 .sidebar-command-row {
   display: flex;
+  align-items: center;
   gap: 8px;
   min-width: 0;
   font-size: 12px;
@@ -1364,6 +1365,62 @@ body.sidebar-open {
   color: var(--text-faint);
   font-size: 10px;
   text-transform: uppercase;
+}
+.sidebar-permission-row.editable span:nth-child(2) {
+  flex: 1;
+  white-space: nowrap;
+}
+.sidebar-permission-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sidebar-inline-button,
+.sidebar-icon-button,
+.sidebar-token-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.sidebar-inline-button {
+  padding: 2px 0;
+  font-size: 12px;
+}
+.sidebar-inline-button.primary,
+.sidebar-inline-button:hover,
+.sidebar-token-button:hover {
+  color: var(--accent-coral);
+}
+.sidebar-icon-button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--text-faint);
+}
+.sidebar-icon-button:hover {
+  color: var(--danger);
+}
+.sidebar-token-button {
+  padding: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+.sidebar-token-button.is-added {
+  color: var(--text-faint);
+}
+.sidebar-inline-button:disabled,
+.sidebar-icon-button:disabled,
+.sidebar-token-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.sidebar-permission-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .sidebar-token-list {
   display: flex;
