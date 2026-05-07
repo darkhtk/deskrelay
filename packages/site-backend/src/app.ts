@@ -56,7 +56,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return c.json({ error: "Site token is not configured" }, 404);
     }
     const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
-    const preferredUrl = pickPreferredUrl(urls);
+    const preferredUrl = pickRemoteAccessUrl(urls);
     return c.json({
       preferredUrl,
       urls,
@@ -72,7 +72,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return c.json({ error: "Site token is not configured" }, 404);
     }
     const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
-    const preferredUrl = pickPreferredUrl(urls);
+    const preferredUrl = pickRemoteAccessUrl(urls);
     return c.json({
       preferredUrl,
       urls,
@@ -458,7 +458,7 @@ function getAccessUrls(baseUrl: string): AccessUrl[] {
   const rows: AccessUrl[] = [{ kind: "This PC", url: `http://127.0.0.1:${port}` }];
   const currentHost = base.hostname.replace(/^\[|\]$/g, "");
   if (!isLocalHost(currentHost) && currentHost !== "0.0.0.0") {
-    rows.push({ kind: "Current URL", url: base.origin });
+    rows.push({ kind: classifyRemoteHost(currentHost), url: base.origin });
   }
   for (const entries of Object.values(networkInterfaces())) {
     for (const entry of entries ?? []) {
@@ -481,6 +481,18 @@ function isLocalHost(host: string): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "::1";
 }
 
+function classifyRemoteHost(host: string): AccessUrl["kind"] {
+  if (host.startsWith("100.")) return "Tailscale";
+  if (
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+  ) {
+    return "LAN";
+  }
+  return "Current URL";
+}
+
 function dedupeUrls(rows: AccessUrl[]): AccessUrl[] {
   const seen = new Set<string>();
   const out: AccessUrl[] = [];
@@ -492,13 +504,23 @@ function dedupeUrls(rows: AccessUrl[]): AccessUrl[] {
   return out;
 }
 
-function pickPreferredUrl(rows: AccessUrl[]): string {
+function pickRemoteAccessUrl(rows: AccessUrl[]): string {
   return (
-    rows.find((row) => row.kind === "Current URL") ??
     rows.find((row) => row.kind === "Tailscale") ??
+    rows.find((row) => isTailscaleUrl(row.url)) ??
     rows.find((row) => row.kind === "LAN") ??
+    rows.find((row) => row.kind === "Current URL") ??
     rows[0] ?? { kind: "This PC", url: "http://127.0.0.1:18193" }
   ).url;
+}
+
+function isTailscaleUrl(raw: string): boolean {
+  try {
+    const host = new URL(raw).hostname.replace(/^\[|\]$/g, "");
+    return host.startsWith("100.");
+  } catch {
+    return false;
+  }
 }
 
 function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string }): string {
@@ -506,26 +528,16 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
   return [
     "# DeskRelay - register another PC",
     "# Paste this whole block into PowerShell on the PC you want to control.",
-    "# It installs/updates DeskRelay, starts the connector, verifies the",
-    "# Tailscale/LAN URL, then registers that PC in this DeskRelay instance.",
+    "# It downloads DeskRelay's idempotent bootstrap script from GitHub,",
+    "# fixes/reclones a stale $HOME\\deskrelay folder when needed, starts",
+    "# the connector, then registers that PC in this DeskRelay instance.",
     "",
     "$ErrorActionPreference = 'Stop'",
-    "$repo = Join-Path $HOME 'deskrelay'",
-    "if (-not (Test-Path -LiteralPath $repo)) {",
-    "  git clone https://github.com/darkhtk/deskrelay.git $repo",
-    "} elseif (-not (Test-Path -LiteralPath (Join-Path $repo '.git'))) {",
-    '  throw "Path exists but is not a git repo: $repo"',
-    "}",
-    "Set-Location -LiteralPath $repo",
-    "git pull --ff-only",
-    "bun install",
+    "$bootstrap = Join-Path $env:TEMP 'deskrelay-register-other-pc.ps1'",
+    "Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/register-other-pc.ps1' -OutFile $bootstrap",
     "",
     "$workspaceRoots = Join-Path $HOME 'Projects'",
-    "if (-not (Test-Path -LiteralPath $workspaceRoots)) {",
-    "  New-Item -ItemType Directory -Force -Path $workspaceRoots | Out-Null",
-    "}",
-    "",
-    `bun run packages/pc-connector-daemon/src/bin.ts register-self --server ${quotePs(siteUrl)} --site-token ${quotePs(input.siteToken)} --workspace-roots $workspaceRoots --label $env:COMPUTERNAME`,
+    `powershell -ExecutionPolicy Bypass -File $bootstrap -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -WorkspaceRoots $workspaceRoots -Label $env:COMPUTERNAME`,
     "",
     `Write-Host ${quotePs(`Open DeskRelay: ${siteUrl}`)}`,
   ].join("\n");

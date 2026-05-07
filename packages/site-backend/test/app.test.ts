@@ -113,7 +113,7 @@ describe("self-host command helper", () => {
     const app = createSiteApp({
       registry: new InMemoryDeviceRegistry(),
       token: TOKEN,
-      selfHostUrl: "http://127.0.0.1:18193",
+      selfHostUrl: "http://100.64.1.2:18193",
     });
     const res = await app.fetch(
       new Request("http://site.local/api/self/register-other-pc-command", {
@@ -126,11 +126,15 @@ describe("self-host command helper", () => {
       urls: Array<{ kind: string; url: string }>;
       command: string;
     };
-    expect(body.command).toContain("git clone https://github.com/darkhtk/deskrelay.git");
-    expect(body.command).toContain("register-self");
-    expect(body.command).toContain(`--server '${body.preferredUrl}'`);
-    expect(body.command).toContain(`--site-token '${TOKEN}'`);
-    expect(body.command).toContain("--workspace-roots $workspaceRoots");
+    expect(body.preferredUrl).toBe("http://100.64.1.2:18193");
+    expect(body.command).toContain(
+      "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/register-other-pc.ps1",
+    );
+    expect(body.command).toContain("register-other-pc.ps1");
+    expect(body.command).toContain(`-Server '${body.preferredUrl}'`);
+    expect(body.command).toContain(`-SiteToken '${TOKEN}'`);
+    expect(body.command).toContain("-WorkspaceRoots $workspaceRoots");
+    expect(body.command).toContain("Invoke-WebRequest");
     expect(body.command).not.toContain("Invoke-RestMethod -Method Post");
     expect(body.preferredUrl).toMatch(/^http:\/\//);
     expect(body.urls.length).toBeGreaterThan(0);

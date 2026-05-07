@@ -110,26 +110,16 @@ $urlsText = ($urls | ForEach-Object { "$($_.Kind): $($_.Url)" }) -join "`r`n"
 $registerOtherPc = @"
 # DeskRelay - register another PC
 # Paste this whole block into PowerShell on the PC you want to control.
-# It installs DeskRelay under `$HOME\deskrelay, starts the connector as a
-# Windows login task, then registers that PC in this DeskRelay instance.
+# It downloads DeskRelay's idempotent bootstrap script from GitHub,
+# fixes/reclones a stale `$HOME\deskrelay folder when needed, starts
+# the connector, then registers that PC in this DeskRelay instance.
 
 `$ErrorActionPreference = 'Stop'
-`$repo = Join-Path `$HOME 'deskrelay'
-if (-not (Test-Path -LiteralPath `$repo)) {
-  git clone https://github.com/darkhtk/deskrelay.git `$repo
-} elseif (-not (Test-Path -LiteralPath (Join-Path `$repo '.git'))) {
-  throw "Path exists but is not a git repo: `$repo"
-}
-Set-Location -LiteralPath `$repo
-git pull --ff-only
-bun install
+`$bootstrap = Join-Path `$env:TEMP 'deskrelay-register-other-pc.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/register-other-pc.ps1' -OutFile `$bootstrap
 
 `$workspaceRoots = Join-Path `$HOME 'Projects'
-if (-not (Test-Path -LiteralPath `$workspaceRoots)) {
-  New-Item -ItemType Directory -Force -Path `$workspaceRoots | Out-Null
-}
-
-bun run packages/pc-connector-daemon/src/bin.ts register-self --server $preferredUrlQ --site-token $siteTokenQ --workspace-roots `$workspaceRoots --label `$env:COMPUTERNAME
+powershell -ExecutionPolicy Bypass -File `$bootstrap -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME
 
 Write-Host "Open DeskRelay: $preferredUrl"
 "@
