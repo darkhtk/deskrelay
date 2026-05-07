@@ -146,21 +146,9 @@ describe("ChatView device refresh bridge", () => {
     });
     expect(sessionsRequests).toBe(1);
     expect(sessionsListParams).toMatchObject({ limit: 200, dedupeSessionIds: true });
-    await waitFor(() => {
-      expect(contextUsageRequests).toBe(2);
-      const sessionRequest = contextUsageParams.find((params) => params.scope === "session");
-      const weekRequest = contextUsageParams.find((params) => params.scope === "week");
-      expect(sessionRequest).toMatchObject({ cwd: "." });
-      expect(weekRequest).toMatchObject({ cwd: "." });
-      expect(sessionRequest).not.toHaveProperty("sessionId");
-      expect(weekRequest).not.toHaveProperty("sessionId");
-      expect(contextUsageSnapshots).toContainEqual(
-        expect.objectContaining({
-          session: { remainingPercent: 88, usedPercent: 12, source: "text" },
-          week: { remainingPercent: 88, usedPercent: 12, source: "text" },
-        }),
-      );
-    });
+    expect(contextUsageRequests).toBe(0);
+    expect(contextUsageParams).toEqual([]);
+    expect(contextUsageSnapshots).toContainEqual({ session: null, week: null });
     expect(requestedUrls.some((url) => url.endsWith(`/api/devices/${DEV.id}/behaviors`))).toBe(
       true,
     );
@@ -171,7 +159,7 @@ describe("ChatView device refresh bridge", () => {
     ).toBe(true);
   });
 
-  test("polls device context usage every five minutes without tying it to a session", async () => {
+  test("does not poll global usage because Claude extra-usage opens a browser tab", async () => {
     vi.useFakeTimers();
     let contextUsageRequests = 0;
     const contextUsageParams: Array<Record<string, unknown>> = [];
@@ -238,23 +226,14 @@ describe("ChatView device refresh bridge", () => {
     ));
 
     await vi.waitFor(() => {
-      expect(contextUsageRequests).toBe(2);
+      expect(contextUsageRequests).toBe(0);
     });
-    expect(contextUsageParams[0]).toMatchObject({ cwd: "." });
-    expect(contextUsageParams[1]).toMatchObject({ cwd: "." });
-    expect(contextUsageParams[0]).not.toHaveProperty("sessionId");
-    expect(contextUsageParams[1]).not.toHaveProperty("sessionId");
-    expect(contextUsageParams.map((params) => params.scope).sort()).toEqual(["session", "week"]);
+    expect(contextUsageParams).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
 
-    await vi.waitFor(() => {
-      expect(contextUsageRequests).toBe(4);
-    });
-    expect(contextUsageParams[2]).toMatchObject({ cwd: "." });
-    expect(contextUsageParams[3]).toMatchObject({ cwd: "." });
-    expect(contextUsageParams[2]).not.toHaveProperty("sessionId");
-    expect(contextUsageParams[3]).not.toHaveProperty("sessionId");
+    expect(contextUsageRequests).toBe(0);
+    expect(contextUsageParams).toEqual([]);
   });
 
   test("uses the saved device default cwd for New Chat even after selecting an older session", async () => {
@@ -1579,6 +1558,16 @@ describe("ChatView device refresh bridge", () => {
           chatParams = body.params as ChatRequestParams;
           streamController?.enqueue(
             encoder.encode(
+              'data: {"kind":"claude.event","content":{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1778134800,"rateLimitType":"five_hour","used_percentage":22}}}\n\n',
+            ),
+          );
+          streamController?.enqueue(
+            encoder.encode(
+              'data: {"kind":"claude.event","content":{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1778739600,"rateLimitType":"weekly","used_percentage":45}}}\n\n',
+            ),
+          );
+          streamController?.enqueue(
+            encoder.encode(
               'data: {"kind":"claude.event","content":{"type":"system","subtype":"init","permissionMode":"default","session_id":"sess_live","model":"claude-test"}}\n\n',
             ),
           );
@@ -1688,14 +1677,18 @@ describe("ChatView device refresh bridge", () => {
     await waitFor(() => {
       expect(contextUsageSnapshots).toContainEqual({
         session: expect.objectContaining({
-          remainingPercent: 94.1,
-          usedPercent: 5.9,
-          source: "text",
+          remainingPercent: 78,
+          usedPercent: 22,
+          source: "event",
+          resetAt: "2026-05-07T06:20:00.000Z",
+          rateLimitType: "five_hour",
         }),
         week: expect.objectContaining({
-          remainingPercent: 94.1,
-          usedPercent: 5.9,
-          source: "text",
+          remainingPercent: 55,
+          usedPercent: 45,
+          source: "event",
+          resetAt: "2026-05-14T06:20:00.000Z",
+          rateLimitType: "weekly",
         }),
       });
     });

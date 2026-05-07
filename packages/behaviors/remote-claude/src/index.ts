@@ -325,10 +325,16 @@ export const behaviorDef: RunBehaviorOptions = {
       if (!params || typeof params.cwd !== "string" || !params.cwd.trim()) {
         throw new Error("context.usage: cwd is required");
       }
-      const events: ClaudeStreamEvent[] = [];
       const scope =
         params.scope === "session" || params.scope === "week" ? params.scope : undefined;
-      const message = scope === "session" || scope === "week" ? "/extra-usage" : "/context";
+      if (scope && !params.command) {
+        return {
+          usage: null,
+          eventCount: 0,
+          checkedAt: new Date().toISOString(),
+        };
+      }
+      const events: ClaudeStreamEvent[] = [];
       const permissionMode =
         params.permissionMode && VALID_PERMISSION_MODES.has(params.permissionMode)
           ? params.permissionMode
@@ -336,15 +342,12 @@ export const behaviorDef: RunBehaviorOptions = {
       const model = safeClaudeModel(params.model);
       const result = await runClaude({
         cwd: params.cwd,
-        message,
-        ...(scope ? {} : params.sessionId ? { resumeSessionId: params.sessionId } : {}),
+        message: "/context",
+        ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(model ? { model } : {}),
         ...(params.command ? { command: params.command } : {}),
-        extraArgs:
-          scope === "session" || scope === "week"
-            ? ["--no-session-persistence", "--max-budget-usd", "0.01"]
-            : ["--max-budget-usd", "0.01"],
+        extraArgs: ["--max-budget-usd", "0.01"],
         onEvent: (event) => {
           events.push(event);
         },

@@ -67,7 +67,6 @@ const BEHAVIOR_READY_RETRY_MS = 1000;
 const BEHAVIOR_READY_MAX_RETRIES = 15;
 const DEVICE_OFFLINE_REFETCH_MS = 1500;
 const STREAM_OPEN_GRACE_MS = 2500;
-const CONTEXT_USAGE_POLL_MS = 5 * 60 * 1000;
 const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
 
@@ -101,12 +100,6 @@ export interface ContextUsageOverview {
   week: ContextUsageSnapshot | null;
 }
 
-interface ContextUsageResult {
-  usage: ContextUsageSnapshot | null;
-  eventCount: number;
-  checkedAt: string;
-}
-
 export function latestContextUsageSnapshot(
   events: ClaudeStreamEvent[],
 ): ContextUsageSnapshot | null {
@@ -115,6 +108,48 @@ export function latestContextUsageSnapshot(
     if (snapshot) return snapshot;
   }
   return null;
+}
+
+function latestRateLimitUsageSnapshot(
+  events: ClaudeStreamEvent[],
+  target: "five_hour" | "weekly",
+): ContextUsageSnapshot | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const snapshot = rateLimitUsageFromEvent(events[i], target);
+    if (snapshot) return snapshot;
+  }
+  return null;
+}
+
+function rateLimitUsageFromEvent(
+  event: unknown,
+  target: "five_hour" | "weekly",
+): ContextUsageSnapshot | null {
+  const record = asRecord(event);
+  if (!record || record.type !== "rate_limit_event") return null;
+  const info = asRecord(record.rate_limit_info);
+  if (!info) return null;
+  const rateLimitType = typeof info.rateLimitType === "string" ? info.rateLimitType : "";
+  const normalizedType = rateLimitType.toLowerCase().replace(/[-\s]+/g, "_");
+  const isTarget =
+    target === "five_hour"
+      ? normalizedType === "five_hour" || normalizedType === "session"
+      : normalizedType === "weekly" || normalizedType === "week";
+  if (!isTarget) return null;
+
+  const usedPercent = firstPercent(info, ["used_percentage", "usedPercentage", "used_percent"]);
+  const resetsAt = numericValue(info.resetsAt);
+  const resetAt =
+    resetsAt !== null && resetsAt > 0 ? new Date(resetsAt * 1000).toISOString() : undefined;
+  const status = typeof info.status === "string" ? info.status : undefined;
+  return {
+    remainingPercent: usedPercent === null ? null : clampPercent(100 - usedPercent),
+    usedPercent,
+    source: "event",
+    rateLimitType,
+    ...(resetAt ? { resetAt } : {}),
+    ...(status ? { status } : {}),
+  };
 }
 
 function contextUsageFromEvent(event: unknown): ContextUsageSnapshot | null {
@@ -521,8 +556,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setSelectedDeviceId(null);
     setSelectedSession(null);
     setTranscript([]);
-    clearSessionContextUsage();
-    clearWeekContextUsage();
     setError(null);
     setCwd("");
     resetConfirmedPermissionMode();
@@ -650,23 +683,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   const [selectedSession, setSelectedSession] = createSignal<ClaudeSessionSummary | null>(null);
   const [transcript, setTranscript] = createSignal<ClaudeStreamEvent[]>([]);
-  const [probedSessionContextUsage, setProbedSessionContextUsage] =
-    createSignal<ContextUsageSnapshot | null>(null);
-  const [weekContextUsage, setWeekContextUsage] = createSignal<ContextUsageSnapshot | null>(null);
   const contextUsage = createMemo<ContextUsageOverview>(() => ({
-    session: probedSessionContextUsage(),
-    week: weekContextUsage(),
+    session: latestRateLimitUsageSnapshot(transcript(), "five_hour"),
+    week: latestRateLimitUsageSnapshot(transcript(), "weekly"),
   }));
-  let sessionContextUsageRequestSeq = 0;
-  let weekContextUsageRequestSeq = 0;
-  function clearSessionContextUsage() {
-    sessionContextUsageRequestSeq += 1;
-    setProbedSessionContextUsage(null);
-  }
-  function clearWeekContextUsage() {
-    weekContextUsageRequestSeq += 1;
-    setWeekContextUsage(null);
-  }
 
   const [cwd, setCwd] = createSignal<string>("");
   const [requestedPermissionMode, setRequestedPermissionMode] = createSignal<ClaudePermissionMode>(
@@ -936,80 +956,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setTranscriptAtBottom(false);
     }
   }
-
-  interface ContextUsageProbeInput {
-    deviceId: string;
-    instanceId: string;
-    cwd: string;
-    permissionMode: ClaudePermissionMode;
-    model: string | null;
-  }
-
-  function deviceContextUsageCwd(deviceId: string): string {
-    return getDeviceDefaultCwd(deviceId) || ".";
-  }
-
-  function contextUsageProbeInputFor(deviceId: string, instanceId: string): ContextUsageProbeInput {
-    return {
-      deviceId,
-      instanceId,
-      cwd: deviceContextUsageCwd(deviceId),
-      permissionMode: confirmedPermissionMode() ?? requestedPermissionMode(),
-      model: selectedClaudeModel(),
-    };
-  }
-
-  async function refreshContextUsage(input: ContextUsageProbeInput, scope: "session" | "week") {
-    const seq =
-      scope === "session" ? ++sessionContextUsageRequestSeq : ++weekContextUsageRequestSeq;
-    try {
-      const res = await api.callBehavior<ContextUsageResult>(
-        input.deviceId,
-        input.instanceId,
-        "context.usage",
-        {
-          cwd: input.cwd,
-          scope,
-          permissionMode: input.permissionMode,
-          ...(input.model ? { model: input.model } : {}),
-        },
-      );
-      if (scope === "session" && seq !== sessionContextUsageRequestSeq) return;
-      if (scope === "week" && seq !== weekContextUsageRequestSeq) return;
-      if (res.error) return;
-      if (scope === "session") setProbedSessionContextUsage(res.result?.usage ?? null);
-      else setWeekContextUsage(res.result?.usage ?? null);
-    } catch {
-      if (scope === "session" && seq === sessionContextUsageRequestSeq) {
-        setProbedSessionContextUsage(null);
-      }
-      if (scope === "week" && seq === weekContextUsageRequestSeq) {
-        setWeekContextUsage(null);
-      }
-    }
-  }
-
-  createEffect(() => {
-    if (devices.loading || behaviors.loading) return;
-    const deviceId = effectiveDeviceId();
-    const instanceId = remoteClaudeInstance();
-    if (!deviceId || !instanceId) {
-      clearWeekContextUsage();
-      return;
-    }
-    const input = contextUsageProbeInputFor(deviceId, instanceId);
-    void refreshContextUsage(input, "session");
-    void refreshContextUsage(input, "week");
-    const timer = setInterval(() => {
-      const currentDeviceId = effectiveDeviceId();
-      const currentInstanceId = remoteClaudeInstance();
-      if (!currentDeviceId || !currentInstanceId) return;
-      const currentInput = contextUsageProbeInputFor(currentDeviceId, currentInstanceId);
-      void refreshContextUsage(currentInput, "session");
-      void refreshContextUsage(currentInput, "week");
-    }, CONTEXT_USAGE_POLL_MS);
-    onCleanup(() => clearInterval(timer));
-  });
 
   function handleScrollToBottomClick() {
     scrollTranscriptToBottom("smooth");
@@ -1623,7 +1569,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setActiveRunId(runId);
     setLastPermissionModeRequest(requestedModeForRun);
     setPermissionModeStatus("pending");
-    let streamFinished = false;
 
     let markStreamReady = () => {};
     const streamReady = new Promise<void>((resolve) => {
@@ -1668,7 +1613,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             abort.abort();
             return;
           } else if (e.kind === "run.finished") {
-            streamFinished = true;
             abort.abort();
             return;
           }
@@ -1729,11 +1673,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (chatAccepted && !streamSawSystemInit && activeRunId() === runId) {
         setLastPermissionModeRequest(requestedModeForRun);
         setPermissionModeStatus("unknown");
-      }
-      if (chatAccepted && streamFinished) {
-        const usageInput = contextUsageProbeInputFor(dev, inst);
-        void refreshContextUsage(usageInput, "session");
-        void refreshContextUsage(usageInput, "week");
       }
       abort.abort();
       setRunning(false);
@@ -1830,8 +1769,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   setSelectedDeviceId(v || null);
                   setSelectedSession(null);
                   setTranscript([]);
-                  clearSessionContextUsage();
-                  clearWeekContextUsage();
                   resetConfirmedPermissionMode();
                   void refetchBehaviors();
                 }
