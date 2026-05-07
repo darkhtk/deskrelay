@@ -131,4 +131,32 @@ describe("remote-claude behavior chat request", () => {
     expect(saved.permissions?.ask).toEqual(["Edit(*)"]);
     expect(saved.permissions?.defaultMode).toBe("default");
   });
+
+  test("context.usage returns a compact snapshot from Claude /context output", async () => {
+    const { ctx, handlers } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const contextUsage = handlers.get("context.usage");
+    if (!contextUsage) throw new Error("context.usage handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-context-"));
+    tempDirs.push(cwd);
+    const fixture = fileURLToPath(new URL("./fixtures/fake-claude-context.ts", import.meta.url));
+
+    const result = (await contextUsage({
+      cwd,
+      sessionId: "sess_context",
+      command: ["bun", fixture],
+    })) as {
+      usage: { remainingPercent: number; usedPercent: number; source: string } | null;
+      eventCount: number;
+      checkedAt: string;
+    };
+
+    expect(result.eventCount).toBe(3);
+    expect(result.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(result.usage?.remainingPercent).toBeCloseTo(94.1);
+    expect(result.usage?.usedPercent).toBeCloseTo(5.9);
+    expect(result.usage?.source).toBe("text");
+  });
 });

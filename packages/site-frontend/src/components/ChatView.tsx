@@ -1,4 +1,4 @@
-// ChatView — full claude-remote-style chat experience.
+// ChatView ??full claude-remote-style chat experience.
 //
 // Layout: sidebar (device picker, sessions, profile) + main (transcript +
 // composer). The class names + structure mirror the index.html shell
@@ -90,6 +90,12 @@ export interface ContextUsageSnapshot {
   remainingPercent: number;
   usedPercent: number;
   source: "event" | "text";
+}
+
+interface ContextUsageResult {
+  usage: ContextUsageSnapshot | null;
+  eventCount: number;
+  checkedAt: string;
 }
 
 export function latestContextUsageSnapshot(
@@ -346,6 +352,13 @@ function isClaudeSystemInit(event: unknown): boolean {
   return e.type === "system" && e.subtype === "init";
 }
 
+function sessionIdFromSystemInit(event: unknown): string | null {
+  if (!event || typeof event !== "object") return null;
+  const e = event as { type?: unknown; subtype?: unknown; session_id?: unknown };
+  if (e.type !== "system" || e.subtype !== "init") return null;
+  return typeof e.session_id === "string" && e.session_id.trim() ? e.session_id : null;
+}
+
 function isLocalSlashCommandText(value: string): boolean {
   return /^\/(?:help|clear|model|permissions|status)(?:\s+.*)?$/i.test(value.trim());
 }
@@ -506,6 +519,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setSelectedDeviceId(null);
     setSelectedSession(null);
     setTranscript([]);
+    clearProbedContextUsage();
     setError(null);
     setCwd("");
     resetConfirmedPermissionMode();
@@ -633,7 +647,18 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   const [selectedSession, setSelectedSession] = createSignal<ClaudeSessionSummary | null>(null);
   const [transcript, setTranscript] = createSignal<ClaudeStreamEvent[]>([]);
-  const contextUsage = createMemo(() => latestContextUsageSnapshot(transcript()));
+  const [probedContextUsage, setProbedContextUsage] = createSignal<ContextUsageSnapshot | null>(
+    null,
+  );
+  const contextUsage = createMemo(
+    () => probedContextUsage() ?? latestContextUsageSnapshot(transcript()),
+  );
+  let contextUsageRequestSeq = 0;
+  function clearProbedContextUsage() {
+    contextUsageRequestSeq += 1;
+    setProbedContextUsage(null);
+  }
+
   const [cwd, setCwd] = createSignal<string>("");
   const [requestedPermissionMode, setRequestedPermissionMode] = createSignal<ClaudePermissionMode>(
     CLAUDE_PERMISSION_MODES.DEFAULT,
@@ -903,6 +928,35 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
   }
 
+  async function refreshContextUsageAfterRun(input: {
+    deviceId: string;
+    instanceId: string;
+    cwd: string;
+    sessionId: string;
+    permissionMode: ClaudePermissionMode;
+    model: string | null;
+  }) {
+    const seq = ++contextUsageRequestSeq;
+    try {
+      const res = await api.callBehavior<ContextUsageResult>(
+        input.deviceId,
+        input.instanceId,
+        "context.usage",
+        {
+          cwd: input.cwd,
+          sessionId: input.sessionId,
+          permissionMode: input.permissionMode,
+          ...(input.model ? { model: input.model } : {}),
+        },
+      );
+      if (seq !== contextUsageRequestSeq) return;
+      if (res.error) return;
+      setProbedContextUsage(res.result?.usage ?? null);
+    } catch {
+      if (seq === contextUsageRequestSeq) setProbedContextUsage(null);
+    }
+  }
+
   function handleScrollToBottomClick() {
     scrollTranscriptToBottom("smooth");
   }
@@ -911,7 +965,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (transcript().length === 0) setTranscriptAtBottom(true);
   });
 
-  // Mobile drawer toggle — the CSS rules at @media (max-width: 720px)
+  // Mobile drawer toggle ??the CSS rules at @media (max-width: 720px)
   // key off body.sidebar-open (so the sibling backdrop selector +
   // body-scroll-lock both work from the same hook). Sync the body
   // class with the signal here. Without this the drawer never slid
@@ -1130,6 +1184,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (selectedSession()?.sessionId === id) {
       setSelectedSession(null);
       setTranscript([]);
+      clearProbedContextUsage();
       resetConfirmedPermissionMode();
     }
     mutateSessions((current) => (current ?? []).filter((session) => session.sessionId !== id));
@@ -1208,6 +1263,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (selectedSession()?.cwd === cwdToDelete) {
       setSelectedSession(null);
       setTranscript([]);
+      clearProbedContextUsage();
       setCwd("");
       resetConfirmedPermissionMode();
     }
@@ -1224,11 +1280,13 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   async function selectSession(id: string, _entry: SessionEntry | undefined) {
     const summary = (sessions() ?? []).find((s) => s.sessionId === id) ?? null;
     setSelectedSession(summary);
+    clearProbedContextUsage();
     setError(null);
     setShowNewChat(false);
     setSidebarOpen(false);
     if (!summary) {
       setTranscript([]);
+      clearProbedContextUsage();
       return;
     }
     setCwd(summary.cwd);
@@ -1278,6 +1336,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (isMissingSessionFileError(message)) {
         setSelectedSession(null);
         setTranscript([]);
+        clearProbedContextUsage();
         setCwd("");
         resetConfirmedPermissionMode();
         void refetchSessions();
@@ -1286,17 +1345,19 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       }
       setError(message);
       setTranscript([]);
+      clearProbedContextUsage();
     }
   }
 
   function openNewChat() {
     // The NewChatCard renders INSIDE the sidebar (cwd picker + start
-    // button), so we explicitly keep the sidebar open here — closing it
+    // button), so we explicitly keep the sidebar open here ??closing it
     // would hide the very surface the user just clicked into. The
     // drawer closes when the cwd is confirmed (startSession) instead.
     setShowNewChat(true);
     setSelectedSession(null);
     setTranscript([]);
+    clearProbedContextUsage();
     setError(null);
     resetConfirmedPermissionMode();
   }
@@ -1327,10 +1388,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setNextPermissionMode(input.permissionMode);
     setShowNewChat(false);
     setTranscript([]);
+    clearProbedContextUsage();
     setError(null);
     setSelectedSession(null);
     resetConfirmedPermissionMode();
-    // User has committed to a chat — collapse the drawer so the
+    // User has committed to a chat ??collapse the drawer so the
     // composer + transcript take the full mobile viewport.
     setSidebarOpen(false);
   }
@@ -1368,6 +1430,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
     if (command === "clear") {
       setTranscript([]);
+      clearProbedContextUsage();
       setError(null);
       resetConfirmedPermissionMode();
       appendLocalAssistantMessage("Transcript cleared.");
@@ -1508,11 +1571,15 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
     const runId = `r${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const requestedModeForRun = requestedPermissionMode();
+    const cwdForRun = cwd();
+    const modelForRun = selectedClaudeModel();
     const space = `remote-claude.run:${runId}`;
     const abort = new AbortController();
     setActiveRunId(runId);
     setLastPermissionModeRequest(requestedModeForRun);
     setPermissionModeStatus("pending");
+    let runSessionId = selectedSession()?.sessionId ?? null;
+    let streamFinished = false;
 
     let markStreamReady = () => {};
     const streamReady = new Promise<void>((resolve) => {
@@ -1542,6 +1609,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           if (e.kind === "claude.event" && e.content) {
             if (activeRunId() === runId && isClaudeSystemInit(e.content)) {
               streamSawSystemInit = true;
+              runSessionId = sessionIdFromSystemInit(e.content) ?? runSessionId;
               const actualMode = permissionModeFromSystemInit(e.content);
               if (actualMode) {
                 confirmPermissionMode(actualMode, requestedModeForRun);
@@ -1557,6 +1625,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             abort.abort();
             return;
           } else if (e.kind === "run.finished") {
+            streamFinished = true;
             abort.abort();
             return;
           }
@@ -1578,14 +1647,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         inst,
         "chat",
         {
-          cwd: cwd(),
+          cwd: cwdForRun,
           message,
           attachments: pendingAttachments,
           runId,
           permissionMode: requestedModeForRun,
-          ...(selectedClaudeModel() ? { model: selectedClaudeModel() } : {}),
+          ...(modelForRun ? { model: modelForRun } : {}),
           // Per-device fail-policy hint for the PreToolUse hook. Persisted
-          // in localStorage via Settings → Devices → device-prefs.
+          // in localStorage via Settings ??Devices ??device-prefs.
           securityProfile: getDeviceSecurityProfile(dev),
           ...(selectedSession()?.sessionId ? { sessionId: selectedSession()?.sessionId } : {}),
         },
@@ -1624,6 +1693,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setActiveRunId(null);
       attachmentsApi?.clear();
       void refetchSessions();
+      if (chatAccepted && streamFinished && runSessionId) {
+        void refreshContextUsageAfterRun({
+          deviceId: dev,
+          instanceId: inst,
+          cwd: cwdForRun,
+          sessionId: runSessionId,
+          permissionMode: confirmedPermissionMode() ?? requestedModeForRun,
+          model: modelForRun,
+        });
+      }
     }
   }
 
@@ -1713,6 +1792,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   setSelectedDeviceId(v || null);
                   setSelectedSession(null);
                   setTranscript([]);
+                  clearProbedContextUsage();
                   resetConfirmedPermissionMode();
                   void refetchBehaviors();
                 }
@@ -2315,12 +2395,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         </div>
       </section>
 
-      {/* Refresh devices when nothing has loaded yet — runs once on mount. */}
+      {/* Refresh devices when nothing has loaded yet ??runs once on mount. */}
       <Show when={!effectiveDeviceId()}>
         <RefreshOnMount onMount={() => void refetchDevices()} />
       </Show>
 
-      {/* Always mounted — subscribes to the active device's approval
+      {/* Always mounted ??subscribes to the active device's approval
           space and pops a modal when claude requests a tool. */}
       <ApprovalModal deviceId={effectiveDeviceId()} />
     </section>

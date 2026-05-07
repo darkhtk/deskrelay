@@ -1386,6 +1386,7 @@ describe("ChatView device refresh bridge", () => {
     let sessionsListRequests = 0;
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
     let chatParams: ChatRequestParams | undefined;
+    const contextUsageSnapshots: Array<unknown> = [];
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1442,6 +1443,18 @@ describe("ChatView device refresh bridge", () => {
             headers: { "content-type": "application/json" },
           });
         }
+        if (body.method === "context.usage") {
+          return new Response(
+            JSON.stringify({
+              result: {
+                usage: { remainingPercent: 94.1, usedPercent: 5.9, source: "text" },
+                eventCount: 3,
+                checkedAt: "2026-05-07T00:00:00.000Z",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
         if (body.method === "chat") {
           order.push("chat-request");
           chatParams = body.params as ChatRequestParams;
@@ -1478,6 +1491,7 @@ describe("ChatView device refresh bridge", () => {
         me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
         onSignOut={vi.fn()}
         onOpenSettings={vi.fn()}
+        onContextUsageChange={(usage) => contextUsageSnapshots.push(usage)}
       />
     ));
 
@@ -1551,6 +1565,13 @@ describe("ChatView device refresh bridge", () => {
       );
       expect(permissionSelect.value).toBe("default");
       expect(scroller.scrollTop).toBe(987);
+    });
+    await waitFor(() => {
+      expect(contextUsageSnapshots).toContainEqual({
+        remainingPercent: 94.1,
+        usedPercent: 5.9,
+        source: "text",
+      });
     });
   });
 });

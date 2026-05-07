@@ -29,7 +29,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type RunBehaviorOptions, runBehavior } from "@claude-remote/behavior-sdk/runtime";
 import manifest from "../manifest.json" with { type: "json" };
-import { ClaudeRunError, probeClaudeSlashCommands, runClaude } from "./claude-runner.ts";
+import {
+  ClaudeRunError,
+  type ClaudeStreamEvent,
+  probeClaudeSlashCommands,
+  runClaude,
+} from "./claude-runner.ts";
 import {
   type DeleteSessionOptions,
   type DeleteSessionResult,
@@ -146,6 +151,26 @@ interface SlashCommandsResult {
   skills: string[];
   claudeVersion?: string;
   model?: string;
+}
+
+interface ContextUsageParams {
+  cwd: string;
+  sessionId?: string;
+  permissionMode?: string;
+  model?: string;
+  command?: string[];
+}
+
+interface ContextUsageSnapshot {
+  remainingPercent: number;
+  usedPercent: number;
+  source: "event" | "text";
+}
+
+interface ContextUsageResult {
+  usage: ContextUsageSnapshot | null;
+  eventCount: number;
+  checkedAt: string;
 }
 
 interface PermissionsInspectParams {
@@ -290,6 +315,41 @@ export const behaviorDef: RunBehaviorOptions = {
           ctx.logger.warn("slash command probe stderr", { line });
         },
       });
+    });
+
+    ctx.onRequest<ContextUsageParams, ContextUsageResult>("context.usage", async (params) => {
+      if (!params || typeof params.cwd !== "string" || !params.cwd.trim()) {
+        throw new Error("context.usage: cwd is required");
+      }
+      const events: ClaudeStreamEvent[] = [];
+      const permissionMode =
+        params.permissionMode && VALID_PERMISSION_MODES.has(params.permissionMode)
+          ? params.permissionMode
+          : undefined;
+      const model = safeClaudeModel(params.model);
+      const result = await runClaude({
+        cwd: params.cwd,
+        message: "/context",
+        ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(model ? { model } : {}),
+        ...(params.command ? { command: params.command } : {}),
+        extraArgs: ["--max-budget-usd", "0.01"],
+        onEvent: (event) => {
+          events.push(event);
+        },
+        onMalformedStdout: (line, error) => {
+          ctx.logger.warn("context usage malformed stdout", { line, error: error.message });
+        },
+        onStderrLine: (line) => {
+          ctx.logger.warn("context usage stderr", { line });
+        },
+      });
+      return {
+        usage: latestContextUsageSnapshot(events),
+        eventCount: result.eventCount,
+        checkedAt: new Date().toISOString(),
+      };
     });
 
     ctx.onRequest<PermissionsInspectParams, PermissionsInspectResult>(
@@ -589,4 +649,200 @@ function normalizePermissionUpdateList(value: unknown): string[] {
 function stringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function latestContextUsageSnapshot(events: ClaudeStreamEvent[]): ContextUsageSnapshot | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const snapshot = contextUsageFromEvent(events[i]);
+    if (snapshot) return snapshot;
+  }
+  return null;
+}
+
+function contextUsageFromEvent(event: unknown): ContextUsageSnapshot | null {
+  const record = asRecord(event);
+  if (!record) return null;
+  const message = asRecord(record.message);
+  const candidates = [
+    record,
+    asRecord(record.usage),
+    asRecord(record.context),
+    asRecord(record.result),
+    message,
+    message ? asRecord(message.usage) : null,
+    message ? asRecord(message.context) : null,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const snapshot = contextUsageFromRecord(candidate);
+    if (snapshot) return snapshot;
+  }
+  for (const text of contextTextFields(record)) {
+    const snapshot = contextUsageFromText(text);
+    if (snapshot) return snapshot;
+  }
+  return null;
+}
+
+function contextUsageFromRecord(record: Record<string, unknown>): ContextUsageSnapshot | null {
+  const remaining = firstPercent(record, [
+    "context_remaining_percent",
+    "contextRemainingPercent",
+    "remaining_context_percent",
+    "remainingContextPercent",
+    "remaining_percent",
+    "remainingPercent",
+  ]);
+  if (remaining !== null) return usageFromRemaining(remaining, "event");
+
+  const used = firstPercent(record, [
+    "context_usage_percent",
+    "contextUsagePercent",
+    "context_used_percent",
+    "contextUsedPercent",
+    "used_percent",
+    "usedPercent",
+    "percent_used",
+    "percentUsed",
+  ]);
+  if (used !== null) return usageFromUsed(used, "event");
+
+  const maxTokens = firstNumber(record, [
+    "context_window",
+    "contextWindow",
+    "context_window_tokens",
+    "contextWindowTokens",
+    "max_context_tokens",
+    "maxContextTokens",
+    "max_tokens",
+    "maxTokens",
+    "limit",
+  ]);
+  if (!maxTokens || maxTokens <= 0) return null;
+
+  const remainingTokens = firstNumber(record, [
+    "remaining_tokens",
+    "remainingTokens",
+    "context_remaining_tokens",
+    "contextRemainingTokens",
+  ]);
+  if (remainingTokens !== null)
+    return usageFromRemaining((remainingTokens / maxTokens) * 100, "event");
+
+  const usedTokens = firstNumber(record, [
+    "used_tokens",
+    "usedTokens",
+    "context_used_tokens",
+    "contextUsedTokens",
+    "input_tokens",
+    "inputTokens",
+    "total_tokens",
+    "totalTokens",
+  ]);
+  return usedTokens !== null ? usageFromUsed((usedTokens / maxTokens) * 100, "event") : null;
+}
+
+function contextUsageFromText(text: string): ContextUsageSnapshot | null {
+  if (!text || !/\bcontext\b/i.test(text) || !/%/.test(text)) return null;
+  const normalized = text.replace(/\s+/g, " ");
+
+  const freeSpaceMatch = normalized.match(
+    /\|\s*Free space\s*\|[^|]*\|\s*(\d{1,3}(?:\.\d+)?)\s*%\s*\|/i,
+  );
+  if (freeSpaceMatch?.[1]) return usageFromRemaining(Number(freeSpaceMatch[1]), "text");
+
+  const claudeContextTokensMatch = normalized.match(
+    /\*\*Tokens:\*\*\s*[^()]*\((\d{1,3}(?:\.\d+)?)\s*%\)/i,
+  );
+  if (claudeContextTokensMatch?.[1]) {
+    return usageFromUsed(Number(claudeContextTokensMatch[1]), "text");
+  }
+
+  const remainingMatch =
+    normalized.match(/(?:remaining|left|available|free)[^0-9%]{0,48}(\d{1,3}(?:\.\d+)?)\s*%/i) ??
+    normalized.match(/(\d{1,3}(?:\.\d+)?)\s*%[^.]{0,48}(?:remaining|left|available|free)/i);
+  if (remainingMatch?.[1]) return usageFromRemaining(Number(remainingMatch[1]), "text");
+
+  const usedMatch =
+    normalized.match(/(?:used|usage|full)[^0-9%]{0,48}(\d{1,3}(?:\.\d+)?)\s*%/i) ??
+    normalized.match(/(\d{1,3}(?:\.\d+)?)\s*%[^.]{0,48}(?:used|usage|full)/i);
+  return usedMatch?.[1] ? usageFromUsed(Number(usedMatch[1]), "text") : null;
+}
+
+function contextTextFields(record: Record<string, unknown>): string[] {
+  const fields = [messageText(record)];
+  if (typeof record.result === "string") fields.push(record.result);
+  if (typeof record.content === "string") fields.push(record.content);
+  if (typeof record.text === "string") fields.push(record.text);
+  return fields.filter((field) => field.trim().length > 0);
+}
+
+function messageText(record: Record<string, unknown>): string {
+  const message = asRecord(record.message);
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => {
+      const item = asRecord(block);
+      return typeof item?.text === "string" ? item.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function firstPercent(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numericValue(record[key]);
+    if (value !== null) return clampPercent(value);
+  }
+  return null;
+}
+
+function firstNumber(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numericValue(record[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return null;
+  const parsed = Number(value.replace(/%$/, "").trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function usageFromRemaining(
+  value: number,
+  source: ContextUsageSnapshot["source"],
+): ContextUsageSnapshot {
+  const remainingPercent = clampPercent(value);
+  return {
+    remainingPercent,
+    usedPercent: clampPercent(100 - remainingPercent),
+    source,
+  };
+}
+
+function usageFromUsed(
+  value: number,
+  source: ContextUsageSnapshot["source"],
+): ContextUsageSnapshot {
+  const usedPercent = clampPercent(value);
+  return {
+    usedPercent,
+    remainingPercent: clampPercent(100 - usedPercent),
+    source,
+  };
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
 }
