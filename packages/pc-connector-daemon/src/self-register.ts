@@ -1,4 +1,5 @@
 import { networkInterfaces } from "node:os";
+import { spawn } from "node:child_process";
 import { loadOrCreateAuthToken } from "./auth-token.ts";
 import { defaultLoginTaskLaunch, installLoginTask } from "./login-task.ts";
 import { readStateFile } from "./state-file.ts";
@@ -19,6 +20,7 @@ export interface RegisterSelfOptions {
   installTask?: typeof installLoginTask;
   loadAuthToken?: typeof loadOrCreateAuthToken;
   stopRecordedDaemon?: (port: number) => Promise<void>;
+  stopPortOwner?: (port: number) => Promise<boolean>;
 }
 
 export interface RegisterSelfResult {
@@ -67,6 +69,13 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
   }
 
   await (options.stopRecordedDaemon ?? stopRecordedDaemon)(port);
+  await stopLocalConnectorPortIfPresent(
+    fetchImpl,
+    `http://127.0.0.1:${port}`,
+    port,
+    auth.token,
+    options.stopPortOwner ?? stopListeningProcessOnPort,
+  );
 
   const baseLaunch = defaultLoginTaskLaunch();
   const env: Record<string, string | undefined> = {
@@ -139,6 +148,24 @@ async function waitForDaemonStatus(
   throw new Error(`${label} did not become ready at ${baseUrl}: ${lastError || "timed out"}`);
 }
 
+async function stopLocalConnectorPortIfPresent(
+  fetchImpl: typeof fetch,
+  baseUrl: string,
+  port: number,
+  token: string,
+  stopPortOwner: (port: number) => Promise<boolean>,
+): Promise<void> {
+  const probe = await probeDaemonStatus(fetchImpl, baseUrl, token, 1_000);
+  if (!probe.ok && probe.error !== "HTTP 401" && probe.error !== "HTTP 403") return;
+  const stopped = await stopPortOwner(port);
+  if (!stopped) return;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await isPortFree("127.0.0.1", port)) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
 async function probeDaemonStatus(
   fetchImpl: typeof fetch,
   baseUrl: string,
@@ -156,6 +183,61 @@ async function probeDaemonStatus(
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+}
+
+async function stopListeningProcessOnPort(port: number): Promise<boolean> {
+  if (process.platform !== "win32") return false;
+  const pids = await findWindowsListeningPids(port);
+  const targets = pids.filter((pid) => pid > 0 && pid !== process.pid);
+  if (targets.length === 0) return false;
+  for (const pid of targets) {
+    await runCommand("taskkill.exe", ["/PID", String(pid), "/T", "/F"]).catch(() => ({
+      code: 1,
+      stdout: "",
+      stderr: "",
+    }));
+  }
+  return true;
+}
+
+async function findWindowsListeningPids(port: number): Promise<number[]> {
+  const script = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    `Get-NetTCPConnection -LocalPort ${port} -State Listen |`,
+    "  Select-Object -ExpandProperty OwningProcess -Unique",
+  ].join("; ");
+  const result = await runCommand("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    script,
+  ]);
+  if (result.code !== 0) return [];
+  return result.stdout
+    .split(/\r?\n/)
+    .map((line) => Number(line.trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
 }
 
 async function replaceServerRegistration(
