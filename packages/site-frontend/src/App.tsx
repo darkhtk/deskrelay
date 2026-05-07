@@ -81,12 +81,14 @@ const ContextUsageBattery: Component<{
       title={title()}
       data-known={known() ? "true" : "false"}
     >
-      <span class="context-battery">
-        <span class="context-battery-label">{props.label}</span>
-        <span class="context-battery-shell" aria-hidden="true">
-          <span class="context-battery-fill" style={{ width: fillWidth() }} />
+      <span class="context-meter-main">
+        <span class="context-battery">
+          <span class="context-battery-label">{props.label}</span>
+          <span class="context-battery-shell" aria-hidden="true">
+            <span class="context-battery-fill" style={{ width: fillWidth() }} />
+          </span>
+          <span class="context-battery-value">{percentText()}</span>
         </span>
-        <span class="context-battery-value">{percentText()}</span>
       </span>
       <span class="context-meter-reset">{props.resetLabel}</span>
     </output>

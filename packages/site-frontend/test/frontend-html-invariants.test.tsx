@@ -74,6 +74,16 @@ describe("LoginCard", () => {
 });
 
 describe("settings and chrome invariants", () => {
+  test("session and week usage meters stack with reset labels on the right", () => {
+    const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
+    const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
+
+    expect(appSource).toContain('class="context-meter-main"');
+    expect(styles).toMatch(/\.context-meter-group\s*{[^}]*flex-direction:\s*column;/s);
+    expect(styles).toMatch(/\.context-meter\s*{[^}]*justify-content:\s*space-between;/s);
+    expect(styles).toMatch(/\.context-meter-reset\s*{[^}]*margin-left:\s*auto;/s);
+  });
+
   test("general settings, devices, diagnostics, and hard refresh live in unified settings", () => {
     const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
