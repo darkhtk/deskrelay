@@ -1,5 +1,5 @@
-import { networkInterfaces } from "node:os";
 import { spawn } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import { loadOrCreateAuthToken } from "./auth-token.ts";
 import { defaultLoginTaskLaunch, installLoginTask } from "./login-task.ts";
 import { readStateFile } from "./state-file.ts";
@@ -26,6 +26,9 @@ export interface RegisterSelfOptions {
 export interface RegisterSelfResult {
   daemonUrl: string;
   label: string;
+  listenHost: string;
+  advertiseHost: string;
+  port: number;
   taskName: string;
   scriptPath?: string;
   logPath?: string;
@@ -115,6 +118,9 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
   return {
     daemonUrl,
     label,
+    listenHost,
+    advertiseHost,
+    port,
     taskName: install.taskName,
     ...(install.scriptPath ? { scriptPath: install.scriptPath } : {}),
     ...(install.logPath ? { logPath: install.logPath } : {}),
@@ -251,7 +257,9 @@ async function replaceServerRegistration(
     method: "GET",
     headers: { authorization: `Bearer ${siteToken}` },
     signal: AbortSignal.timeout(10_000),
-  }).catch(() => undefined);
+  }).catch((err) => {
+    throw new Error(`cannot reach DeskRelay server at ${serverUrl}: ${(err as Error).message}`);
+  });
   if (existing?.ok) {
     const devices = (await existing.json().catch(() => [])) as PublicDevice[];
     for (const device of devices) {
@@ -272,6 +280,10 @@ async function replaceServerRegistration(
     },
     body: JSON.stringify(input),
     signal: AbortSignal.timeout(15_000),
+  }).catch((err) => {
+    throw new Error(
+      `cannot register with DeskRelay server at ${serverUrl}: ${(err as Error).message}`,
+    );
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");

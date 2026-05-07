@@ -261,7 +261,9 @@ if (command === "register-self") {
     });
     process.stdout.write(
       [
-        `registered ${result.label} at ${result.daemonUrl}`,
+        `connector listening: ${result.listenHost}:${result.port}`,
+        `external connector URL verified: ${result.daemonUrl}`,
+        `registered ${result.label} with the DeskRelay server`,
         `login task: ${result.taskName}`,
         ...(result.scriptPath ? [`script: ${result.scriptPath}`] : []),
         ...(result.logPath ? [`log: ${result.logPath}`] : []),

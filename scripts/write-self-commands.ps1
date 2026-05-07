@@ -112,7 +112,9 @@ $registerOtherPc = @"
 # Paste this whole block into PowerShell on the PC you want to control.
 # It downloads DeskRelay's idempotent bootstrap script from GitHub,
 # fixes/reclones a stale `$HOME\deskrelay folder when needed, starts
-# the connector, then registers that PC in this DeskRelay instance.
+# the connector on 0.0.0.0, detects the matching Tailscale/LAN address,
+# verifies server-to-connector access, then registers that PC in this
+# DeskRelay instance.
 
 `$ErrorActionPreference = 'Stop'
 `$bootstrap = Join-Path `$env:TEMP 'deskrelay-register-other-pc.ps1'
@@ -203,6 +205,11 @@ $commandsDir
 To register another PC, open this file in the DeskRelay folder root and
 copy the whole PowerShell block into the PC you want to control:
 REGISTER-OTHER-PC.txt
+
+The registration command handles Tailscale/LAN address detection, connector
+startup, access verification, and server registration. If the server URL is a
+Tailscale URL, the target PC must be logged in to the same tailnet before the
+command can complete.
 "@
 
 $listDevices = @"

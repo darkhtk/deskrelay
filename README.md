@@ -108,10 +108,14 @@ notepad .\REGISTER-OTHER-PC.txt
 
 - `$HOME\deskrelay` 설치 또는 업데이트
 - 기존 폴더 상태가 이상하면 백업 후 새로 clone
-- connector daemon 로그인 작업 등록 및 실행
-- 서버의 Tailscale/LAN URL로 디바이스 자동 등록
+- connector daemon을 `0.0.0.0:18091`로 로그인 작업 등록 및 실행
+- 서버 URL에 맞는 Tailscale 또는 LAN 주소 감지
+- 서버에서 해당 connector URL에 접근 가능한지 검증
+- 서버의 디바이스 목록에 자동 등록
 
 등록이 끝나면 브라우저의 디바이스 목록에 새 PC가 나타납니다.
+
+서버 URL이 Tailscale 주소라면 등록 대상 PC도 같은 tailnet에 로그인되어 있어야 합니다. 명령은 Tailscale IPv4를 자동으로 찾아 사용하고, 없으면 설치/로그인 후 다시 실행하라는 오류를 냅니다.
 
 ## 자주 쓰는 명령
 

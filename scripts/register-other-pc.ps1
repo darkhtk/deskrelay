@@ -9,7 +9,8 @@ param(
   [string]$WorkspaceRoots = "",
   [string]$Label = "",
   [string]$Repo = "",
-  [string]$RepoUrl = "https://github.com/darkhtk/deskrelay.git"
+  [string]$RepoUrl = "https://github.com/darkhtk/deskrelay.git",
+  [int]$Port = 18091
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +27,154 @@ function Invoke-Native {
   & $Command @Arguments
   if ($LASTEXITCODE -ne 0) {
     throw "$Command $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+  }
+}
+
+function Get-UrlHost {
+  param([string]$Url)
+  try {
+    return ([Uri]$Url).DnsSafeHost.Trim("[", "]")
+  } catch {
+    throw "Invalid DeskRelay server URL: $Url"
+  }
+}
+
+function Test-IsTailscaleHost {
+  param([string]$HostName)
+  return $HostName -match "^100\." -or $HostName -like "*.ts.net"
+}
+
+function Test-IsLocalHost {
+  param([string]$HostName)
+  return $HostName -eq "localhost" -or $HostName -eq "127.0.0.1" -or $HostName -eq "::1"
+}
+
+function Get-TailscaleIp {
+  $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.InterfaceAlias -like "*Tailscale*" -and $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+    Sort-Object InterfaceAlias |
+    Select-Object -First 1 -ExpandProperty IPAddress
+  if ($ip) {
+    return [string]$ip
+  }
+
+  $tailscale = Get-Command tailscale -ErrorAction SilentlyContinue
+  if ($tailscale) {
+    $out = & $tailscale.Source ip -4 2>$null | Select-Object -First 1
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($out)) {
+      return [string]$out.Trim()
+    }
+  }
+
+  return ""
+}
+
+function Get-RouteLocalIp {
+  param([string]$RemoteHost)
+  try {
+    $addresses = [System.Net.Dns]::GetHostAddresses($RemoteHost) |
+      Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork }
+    foreach ($address in $addresses) {
+      $udp = [System.Net.Sockets.UdpClient]::new()
+      try {
+        $udp.Connect($address, 9)
+        $local = $udp.Client.LocalEndPoint
+        if ($local -and $local.Address) {
+          $value = $local.Address.ToString()
+          if ($value -and $value -notlike "127.*" -and $value -notlike "169.254.*") {
+            return $value
+          }
+        }
+      } finally {
+        $udp.Dispose()
+      }
+    }
+  } catch {
+    return ""
+  }
+  return ""
+}
+
+function Get-LanIp {
+  param([string]$ServerHost)
+  $routeIp = Get-RouteLocalIp -RemoteHost $ServerHost
+  if ($routeIp -and -not (Test-IsTailscaleHost -HostName $routeIp)) {
+    return $routeIp
+  }
+
+  $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object {
+      -not $_.Internal -and
+      $_.InterfaceAlias -notlike "*Tailscale*" -and
+      $_.IPAddress -notlike "127.*" -and
+      $_.IPAddress -notlike "169.254.*"
+    } |
+    Sort-Object InterfaceAlias |
+    Select-Object -First 1 -ExpandProperty IPAddress
+  if ($ip) {
+    return [string]$ip
+  }
+  return ""
+}
+
+function Select-AdvertiseEndpoint {
+  param([string]$ServerUrl)
+  $serverHost = Get-UrlHost -Url $ServerUrl
+  if (Test-IsLocalHost -HostName $serverHost) {
+    throw "The DeskRelay server URL is local-only ($serverHost). Open the server command/status file on the server PC and copy the Tailscale or LAN URL, then run registration again."
+  }
+  $tailscaleIp = Get-TailscaleIp
+  if (Test-IsTailscaleHost -HostName $serverHost) {
+    if (-not $tailscaleIp) {
+      throw "DeskRelay server is being reached through Tailscale ($serverHost), but this PC has no Tailscale IPv4 address. Install Tailscale, log in to the same tailnet, then run this registration command again."
+    }
+    return [PSCustomObject]@{ Host = $tailscaleIp; Kind = "Tailscale" }
+  }
+
+  $lanIp = Get-LanIp -ServerHost $serverHost
+  if ($lanIp) {
+    return [PSCustomObject]@{ Host = $lanIp; Kind = "LAN" }
+  }
+  if ($tailscaleIp) {
+    return [PSCustomObject]@{ Host = $tailscaleIp; Kind = "Tailscale" }
+  }
+
+  throw "Could not detect an externally reachable LAN or Tailscale IPv4 address for this PC."
+}
+
+function Test-IsAdministrator {
+  if (-not $IsWindows -and $PSVersionTable.PSEdition -eq "Core") {
+    return $false
+  }
+  try {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  } catch {
+    return $false
+  }
+}
+
+function Ensure-ConnectorFirewallRule {
+  param([int]$Port)
+  if (-not $IsWindows -and $PSVersionTable.PSEdition -eq "Core") {
+    return
+  }
+  $name = "DeskRelay Connector $Port"
+  if (-not (Test-IsAdministrator)) {
+    Write-Warning "Skipped Windows Firewall setup because PowerShell is not elevated. Registration will still verify server-to-connector access and fail with a firewall hint if the port is blocked."
+    return
+  }
+  try {
+    $rule = Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($rule) {
+      Set-NetFirewallRule -DisplayName $name -Enabled True -Direction Inbound -Action Allow -Profile Any | Out-Null
+    } else {
+      New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Any | Out-Null
+    }
+    Write-Host "Windows Firewall allows inbound TCP $Port for DeskRelay."
+  } catch {
+    Write-Warning "Could not update Windows Firewall automatically: $($_.Exception.Message)"
   }
 }
 
@@ -117,6 +266,13 @@ if ([string]::IsNullOrWhiteSpace($Label)) {
 Require-Command "git" "Install Git for Windows, then run this command again."
 Require-Command "bun" "Install Bun, then run this command again."
 
+$serverUrl = $Server.TrimEnd("/")
+$endpoint = Select-AdvertiseEndpoint -ServerUrl $serverUrl
+Write-Host "DeskRelay server: $serverUrl"
+Write-Host "This PC connector will listen on 0.0.0.0:$Port"
+Write-Host "This PC will be registered as $($endpoint.Kind): http://$($endpoint.Host):$Port"
+Ensure-ConnectorFirewallRule -Port $Port
+
 Ensure-DeskRelayRepo -Path $Repo -Url $RepoUrl
 
 if (-not (Test-Path -LiteralPath $WorkspaceRoots)) {
@@ -129,13 +285,20 @@ Invoke-Native "bun" @(
   "packages/pc-connector-daemon/src/bin.ts",
   "register-self",
   "--server",
-  $Server.TrimEnd("/"),
+  $serverUrl,
   "--site-token",
   $SiteToken,
+  "--listen-host",
+  "0.0.0.0",
+  "--advertise-host",
+  $endpoint.Host,
+  "--port",
+  [string]$Port,
   "--workspace-roots",
   $WorkspaceRoots,
   "--label",
   $Label
 )
 
-Write-Host "Registered $Label with DeskRelay server: $($Server.TrimEnd('/'))"
+Write-Host "External connector URL verified: http://$($endpoint.Host):$Port"
+Write-Host "Registered $Label with DeskRelay server: $serverUrl"
