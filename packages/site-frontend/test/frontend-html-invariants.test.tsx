@@ -74,6 +74,16 @@ describe("LoginCard", () => {
 });
 
 describe("settings and chrome invariants", () => {
+  test("composer CTX meter sits inside the right edge of the rounded composer", () => {
+    const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
+
+    expect(styles).toMatch(/\.composer-card\s*{[^}]*position:\s*relative;/s);
+    expect(styles).toMatch(/\.composer-card\s*{[^}]*padding:\s*12px 22px 8px 12px;/s);
+    expect(styles).toMatch(/\.composer-ctx-meter\s*{[^}]*position:\s*absolute;/s);
+    expect(styles).toMatch(/\.composer-ctx-meter\s*{[^}]*right:\s*8px;/s);
+    expect(styles).toMatch(/\.composer-ctx-meter\s*{[^}]*bottom:\s*14px;/s);
+  });
+
   test("session and week usage meters stack with reset labels on the right", () => {
     const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");

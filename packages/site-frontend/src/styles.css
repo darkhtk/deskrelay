@@ -2436,12 +2436,13 @@ pre .copy-button:hover {
 }
 
 .composer-card {
+  position: relative;
   max-width: 760px;
   margin: 0 auto;
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: 20px;
-  padding: 12px 12px 8px;
+  padding: 12px 22px 8px 12px;
   box-shadow: var(--shadow-sm);
 }
 .composer-card:focus-within {
@@ -2513,12 +2514,12 @@ pre .copy-button:hover {
 }
 
 .composer-ctx-meter {
-  position: relative;
+  position: absolute;
+  top: 14px;
+  right: 8px;
+  bottom: 14px;
   display: inline-block;
   width: 4px;
-  height: 30px;
-  flex: 0 0 4px;
-  align-self: center;
   overflow: hidden;
   border-radius: 999px;
   background: var(--bg-soft);
