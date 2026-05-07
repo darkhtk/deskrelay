@@ -155,6 +155,40 @@ function Stop-ProcessTree {
   Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
+function Get-DevPorts {
+  $ports = @()
+  if (-not $NoDaemon -and $env:CR_CONNECTOR_PORT) {
+    $ports += [int]$env:CR_CONNECTOR_PORT
+  }
+  if (-not $NoBackend -and $env:CR_SITE_PORT) {
+    $ports += [int]$env:CR_SITE_PORT
+  }
+  if (-not $NoFrontend -and $env:CR_DEV_FRONTEND_URL) {
+    try {
+      $ports += ([Uri]$env:CR_DEV_FRONTEND_URL).Port
+    } catch {
+      # Ignore malformed convenience value.
+    }
+  }
+  return @($ports | Sort-Object -Unique)
+}
+
+function Stop-StaleDevPortListeners {
+  param([object[]]$KnownProcesses)
+  $knownPids = @($KnownProcesses | ForEach-Object { if ($_.pid) { [int]$_.pid } })
+  foreach ($port in Get-DevPorts) {
+    $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+    foreach ($listener in $listeners) {
+      $owner = [int]$listener.OwningProcess
+      if (-not $owner -or $owner -eq $PID -or $knownPids -contains $owner) {
+        continue
+      }
+      Write-Host "Stopping stale DeskRelay dev listener on port $port pid=$owner"
+      Stop-ProcessTree -ProcessId $owner
+    }
+  }
+}
+
 trap {
   if (-not $PrintOnly -and $script:StartedProcesses.Count -gt 0) {
     foreach ($entry in $script:StartedProcesses) {
@@ -194,6 +228,10 @@ if (Test-Path $env:CR_DEV_PROCESS_FILE) {
 if ($existing.Count -gt 0 -and -not $PrintOnly) {
   $names = ($existing | ForEach-Object { "$($_.name):$($_.pid)" }) -join ", "
   throw "Local dev appears to be running already ($names). Run scripts\dev-local-stop.ps1 first."
+}
+
+if (-not $PrintOnly) {
+  Stop-StaleDevPortListeners -KnownProcesses $existing
 }
 
 $started = @()
