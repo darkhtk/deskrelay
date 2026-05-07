@@ -14,8 +14,8 @@ import {
   type LoadedBehaviorPackage,
   loadBehaviorPackage,
   spawnBehaviorHost,
-} from "@claude-remote/behavior-sdk";
-import type { InProcessSubscriptionBroker } from "@claude-remote/core";
+} from "@deskrelay/behavior-sdk";
+import type { InProcessSubscriptionBroker } from "@deskrelay/core";
 
 export interface BehaviorEntry {
   instanceId: string;
@@ -55,7 +55,7 @@ export interface BehaviorRegistryOptions {
    *  ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC"]. */
   freeLicenses?: readonly string[];
   /** Phase 1 manifest-permission policy: publisher IDs trusted to
-   *  declare any permission. Defaults to ["claude-remote"] — the only
+   *  declare any permission. Defaults to ["deskrelay"] — the only
    *  publisher that ships behaviors with this repo. Third-party
    *  publishers fall through to allowedThirdPartyPermissions. */
   firstPartyPublishers?: readonly string[];
@@ -83,7 +83,7 @@ const DEFAULT_FREE_LICENSES: readonly string[] = [
   "0BSD",
 ];
 
-const DEFAULT_FIRST_PARTY_PUBLISHERS: readonly string[] = ["claude-remote"];
+const DEFAULT_FIRST_PARTY_PUBLISHERS: readonly string[] = ["deskrelay"];
 
 export class BehaviorRegistry {
   readonly #broker: InProcessSubscriptionBroker;

@@ -111,11 +111,11 @@ function defaultDeviceRegistryFile(): string | undefined {
 function defaultAuthFilePath(): string {
   if (process.platform === "win32") {
     const appData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-    return join(appData, "claude-remote", "auth.json");
+    return join(appData, "DeskRelay", "site-auth.json");
   }
   if (process.platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", "claude-remote", "auth.json");
+    return join(homedir(), "Library", "Application Support", "DeskRelay", "site-auth.json");
   }
   const xdg = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
-  return join(xdg, "claude-remote", "auth.json");
+  return join(xdg, "deskrelay", "site-auth.json");
 }

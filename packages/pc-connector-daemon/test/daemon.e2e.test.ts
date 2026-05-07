@@ -501,9 +501,9 @@ describe("Daemon HTTP API — fetcher-resolved registry URLs", () => {
     return { status: res.status, data };
   }
 
-  test("claude-remote-platform:// URL resolves via firstPartyDirs", async () => {
+  test("deskrelay:// URL resolves via firstPartyDirs", async () => {
     const r = await call("POST", "/behaviors/load", {
-      packageDir: "claude-remote-platform://behaviors/echo",
+      packageDir: "deskrelay://behaviors/echo",
       instanceId: "echo-via-url",
     });
     expect(r.status).toBe(200);
@@ -511,9 +511,9 @@ describe("Daemon HTTP API — fetcher-resolved registry URLs", () => {
     await call("DELETE", "/behaviors/echo-via-url");
   });
 
-  test("cr-platform:// alias also resolves", async () => {
+  test("dr:// alias also resolves", async () => {
     const r = await call("POST", "/behaviors/load", {
-      packageDir: "cr-platform://behaviors/echo",
+      packageDir: "dr://behaviors/echo",
       instanceId: "echo-alias",
     });
     expect(r.status).toBe(200);
@@ -522,7 +522,7 @@ describe("Daemon HTTP API — fetcher-resolved registry URLs", () => {
 
   test("registry URL for unknown name → 400 with firstPartyDirs message", async () => {
     const r = await call("POST", "/behaviors/load", {
-      packageDir: "claude-remote-platform://behaviors/unknown",
+      packageDir: "deskrelay://behaviors/unknown",
     });
     expect(r.status).toBe(400);
     expect((r.data as { error: string }).error).toMatch(/not in firstPartyDirs/);

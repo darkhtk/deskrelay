@@ -13,8 +13,8 @@
 // (Node, Bun, or Workers isolate). Multiple in-flight publishes serialize
 // naturally; we don't take locks.
 
-import type { EventEnvelope, EventInput } from "@claude-remote/shared/event";
-import { type SpaceId, isSpaceId } from "@claude-remote/shared/space";
+import type { EventEnvelope, EventInput } from "@deskrelay/shared/event";
+import { type SpaceId, isSpaceId } from "@deskrelay/shared/space";
 
 const DEFAULT_BACKLOG_PER_SPACE = 1024;
 

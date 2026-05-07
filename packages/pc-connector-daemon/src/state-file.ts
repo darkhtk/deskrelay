@@ -4,9 +4,9 @@
 // every CLI invocation. The daemon writes a tiny JSON file on start
 // listing host/port/pid; the CLI reads it as the default --base-url.
 //
-// Default location: $XDG_STATE_HOME/claude-remote/daemon.json on Linux,
-// %LOCALAPPDATA%\claude-remote\daemon.json on Windows, ~/Library/
-// Application Support/claude-remote/daemon.json on macOS.
+// Default location: $XDG_STATE_HOME/deskrelay/daemon.json on Linux,
+// %LOCALAPPDATA%\DeskRelay\daemon.json on Windows, ~/Library/
+// Application Support/DeskRelay/daemon.json on macOS.
 // Override via $CR_CONNECTOR_STATE_FILE.
 //
 // On graceful shutdown the daemon should call clearStateFile(); on a
@@ -30,13 +30,13 @@ export function defaultStateDir(): string {
   if (process.env.CR_CONNECTOR_STATE_DIR) return process.env.CR_CONNECTOR_STATE_DIR;
   if (process.platform === "win32") {
     const appData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-    return join(appData, "claude-remote");
+    return join(appData, "DeskRelay");
   }
   if (process.platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", "claude-remote");
+    return join(homedir(), "Library", "Application Support", "DeskRelay");
   }
   const xdg = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
-  return join(xdg, "claude-remote");
+  return join(xdg, "deskrelay");
 }
 
 export function defaultStateFilePath(): string {

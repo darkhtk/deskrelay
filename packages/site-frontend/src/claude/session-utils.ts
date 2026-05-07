@@ -1,5 +1,5 @@
 // session-utils — pure helpers for SessionList rendering. Same surface as
-// claude-remote/public/session-list.js (cwdBasename + formatAgo) so test
+// the original browser prototype session-list (cwdBasename + formatAgo) so test
 // fixtures can be reused.
 
 export function cwdBasename(cwd: unknown): string {

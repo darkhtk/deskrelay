@@ -1,5 +1,5 @@
 // Test fixture — minimal echo behavior. Used by host-runtime.e2e.test.ts.
-import { runBehavior } from "@claude-remote/behavior-sdk/runtime";
+import { runBehavior } from "@deskrelay/behavior-sdk/runtime";
 import manifest from "./manifest.json" with { type: "json" };
 
 await runBehavior({

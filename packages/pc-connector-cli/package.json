@@ -1,5 +1,5 @@
 {
-  "name": "@claude-remote/pc-connector-cli",
+  "name": "@deskrelay/pc-connector-cli",
   "version": "0.0.0",
   "private": true,
   "description": "CLI for the PC connector daemon. Talks to the daemon's local HTTP API.",
@@ -16,8 +16,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@claude-remote/pc-connector-daemon": "workspace:*",
-    "@claude-remote/shared": "workspace:*"
+    "@deskrelay/pc-connector-daemon": "workspace:*",
+    "@deskrelay/shared": "workspace:*"
   },
   "license": "Apache-2.0"
 }

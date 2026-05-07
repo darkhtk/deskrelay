@@ -1,5 +1,5 @@
 {
-  "name": "@claude-remote/behavior-remote-claude",
+  "name": "@deskrelay/behavior-remote-claude",
   "version": "0.0.1",
   "private": true,
   "description": "β behavior — runs the claude CLI on the user's PC. Streams stream-json output as kernel events.",
@@ -12,8 +12,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@claude-remote/behavior-sdk": "workspace:*",
-    "@claude-remote/shared": "workspace:*"
+    "@deskrelay/behavior-sdk": "workspace:*",
+    "@deskrelay/shared": "workspace:*"
   },
   "license": "Apache-2.0"
 }

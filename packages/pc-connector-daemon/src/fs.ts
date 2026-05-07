@@ -6,7 +6,7 @@
 // what the user themselves can read/write — no extra sandboxing
 // because the picker exists to navigate the user's filesystem.
 //
-// Ported from claude-remote/src/fs-list.js (user-owned source, TS port).
+// Ported from the original browser prototype source/fs-list.js (user-owned source, TS port).
 
 import { execFileSync } from "node:child_process";
 import type { Dirent } from "node:fs";

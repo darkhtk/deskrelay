@@ -1,5 +1,5 @@
 {
-  "name": "@claude-remote/behavior-sdk",
+  "name": "@deskrelay/behavior-sdk",
   "version": "0.0.0",
   "private": true,
   "description": "SDK for authoring β behaviors and hosting them from the PC connector. JSONRPC 2.0 over NDJSON stdio.",
@@ -16,8 +16,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@claude-remote/shared": "workspace:*",
-    "@claude-remote/core": "workspace:*"
+    "@deskrelay/shared": "workspace:*",
+    "@deskrelay/core": "workspace:*"
   },
   "license": "Apache-2.0"
 }

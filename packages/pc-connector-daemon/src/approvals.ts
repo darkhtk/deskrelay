@@ -21,8 +21,8 @@
 // Decisions time out after APPROVAL_TIMEOUT_MS (default deny so a
 // missing browser doesn't hang the daemon forever).
 
-import type { InProcessSubscriptionBroker } from "@claude-remote/core";
-import { asSpaceId } from "@claude-remote/shared/space";
+import type { InProcessSubscriptionBroker } from "@deskrelay/core";
+import { asSpaceId } from "@deskrelay/shared/space";
 
 export const APPROVAL_TIMEOUT_MS = 60_000;
 // Format must match SpaceId brand (`{behavior}.{kind}:{id}`).

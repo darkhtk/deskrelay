@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearStateFile,
+  defaultStateDir,
   readStateFile,
   stateFileToBaseUrl,
   writeStateFile,
@@ -22,6 +23,19 @@ afterEach(async () => {
 });
 
 describe("state-file round-trip", () => {
+  test("default state dir is DeskRelay-specific", () => {
+    const previous = process.env.CR_CONNECTOR_STATE_DIR;
+    Reflect.deleteProperty(process.env, "CR_CONNECTOR_STATE_DIR");
+    try {
+      const dir = defaultStateDir().replaceAll("\\", "/").toLowerCase();
+      expect(dir).toContain("deskrelay");
+      expect(dir).not.toContain("claude-remote");
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "CR_CONNECTOR_STATE_DIR");
+      else process.env.CR_CONNECTOR_STATE_DIR = previous;
+    }
+  });
+
   test("write then read returns the same shape", async () => {
     const state = {
       pid: 4242,

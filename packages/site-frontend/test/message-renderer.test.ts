@@ -1,4 +1,4 @@
-// Tests ported from claude-remote/test/message-renderer.test.js (vanilla JS).
+// Tests ported from the original browser prototype tests/message-renderer.test.js (vanilla JS).
 // Same coverage map; types added for the TS port.
 
 import { describe, expect, test } from "vitest";

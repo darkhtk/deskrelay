@@ -13,9 +13,9 @@
   "minConnectorVersion": "0.0.0",
   "license": "Apache-2.0",
   "publisher": {
-    "id": "claude-remote",
+    "id": "deskrelay",
     "name": "Claude Remote",
-    "key": "did:web:claude-remote.dev"
+    "key": "did:web:deskrelay.local"
   },
   "displayName": "Claude Code",
   "description": "Run the claude CLI on your PC and stream its output to the browser. Free, open-source, the foundation behavior of the platform.",

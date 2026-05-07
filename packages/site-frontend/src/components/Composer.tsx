@@ -1,6 +1,6 @@
 // Composer — message input + send button + slash-command picker.
 //
-// Ported from claude-remote/public/composer.js (production-validated). Key
+// Ported from the original browser prototype/composer.js (production-validated). Key
 // behaviors preserved:
 //   - Multi-turn never blocks input. Send stays enabled while a previous
 //     turn is in flight; the "Stop" affordance lives on the send button

@@ -14,9 +14,9 @@
 // daemon anyway. Loading them in-process eliminates the entire pipeline
 // in one move.
 
-import type { InProcessSubscriptionBroker } from "@claude-remote/core";
-import type { Actor, EventInput } from "@claude-remote/shared/event";
-import { type SpaceId, asSpaceId, makeSpaceId } from "@claude-remote/shared/space";
+import type { InProcessSubscriptionBroker } from "@deskrelay/core";
+import type { Actor, EventInput } from "@deskrelay/shared/event";
+import { type SpaceId, asSpaceId, makeSpaceId } from "@deskrelay/shared/space";
 import { BehaviorHostError, type BehaviorHostLogRecord } from "./host.ts";
 import type { LoadedBehaviorPackage } from "./manifest-loader.ts";
 import type {

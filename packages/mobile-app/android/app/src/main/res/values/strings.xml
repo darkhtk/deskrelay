@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">DeskRelay</string>
     <string name="title_activity_main">DeskRelay</string>
-    <string name="package_name">com.semibanbi.clauderemote</string>
-    <string name="custom_url_scheme">com.semibanbi.clauderemote</string>
+    <string name="package_name">io.github.darkhtk.deskrelay</string>
+    <string name="custom_url_scheme">io.github.darkhtk.deskrelay</string>
 </resources>

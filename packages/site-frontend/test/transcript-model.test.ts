@@ -1,5 +1,5 @@
 // Tests for TranscriptModel — covers the entry accumulation logic + render
-// output. Ported from claude-remote/test/transcript.test.* but recast to
+// output. Ported from the original browser prototype tests/transcript.test.* but recast to
 // the model-only API (no DOM); the Solid component layer is tested
 // separately in transcript-component.test.tsx.
 

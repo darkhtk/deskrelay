@@ -26,7 +26,7 @@ export type Permission = string;
 export type IpcProtocol = "jsonrpc-2.0";
 
 export interface BehaviorPublisher {
-  /** Stable slug, e.g. "claude-remote", "alice-dev". */
+  /** Stable slug, e.g. "deskrelay", "alice-dev". */
   id: string;
   /** Human display label. */
   name: string;

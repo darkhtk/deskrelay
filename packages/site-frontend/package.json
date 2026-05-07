@@ -1,8 +1,8 @@
 {
-  "name": "@claude-remote/site-frontend",
+  "name": "@deskrelay/site-frontend",
   "version": "0.0.0",
   "private": true,
-  "description": "Browser app — Solid + Vite SPA. Talks to @claude-remote/site-backend. M3 promotes this to Solid Start when marketing pages are added.",
+  "description": "Browser app — Solid + Vite SPA. Talks to @deskrelay/site-backend. M3 promotes this to Solid Start when marketing pages are added.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@claude-remote/shared": "workspace:*",
+    "@deskrelay/shared": "workspace:*",
     "solid-js": "^1.9.3"
   },
   "devDependencies": {

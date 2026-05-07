@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { EventEnvelope } from "@claude-remote/shared/event";
-import { asSpaceId } from "@claude-remote/shared/space";
+import type { EventEnvelope } from "@deskrelay/shared/event";
+import { asSpaceId } from "@deskrelay/shared/space";
 import { InProcessSubscriptionBroker } from "../src/broker.ts";
 
 const SPACE = asSpaceId("remote_claude.machine:home-pc");

@@ -239,7 +239,7 @@ if (-not $NoRegisterDevice -and -not $NoDaemon -and -not $NoBackend -and -not $P
 
 if (-not $NoFrontend) {
   $frontendLog = Join-Path $env:CR_DEV_LOG_DIR "site-frontend.log"
-  $frontend = Start-DevProcess -Name "site-frontend" -Command "bun --filter @claude-remote/site-frontend dev -- --host $FrontendHost --port $FrontendPort" -LogPath $frontendLog -Repo $repo -EnvFile $envFile
+  $frontend = Start-DevProcess -Name "site-frontend" -Command "bun --filter @deskrelay/site-frontend dev -- --host $FrontendHost --port $FrontendPort" -LogPath $frontendLog -Repo $repo -EnvFile $envFile
   if ($frontend) {
     $started += $frontend
     Wait-Http -Url $env:CR_DEV_FRONTEND_URL -TimeoutSeconds 25

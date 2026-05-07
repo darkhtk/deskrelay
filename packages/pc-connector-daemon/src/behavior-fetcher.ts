@@ -3,16 +3,16 @@
 //
 // Source kinds (M7.5.4 — minimal):
 //   { kind: "local", packageDir }    — already on disk; pass through.
-//   { kind: "registry", url }        — claude-remote-platform://behaviors/<name>
-//                                       (alias: cr-platform://behaviors/<name>)
+//   { kind: "registry", url }        — deskrelay://behaviors/<name>
+//                                       (alias: dr://behaviors/<name>)
 //                                       resolves to the bundled
 //                                       packages/behaviors/<name>/ for
-//                                       first-party / dev. Production
-//                                       (M9) maps it to a R2 tarball.
+//                                       first-party / dev. Future remote
+//                                       catalogs can map it to an archive.
 //   { kind: "npm", package }         — fetch from npm, extract tarball.
 //   { kind: "github", repo, ref? }   — fetch from GitHub release tarball.
 //
-// Cache layout: ~/.claude-remote/behaviors/<name>/<version>/
+// Cache layout: ~/.deskrelay/behaviors/<name>/<version>/
 // First time: download + extract + write manifest. Subsequent loads
 // short-circuit on the cached dir.
 
@@ -31,8 +31,8 @@ export interface BehaviorFetcherOptions {
   cacheDir?: string;
   /** Override fetch (tests). */
   fetchImpl?: typeof fetch;
-  /** First-party behaviors lookup table — for `claude-remote-platform://behaviors/<name>`
-   *  (or the `cr-platform://` alias) the fetcher returns
+  /** First-party behaviors lookup table — for `deskrelay://behaviors/<name>`
+   *  (or the `dr://` alias) the fetcher returns
    *  `firstPartyDirs.get(name)` directly without hitting the network.
    *  Lets the bundled monorepo install behaviors in dev without a registry. */
   firstPartyDirs?: Map<string, string>;
@@ -52,11 +52,9 @@ export class BehaviorFetcherError extends Error {
   }
 }
 
-// `claude-remote-platform://` is the canonical scheme (matches the
-// marketplace catalog data and the public docs); `cr-platform://` is
-// kept as a back-compat alias for older callers and existing tests.
+// `deskrelay://` is the canonical scheme; `dr://` is kept as a short alias.
 const REGISTRY_URL_PATTERN =
-  /^(?:claude-remote-platform|cr-platform):\/\/behaviors\/([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*)$/;
+  /^(?:deskrelay|dr):\/\/behaviors\/([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*)$/;
 
 export class BehaviorFetcher {
   readonly #cacheDir: string;
@@ -92,7 +90,7 @@ export class BehaviorFetcher {
   static parseSourceUrl(input: string): BehaviorSource {
     const trimmed = input.trim();
     if (!trimmed) throw new BehaviorFetcherError("empty source URL");
-    if (trimmed.startsWith("claude-remote-platform://") || trimmed.startsWith("cr-platform://")) {
+    if (trimmed.startsWith("deskrelay://") || trimmed.startsWith("dr://")) {
       return { kind: "registry", url: trimmed };
     }
     if (trimmed.startsWith("npm://")) {
@@ -130,7 +128,7 @@ export class BehaviorFetcher {
     const m = url.match(REGISTRY_URL_PATTERN);
     if (!m) {
       throw new BehaviorFetcherError(
-        `invalid registry URL (expected claude-remote-platform://behaviors/<name>): ${url}`,
+        `invalid registry URL (expected deskrelay://behaviors/<name>): ${url}`,
       );
     }
     const name = m[1] as string;

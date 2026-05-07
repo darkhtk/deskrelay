@@ -10,7 +10,7 @@
 //   - theme-color regression.
 //
 // Run with:  bun run scripts/frontend-smoke.ts
-// Pre-req:   bun --filter @claude-remote/site-frontend build (populates dist).
+// Pre-req:   bun --filter @deskrelay/site-frontend build (populates dist).
 
 import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
@@ -101,7 +101,7 @@ function assert(name: string, condition: boolean, detail?: string) {
 async function main(): Promise<void> {
   await stat(join(distDir, "index.html")).catch(() => {
     throw new Error(
-      "site-frontend dist missing — run `bun --filter @claude-remote/site-frontend build` first.",
+      "site-frontend dist missing — run `bun --filter @deskrelay/site-frontend build` first.",
     );
   });
 

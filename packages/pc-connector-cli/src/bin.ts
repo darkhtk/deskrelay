@@ -3,7 +3,7 @@ import {
   readAuthToken,
   readStateFile,
   stateFileToBaseUrl,
-} from "@claude-remote/pc-connector-daemon";
+} from "@deskrelay/pc-connector-daemon";
 import { runCli } from "./cli.ts";
 import { CliClient } from "./client.ts";
 

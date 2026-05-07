@@ -2,7 +2,7 @@
 // patterns Claude actually emits in chat-style responses; not a full
 // CommonMark implementation.
 //
-// Ported from claude-remote/public/message-renderer.js (production-validated)
+// Ported from the original browser prototype/message-renderer.js (production-validated)
 // with TS types added. Pattern set:
 //   - Triple-backtick fenced code blocks (with optional language tag)
 //   - Inline `code`

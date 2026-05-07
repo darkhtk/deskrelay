@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "claude-remote-platform",
+      "name": "deskrelay",
       "devDependencies": {
         "@biomejs/biome": "^1.9.4",
         "@resvg/resvg-js": "^2.6.2",
@@ -13,38 +13,38 @@
       },
     },
     "packages/behavior-sdk": {
-      "name": "@claude-remote/behavior-sdk",
+      "name": "@deskrelay/behavior-sdk",
       "version": "0.0.0",
       "dependencies": {
-        "@claude-remote/core": "workspace:*",
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/core": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
       },
     },
     "packages/behaviors/echo": {
-      "name": "@claude-remote/behavior-echo",
+      "name": "@deskrelay/behavior-echo",
       "version": "0.0.1",
       "dependencies": {
-        "@claude-remote/behavior-sdk": "workspace:*",
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/behavior-sdk": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
       },
     },
     "packages/behaviors/remote-claude": {
-      "name": "@claude-remote/behavior-remote-claude",
+      "name": "@deskrelay/behavior-remote-claude",
       "version": "0.0.1",
       "dependencies": {
-        "@claude-remote/behavior-sdk": "workspace:*",
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/behavior-sdk": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
       },
     },
     "packages/core": {
-      "name": "@claude-remote/core",
+      "name": "@deskrelay/core",
       "version": "0.0.0",
       "dependencies": {
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
       },
     },
     "packages/mobile-app": {
-      "name": "@claude-remote/mobile-app",
+      "name": "@deskrelay/mobile-app",
       "version": "0.0.0",
       "dependencies": {
         "@capacitor/android": "^6.2.0",
@@ -60,49 +60,49 @@
       },
     },
     "packages/pc-connector-cli": {
-      "name": "@claude-remote/pc-connector-cli",
+      "name": "@deskrelay/pc-connector-cli",
       "version": "0.0.0",
       "bin": {
         "cr-connector": "./src/bin.ts",
       },
       "dependencies": {
-        "@claude-remote/pc-connector-daemon": "workspace:*",
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/pc-connector-daemon": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
       },
     },
     "packages/pc-connector-daemon": {
-      "name": "@claude-remote/pc-connector-daemon",
+      "name": "@deskrelay/pc-connector-daemon",
       "version": "0.0.0",
       "bin": {
         "cr-connector-daemon": "./src/bin.ts",
       },
       "dependencies": {
-        "@claude-remote/behavior-remote-claude": "workspace:*",
-        "@claude-remote/behavior-sdk": "workspace:*",
-        "@claude-remote/core": "workspace:*",
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/behavior-remote-claude": "workspace:*",
+        "@deskrelay/behavior-sdk": "workspace:*",
+        "@deskrelay/core": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
       },
     },
     "packages/shared": {
-      "name": "@claude-remote/shared",
+      "name": "@deskrelay/shared",
       "version": "0.0.0",
     },
     "packages/site-backend": {
-      "name": "@claude-remote/site-backend",
+      "name": "@deskrelay/site-backend",
       "version": "0.0.0",
       "bin": {
         "cr-site": "./src/bin.ts",
       },
       "dependencies": {
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
         "hono": "^4.6.13",
       },
     },
     "packages/site-frontend": {
-      "name": "@claude-remote/site-frontend",
+      "name": "@deskrelay/site-frontend",
       "version": "0.0.0",
       "dependencies": {
-        "@claude-remote/shared": "workspace:*",
+        "@deskrelay/shared": "workspace:*",
         "solid-js": "^1.9.3",
       },
       "devDependencies": {
@@ -193,26 +193,6 @@
 
     "@capacitor/status-bar": ["@capacitor/status-bar@6.0.3", "", { "peerDependencies": { "@capacitor/core": "^6.0.0" } }, "sha512-nFlgSmtx6Zwaw0tEvZgQsWHBeOfWWB/AvEoCApopLT4mHkBVoSrwkLvy2PjZs5wxCbsmqvQczr3XCyTwaDZVQg=="],
 
-    "@claude-remote/behavior-echo": ["@claude-remote/behavior-echo@workspace:packages/behaviors/echo"],
-
-    "@claude-remote/behavior-remote-claude": ["@claude-remote/behavior-remote-claude@workspace:packages/behaviors/remote-claude"],
-
-    "@claude-remote/behavior-sdk": ["@claude-remote/behavior-sdk@workspace:packages/behavior-sdk"],
-
-    "@claude-remote/core": ["@claude-remote/core@workspace:packages/core"],
-
-    "@claude-remote/mobile-app": ["@claude-remote/mobile-app@workspace:packages/mobile-app"],
-
-    "@claude-remote/pc-connector-cli": ["@claude-remote/pc-connector-cli@workspace:packages/pc-connector-cli"],
-
-    "@claude-remote/pc-connector-daemon": ["@claude-remote/pc-connector-daemon@workspace:packages/pc-connector-daemon"],
-
-    "@claude-remote/shared": ["@claude-remote/shared@workspace:packages/shared"],
-
-    "@claude-remote/site-backend": ["@claude-remote/site-backend@workspace:packages/site-backend"],
-
-    "@claude-remote/site-frontend": ["@claude-remote/site-frontend@workspace:packages/site-frontend"],
-
     "@csstools/color-helpers": ["@csstools/color-helpers@5.1.0", "", {}, "sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA=="],
 
     "@csstools/css-calc": ["@csstools/css-calc@2.1.4", "", { "peerDependencies": { "@csstools/css-parser-algorithms": "^3.0.5", "@csstools/css-tokenizer": "^3.0.4" } }, "sha512-3N8oaj+0juUw/1H3YwmDDJXCgTB1gKU6Hc/bB502u9zR0q2vd786XJH9QfrKIEgFlZmhZiq6epXl4rHqhzsIgQ=="],
@@ -222,6 +202,26 @@
     "@csstools/css-parser-algorithms": ["@csstools/css-parser-algorithms@3.0.5", "", { "peerDependencies": { "@csstools/css-tokenizer": "^3.0.4" } }, "sha512-DaDeUkXZKjdGhgYaHNJTV9pV7Y9B3b644jCLs9Upc3VeNGg6LWARAT6O+Q+/COo+2gg/bM5rhpMAtf70WqfBdQ=="],
 
     "@csstools/css-tokenizer": ["@csstools/css-tokenizer@3.0.4", "", {}, "sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw=="],
+
+    "@deskrelay/behavior-echo": ["@deskrelay/behavior-echo@workspace:packages/behaviors/echo"],
+
+    "@deskrelay/behavior-remote-claude": ["@deskrelay/behavior-remote-claude@workspace:packages/behaviors/remote-claude"],
+
+    "@deskrelay/behavior-sdk": ["@deskrelay/behavior-sdk@workspace:packages/behavior-sdk"],
+
+    "@deskrelay/core": ["@deskrelay/core@workspace:packages/core"],
+
+    "@deskrelay/mobile-app": ["@deskrelay/mobile-app@workspace:packages/mobile-app"],
+
+    "@deskrelay/pc-connector-cli": ["@deskrelay/pc-connector-cli@workspace:packages/pc-connector-cli"],
+
+    "@deskrelay/pc-connector-daemon": ["@deskrelay/pc-connector-daemon@workspace:packages/pc-connector-daemon"],
+
+    "@deskrelay/shared": ["@deskrelay/shared@workspace:packages/shared"],
+
+    "@deskrelay/site-backend": ["@deskrelay/site-backend@workspace:packages/site-backend"],
+
+    "@deskrelay/site-frontend": ["@deskrelay/site-frontend@workspace:packages/site-frontend"],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.25.12", "", { "os": "aix", "cpu": "ppc64" }, "sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA=="],
 

@@ -1,4 +1,4 @@
-// Tests ported from claude-remote/test/tool-renderers.test.js with TS types.
+// Tests ported from the original browser prototype tests/tool-renderers.test.js with TS types.
 
 import { describe, expect, test } from "vitest";
 import {

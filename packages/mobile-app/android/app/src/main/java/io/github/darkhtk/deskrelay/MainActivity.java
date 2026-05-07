@@ -1,4 +1,4 @@
-package com.semibanbi.clauderemote;
+package io.github.darkhtk.deskrelay;
 
 import com.getcapacitor.BridgeActivity;
 

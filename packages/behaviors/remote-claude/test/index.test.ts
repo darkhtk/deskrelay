@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BehaviorContext, RequestHandler } from "@claude-remote/behavior-sdk/runtime";
+import type { BehaviorContext, RequestHandler } from "@deskrelay/behavior-sdk/runtime";
 import { behaviorDef } from "../src/index.ts";
 
 const tempDirs: string[] = [];

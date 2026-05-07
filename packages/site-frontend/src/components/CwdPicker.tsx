@@ -2,7 +2,7 @@
 // types and pops a suggestion list of subdirectories. Used by NewChatCard
 // (start a session in cwd X) and DeviceSettingsDialog (default cwd pref).
 //
-// Behaviors mirrored from claude-remote/public/new-chat.js:
+// Behaviors mirrored from the original browser prototype/new-chat.js:
 //   - Trailing-separator trick: applying a suggestion sets the value to
 //     `<fullPath><sep>` so the next keystroke browses children.
 //   - Race-condition guard via an active-fetch counter.

@@ -28,7 +28,7 @@ import type { Dirent } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { type RunBehaviorOptions, runBehavior } from "@claude-remote/behavior-sdk/runtime";
+import { type RunBehaviorOptions, runBehavior } from "@deskrelay/behavior-sdk/runtime";
 import manifest from "../manifest.json" with { type: "json" };
 import {
   ClaudeRunError,

@@ -3,7 +3,7 @@
 // the host (Transcript.tsx) calls render() and assigns the result to
 // innerHTML so Solid's reactivity recomputes when events change.
 //
-// Ported from claude-remote/public/transcript.js (production-validated).
+// Ported from the original browser prototype/transcript.js (production-validated).
 // Behavior preserved; types added; envelope handling kept compatible
 // with both raw claude events (current platform wire) and the wrapped
 // `{kind: "claude.event", event, cursor}` envelope (legacy ops-cure

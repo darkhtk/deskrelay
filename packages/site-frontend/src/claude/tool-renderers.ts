@@ -3,7 +3,7 @@
 // and returns an HTML string. Unknown tool names fall through to
 // renderDefault.
 //
-// Ported from claude-remote/public/tool-renderers.js (production-validated
+// Ported from the original browser prototype/tool-renderers.js (production-validated
 // against real Claude Code tool calls). TS types added; behavior unchanged.
 
 import { escapeHtml } from "./message-renderer.ts";

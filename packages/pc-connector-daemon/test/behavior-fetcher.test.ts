@@ -40,17 +40,17 @@ afterEach(async () => {
 });
 
 describe("BehaviorFetcher.parseSourceUrl", () => {
-  test("claude-remote-platform://behaviors/<name> → registry (canonical)", () => {
-    const s = BehaviorFetcher.parseSourceUrl("claude-remote-platform://behaviors/echo");
+  test("deskrelay://behaviors/<name> → registry (canonical)", () => {
+    const s = BehaviorFetcher.parseSourceUrl("deskrelay://behaviors/echo");
     expect(s).toEqual({
       kind: "registry",
-      url: "claude-remote-platform://behaviors/echo",
+      url: "deskrelay://behaviors/echo",
     });
   });
 
-  test("cr-platform://behaviors/<name> → registry (back-compat alias)", () => {
-    const s = BehaviorFetcher.parseSourceUrl("cr-platform://behaviors/echo");
-    expect(s).toEqual({ kind: "registry", url: "cr-platform://behaviors/echo" });
+  test("dr://behaviors/<name> → registry (back-compat alias)", () => {
+    const s = BehaviorFetcher.parseSourceUrl("dr://behaviors/echo");
+    expect(s).toEqual({ kind: "registry", url: "dr://behaviors/echo" });
   });
 
   test("npm://<package> → npm without version", () => {
@@ -121,19 +121,19 @@ describe("BehaviorFetcher.fetchSource", () => {
     });
     const result = await f.fetchSource({
       kind: "registry",
-      url: "claude-remote-platform://behaviors/echo",
+      url: "deskrelay://behaviors/echo",
     });
     expect(result.packageDir).toBe(pkgDir);
   });
 
-  test("registry source resolves via firstPartyDirs map (cr-platform alias)", async () => {
+  test("registry source resolves via firstPartyDirs map (dr alias)", async () => {
     const pkgDir = await setupBehaviorPkg(tmp, "echo");
     const f = new BehaviorFetcher({
       firstPartyDirs: new Map([["echo", pkgDir]]),
     });
     const result = await f.fetchSource({
       kind: "registry",
-      url: "cr-platform://behaviors/echo",
+      url: "dr://behaviors/echo",
     });
     expect(result.packageDir).toBe(pkgDir);
   });
@@ -143,7 +143,7 @@ describe("BehaviorFetcher.fetchSource", () => {
     await expect(
       f.fetchSource({
         kind: "registry",
-        url: "claude-remote-platform://behaviors/missing",
+        url: "deskrelay://behaviors/missing",
       }),
     ).rejects.toThrow(/not in firstPartyDirs/);
   });
@@ -151,7 +151,7 @@ describe("BehaviorFetcher.fetchSource", () => {
   test("malformed registry URL → error", async () => {
     const f = new BehaviorFetcher();
     await expect(
-      f.fetchSource({ kind: "registry", url: "claude-remote-platform://wrong/path" }),
+      f.fetchSource({ kind: "registry", url: "deskrelay://wrong/path" }),
     ).rejects.toThrow(/invalid registry URL/);
   });
 
@@ -175,7 +175,7 @@ describe("BehaviorRegistry license gate (M7.5.4)", () => {
     // Reuse the existing daemon e2e infra by importing BehaviorRegistry
     // and verifying the gate. We stub spawnBehaviorHost via the real
     // SDK fixture (echo behavior) to keep this an integration test.
-    const { InProcessSubscriptionBroker } = await import("@claude-remote/core");
+    const { InProcessSubscriptionBroker } = await import("@deskrelay/core");
     const { BehaviorRegistry } = await import("../src/behavior-registry.ts");
     const broker = new InProcessSubscriptionBroker();
     let checked = false;
@@ -198,7 +198,7 @@ describe("BehaviorRegistry license gate (M7.5.4)", () => {
   });
 
   test("non-free behavior with checkLicense=false rejects", async () => {
-    const { InProcessSubscriptionBroker } = await import("@claude-remote/core");
+    const { InProcessSubscriptionBroker } = await import("@deskrelay/core");
     const { BehaviorRegistry, BehaviorRegistryError } = await import("../src/behavior-registry.ts");
     const broker = new InProcessSubscriptionBroker();
     const reg = new BehaviorRegistry({
@@ -223,7 +223,7 @@ describe("BehaviorRegistry license gate (M7.5.4)", () => {
   });
 
   test("non-free behavior with checkLicense=true allows", async () => {
-    const { InProcessSubscriptionBroker } = await import("@claude-remote/core");
+    const { InProcessSubscriptionBroker } = await import("@deskrelay/core");
     const { BehaviorRegistry } = await import("../src/behavior-registry.ts");
     const broker = new InProcessSubscriptionBroker();
     const reg = new BehaviorRegistry({

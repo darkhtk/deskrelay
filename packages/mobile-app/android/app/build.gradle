@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.semibanbi.clauderemote"
+    namespace "io.github.darkhtk.deskrelay"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.semibanbi.clauderemote"
+        applicationId "io.github.darkhtk.deskrelay"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 2

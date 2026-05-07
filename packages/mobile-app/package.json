@@ -1,5 +1,5 @@
 {
-  "name": "@claude-remote/mobile-app",
+  "name": "@deskrelay/mobile-app",
   "version": "0.0.0",
   "private": true,
   "description": "Capacitor wrapper for the site-frontend — Android + (later) iOS native shell published as 'DeskRelay' on Google Play.",

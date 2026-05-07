@@ -11,9 +11,9 @@ const valid: BehaviorManifest = {
   minConnectorVersion: "1.0.0",
   license: "Apache-2.0",
   publisher: {
-    id: "claude-remote",
+    id: "deskrelay",
     name: "Claude Remote",
-    key: "did:web:claude-remote.dev",
+    key: "did:web:deskrelay.local",
   },
   displayName: "Claude Code",
   description: "Run claude CLI sessions from a browser.",

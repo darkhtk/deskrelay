@@ -16,10 +16,10 @@
 // (see auth-token.ts). The CLI, the site-ws-client, and any self-host
 // site backend running on the same machine read that file. Browsers never see this token. A constructor without an authToken is rejected so we do not accidentally expose an unauthenticated daemon.
 
-import { BehaviorHostError, type BehaviorHostLogRecord } from "@claude-remote/behavior-sdk";
-import { InProcessSubscriptionBroker } from "@claude-remote/core";
-import type { EventEnvelope } from "@claude-remote/shared/event";
-import { type SpaceId, isSpaceId } from "@claude-remote/shared/space";
+import { BehaviorHostError, type BehaviorHostLogRecord } from "@deskrelay/behavior-sdk";
+import { InProcessSubscriptionBroker } from "@deskrelay/core";
+import type { EventEnvelope } from "@deskrelay/shared/event";
+import { type SpaceId, isSpaceId } from "@deskrelay/shared/space";
 import { ApprovalQueue } from "./approvals.ts";
 import { BehaviorFetcher, BehaviorFetcherError } from "./behavior-fetcher.ts";
 import { BehaviorRegistry, BehaviorRegistryError } from "./behavior-registry.ts";
@@ -340,7 +340,7 @@ export class Daemon {
       return jsonResponse(400, { error: "instanceId must be a string" });
     }
     let resolvedPackageDir = b.packageDir;
-    // URL-style inputs (claude-remote-platform://, npm://, github://)
+    // URL-style inputs (deskrelay://, npm://, github://)
     // need fetcher resolution before BehaviorRegistry.load can read the
     // manifest. Filesystem paths bypass the fetcher to keep the
     // path-only daemon construction working as before.

@@ -1,7 +1,7 @@
 // Load + validate a behavior package's manifest from disk.
 //
 // A behavior package is a directory containing at minimum:
-//   - manifest.json   (matches @claude-remote/shared BehaviorManifest)
+//   - manifest.json   (matches @deskrelay/shared BehaviorManifest)
 //   - the file referenced by manifest.entry
 //
 // Distribution mechanism (npm tarball, our registry, GitHub release) is
@@ -10,7 +10,7 @@
 
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { type BehaviorManifest, validateManifest } from "@claude-remote/shared/manifest";
+import { type BehaviorManifest, validateManifest } from "@deskrelay/shared/manifest";
 
 export interface LoadedBehaviorPackage {
   /** Absolute path to the package directory. */

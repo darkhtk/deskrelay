@@ -29,7 +29,7 @@ console.log(
   `[mobile-app] building site-frontend with VITE_API_BASE_URL=${apiBase || "(relative / same-origin)"}`,
 );
 
-await runStep(bun, ["--filter", "@claude-remote/site-frontend", "build"], frontendEnv);
+await runStep(bun, ["--filter", "@deskrelay/site-frontend", "build"], frontendEnv);
 await runStep(bun, ["run", resolve(here, "sync-web.ts")], process.env);
 
 async function runStep(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {

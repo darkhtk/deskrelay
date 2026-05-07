@@ -8,9 +8,9 @@
   "minConnectorVersion": "0.0.0",
   "license": "Apache-2.0",
   "publisher": {
-    "id": "claude-remote",
+    "id": "deskrelay",
     "name": "Claude Remote",
-    "key": "did:web:claude-remote.dev"
+    "key": "did:web:deskrelay.local"
   },
   "displayName": "Echo",
   "description": "Trivial echo behavior. Demonstrates the behavior-sdk request/response and event-publish APIs end-to-end.",

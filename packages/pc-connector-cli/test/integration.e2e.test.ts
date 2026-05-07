@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readStateFile } from "@claude-remote/pc-connector-daemon";
+import { readStateFile } from "@deskrelay/pc-connector-daemon";
 import { type Subprocess, spawn } from "bun";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");

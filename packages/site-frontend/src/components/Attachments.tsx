@@ -1,6 +1,6 @@
 // Attachments — pending image-attachment list shown above the composer.
 //
-// Ported from claude-remote/public/attachments.js. Image-only (matches
+// Ported from the original browser prototype/attachments.js. Image-only (matches
 // claude's image content-block surface), max 8 files / 10 MB each. Two
 // input paths exposed:
 //   - File picker via the "Attach" button that triggers a hidden <input>

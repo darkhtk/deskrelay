@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { InProcessSubscriptionBroker } from "@claude-remote/core";
-import type { EventEnvelope } from "@claude-remote/shared/event";
-import { asSpaceId } from "@claude-remote/shared/space";
+import { InProcessSubscriptionBroker } from "@deskrelay/core";
+import type { EventEnvelope } from "@deskrelay/shared/event";
+import { asSpaceId } from "@deskrelay/shared/space";
 import {
   type BehaviorHost,
   BehaviorHostError,

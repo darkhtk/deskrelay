@@ -12,7 +12,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import { defaultStateDir } from "./state-file.ts";
 
 export const WINDOWS_LOGIN_TASK_NAME = "DeskRelay Connector";
-export const LEGACY_WINDOWS_LOGIN_TASK_NAME = "Remote for Claude Connector";
 export const WINDOWS_LOGIN_TASK_SCRIPT_NAME = "cr-connector-login-task.ps1";
 export const WINDOWS_LOGIN_TASK_LOG_NAME = "connector.log";
 export const WINDOWS_LOGIN_TASK_LOCK_NAME = "connector-supervisor.lock";

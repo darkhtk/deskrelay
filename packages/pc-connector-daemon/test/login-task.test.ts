@@ -36,13 +36,13 @@ describe("login task command generation", () => {
         "--login-task",
       ],
       "C:\\Users\\me\\.bun\\bin\\bun.exe",
-      "C:\\Users\\me\\claude-remote-platform",
+      "C:\\Users\\me\\deskrelay",
     );
 
     expect(launch.command).toBe("C:\\Users\\me\\.bun\\bin\\bun.exe");
     expect(launch.args).toEqual([
       "run",
-      "C:\\Users\\me\\claude-remote-platform\\packages\\pc-connector-daemon\\src\\bin.ts",
+      "C:\\Users\\me\\deskrelay\\packages\\pc-connector-daemon\\src\\bin.ts",
     ]);
     expect(launch.args.join(" ")).not.toContain("pair");
   });
@@ -83,7 +83,7 @@ describe("login task command generation", () => {
           CR_CONNECTOR_PORT: "18091",
         },
       },
-      "C:\\Users\\me\\AppData\\Local\\claude-remote\\logs\\connector.log",
+      "C:\\Users\\me\\AppData\\Local\\DeskRelay\\logs\\connector.log",
     );
 
     expect(script).toContain("while ($true)");
@@ -113,15 +113,15 @@ describe("login task command generation", () => {
         args: ["run", "C:\\repo\\packages\\pc-connector-daemon\\src\\bin.ts"],
         cwd: "C:\\repo",
       },
-      "C:\\Users\\me\\AppData\\Local\\claude-remote\\logs\\connector.log",
+      "C:\\Users\\me\\AppData\\Local\\DeskRelay\\logs\\connector.log",
     );
     const packagedScript = buildWindowsLoginTaskScript(
       {
-        command: "C:\\Program Files\\WindowsApps\\Banbi.DeskRelayConnector\\cr-connector.exe",
+        command: "C:\\Tools\\DeskRelay\\cr-connector.exe",
         args: [],
-        cwd: "C:\\Program Files\\WindowsApps\\Banbi.DeskRelayConnector",
+        cwd: "C:\\Tools\\DeskRelay",
       },
-      "C:\\Users\\me\\AppData\\Local\\claude-remote\\logs\\connector.log",
+      "C:\\Users\\me\\AppData\\Local\\DeskRelay\\logs\\connector.log",
     );
 
     expect(isSourceRunLoginTaskScript(sourceRunScript)).toBe(true);
@@ -134,7 +134,7 @@ describe("login task command generation", () => {
     // shell quoting; the test decodes it back and asserts the inner script.
     const args = buildWindowsRegisterTaskArgs(
       "DeskRelay Connector",
-      "C:\\Users\\me\\AppData\\Local\\claude-remote\\task.ps1",
+      "C:\\Users\\me\\AppData\\Local\\DeskRelay\\task.ps1",
     );
     expect(args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
     const encoded = args[3] ?? "";
@@ -142,7 +142,7 @@ describe("login task command generation", () => {
     const script = Buffer.from(encoded, "base64").toString("utf16le");
     // Action: powershell.exe with -File pointing at the supervisor script.
     expect(script).toContain("New-ScheduledTaskAction -Execute 'powershell.exe'");
-    expect(script).toContain("C:\\Users\\me\\AppData\\Local\\claude-remote\\task.ps1");
+    expect(script).toContain("C:\\Users\\me\\AppData\\Local\\DeskRelay\\task.ps1");
     // Trigger: at logon, scoped to $env:USERNAME (per-user, not "any user").
     expect(script).toContain("New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME");
     // Register: under the current user's SID, with -Force so a re-pair
@@ -168,21 +168,6 @@ describe("login task command generation", () => {
     expect(script).toContain("-Confirm:$false");
   });
 
-  test("migration scripts can override the default task name", async () => {
-    const previous = process.env.CR_CONNECTOR_LOGIN_TASK_NAME;
-    process.env.CR_CONNECTOR_LOGIN_TASK_NAME = "Remote for Claude Connector";
-    try {
-      const result = await removeLoginTask({
-        platform: "win32",
-        runner: async () => ({ code: 1, stdout: "", stderr: "not found" }),
-      });
-      expect(result.taskName).toBe("Remote for Claude Connector");
-    } finally {
-      if (previous === undefined)
-        Reflect.deleteProperty(process.env, "CR_CONNECTOR_LOGIN_TASK_NAME");
-      else process.env.CR_CONNECTOR_LOGIN_TASK_NAME = previous;
-    }
-  });
 });
 
 describe("installLoginTask", () => {

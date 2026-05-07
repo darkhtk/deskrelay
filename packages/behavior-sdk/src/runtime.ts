@@ -17,7 +17,7 @@
 //
 // Example:
 //
-//   import { runBehavior } from "@claude-remote/behavior-sdk/runtime";
+//   import { runBehavior } from "@deskrelay/behavior-sdk/runtime";
 //   await runBehavior({
 //     manifest: { ...manifestInline },
 //     async start(ctx) {
@@ -28,9 +28,9 @@
 //     },
 //   });
 
-import type { EventInput } from "@claude-remote/shared/event";
-import type { BehaviorManifest } from "@claude-remote/shared/manifest";
-import { type SpaceId, makeSpaceId } from "@claude-remote/shared/space";
+import type { EventInput } from "@deskrelay/shared/event";
+import type { BehaviorManifest } from "@deskrelay/shared/manifest";
+import { type SpaceId, makeSpaceId } from "@deskrelay/shared/space";
 import {
   JsonRpcErrorCode,
   type JsonRpcRequest,

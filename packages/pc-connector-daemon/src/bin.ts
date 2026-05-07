@@ -28,7 +28,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
-import { behaviorDef as remoteClaudeBehavior } from "@claude-remote/behavior-remote-claude";
+import { behaviorDef as remoteClaudeBehavior } from "@deskrelay/behavior-remote-claude";
 import { loadOrCreateAuthToken, readAuthFile } from "./auth-token.ts";
 import { BehaviorFetcher } from "./behavior-fetcher.ts";
 import { removeConnectorLocalState } from "./connector-cleanup.ts";
@@ -40,7 +40,6 @@ import {
   removeDeviceIdentity,
 } from "./device-identity.ts";
 import {
-  LEGACY_WINDOWS_LOGIN_TASK_NAME,
   WINDOWS_LOGIN_TASK_NAME,
   installLoginTask,
   isPackagedConnectorBinary,
@@ -399,7 +398,7 @@ const host = process.env.CR_CONNECTOR_HOST ?? "127.0.0.1";
 const bunPath = process.env.CR_CONNECTOR_BUN_PATH ?? process.execPath;
 
 // Resolve first-party behavior dirs so URL-style packageDir inputs
-// (`claude-remote-platform://behaviors/<name>`) can be installed without
+// (`deskrelay://behaviors/<name>`) can be installed without
 // a remote registry. Three sources, merged in this order:
 //   1. monorepo auto-detect — when running from the bundled repo, scan
 //      <root>/packages/behaviors/* for manifest.json files.
@@ -408,7 +407,7 @@ const bunPath = process.env.CR_CONNECTOR_BUN_PATH ?? process.execPath;
 //   3. CR_CONNECTOR_FIRST_PARTY_DIRS env — `name=path,name=path` for
 //      operators wiring without the monorepo (prod self-host).
 // All absent is fine: fetcher just rejects registry URLs with a
-// clear "not in firstPartyDirs" error until M9 wires the R2 mirror.
+// clear "not in firstPartyDirs" error until a remote catalog is configured.
 const firstPartyDirs = new Map<string, string>();
 for (const [name, dir] of discoverMonorepoBehaviors()) firstPartyDirs.set(name, dir);
 for (const [name, dir] of discoverSiblingBehaviors()) firstPartyDirs.set(name, dir);
@@ -875,10 +874,6 @@ async function maybeMigrateSourceRunLoginTaskForPackagedConnector(): Promise<voi
     {
       taskName: WINDOWS_LOGIN_TASK_NAME,
       remove: () => removeSourceRunLoginTask({ taskName: WINDOWS_LOGIN_TASK_NAME }),
-    },
-    {
-      taskName: LEGACY_WINDOWS_LOGIN_TASK_NAME,
-      remove: () => removeLoginTask({ taskName: LEGACY_WINDOWS_LOGIN_TASK_NAME }),
     },
   ];
 

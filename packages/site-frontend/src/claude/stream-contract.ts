@@ -1,6 +1,6 @@
 // Canonical browser/test contract vocabulary for the Claude Code stream-json
 // surface. Pinned here so server, runtime adapter, browser, and tests share
-// the same names. Sourced from claude-remote/public/claude-stream-contract.js
+// the same names. Sourced from the original browser prototype/claude-stream-contract.js
 // (production-validated against real claude --output-format stream-json).
 //
 // The adapter passes through any event type unchanged — these sets are the

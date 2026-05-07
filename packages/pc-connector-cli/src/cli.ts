@@ -247,7 +247,7 @@ async function cmdPair(args: string[], env: CliEnv, json: boolean): Promise<CliR
   const label = takeFlagValue(args, "--label");
   // Lazy-load to keep the CLI dep graph clean and let `--help` still work
   // without filesystem permissions.
-  const { pairWithSite } = await import("@claude-remote/pc-connector-daemon");
+  const { pairWithSite } = await import("@deskrelay/pc-connector-daemon");
   const os = process.platform;
   const hostname = (await import("node:os")).hostname();
   const opts: Parameters<typeof pairWithSite>[0] = {
@@ -269,7 +269,7 @@ async function cmdPair(args: string[], env: CliEnv, json: boolean): Promise<CliR
 }
 
 async function cmdIdentity(_args: string[], env: CliEnv, json: boolean): Promise<CliResult> {
-  const { readDeviceIdentity } = await import("@claude-remote/pc-connector-daemon");
+  const { readDeviceIdentity } = await import("@deskrelay/pc-connector-daemon");
   const identity = await readDeviceIdentity();
   if (!identity) {
     if (json) env.stdout("null\n");
@@ -292,7 +292,7 @@ async function cmdUnpair(_args: string[], env: CliEnv, json: boolean): Promise<C
   // Site-side device row is NOT removed; that's a separate browser
   // action against DELETE /api/devices/:id (the user's session auth
   // gates it, so we don't widen the device-side auth surface here).
-  const { removeDeviceIdentity } = await import("@claude-remote/pc-connector-daemon");
+  const { removeDeviceIdentity } = await import("@deskrelay/pc-connector-daemon");
   const r = await removeDeviceIdentity();
   if (json) {
     env.stdout(`${JSON.stringify(r)}\n`);

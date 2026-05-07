@@ -8,8 +8,8 @@
 // All requests publish at least one event into the kernel broker so the
 // connector / browser can observe them.
 
-import { runBehavior } from "@claude-remote/behavior-sdk/runtime";
-import type { BehaviorManifest } from "@claude-remote/shared/manifest";
+import { runBehavior } from "@deskrelay/behavior-sdk/runtime";
+import type { BehaviorManifest } from "@deskrelay/shared/manifest";
 import manifest from "../manifest.json" with { type: "json" };
 
 await runBehavior({

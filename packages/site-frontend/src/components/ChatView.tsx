@@ -1,8 +1,8 @@
-// ChatView ??full claude-remote-style chat experience.
+// ChatView -- full DeskRelay chat experience.
 //
 // Layout: sidebar (device picker, sessions, profile) + main (transcript +
 // composer). The class names + structure mirror the index.html shell
-// from C:\Users\darkh\Projects\claude-remote so styles.css (also ported
+// from the original browser prototype so styles.css (also ported
 // from there) styles them correctly.
 
 import {

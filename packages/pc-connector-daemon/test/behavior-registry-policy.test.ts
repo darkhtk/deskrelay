@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadBehaviorPackage } from "@claude-remote/behavior-sdk";
-import { InProcessSubscriptionBroker } from "@claude-remote/core";
+import { loadBehaviorPackage } from "@deskrelay/behavior-sdk";
+import { InProcessSubscriptionBroker } from "@deskrelay/core";
 import { BehaviorRegistry, BehaviorRegistryError } from "../src/behavior-registry.ts";
 
 interface ManifestOverrides {
@@ -36,7 +36,7 @@ async function writePackage(dir: string, overrides: ManifestOverrides = {}): Pro
     minConnectorVersion: "0.0.0",
     license: overrides.license ?? "Apache-2.0",
     publisher: {
-      id: overrides.publisherId ?? "claude-remote",
+      id: overrides.publisherId ?? "deskrelay",
       name: "Test Publisher",
       key: "did:web:test.example",
     },
@@ -74,7 +74,7 @@ async function loadManifest(overrides: ManifestOverrides = {}) {
 describe("BehaviorRegistry — phase-1 permission policy", () => {
   test("first-party publisher passes with broad permissions", async () => {
     const manifest = await loadManifest({
-      publisherId: "claude-remote",
+      publisherId: "deskrelay",
       permissions: ["shell:exec:*", "filesystem:write:user.home"],
     });
     const registry = new BehaviorRegistry({

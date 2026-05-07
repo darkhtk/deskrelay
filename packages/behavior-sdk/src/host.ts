@@ -12,8 +12,8 @@
 // hosts and lets the broker route between them.
 
 import { basename } from "node:path";
-import type { InProcessSubscriptionBroker } from "@claude-remote/core";
-import type { Actor, EventInput } from "@claude-remote/shared/event";
+import type { InProcessSubscriptionBroker } from "@deskrelay/core";
+import type { Actor, EventInput } from "@deskrelay/shared/event";
 import { type Subprocess, spawn } from "bun";
 import {
   JsonRpcErrorCode,

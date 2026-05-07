@@ -1,4 +1,4 @@
-// Tests ported from claude-remote/test/slash-commands.test.js, adjusted for
+// Tests ported from the original browser prototype tests/slash-commands.test.js, adjusted for
 // the platform's filtered list (no /login /logout /keybindings-help
 // /skills; runtime-discovered skills are merged from Claude init).
 

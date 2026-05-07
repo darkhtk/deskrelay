@@ -104,7 +104,7 @@ describe("ChatView device refresh bridge", () => {
               result: [
                 {
                   sessionId: "sess_initial_1",
-                  cwd: "C:\\Users\\darkh\\Projects\\claude-remote-platform",
+                  cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
                   title: "Initial session loaded",
                   modifiedAt: "2026-04-30T00:00:00.000Z",
                   fileSize: 512,
@@ -1503,7 +1503,7 @@ describe("ChatView device refresh bridge", () => {
               result: [
                 {
                   sessionId: "sess_many",
-                  cwd: "C:\\Users\\darkh\\Projects\\claude-remote-platform",
+                  cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
                   title: "Long session",
                   modifiedAt: "2026-04-30T00:00:00.000Z",
                   fileSize: 4096,
@@ -1519,7 +1519,7 @@ describe("ChatView device refresh bridge", () => {
             JSON.stringify({
               result: {
                 sessionId: "sess_many",
-                cwd: "C:\\Users\\darkh\\Projects\\claude-remote-platform",
+                cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
                 events,
                 truncated: true,
               },
@@ -1568,7 +1568,7 @@ describe("ChatView device refresh bridge", () => {
   test("waits for the run SSE stream and scrolls composer sends/live CLI events into view", async () => {
     localStorage.setItem(
       `cr:device:${DEV.id}:defaultCwd`,
-      "C:\\Users\\darkh\\Projects\\claude-remote-platform",
+      "C:\\Users\\darkh\\Projects\\deskrelay",
     );
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       cb(0);

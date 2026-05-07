@@ -1,5 +1,5 @@
 {
-  "name": "@claude-remote/pc-connector-daemon",
+  "name": "@deskrelay/pc-connector-daemon",
   "version": "0.0.0",
   "private": true,
   "description": "Self-host connector daemon that exposes local Claude Code behaviors over a private HTTP API.",
@@ -19,10 +19,10 @@
     "build:binary": "bun run scripts/build-binary.ts"
   },
   "dependencies": {
-    "@claude-remote/behavior-remote-claude": "workspace:*",
-    "@claude-remote/behavior-sdk": "workspace:*",
-    "@claude-remote/core": "workspace:*",
-    "@claude-remote/shared": "workspace:*"
+    "@deskrelay/behavior-remote-claude": "workspace:*",
+    "@deskrelay/behavior-sdk": "workspace:*",
+    "@deskrelay/core": "workspace:*",
+    "@deskrelay/shared": "workspace:*"
   },
   "license": "Apache-2.0"
 }

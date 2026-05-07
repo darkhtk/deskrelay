@@ -15,7 +15,7 @@ import {
   SoftwareKeyBackend,
   type SoftwareKeyStorage,
   base64UrlEncode,
-} from "@claude-remote/shared/device-key";
+} from "@deskrelay/shared/device-key";
 import { chmod600Best } from "./chmod-best.ts";
 import { defaultStateDir } from "./state-file.ts";
 

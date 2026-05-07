@@ -1,4 +1,4 @@
-import { InProcessSubscriptionBroker } from "@claude-remote/core";
+import { InProcessSubscriptionBroker } from "@deskrelay/core";
 import { describe, expect, test } from "bun:test";
 import {
   APPROVALS_SPACE,
