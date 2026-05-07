@@ -223,6 +223,14 @@ async function runScenario(ctx: TestContext): Promise<void> {
   assert(roots.mode === "restricted", `expected restricted roots, got ${roots.mode}`);
   assert(roots.roots.includes(ctx.remoteWorkspace), "remote workspace root was not exposed");
 
+  const behaviors = await waitJson<unknown>(`${ctx.serverUrl}/api/devices/${device.id}/behaviors`, {
+    headers: authHeaders(ctx.siteToken),
+  });
+  assert(
+    JSON.stringify(behaviors).includes("remote-claude"),
+    "remote-claude behavior was not visible through the site",
+  );
+
   const listing = await waitJson<{ entries: Array<{ name: string; type: string }> }>(
     `${ctx.serverUrl}/api/devices/${device.id}/fs/list?path=${encodeURIComponent(ctx.remoteWorkspace)}`,
     { headers: authHeaders(ctx.siteToken) },
