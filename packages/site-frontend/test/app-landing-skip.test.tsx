@@ -38,8 +38,8 @@ describe("App landing flow", () => {
         screen.getAllByRole("button", { name: t("landing.cta.start") }).length,
       ).toBeGreaterThan(0);
     });
-    expect(screen.getByRole("heading", { name: "Release notes" })).toBeTruthy();
-    expect(document.body.textContent).toContain("CLI permissions can be edited");
+    expect(screen.getByRole("heading", { name: "릴리즈 노트" })).toBeTruthy();
+    expect(document.body.textContent).toContain("CLI 권한을 편집할 수 있습니다");
   });
 
   test("a stored token still lets the user review the landing screen first", async () => {

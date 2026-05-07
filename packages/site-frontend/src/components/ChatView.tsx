@@ -92,7 +92,9 @@ export interface ContextUsageSnapshot {
   source: "event" | "text";
 }
 
-function latestContextUsageSnapshot(events: ClaudeStreamEvent[]): ContextUsageSnapshot | null {
+export function latestContextUsageSnapshot(
+  events: ClaudeStreamEvent[],
+): ContextUsageSnapshot | null {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const snapshot = contextUsageFromEvent(events[i]);
     if (snapshot) return snapshot;
@@ -118,7 +120,11 @@ function contextUsageFromEvent(event: unknown): ContextUsageSnapshot | null {
     const snapshot = contextUsageFromRecord(candidate);
     if (snapshot) return snapshot;
   }
-  return contextUsageFromText(messageText(record));
+  for (const text of contextTextFields(record)) {
+    const snapshot = contextUsageFromText(text);
+    if (snapshot) return snapshot;
+  }
+  return null;
 }
 
 function contextUsageFromRecord(record: Record<string, unknown>): ContextUsageSnapshot | null {
@@ -182,6 +188,19 @@ function contextUsageFromRecord(record: Record<string, unknown>): ContextUsageSn
 function contextUsageFromText(text: string): ContextUsageSnapshot | null {
   if (!text || !/\bcontext\b/i.test(text) || !/%/.test(text)) return null;
   const normalized = text.replace(/\s+/g, " ");
+
+  const freeSpaceMatch = normalized.match(
+    /\|\s*Free space\s*\|[^|]*\|\s*(\d{1,3}(?:\.\d+)?)\s*%\s*\|/i,
+  );
+  if (freeSpaceMatch?.[1]) return usageFromRemaining(Number(freeSpaceMatch[1]), "text");
+
+  const claudeContextTokensMatch = normalized.match(
+    /\*\*Tokens:\*\*\s*[^()]*\((\d{1,3}(?:\.\d+)?)\s*%\)/i,
+  );
+  if (claudeContextTokensMatch?.[1]) {
+    return usageFromUsed(Number(claudeContextTokensMatch[1]), "text");
+  }
+
   const remainingMatch =
     normalized.match(/(?:remaining|left|available|free)[^0-9%]{0,48}(\d{1,3}(?:\.\d+)?)\s*%/i) ??
     normalized.match(/(\d{1,3}(?:\.\d+)?)\s*%[^.]{0,48}(?:remaining|left|available|free)/i);
@@ -191,6 +210,14 @@ function contextUsageFromText(text: string): ContextUsageSnapshot | null {
     normalized.match(/(?:used|usage|full)[^0-9%]{0,48}(\d{1,3}(?:\.\d+)?)\s*%/i) ??
     normalized.match(/(\d{1,3}(?:\.\d+)?)\s*%[^.]{0,48}(?:used|usage|full)/i);
   return usedMatch?.[1] ? usageFromUsed(Number(usedMatch[1]), "text") : null;
+}
+
+function contextTextFields(record: Record<string, unknown>): string[] {
+  const fields = [messageText(record)];
+  if (typeof record.result === "string") fields.push(record.result);
+  if (typeof record.content === "string") fields.push(record.content);
+  if (typeof record.text === "string") fields.push(record.text);
+  return fields.filter((field) => field.trim().length > 0);
 }
 
 function messageText(record: Record<string, unknown>): string {

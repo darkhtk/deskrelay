@@ -1,9 +1,9 @@
-## Release notes
+## 릴리즈 노트
 
-### Self-host build
+### Self-host 빌드
 
-- The main screen now opens directly into the product with a Korean-only interface and **Start**.
-- Another PC can be registered by copying one PowerShell command from **Settings -> Devices**.
-- Sessions, permissions, and skills are scoped to the selected device.
-- CLI permissions can be edited from the sidebar: remove entries, switch to `All`, clear the allow list, or add `Bash(*)`, `Grep(*)`, `Read(*)`, and other common tools.
-- Device and server command files are generated at install time so the setup can be copied without hunting through logs.
+- 메인 화면은 한국어 전용 인터페이스와 **시작하기** 버튼으로 바로 열립니다.
+- **설정 -> 디바이스**에서 PowerShell 명령 하나를 복사해 다른 PC를 등록할 수 있습니다.
+- 세션, 권한, 스킬은 모두 현재 선택된 디바이스 기준으로 표시됩니다.
+- 사이드바 권한 탭에서 CLI 권한을 편집할 수 있습니다. 항목 삭제, `All` 전환, 허용 목록 비우기, `Bash(*)`, `Grep(*)`, `Read(*)` 같은 자주 쓰는 권한 추가를 지원합니다.
+- 설치 시 디바이스와 서버 명령 파일을 생성해 로그를 찾지 않아도 필요한 설정을 복사할 수 있습니다.
