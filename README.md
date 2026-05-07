@@ -2,6 +2,37 @@
 
 DeskRelay는 자기 PC에서 실행 중인 Claude Code를 브라우저로 조작하기 위한 self-host 오픈소스 도구다. 출시용 SaaS가 아니라, 파워유저가 자기 장비 안에 띄워 두는 control plane에 가깝다.
 
+## 서버 PC 설치
+
+서버로 쓸 Windows PC의 PowerShell에 아래 명령을 통째로 붙여넣는다. 기본 설치 위치는 `$HOME\deskrelay`이고, 실행 상태와 Site token은 `.self-server` 아래에 생성된다.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+
+$repo = Join-Path $HOME 'deskrelay'
+if (-not (Test-Path -LiteralPath $repo)) {
+  git clone https://github.com/darkhtk/deskrelay.git $repo
+} elseif (-not (Test-Path -LiteralPath (Join-Path $repo '.git'))) {
+  throw "Path exists but is not a git repo: $repo"
+}
+
+Set-Location -LiteralPath $repo
+git pull --ff-only
+bun install
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
+```
+
+실행이 끝나면 터미널에 접속 URL, Site token, command 파일 위치가 출력된다. 같은 정보는 저장소 최상위의 `DESKRELAY-SERVER-CODE.txt`와 `REGISTER-OTHER-PC.txt`에도 생성된다.
+
+서버를 중지하려면:
+
+```powershell
+Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
+```
+
+다른 PC에서 접속하려면 서버 PC와 대상 PC가 같은 LAN 또는 Tailscale tailnet에 있어야 한다. connector 포트를 공용 인터넷에 직접 노출하지 않는다.
+
 ## 구조 노드
 
 ```mermaid
