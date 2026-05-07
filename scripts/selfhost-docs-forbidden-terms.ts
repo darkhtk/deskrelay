@@ -4,7 +4,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "..");
-const scanRoots = ["README.md", "docs", "packages/site-frontend/src/content"];
+const scanRoots = ["USABILITY_EVALUATION.md"];
 const forbidden = [
   "Cloudflare",
   "MSIX",

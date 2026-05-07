@@ -1,5 +1,4 @@
 import { type Component, For, type JSX, Show, createSignal } from "solid-js";
-import releaseNotesMarkdown from "../content/release-notes.md?raw";
 import { t } from "../i18n.ts";
 import { LoginCard } from "./LoginCard.tsx";
 
@@ -8,6 +7,23 @@ type MarkdownBlock =
   | { type: "h3"; text: string }
   | { type: "p"; text: string }
   | { type: "ul"; items: string[] };
+
+const releaseNotesMarkdown = `
+## 릴리즈 노트
+
+### Self-host 설치와 등록 정리
+
+- 설치 흐름을 서버 시작과 다른 PC 등록 명령 실행으로 단순화했습니다.
+- 다른 PC 등록 명령은 서버 URL과 Site token만 포함합니다.
+- 대상 PC의 connector daemon은 외부 접근 가능 여부를 검증한 뒤 등록됩니다.
+- 같은 daemon URL을 다시 등록하면 기존 등록을 정리한 뒤 새 등록을 만듭니다.
+
+### UI 기준
+
+- 메인 화면은 한국어 기준의 간단한 시작 화면입니다.
+- 세션, 권한, 스킬은 모두 현재 선택된 디바이스 기준으로 표시됩니다.
+- composer에서 연속으로 보낸 지시는 순서대로 큐잉됩니다.
+`.trim();
 
 export interface LandingProps {
   onTokenLogin: (token: string) => void | Promise<void>;
