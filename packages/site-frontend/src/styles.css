@@ -1452,6 +1452,7 @@ body.sidebar-open {
   padding: 1px 0;
   text-align: left;
   line-height: 1.35;
+  position: relative;
 }
 .sidebar-skill-row-deleting {
   opacity: 0.55;
@@ -1500,20 +1501,52 @@ body.sidebar-open {
 .sidebar-command-list {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 2px;
 }
 .sidebar-command-row {
-  flex-direction: column;
-  gap: 1px;
+  display: grid;
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+  text-align: left;
+  position: relative;
 }
-.sidebar-command-row span {
+.sidebar-command-name {
+  min-width: 0;
   font-family: ui-monospace, monospace;
   font-size: 11px;
   color: var(--text);
+  white-space: nowrap;
+  text-align: left;
 }
-.sidebar-command-row small {
+.sidebar-command-hint {
+  min-width: 0;
   color: var(--text-faint);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.sidebar-skill-row[data-full-description]:hover::after,
+.sidebar-skill-row[data-full-description]:focus-within::after,
+.sidebar-command-row[data-full-description]:hover::after,
+.sidebar-command-row[data-full-description]:focus-within::after {
+  content: attr(data-full-description);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 1px);
+  z-index: 10;
+  padding: 2px 0;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 /* Capabilities strip at the bottom of the sidebar — flat row of icon +

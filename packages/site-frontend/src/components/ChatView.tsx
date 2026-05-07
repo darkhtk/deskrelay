@@ -2399,6 +2399,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                                   "sidebar-skill-row-armed": isArmed(),
                                   "sidebar-skill-row-deleting": isDeleting(),
                                 }}
+                                title={skill.description}
+                                data-full-description={skill.description}
                               >
                                 <span class="sidebar-skill-name">{skill.name}</span>
                                 <span class="sidebar-skill-description" title={skill.description}>
@@ -2454,9 +2456,15 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                     <div class="sidebar-command-list">
                       <For each={composerSlashCommands()}>
                         {(command) => (
-                          <div class="sidebar-command-row">
-                            <span>{command.name}</span>
-                            <small>{command.hint}</small>
+                          <div
+                            class="sidebar-command-row"
+                            title={command.hint}
+                            data-full-description={command.hint}
+                          >
+                            <span class="sidebar-command-name">{command.name}</span>
+                            <small class="sidebar-command-hint" title={command.hint}>
+                              {command.hint}
+                            </small>
                           </div>
                         )}
                       </For>

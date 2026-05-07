@@ -574,6 +574,21 @@ describe("ChatView device refresh bridge", () => {
     );
     expect(addedSkill).toBeTruthy();
     expect(builtinSkill).toBeTruthy();
+    expect(addedSkill?.getAttribute("data-full-description")).toBe("Claude Code skill");
+    expect(addedSkill?.getAttribute("title")).toBe("Claude Code skill");
+    const statusCommand = [...container.querySelectorAll(".sidebar-command-row")].find(
+      (item) => item.querySelector(".sidebar-command-name")?.textContent === "/status",
+    );
+    expect(statusCommand).toBeTruthy();
+    expect(statusCommand?.querySelector(".sidebar-command-hint")?.textContent).toBe(
+      "Show DeskRelay connection and session status",
+    );
+    expect(statusCommand?.getAttribute("data-full-description")).toBe(
+      "Show DeskRelay connection and session status",
+    );
+    expect(statusCommand?.getAttribute("title")).toBe(
+      "Show DeskRelay connection and session status",
+    );
 
     const sessionsTab = [...container.querySelectorAll('[role="tab"]')].find(
       (button) => button.textContent === t("chat.sidebar.tab.sessions"),
