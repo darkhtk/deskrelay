@@ -81,6 +81,7 @@ describe("settings and chrome invariants", () => {
     expect(appSource).toContain('class="context-meter-main"');
     expect(styles).toMatch(/\.context-meter-group\s*{[^}]*flex-direction:\s*column;/s);
     expect(styles).toMatch(/\.context-meter\s*{[^}]*justify-content:\s*space-between;/s);
+    expect(styles).toMatch(/\.context-battery-label\s*{[^}]*min-width:\s*46px;/s);
     expect(styles).toMatch(/\.context-meter-reset\s*{[^}]*margin-left:\s*auto;/s);
   });
 

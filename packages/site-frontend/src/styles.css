@@ -3027,6 +3027,7 @@ pre .copy-button:hover {
   gap: 6px;
 }
 .context-battery-label {
+  min-width: 46px;
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
