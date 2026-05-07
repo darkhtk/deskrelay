@@ -152,7 +152,19 @@ function Stop-ProcessTree {
   foreach ($child in $children) {
     Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
   }
-  Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+  $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  if (-not $proc) {
+    return
+  }
+  try {
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+  } catch {
+    throw "Could not stop stale DeskRelay dev process pid=$ProcessId ($($proc.ProcessName)). Close the process, or rerun from an elevated terminal. $($_.Exception.Message)"
+  }
+  Start-Sleep -Milliseconds 200
+  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    throw "Could not stop stale DeskRelay dev process pid=$ProcessId ($($proc.ProcessName)). Close the process, or rerun from an elevated terminal."
+  }
 }
 
 function Get-DevPorts {
