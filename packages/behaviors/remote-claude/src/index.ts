@@ -156,15 +156,19 @@ interface SlashCommandsResult {
 interface ContextUsageParams {
   cwd: string;
   sessionId?: string;
+  scope?: "session" | "week";
   permissionMode?: string;
   model?: string;
   command?: string[];
 }
 
 interface ContextUsageSnapshot {
-  remainingPercent: number;
-  usedPercent: number;
+  remainingPercent: number | null;
+  usedPercent: number | null;
   source: "event" | "text";
+  resetAt?: string;
+  rateLimitType?: string;
+  status?: string;
 }
 
 interface ContextUsageResult {
@@ -322,6 +326,9 @@ export const behaviorDef: RunBehaviorOptions = {
         throw new Error("context.usage: cwd is required");
       }
       const events: ClaudeStreamEvent[] = [];
+      const scope =
+        params.scope === "session" || params.scope === "week" ? params.scope : undefined;
+      const message = scope === "session" || scope === "week" ? "/extra-usage" : "/context";
       const permissionMode =
         params.permissionMode && VALID_PERMISSION_MODES.has(params.permissionMode)
           ? params.permissionMode
@@ -329,12 +336,15 @@ export const behaviorDef: RunBehaviorOptions = {
       const model = safeClaudeModel(params.model);
       const result = await runClaude({
         cwd: params.cwd,
-        message: "/context",
-        ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}),
+        message,
+        ...(scope ? {} : params.sessionId ? { resumeSessionId: params.sessionId } : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(model ? { model } : {}),
         ...(params.command ? { command: params.command } : {}),
-        extraArgs: ["--max-budget-usd", "0.01"],
+        extraArgs:
+          scope === "session" || scope === "week"
+            ? ["--no-session-persistence", "--max-budget-usd", "0.01"]
+            : ["--max-budget-usd", "0.01"],
         onEvent: (event) => {
           events.push(event);
         },
@@ -346,7 +356,12 @@ export const behaviorDef: RunBehaviorOptions = {
         },
       });
       return {
-        usage: latestContextUsageSnapshot(events),
+        usage:
+          scope === "session"
+            ? latestRateLimitUsageSnapshot(events, "five_hour")
+            : scope === "week"
+              ? latestRateLimitUsageSnapshot(events, "weekly")
+              : latestContextUsageSnapshot(events),
         eventCount: result.eventCount,
         checkedAt: new Date().toISOString(),
       };
@@ -657,6 +672,47 @@ function latestContextUsageSnapshot(events: ClaudeStreamEvent[]): ContextUsageSn
     if (snapshot) return snapshot;
   }
   return null;
+}
+
+function latestRateLimitUsageSnapshot(
+  events: ClaudeStreamEvent[],
+  target: "five_hour" | "weekly",
+): ContextUsageSnapshot | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const snapshot = rateLimitUsageFromEvent(events[i], target);
+    if (snapshot) return snapshot;
+  }
+  return null;
+}
+
+function rateLimitUsageFromEvent(
+  event: unknown,
+  target: "five_hour" | "weekly",
+): ContextUsageSnapshot | null {
+  const record = asRecord(event);
+  if (!record || record.type !== "rate_limit_event") return null;
+  const info = asRecord(record.rate_limit_info);
+  if (!info) return null;
+  const rateLimitType = typeof info.rateLimitType === "string" ? info.rateLimitType : "";
+  const normalizedType = rateLimitType.toLowerCase().replace(/[-\s]+/g, "_");
+  const isTarget =
+    target === "five_hour"
+      ? normalizedType === "five_hour" || normalizedType === "session"
+      : normalizedType === "weekly" || normalizedType === "week";
+  if (!isTarget) return null;
+
+  const resetsAt = numericValue(info.resetsAt);
+  const resetAt =
+    resetsAt !== null && resetsAt > 0 ? new Date(resetsAt * 1000).toISOString() : undefined;
+  const status = typeof info.status === "string" ? info.status : undefined;
+  return {
+    remainingPercent: null,
+    usedPercent: null,
+    source: "event",
+    rateLimitType,
+    ...(resetAt ? { resetAt } : {}),
+    ...(status ? { status } : {}),
+  };
 }
 
 function contextUsageFromEvent(event: unknown): ContextUsageSnapshot | null {

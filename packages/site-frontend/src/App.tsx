@@ -36,6 +36,15 @@ function nextWeekResetLabel(): string {
   return `reset ${reset.getMonth() + 1}/${reset.getDate()} 00:00`;
 }
 
+function resetLabelFromUsage(usage: ContextUsageSnapshot | null, fallback: string): string {
+  if (!usage?.resetAt) return fallback;
+  const reset = new Date(usage.resetAt);
+  if (Number.isNaN(reset.getTime())) return fallback;
+  const hours = reset.getHours().toString().padStart(2, "0");
+  const minutes = reset.getMinutes().toString().padStart(2, "0");
+  return `reset ${reset.getMonth() + 1}/${reset.getDate()} ${hours}:${minutes}`;
+}
+
 const ContextUsageBattery: Component<{
   usage: ContextUsageSnapshot | null;
   label: string;
@@ -57,8 +66,8 @@ const ContextUsageBattery: Component<{
   const title = () => {
     const value = remaining();
     return value === null
-      ? `${props.label} context unavailable - ${props.resetLabel}`
-      : `${props.label} context remaining ${percentText()} - ${props.resetLabel}`;
+      ? `${props.label} usage unavailable - ${props.resetLabel}`
+      : `${props.label} usage remaining ${percentText()} - ${props.resetLabel}`;
   };
   const fillWidth = () => {
     const value = remaining();
@@ -91,13 +100,13 @@ const ContextUsageMeters: Component<{ usage: ContextUsageOverview; visible: bool
     <div class="context-meter-group">
       <ContextUsageBattery
         usage={props.usage.session}
-        label="current session"
-        resetLabel="reset: new session/compact"
+        label="Session"
+        resetLabel={resetLabelFromUsage(props.usage.session, "reset ~5h")}
       />
       <ContextUsageBattery
         usage={props.usage.week}
-        label="current week"
-        resetLabel={nextWeekResetLabel()}
+        label="Week"
+        resetLabel={resetLabelFromUsage(props.usage.week, nextWeekResetLabel())}
       />
     </div>
   </Show>

@@ -159,4 +159,50 @@ describe("remote-claude behavior chat request", () => {
     expect(result.usage?.usedPercent).toBeCloseTo(5.9);
     expect(result.usage?.source).toBe("text");
   });
+
+  test("context.usage returns global rate limit reset metadata for session and week scopes", async () => {
+    const { ctx, handlers } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const contextUsage = handlers.get("context.usage");
+    if (!contextUsage) throw new Error("context.usage handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-rate-limit-"));
+    tempDirs.push(cwd);
+    const fixture = fileURLToPath(new URL("./fixtures/fake-claude-rate-limit.ts", import.meta.url));
+
+    const session = (await contextUsage({
+      cwd,
+      scope: "session",
+      command: ["bun", fixture],
+    })) as {
+      usage: {
+        remainingPercent: number | null;
+        usedPercent: number | null;
+        resetAt?: string;
+        rateLimitType?: string;
+        status?: string;
+      } | null;
+    };
+    const week = (await contextUsage({
+      cwd,
+      scope: "week",
+      command: ["bun", fixture],
+    })) as typeof session;
+
+    expect(session.usage).toMatchObject({
+      remainingPercent: null,
+      usedPercent: null,
+      resetAt: "2026-05-07T06:20:00.000Z",
+      rateLimitType: "five_hour",
+      status: "allowed",
+    });
+    expect(week.usage).toMatchObject({
+      remainingPercent: null,
+      usedPercent: null,
+      resetAt: "2026-05-14T06:20:00.000Z",
+      rateLimitType: "weekly",
+      status: "allowed",
+    });
+  });
 });
