@@ -136,7 +136,7 @@ describe("registerSelf", () => {
     ]);
   });
 
-  test("removes an existing registration for the same daemon URL before posting a replacement", async () => {
+  test("removes all existing registrations for the same daemon URL before posting a replacement", async () => {
     const port = 19093;
     const calls: Array<{ method: string; url: string; body?: string; authorization?: string }> = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -153,7 +153,11 @@ describe("registerSelf", () => {
       if (init?.method === "GET" && url.endsWith("/api/devices")) {
         return Response.json([
           {
-            id: "dev_old",
+            id: "dev_old_1",
+            daemonUrl: `http://100.64.1.2:${port}`,
+          },
+          {
+            id: "dev_old_2",
             daemonUrl: `http://100.64.1.2:${port}`,
           },
           {
@@ -162,7 +166,10 @@ describe("registerSelf", () => {
           },
         ]);
       }
-      if (init?.method === "DELETE" && url.endsWith("/api/devices/dev_old")) {
+      if (
+        init?.method === "DELETE" &&
+        (url.endsWith("/api/devices/dev_old_1") || url.endsWith("/api/devices/dev_old_2"))
+      ) {
         return Response.json({ ok: true });
       }
       if (init?.method === "POST" && url.endsWith("/api/devices")) {
@@ -195,7 +202,8 @@ describe("registerSelf", () => {
       `GET http://127.0.0.1:${port}/status`,
       `GET http://100.64.1.2:${port}/status`,
       "GET http://deskrelay.test:18193/api/devices",
-      "DELETE http://deskrelay.test:18193/api/devices/dev_old",
+      "DELETE http://deskrelay.test:18193/api/devices/dev_old_1",
+      "DELETE http://deskrelay.test:18193/api/devices/dev_old_2",
       "POST http://deskrelay.test:18193/api/devices",
     ]);
     expect(calls.at(-1)?.body).toBe(
@@ -206,4 +214,112 @@ describe("registerSelf", () => {
       }),
     );
   });
+
+  test("fails before posting when registered devices cannot be listed", async () => {
+    const port = 19094;
+    const calls: Array<{ method: string; url: string }> = [];
+    const fetchImpl = makeRegisterFetch(calls, {
+      listDevices: () => Response.json({ error: "server down" }, { status: 500 }),
+      postDevice: () => {
+        throw new Error("POST should not be reached");
+      },
+    });
+
+    await expect(registerSelfForTest({ port, fetchImpl })).rejects.toThrow(
+      "cannot list registered devices (500)",
+    );
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://100.64.1.2:${port}/status`,
+      "GET http://deskrelay.test:18193/api/devices",
+    ]);
+  });
+
+  test("fails before posting when registered devices response is invalid", async () => {
+    const port = 19095;
+    const calls: Array<{ method: string; url: string }> = [];
+    const fetchImpl = makeRegisterFetch(calls, {
+      listDevices: () => new Response("{not-json", { status: 200 }),
+      postDevice: () => {
+        throw new Error("POST should not be reached");
+      },
+    });
+
+    await expect(registerSelfForTest({ port, fetchImpl })).rejects.toThrow(
+      "cannot parse registered devices response",
+    );
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://100.64.1.2:${port}/status`,
+      "GET http://deskrelay.test:18193/api/devices",
+    ]);
+  });
+
+  test("fails before posting when an existing registration cannot be deleted", async () => {
+    const port = 19096;
+    const calls: Array<{ method: string; url: string }> = [];
+    const fetchImpl = makeRegisterFetch(calls, {
+      listDevices: () => Response.json([{ id: "dev_old", daemonUrl: `http://100.64.1.2:${port}` }]),
+      deleteDevice: () => Response.json({ error: "locked" }, { status: 409 }),
+      postDevice: () => {
+        throw new Error("POST should not be reached");
+      },
+    });
+
+    await expect(registerSelfForTest({ port, fetchImpl })).rejects.toThrow(
+      "cannot remove existing device dev_old (409)",
+    );
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://100.64.1.2:${port}/status`,
+      "GET http://deskrelay.test:18193/api/devices",
+      "DELETE http://deskrelay.test:18193/api/devices/dev_old",
+    ]);
+  });
 });
+
+function makeRegisterFetch(
+  calls: Array<{ method: string; url: string }>,
+  handlers: {
+    listDevices: () => Response;
+    deleteDevice?: (url: string) => Response;
+    postDevice: () => Response;
+  },
+): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ method, url });
+    if (url.endsWith("/status")) return Response.json({ ok: true });
+    if (method === "GET" && url.endsWith("/api/devices")) return handlers.listDevices();
+    if (method === "DELETE" && url.includes("/api/devices/")) {
+      return handlers.deleteDevice?.(url) ?? Response.json({ ok: true });
+    }
+    if (method === "POST" && url.endsWith("/api/devices")) return handlers.postDevice();
+    throw new Error(`unexpected fetch: ${method} ${url}`);
+  }) as typeof fetch;
+}
+
+async function registerSelfForTest(options: { port: number; fetchImpl: typeof fetch }) {
+  return await registerSelf({
+    serverUrl: "http://deskrelay.test:18193/",
+    siteToken: "site-token",
+    port: options.port,
+    advertiseHost: "100.64.1.2",
+    label: "Replacement",
+    fetchImpl: options.fetchImpl,
+    installTask: async () => ({
+      supported: true,
+      installed: true,
+      started: true,
+      taskName: "DeskRelay Connector",
+    }),
+    loadAuthToken: async () => ({ token: "daemon-token", path: "auth.json", created: false }),
+    stopRecordedDaemon: async () => undefined,
+    stopPortOwner: async () => false,
+    timeoutMs: 10,
+  });
+}

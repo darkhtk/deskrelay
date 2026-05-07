@@ -57,7 +57,10 @@
 | 케이스 | 절차 | 기대 결과 | 비고 |
 |---|---|---|---|
 | 정상 등록 | `/api/devices` POST 또는 등록 명령 | list에 즉시 표시, token은 응답에 노출 안 됨 | 자동화됨 |
-| 중복 daemon URL 등록 | 같은 daemon URL 재등록 | 기존 같은 daemon URL row 삭제 후 새 row 등록 | 자동화됨 |
+| 중복 daemon URL 등록 | 같은 daemon URL 재등록 | 기존 같은 daemon URL row 모두 삭제 후 새 row 등록 | 자동화됨 |
+| 등록 목록 조회 실패 | `/api/devices` 조회가 401/403/500 | 새 등록 중단, 중복 row 가능성 차단 | 자동화됨 |
+| 등록 목록 invalid JSON | `/api/devices`가 잘못된 JSON 응답 | 새 등록 중단, registry 변화 없음 | 자동화됨 |
+| 중복 row 삭제 실패 | 같은 daemon URL row DELETE 실패 | 새 등록 중단, 중복 row 가능성 차단 | 자동화됨 |
 | 등록 직후 offline badge | 등록 후 health poll 확인 | reachable이면 offline 표시 자동 제거 | UI 자동/수동 |
 | 선택된 디바이스 삭제 | 현재 선택 디바이스 삭제 | selected id 보정, 삭제 id로 요청 안 함 | UI 자동 보강 |
 | 삭제 후 refetch 실패 | DELETE 성공 후 list refetch 실패 유도 | local optimistic removal 유지, 오류는 별도 표시 | UI 자동 보강 |

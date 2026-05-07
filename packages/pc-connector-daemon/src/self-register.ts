@@ -264,15 +264,40 @@ async function replaceServerRegistration(
   }).catch((err) => {
     throw new Error(`cannot reach DeskRelay server at ${serverUrl}: ${(err as Error).message}`);
   });
-  if (existing?.ok) {
-    const devices = (await existing.json().catch(() => [])) as PublicDevice[];
-    for (const device of devices) {
-      if (device.daemonUrl !== input.daemonUrl) continue;
-      await fetchImpl(`${devicesUrl}/${encodeURIComponent(device.id)}`, {
-        method: "DELETE",
-        headers: { authorization: `Bearer ${siteToken}` },
-        signal: AbortSignal.timeout(10_000),
-      });
+  if (!existing.ok) {
+    const text = await existing.text().catch(() => "");
+    throw new Error(
+      `cannot list registered devices (${existing.status}): ${text || existing.statusText}`,
+    );
+  }
+
+  let devices: PublicDevice[];
+  try {
+    const parsed = await existing.json();
+    if (!Array.isArray(parsed)) throw new Error("response is not an array");
+    devices = parsed as PublicDevice[];
+  } catch (err) {
+    throw new Error(`cannot parse registered devices response: ${(err as Error).message}`);
+  }
+
+  for (const device of devices) {
+    if (device.daemonUrl !== input.daemonUrl) continue;
+    if (!device.id) {
+      throw new Error(`registered device for ${input.daemonUrl} is missing an id`);
+    }
+    const deleteUrl = `${devicesUrl}/${encodeURIComponent(device.id)}`;
+    const deleted = await fetchImpl(deleteUrl, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${siteToken}` },
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err) => {
+      throw new Error(`cannot remove existing device ${device.id}: ${(err as Error).message}`);
+    });
+    if (!deleted.ok) {
+      const text = await deleted.text().catch(() => "");
+      throw new Error(
+        `cannot remove existing device ${device.id} (${deleted.status}): ${text || deleted.statusText}`,
+      );
     }
   }
 
