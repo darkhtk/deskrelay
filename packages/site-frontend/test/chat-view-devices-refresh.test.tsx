@@ -61,6 +61,9 @@ describe("ChatView device refresh bridge", () => {
     const requestedUrls: string[] = [];
     let sessionsRequests = 0;
     let sessionsListParams: Record<string, unknown> | null = null;
+    let contextUsageRequests = 0;
+    let contextUsageParams: Record<string, unknown> | null = null;
+    const contextUsageSnapshots: Array<unknown> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requestedUrls.push(url);
@@ -95,21 +98,35 @@ describe("ChatView device refresh bridge", () => {
         if (body.method === "sessions.list") {
           sessionsRequests += 1;
           sessionsListParams = body.params ?? null;
+          return new Response(
+            JSON.stringify({
+              result: [
+                {
+                  sessionId: "sess_initial_1",
+                  cwd: "C:\\Users\\darkh\\Projects\\claude-remote-platform",
+                  title: "Initial session loaded",
+                  modifiedAt: "2026-04-30T00:00:00.000Z",
+                  fileSize: 512,
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
         }
-        return new Response(
-          JSON.stringify({
-            result: [
-              {
-                sessionId: "sess_initial_1",
-                cwd: "C:\\Users\\darkh\\Projects\\claude-remote-platform",
-                title: "Initial session loaded",
-                modifiedAt: "2026-04-30T00:00:00.000Z",
-                fileSize: 512,
+        if (body.method === "context.usage") {
+          contextUsageRequests += 1;
+          contextUsageParams = body.params ?? null;
+          return new Response(
+            JSON.stringify({
+              result: {
+                usage: { remainingPercent: 88, usedPercent: 12, source: "text" },
+                eventCount: 3,
+                checkedAt: "2026-05-07T00:00:00.000Z",
               },
-            ],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
       }
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -119,6 +136,7 @@ describe("ChatView device refresh bridge", () => {
         me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
         onSignOut={vi.fn()}
         onOpenSettings={vi.fn()}
+        onContextUsageChange={(usage) => contextUsageSnapshots.push(usage)}
       />
     ));
 
@@ -128,6 +146,18 @@ describe("ChatView device refresh bridge", () => {
     });
     expect(sessionsRequests).toBe(1);
     expect(sessionsListParams).toMatchObject({ limit: 200, dedupeSessionIds: true });
+    await waitFor(() => {
+      expect(contextUsageRequests).toBe(1);
+      expect(contextUsageParams).toMatchObject({
+        cwd: "C:\\Users\\darkh\\Projects\\claude-remote-platform",
+        sessionId: "sess_initial_1",
+      });
+      expect(contextUsageSnapshots).toContainEqual({
+        remainingPercent: 88,
+        usedPercent: 12,
+        source: "text",
+      });
+    });
     expect(requestedUrls.some((url) => url.endsWith(`/api/devices/${DEV.id}/behaviors`))).toBe(
       true,
     );

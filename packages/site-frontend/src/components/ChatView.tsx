@@ -654,8 +654,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     () => probedContextUsage() ?? latestContextUsageSnapshot(transcript()),
   );
   let contextUsageRequestSeq = 0;
+  let lastContextUsageProbeKey: string | null = null;
   function clearProbedContextUsage() {
     contextUsageRequestSeq += 1;
+    lastContextUsageProbeKey = null;
     setProbedContextUsage(null);
   }
 
@@ -928,6 +930,15 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
   }
 
+  function contextUsageProbeKey(input: {
+    deviceId: string;
+    instanceId: string;
+    cwd: string;
+    sessionId: string;
+  }): string {
+    return `${input.deviceId}\n${input.instanceId}\n${input.cwd}\n${input.sessionId}`;
+  }
+
   async function refreshContextUsageAfterRun(input: {
     deviceId: string;
     instanceId: string;
@@ -936,6 +947,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     permissionMode: ClaudePermissionMode;
     model: string | null;
   }) {
+    lastContextUsageProbeKey = contextUsageProbeKey(input);
     const seq = ++contextUsageRequestSeq;
     try {
       const res = await api.callBehavior<ContextUsageResult>(
@@ -956,6 +968,29 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (seq === contextUsageRequestSeq) setProbedContextUsage(null);
     }
   }
+
+  createEffect(() => {
+    if (running() || devices.loading || behaviors.loading || sessions.loading) return;
+    const deviceId = effectiveDeviceId();
+    const instanceId = remoteClaudeInstance();
+    const summary = selectedSession() ?? (sessions() ?? [])[0] ?? null;
+    if (!deviceId || !instanceId || !summary) return;
+    const key = contextUsageProbeKey({
+      deviceId,
+      instanceId,
+      cwd: summary.cwd,
+      sessionId: summary.sessionId,
+    });
+    if (lastContextUsageProbeKey === key) return;
+    void refreshContextUsageAfterRun({
+      deviceId,
+      instanceId,
+      cwd: summary.cwd,
+      sessionId: summary.sessionId,
+      permissionMode: confirmedPermissionMode() ?? requestedPermissionMode(),
+      model: selectedClaudeModel(),
+    });
+  });
 
   function handleScrollToBottomClick() {
     scrollTranscriptToBottom("smooth");
@@ -1687,12 +1722,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         setLastPermissionModeRequest(requestedModeForRun);
         setPermissionModeStatus("unknown");
       }
-      abort.abort();
-      setRunning(false);
-      setCliAction(null);
-      setActiveRunId(null);
-      attachmentsApi?.clear();
-      void refetchSessions();
       if (chatAccepted && streamFinished && runSessionId) {
         void refreshContextUsageAfterRun({
           deviceId: dev,
@@ -1703,6 +1732,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           model: modelForRun,
         });
       }
+      abort.abort();
+      setRunning(false);
+      setCliAction(null);
+      setActiveRunId(null);
+      attachmentsApi?.clear();
+      void refetchSessions();
     }
   }
 
