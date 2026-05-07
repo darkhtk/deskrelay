@@ -165,6 +165,79 @@ describe("DeviceShell self-host registration UX", () => {
     });
   });
 
+  test("selects another PC when the copied registration command finishes", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    let listedDevices = [OLD_DEVICE];
+    const onDevicesChanged = vi.fn();
+    const onDeviceSelected = vi.fn();
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify(listedDevices), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/self/register-other-pc-command") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            preferredUrl: "http://100.64.0.1:18193",
+            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
+            command: "powershell register command",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
+        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <DeviceShell onDevicesChanged={onDevicesChanged} onDeviceSelected={onDeviceSelected} />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Register another PC by copy-paste");
+    });
+
+    const copyButton = [...container.querySelectorAll("button")].find((button) =>
+      /copy registration command/i.test(button.textContent ?? ""),
+    ) as HTMLButtonElement | undefined;
+    if (!copyButton) throw new Error("copy command button missing");
+    fireEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("powershell register command");
+      expect(container.textContent).toContain("Waiting for the other PC to register");
+    });
+
+    listedDevices = [OLD_DEVICE, NEW_DEVICE];
+
+    await waitFor(
+      () => {
+        const selected = container.querySelector(
+          '.settings-list-item-main[aria-pressed="true"]',
+        ) as HTMLButtonElement | null;
+        expect(selected?.textContent).toContain(NEW_DEVICE.label);
+        expect(onDevicesChanged).toHaveBeenCalled();
+        expect(onDeviceSelected).toHaveBeenCalledWith(NEW_DEVICE.id);
+        expect(container.textContent).toContain("New laptop (Local) registered and selected.");
+      },
+      { timeout: 2500 },
+    );
+  });
+
   test("copies the generated other-PC removal command from settings", async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, "clipboard", {

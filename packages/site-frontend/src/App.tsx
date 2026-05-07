@@ -145,6 +145,15 @@ export const App: Component = () => {
     setDeviceSelectionRequest((current) => ({ id, seq: current.seq + 1 }));
   };
 
+  const activateRegisteredDevice = (id: string | null) => {
+    requestDeviceSelection(id);
+    if (!id) return;
+    setLandingReopened(false);
+    setLandingDismissed(true);
+    setPickedLocale(true);
+    setSettingsOpen(false);
+  };
+
   const openSettings = (options: OpenSettingsOptions = {}) => {
     setSettingsTab(options.tab ?? "general");
     setSettingsDeviceId(options.deviceId ?? null);
@@ -298,7 +307,7 @@ export const App: Component = () => {
                 <DeviceShell
                   initialSelectedDeviceId={settingsDeviceId()}
                   onDevicesChanged={notifyDevicesChanged}
-                  onDeviceSelected={requestDeviceSelection}
+                  onDeviceSelected={activateRegisteredDevice}
                 />
               </Show>
               <Show when={settingsTab() === "diagnostics"}>

@@ -1,4 +1,12 @@
-import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
+import {
+  type Component,
+  For,
+  Show,
+  createEffect,
+  createResource,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 import { ApiError, type Device, api } from "../api.ts";
 import { deviceDisplayName } from "../device-display.ts";
 import { clearDevicePrefs } from "../device-prefs.ts";
@@ -6,6 +14,8 @@ import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
 
 type DeviceCommandKind = "register" | "remove";
+const REGISTER_COMMAND_WATCH_MS = 60_000;
+const REGISTER_COMMAND_POLL_MS = 1_500;
 
 export interface DeviceShellProps {
   onDevicesChanged?: () => void | Promise<void>;
@@ -163,6 +173,10 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
   const [commandText, setCommandText] = createSignal("");
   const [commandTextKind, setCommandTextKind] = createSignal<DeviceCommandKind>("register");
   const [commandCopied, setCommandCopied] = createSignal<DeviceCommandKind | null>(null);
+  const [registrationWatchActive, setRegistrationWatchActive] = createSignal(false);
+  let registrationWatchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  onCleanup(() => stopRegistrationWatch());
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -195,6 +209,9 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
     try {
       const result =
         kind === "register" ? await api.registerOtherPcCommand() : await api.removeOtherPcCommand();
+      if (kind === "register") {
+        void startRegistrationWatch();
+      }
       if (!navigator.clipboard?.writeText) {
         setCommandText(result.command);
         setCommandError(t("ds.add.command.copy-unavailable"));
@@ -216,6 +233,47 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
     }
   };
 
+  function stopRegistrationWatch() {
+    if (registrationWatchTimer) clearTimeout(registrationWatchTimer);
+    registrationWatchTimer = null;
+    setRegistrationWatchActive(false);
+  }
+
+  async function startRegistrationWatch() {
+    stopRegistrationWatch();
+    setSuccess(t("ds.add.command.waiting"));
+    const known = new Set((await safeListDevices()).map((device) => device.id));
+    const deadline = Date.now() + REGISTER_COMMAND_WATCH_MS;
+    setRegistrationWatchActive(true);
+
+    const poll = async () => {
+      const list = await safeListDevices();
+      const added = list.find((device) => !known.has(device.id));
+      if (added) {
+        stopRegistrationWatch();
+        await props.onAdded(added);
+        setSuccess(t("ds.add.command.detected", { label: deviceDisplayName(added) }));
+        return;
+      }
+      if (Date.now() >= deadline) {
+        stopRegistrationWatch();
+        setSuccess(t("ds.add.command.timeout"));
+        return;
+      }
+      registrationWatchTimer = setTimeout(() => void poll(), REGISTER_COMMAND_POLL_MS);
+    };
+
+    registrationWatchTimer = setTimeout(() => void poll(), REGISTER_COMMAND_POLL_MS);
+  }
+
+  async function safeListDevices(): Promise<Device[]> {
+    try {
+      return await api.listDevices();
+    } catch {
+      return [];
+    }
+  }
+
   return (
     <section class="settings-card">
       <h3 class="settings-card-title">{t("ds.section.add")}</h3>
@@ -230,9 +288,11 @@ const AddDeviceCard: Component<{ onAdded: (device: Device) => void | Promise<voi
             type="button"
             class="secondary-button"
             onClick={() => void copyDeviceCommand("register")}
-            disabled={Boolean(commandBusy())}
+            disabled={Boolean(commandBusy()) || registrationWatchActive()}
           >
-            {commandBusy() === "register" ? t("ds.add.command.busy") : t("ds.add.command.copy")}
+            {commandBusy() === "register" || registrationWatchActive()
+              ? t("ds.add.command.busy")
+              : t("ds.add.command.copy")}
           </button>
           <button
             type="button"
