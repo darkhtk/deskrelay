@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
-import { defineConfig, type ViteDevServer } from "vite";
+import { type ViteDevServer, defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 
 const SITE_BACKEND_URL = process.env.CR_SITE_BACKEND_URL ?? "http://127.0.0.1:18092";
@@ -11,10 +11,17 @@ function localAddresses(): Set<string> {
   for (const entries of Object.values(networkInterfaces())) {
     for (const entry of entries ?? []) {
       values.add(entry.address);
+      values.add(normalizeAddress(entry.address));
       if (entry.family === "IPv4") values.add(`::ffff:${entry.address}`);
     }
   }
   return values;
+}
+
+function normalizeAddress(value: string): string {
+  if (value.startsWith("::ffff:")) return value.slice("::ffff:".length);
+  if (value === "::1") return "127.0.0.1";
+  return value;
 }
 
 function readSiteToken(): string | null {
@@ -51,6 +58,19 @@ function deskrelayLocalTokenPlugin() {
         res.setHeader("cache-control", "no-store");
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ token }));
+      });
+      server.middlewares.use("/__deskrelay/client-context", (req, res) => {
+        const remote = req.socket.remoteAddress ?? "";
+        const address = normalizeAddress(remote);
+        const locals = localAddresses();
+        res.setHeader("cache-control", "no-store");
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            address,
+            isLocal: locals.has(remote) || locals.has(address),
+          }),
+        );
       });
     },
   };

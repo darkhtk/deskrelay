@@ -163,6 +163,11 @@ export interface RemoveOtherPcCommandResponse {
   command: string;
 }
 
+export interface BrowserClientContext {
+  address: string;
+  isLocal: boolean;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -229,6 +234,25 @@ async function readLocalSiteToken(): Promise<string | null> {
   return null;
 }
 
+async function readBrowserClientContext(): Promise<BrowserClientContext | null> {
+  try {
+    const res = await fetch(`${resolveBaseUrl()}/__deskrelay/client-context`, {
+      method: "GET",
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const parsed = await readResponse(res);
+    if (!parsed || typeof parsed !== "object") return null;
+    const raw = parsed as { address?: unknown; isLocal?: unknown };
+    return {
+      address: typeof raw.address === "string" ? raw.address : "",
+      isLocal: raw.isLocal === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function readResponse(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!text) return undefined;
@@ -242,6 +266,7 @@ async function readResponse(res: Response): Promise<unknown> {
 export const api = {
   health: () => request<{ ok: true; version: string; devices: number }>("GET", "/healthz"),
   localSiteToken: () => readLocalSiteToken(),
+  browserClientContext: () => readBrowserClientContext(),
 
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerOtherPcCommand: () =>

@@ -40,6 +40,7 @@ describe("App landing flow", () => {
       ).toBeGreaterThan(0);
     });
     expect(screen.getByRole("heading", { name: "자동 설치와 진단" })).toBeTruthy();
+    expect(document.body.textContent).toContain("현재 디바이스");
     expect(document.body.textContent).toContain("서버 자동 확인");
     expect(document.body.textContent).toContain("다른 PC 등록 명령");
   });
@@ -64,10 +65,30 @@ describe("App landing flow", () => {
         );
       }
       if (url.includes("/__deskrelay/local-site-token")) {
-        return new Response(JSON.stringify({ token: "tok-local" }), {
+        return new Response(JSON.stringify({ error: "local only" }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/__deskrelay/client-context")) {
+        return new Response(JSON.stringify({ address: "100.64.1.44", isLocal: false }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
+      }
+      if (url.includes("/api/devices")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "dev_remote",
+              label: "WORKPC",
+              daemonUrl: "http://100.64.1.44:18091",
+              registeredAt: "2026-01-01T00:00:00.000Z",
+              connectionState: "online",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
       }
       return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 1 }), {
         status: 200,
@@ -80,6 +101,8 @@ describe("App landing flow", () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain("powershell -ExecutionPolicy Bypass");
     });
+    expect(document.body.textContent).toContain("등록된 디바이스");
+    expect(document.body.textContent).toContain("WORKPC");
     fireEvent.click(screen.getByRole("button", { name: "등록 명령 복사" }));
 
     await waitFor(() => {
@@ -144,5 +167,67 @@ describe("App landing flow", () => {
       expect(window.localStorage.getItem("cr.site-token:http://test.local")).toBe("tok-local");
     });
     expect(screen.queryByPlaceholderText(t("login.token.placeholder"))).toBeNull();
+  });
+
+  test("a remote authenticated browser that does not match a device is labeled unregistered", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/__deskrelay/client-context")) {
+        return new Response(JSON.stringify({ address: "100.64.1.99", isLocal: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/__deskrelay/local-site-token")) {
+        return new Response(JSON.stringify({ error: "local only" }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/api/devices")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "dev_remote",
+              label: "WORKPC",
+              daemonUrl: "http://100.64.1.44:18091",
+              registeredAt: "2026-01-01T00:00:00.000Z",
+              connectionState: "online",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    render(() => <Landing authed onTokenLogin={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("등록 안 된 디바이스");
+    });
+  });
+
+  test("a mobile browser is labeled mobile before device matching", async () => {
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile",
+    });
+    vi.stubGlobal("fetch", async () => {
+      return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    render(() => <Landing authed onTokenLogin={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("모바일");
+      expect(document.body.textContent).toContain("모바일 브라우저");
+    });
   });
 });

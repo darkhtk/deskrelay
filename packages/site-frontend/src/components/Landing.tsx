@@ -4,6 +4,11 @@ import { t } from "../i18n.ts";
 import { LoginCard } from "./LoginCard.tsx";
 
 type StepTone = "good" | "warn" | "bad" | "wait" | "neutral";
+type DeviceLabelState = {
+  tone: StepTone;
+  label: string;
+  detail: string;
+};
 
 export interface LandingProps {
   onTokenLogin: (token: string) => void | Promise<void>;
@@ -20,6 +25,9 @@ export const Landing: Component<LandingProps> = (props) => {
   const [health, { refetch: refetchHealth }] = createResource(async () => await api.health());
   const [localToken, { refetch: refetchLocalToken }] = createResource(
     async () => await api.localSiteToken(),
+  );
+  const [clientContext, { refetch: refetchClientContext }] = createResource(
+    async () => await api.browserClientContext(),
   );
   const [devices, { refetch: refetchDevices }] = createResource(
     () => (props.authed ? "ready" : null),
@@ -52,6 +60,7 @@ export const Landing: Component<LandingProps> = (props) => {
     await Promise.all([
       refetchHealth(),
       refetchLocalToken(),
+      refetchClientContext(),
       props.authed ? refetchDevices() : Promise.resolve(),
       props.authed ? refetchRegisterCommand() : Promise.resolve(),
     ]);
@@ -94,6 +103,68 @@ export const Landing: Component<LandingProps> = (props) => {
   };
   const deviceCount = () => devices()?.length ?? health()?.devices ?? 0;
   const remoteUrl = () => registerCommand()?.preferredUrl ?? "";
+  const matchingCurrentDevice = () => {
+    const address = normalizeHost(clientContext()?.address ?? "");
+    if (!address) return null;
+    return (devices() ?? []).find((device) => deviceHosts(device).has(address)) ?? null;
+  };
+  const currentDeviceLabel = (): DeviceLabelState => {
+    if (isMobileBrowser()) {
+      return {
+        tone: "neutral",
+        label: "모바일",
+        detail: "모바일 브라우저에서는 서버에 등록된 PC를 선택해 사용합니다.",
+      };
+    }
+
+    if (clientContext.loading || localToken.loading) {
+      return { tone: "wait", label: "확인 중", detail: "현재 브라우저 위치를 확인하고 있습니다." };
+    }
+
+    if (clientContext()?.isLocal || localToken()) {
+      return {
+        tone: "good",
+        label: "서버 PC",
+        detail: "이 PC에서 DeskRelay 서버가 실행 중입니다.",
+      };
+    }
+
+    if (!props.authed) {
+      return {
+        tone: "wait",
+        label: "등록 확인 전",
+        detail: "Site token 확인 후 이 PC가 등록됐는지 판별합니다.",
+      };
+    }
+
+    if (devices.loading) {
+      return {
+        tone: "wait",
+        label: "확인 중",
+        detail: "등록된 디바이스 목록과 비교하고 있습니다.",
+      };
+    }
+
+    if (devices.error) {
+      return { tone: "bad", label: "확인 실패", detail: "디바이스 목록을 읽지 못했습니다." };
+    }
+
+    const current = matchingCurrentDevice();
+    if (current) {
+      const offline = current.connectionState === "offline";
+      return {
+        tone: offline ? "warn" : "good",
+        label: "등록된 디바이스",
+        detail: `${current.label}${current.os ? ` (${current.os})` : ""}${offline ? " · 오프라인" : ""}`,
+      };
+    }
+
+    return {
+      tone: "warn",
+      label: "등록 안 된 디바이스",
+      detail: "이 PC에서 등록 명령을 실행하면 디바이스 목록에 추가됩니다.",
+    };
+  };
   const diagnostics = () => {
     const rows: Array<{ tone: StepTone; text: string }> = [];
     if (health.loading) rows.push({ tone: "wait", text: "서버 API 확인 중" });
@@ -155,6 +226,7 @@ export const Landing: Component<LandingProps> = (props) => {
             <p class="landing-kicker">Self-host control plane</p>
             <h2>자동 설치와 진단</h2>
             <p>DeskRelay가 현재 상태를 확인하고, 필요한 다음 작업만 바로 실행하게 합니다.</p>
+            <CurrentDeviceLabel state={currentDeviceLabel()} />
           </div>
 
           <div class="landing-live-state" aria-label="자동 진단 요약">
@@ -357,6 +429,43 @@ export const Landing: Component<LandingProps> = (props) => {
     </>
   );
 };
+
+function isMobileBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+}
+
+function normalizeHost(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.startsWith("::ffff:")) return trimmed.slice("::ffff:".length);
+  if (trimmed === "::1" || trimmed === "localhost") return "127.0.0.1";
+  return trimmed;
+}
+
+function hostFromUrl(value: string): string | null {
+  try {
+    return normalizeHost(new URL(value).hostname);
+  } catch {
+    return null;
+  }
+}
+
+function deviceHosts(device: { daemonUrl: string; hostname?: string }): Set<string> {
+  const hosts = new Set<string>();
+  const urlHost = hostFromUrl(device.daemonUrl);
+  if (urlHost) hosts.add(urlHost);
+  if (device.hostname) hosts.add(normalizeHost(device.hostname));
+  return hosts;
+}
+
+const CurrentDeviceLabel: Component<{ state: DeviceLabelState }> = (props) => (
+  <div class={`landing-current-device landing-current-device-${props.state.tone}`}>
+    <span class="landing-current-device-key">현재 디바이스</span>
+    <strong>{props.state.label}</strong>
+    <span>{props.state.detail}</span>
+  </div>
+);
 
 const StatePill: Component<{ label: string; value: string; tone: StepTone }> = (props) => {
   return (

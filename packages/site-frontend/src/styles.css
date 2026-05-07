@@ -2856,6 +2856,43 @@ pre .copy-button:hover {
   font-size: 14px;
   line-height: 1.65;
 }
+.landing-current-device {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.landing-current-device::before {
+  border-radius: 999px;
+  content: "";
+  height: 7px;
+  width: 7px;
+}
+.landing-current-device-good::before {
+  background: #2f9d62;
+}
+.landing-current-device-warn::before,
+.landing-current-device-wait::before {
+  background: #c7902e;
+}
+.landing-current-device-bad::before {
+  background: #d04f45;
+}
+.landing-current-device-neutral::before {
+  background: var(--text-faint);
+}
+.landing-current-device-key {
+  color: var(--text-faint);
+}
+.landing-current-device strong {
+  color: var(--text);
+  font-weight: 600;
+}
 .landing-live-state {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
