@@ -413,5 +413,8 @@
   "app.hard-refresh": "강력 새로고침",
   "app.title": "DeskRelay",
   "lang.settings.title": "일반",
-  "lang.settings.scroll-on-send": "메시지를 보내면 최신 위치로 이동"
+  "lang.settings.scroll-on-send": "메시지를 보내면 최신 위치로 이동",
+  "settings.usage.show-ctx": "CTX 표시",
+  "settings.usage.show-session": "Session 표시",
+  "settings.usage.show-week": "Week 표시"
 }

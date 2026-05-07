@@ -43,7 +43,7 @@ export interface ComposerProps {
    *  Hosts wire this to open a file picker (Attachments component). */
   onAttachClick?: () => void;
   /** Remaining context percentage. `null` keeps the visual slot but shows an empty bar. */
-  contextRemainingPercent?: number | null;
+  contextRemainingPercent?: number | null | undefined;
 }
 
 export const Composer: Component<ComposerProps> = (props) => {

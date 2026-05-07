@@ -137,6 +137,11 @@ describe("Composer — slash picker", () => {
 });
 
 describe("Composer — context meter", () => {
+  test("does not reserve a CTX meter slot when the host hides usage", () => {
+    const { container } = setup({ onSend: vi.fn() });
+    expect(container.querySelector(".composer-ctx-meter")).toBeNull();
+  });
+
   test("renders a vertical CTX meter without visible label text", () => {
     const { container } = setup({ onSend: vi.fn(), contextRemainingPercent: 38 });
     const meter = container.querySelector(".composer-ctx-meter") as HTMLElement;

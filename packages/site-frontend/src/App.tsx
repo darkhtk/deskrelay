@@ -11,7 +11,16 @@ import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
 import { t } from "./i18n.ts";
-import { scrollToBottomOnSend, setScrollToBottomOnSend } from "./ui-prefs.ts";
+import {
+  scrollToBottomOnSend,
+  setScrollToBottomOnSend,
+  setShowCtxUsageMeter,
+  setShowSessionUsageMeter,
+  setShowWeekUsageMeter,
+  showCtxUsageMeter,
+  showSessionUsageMeter,
+  showWeekUsageMeter,
+} from "./ui-prefs.ts";
 
 type SettingsTab = "general" | "devices" | "diagnostics";
 
@@ -100,16 +109,20 @@ const ContextUsageMeters: Component<{ usage: ContextUsageOverview; visible: bool
 ) => (
   <Show when={props.visible}>
     <div class="context-meter-group">
-      <ContextUsageBattery
-        usage={props.usage.session}
-        label="Session"
-        resetLabel={resetLabelFromUsage(props.usage.session, "reset ~5h")}
-      />
-      <ContextUsageBattery
-        usage={props.usage.week}
-        label="Week"
-        resetLabel={resetLabelFromUsage(props.usage.week, nextWeekResetLabel())}
-      />
+      <Show when={showSessionUsageMeter()}>
+        <ContextUsageBattery
+          usage={props.usage.session}
+          label="Session"
+          resetLabel={resetLabelFromUsage(props.usage.session, "reset ~5h")}
+        />
+      </Show>
+      <Show when={showWeekUsageMeter()}>
+        <ContextUsageBattery
+          usage={props.usage.week}
+          label="Week"
+          resetLabel={resetLabelFromUsage(props.usage.week, nextWeekResetLabel())}
+        />
+      </Show>
     </div>
   </Show>
 );
@@ -253,7 +266,10 @@ export const App: Component = () => {
         </div>
         <AnnouncementBanner />
         <div class="alpha-banner-right">
-          <ContextUsageMeters usage={contextUsage()} visible={chatReady()} />
+          <ContextUsageMeters
+            usage={contextUsage()}
+            visible={chatReady() && (showSessionUsageMeter() || showWeekUsageMeter())}
+          />
         </div>
       </div>
 
@@ -278,6 +294,7 @@ export const App: Component = () => {
             devicesRevision={devicesRevision()}
             requestedDeviceSelection={deviceSelectionRequest()}
             onContextUsageChange={setContextUsage}
+            showContextUsageMeter={showCtxUsageMeter()}
           />
         </Show>
       </Show>
@@ -375,6 +392,30 @@ const LanguageSettings: Component = () => (
         onChange={(event) => setScrollToBottomOnSend(event.currentTarget.checked)}
       />
       {t("lang.settings.scroll-on-send")}
+    </label>
+    <label class="settings-check-row">
+      <input
+        type="checkbox"
+        checked={showCtxUsageMeter()}
+        onChange={(event) => setShowCtxUsageMeter(event.currentTarget.checked)}
+      />
+      {t("settings.usage.show-ctx")}
+    </label>
+    <label class="settings-check-row">
+      <input
+        type="checkbox"
+        checked={showSessionUsageMeter()}
+        onChange={(event) => setShowSessionUsageMeter(event.currentTarget.checked)}
+      />
+      {t("settings.usage.show-session")}
+    </label>
+    <label class="settings-check-row">
+      <input
+        type="checkbox"
+        checked={showWeekUsageMeter()}
+        onChange={(event) => setShowWeekUsageMeter(event.currentTarget.checked)}
+      />
+      {t("settings.usage.show-week")}
     </label>
     <div class="settings-row">
       <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>

@@ -523,6 +523,7 @@ export interface ChatViewProps {
    *  registered device once it appears in the refreshed sidebar list. */
   requestedDeviceSelection?: DeviceSelectionRequest;
   onContextUsageChange?: (usage: ContextUsageOverview) => void;
+  showContextUsageMeter?: boolean;
 }
 
 export const ChatView: Component<ChatViewProps> = (props) => {
@@ -2464,7 +2465,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             hasExtraContent={() => attachmentCount() > 0}
             onAttachClick={handleAttachClick}
             slashCommands={composerSlashCommands()}
-            contextRemainingPercent={contextUsage().ctx?.remainingPercent ?? null}
+            contextRemainingPercent={
+              props.showContextUsageMeter === false
+                ? undefined
+                : (contextUsage().ctx?.remainingPercent ?? null)
+            }
           />
         </div>
       </section>

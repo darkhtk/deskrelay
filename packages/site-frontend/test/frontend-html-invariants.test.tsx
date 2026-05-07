@@ -92,6 +92,13 @@ describe("settings and chrome invariants", () => {
     expect(appSource).toContain('["general", "devices", "diagnostics"]');
     expect(appSource).toContain("app.settings.tab.${value}");
     expect(appSource).toContain('t("app.hard-refresh")');
+    expect(appSource).toContain('t("settings.usage.show-ctx")');
+    expect(appSource).toContain('t("settings.usage.show-session")');
+    expect(appSource).toContain('t("settings.usage.show-week")');
+    expect(appSource).toContain("showCtxUsageMeter()");
+    expect(appSource).toContain("showSessionUsageMeter()");
+    expect(appSource).toContain("showWeekUsageMeter()");
+    expect(chatViewSource).toContain("showContextUsageMeter");
     expect(appSource).toContain("window.caches");
     expect(appSource).toContain("navigator.serviceWorker");
     expect(appSource).toContain('url.searchParams.set("reload"');
