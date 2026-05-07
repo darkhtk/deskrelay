@@ -2512,6 +2512,44 @@ pre .copy-button:hover {
   margin-left: auto;
 }
 
+.composer-ctx-meter {
+  position: relative;
+  display: inline-block;
+  width: 4px;
+  height: 30px;
+  flex: 0 0 4px;
+  align-self: center;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+.composer-ctx-meter-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: block;
+  max-height: 100%;
+  border-radius: inherit;
+  background: #2f9e44;
+  transition: height 160ms ease, background-color 160ms ease;
+}
+.composer-ctx-meter-good .composer-ctx-meter-fill {
+  background: #2f9e44;
+}
+.composer-ctx-meter-warn .composer-ctx-meter-fill {
+  background: #d99a26;
+}
+.composer-ctx-meter-danger .composer-ctx-meter-fill {
+  background: #d24e3a;
+}
+.composer-ctx-meter-unknown {
+  opacity: 0.48;
+}
+.composer-ctx-meter-unknown .composer-ctx-meter-fill {
+  background: transparent;
+}
+
 .composer-stop {
   background: transparent;
   border: 1px solid var(--border-subtle);

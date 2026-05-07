@@ -136,6 +136,30 @@ describe("Composer — slash picker", () => {
   });
 });
 
+describe("Composer — context meter", () => {
+  test("renders a vertical CTX meter without visible label text", () => {
+    const { container } = setup({ onSend: vi.fn(), contextRemainingPercent: 38 });
+    const meter = container.querySelector(".composer-ctx-meter") as HTMLElement;
+    const fill = container.querySelector(".composer-ctx-meter-fill") as HTMLElement;
+
+    expect(meter).toBeTruthy();
+    expect(meter.textContent).toBe("");
+    expect(meter).toHaveAttribute("role", "meter");
+    expect(meter).toHaveAttribute("aria-valuenow", "38");
+    expect(fill.style.height).toBe("38%");
+  });
+
+  test("keeps the CTX meter slot empty when usage is unknown", () => {
+    const { container } = setup({ onSend: vi.fn(), contextRemainingPercent: null });
+    const meter = container.querySelector(".composer-ctx-meter") as HTMLElement;
+    const fill = container.querySelector(".composer-ctx-meter-fill") as HTMLElement;
+
+    expect(meter).toHaveClass("composer-ctx-meter-unknown");
+    expect(meter).not.toHaveAttribute("aria-valuenow");
+    expect(fill.style.height).toBe("0%");
+  });
+});
+
 describe("Composer — Stop / inFlight mode", () => {
   test("inFlight=true reveals the stop button (separate from send)", () => {
     const { sendBtn, stopBtn } = setup({ onSend: vi.fn(), inFlight: true });

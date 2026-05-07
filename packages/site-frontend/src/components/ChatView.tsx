@@ -2464,6 +2464,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             hasExtraContent={() => attachmentCount() > 0}
             onAttachClick={handleAttachClick}
             slashCommands={composerSlashCommands()}
+            contextRemainingPercent={contextUsage().ctx?.remainingPercent ?? null}
           />
         </div>
       </section>

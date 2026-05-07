@@ -42,6 +42,8 @@ export interface ComposerProps {
   /** Click handler for the "+" attach button on the composer footer.
    *  Hosts wire this to open a file picker (Attachments component). */
   onAttachClick?: () => void;
+  /** Remaining context percentage. `null` keeps the visual slot but shows an empty bar. */
+  contextRemainingPercent?: number | null;
 }
 
 export const Composer: Component<ComposerProps> = (props) => {
@@ -57,6 +59,22 @@ export const Composer: Component<ComposerProps> = (props) => {
     }
   };
   const canSend = () => value().trim().length > 0 || hasExtra();
+  const contextRemaining = () => {
+    const value = props.contextRemainingPercent;
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return Math.max(0, Math.min(100, value));
+  };
+  const contextRemainingRounded = () => {
+    const value = contextRemaining();
+    return value === null ? null : Math.round(value);
+  };
+  const contextTone = () => {
+    const value = contextRemaining();
+    if (value === null) return "unknown";
+    if (value >= 70) return "good";
+    if (value >= 40) return "warn";
+    return "danger";
+  };
 
   let inputEl!: HTMLTextAreaElement;
 
@@ -229,6 +247,26 @@ export const Composer: Component<ComposerProps> = (props) => {
             </button>
           </Show>
           <div class="composer-actions">
+            <Show when={props.contextRemainingPercent !== undefined}>
+              <span
+                class={`composer-ctx-meter composer-ctx-meter-${contextTone()}`}
+                role="meter"
+                aria-label="CTX"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={
+                  contextRemainingRounded() === null ? undefined : String(contextRemainingRounded())
+                }
+                title={
+                  contextRemainingRounded() === null ? "CTX" : `CTX ${contextRemainingRounded()}%`
+                }
+              >
+                <span
+                  class="composer-ctx-meter-fill"
+                  style={{ height: `${contextRemainingRounded() ?? 0}%` }}
+                />
+              </span>
+            </Show>
             <button
               type="button"
               class="composer-stop"
