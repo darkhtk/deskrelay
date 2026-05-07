@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type CommandResult,
   buildWindowsLoginTaskScript,
   buildWindowsRegisterTaskArgs,
   buildWindowsUnregisterTaskArgs,
@@ -12,7 +13,6 @@ import {
   readLoginTaskScript,
   removeLoginTask,
   removeSourceRunLoginTask,
-  type CommandResult,
 } from "../src/login-task.ts";
 
 let tmp: string;
@@ -78,6 +78,10 @@ describe("login task command generation", () => {
         command: "C:\\Users\\me\\.bun\\bin\\bun.exe",
         args: ["run", "C:\\repo\\packages\\pc-connector-daemon\\src\\bin.ts"],
         cwd: "C:\\repo",
+        env: {
+          CR_CONNECTOR_HOST: "0.0.0.0",
+          CR_CONNECTOR_PORT: "18091",
+        },
       },
       "C:\\Users\\me\\AppData\\Local\\claude-remote\\logs\\connector.log",
     );
@@ -89,6 +93,8 @@ describe("login task command generation", () => {
     expect(script).toContain("connector-supervisor.lock");
     expect(script).toContain("[System.IO.FileShare]::None");
     expect(script).toContain("another connector supervisor is already running; exiting");
+    expect(script).toContain("$env:CR_CONNECTOR_HOST = '0.0.0.0'");
+    expect(script).toContain("$env:CR_CONNECTOR_PORT = '18091'");
     expect(script).not.toContain("pair ABC123");
   });
 
@@ -136,7 +142,7 @@ describe("login task command generation", () => {
     const script = Buffer.from(encoded, "base64").toString("utf16le");
     // Action: powershell.exe with -File pointing at the supervisor script.
     expect(script).toContain("New-ScheduledTaskAction -Execute 'powershell.exe'");
-    expect(script).toContain('C:\\Users\\me\\AppData\\Local\\claude-remote\\task.ps1');
+    expect(script).toContain("C:\\Users\\me\\AppData\\Local\\claude-remote\\task.ps1");
     // Trigger: at logon, scoped to $env:USERNAME (per-user, not "any user").
     expect(script).toContain("New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME");
     // Register: under the current user's SID, with -Force so a re-pair
@@ -172,7 +178,8 @@ describe("login task command generation", () => {
       });
       expect(result.taskName).toBe("Remote for Claude Connector");
     } finally {
-      if (previous === undefined) delete process.env.CR_CONNECTOR_LOGIN_TASK_NAME;
+      if (previous === undefined)
+        Reflect.deleteProperty(process.env, "CR_CONNECTOR_LOGIN_TASK_NAME");
       else process.env.CR_CONNECTOR_LOGIN_TASK_NAME = previous;
     }
   });
@@ -203,11 +210,7 @@ describe("installLoginTask", () => {
     expect(result.started).toBe(true);
     // Three commands: schtasks /End (best-effort stop), powershell -EncodedCommand
     // Register-ScheduledTask (the install — admin-free), schtasks /Run.
-    expect(calls.map((c) => c.command)).toEqual([
-      "schtasks.exe",
-      "powershell.exe",
-      "schtasks.exe",
-    ]);
+    expect(calls.map((c) => c.command)).toEqual(["schtasks.exe", "powershell.exe", "schtasks.exe"]);
     expect(calls[0]?.args.slice(0, 2)).toEqual(["/End", "/TN"]);
     expect(calls[1]?.args.slice(0, 3)).toEqual([
       "-NoProfile",

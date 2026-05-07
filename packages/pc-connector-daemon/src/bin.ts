@@ -3,6 +3,8 @@
 //
 // User-facing commands:
 //   cr-connector                       run daemon
+//   cr-connector register-self --server <URL> --site-token <TOKEN>
+//                                      install/start/register this PC
 //   cr-connector login-task install --start  install Windows login task
 //   cr-connector login-task status     print Windows login task status
 //   cr-connector login-task remove     remove Windows login task
@@ -29,6 +31,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { behaviorDef as remoteClaudeBehavior } from "@claude-remote/behavior-remote-claude";
 import { loadOrCreateAuthToken, readAuthFile } from "./auth-token.ts";
 import { BehaviorFetcher } from "./behavior-fetcher.ts";
+import { removeConnectorLocalState } from "./connector-cleanup.ts";
 import { Daemon, type DaemonPairingStatus, type DaemonReloadResult } from "./daemon.ts";
 import {
   defaultIdentityPath,
@@ -37,18 +40,18 @@ import {
   removeDeviceIdentity,
 } from "./device-identity.ts";
 import {
+  LEGACY_WINDOWS_LOGIN_TASK_NAME,
+  WINDOWS_LOGIN_TASK_NAME,
   installLoginTask,
   isPackagedConnectorBinary,
-  LEGACY_WINDOWS_LOGIN_TASK_NAME,
   queryLoginTask,
   readLoginTaskScript,
   removeLoginTask,
   removeSourceRunLoginTask,
-  WINDOWS_LOGIN_TASK_NAME,
 } from "./login-task.ts";
+import { registerSelf } from "./self-register.ts";
 import { SiteWsClient } from "./site-ws-client.ts";
 import { clearStateFile, readStateFile, writeStateFile } from "./state-file.ts";
-import { removeConnectorLocalState } from "./connector-cleanup.ts";
 import { parseWorkspaceRoots } from "./workspaces.ts";
 
 const DEFAULT_SITE_URL = "http://127.0.0.1:18092";
@@ -59,6 +62,8 @@ cr-connector - host Claude Code behaviors for DeskRelay
 Usage:
   cr-connector                          run daemon
   cr-connector doctor                   diagnose local connector issues
+  cr-connector register-self --server <URL> --site-token <TOKEN>
+                                        install, start, verify, and register this PC
   cr-connector login-task install       install Windows login task
   cr-connector login-task install --start install and start Windows login task
   cr-connector login-task status        print Windows login task status
@@ -69,8 +74,9 @@ Usage:
   cr-connector --help                   show this help
 
 Self-host:
-  Start this daemon on every PC you want to control, then add its URL
-  in the browser under Settings -> Devices.
+  On every PC you want to control, run the register-self command copied
+  from Settings -> Devices. It starts the connector, verifies the
+  Tailscale/LAN URL, and registers the device with the self-host server.
 
 Uninstall:
   Removes identity/auth/state files, login task, and connector-local
@@ -219,10 +225,55 @@ if (command === "uninstall" || command === "remove") {
 if (command === "doctor") {
   const { runDoctor, formatDoctorOutput } = await import("./doctor.ts");
   const results = await runDoctor();
-  process.stdout.write(formatDoctorOutput(results) + "\n");
+  process.stdout.write(`${formatDoctorOutput(results)}\n`);
   // exit 0 on warns, 1 on errors so CI / scripts can branch.
   const hasError = results.some((r) => r.status === "error");
   process.exit(hasError ? 1 : 0);
+}
+if (command === "register-self") {
+  const serverUrl = takeFlagValue(argv, "--server") ?? takeFlagValue(argv, "--site-url");
+  const siteToken = takeFlagValue(argv, "--site-token") ?? takeFlagValue(argv, "--token");
+  if (!serverUrl || !siteToken) {
+    process.stderr.write(
+      "error: register-self requires --server <URL> and --site-token <TOKEN>\n\n",
+    );
+    process.stderr.write(HELP);
+    process.exit(2);
+  }
+  const portRaw = takeFlagValue(argv, "--port");
+  const port = portRaw ? Number(portRaw) : undefined;
+  const listenHost =
+    takeFlagValue(argv, "--listen-host") ??
+    takeFlagValue(argv, "--bind-host") ??
+    takeFlagValue(argv, "--host");
+  const advertiseHost =
+    takeFlagValue(argv, "--advertise-host") ?? takeFlagValue(argv, "--daemon-host");
+  const workspaceRoots = takeFlagValue(argv, "--workspace-roots");
+  const label = takeFlagValue(argv, "--label");
+  try {
+    const result = await registerSelf({
+      serverUrl,
+      siteToken,
+      ...(port !== undefined ? { port } : {}),
+      ...(listenHost !== undefined ? { listenHost } : {}),
+      ...(advertiseHost !== undefined ? { advertiseHost } : {}),
+      ...(workspaceRoots !== undefined ? { workspaceRoots } : {}),
+      ...(label !== undefined ? { label } : {}),
+    });
+    process.stdout.write(
+      [
+        `registered ${result.label} at ${result.daemonUrl}`,
+        `login task: ${result.taskName}`,
+        ...(result.scriptPath ? [`script: ${result.scriptPath}`] : []),
+        ...(result.logPath ? [`log: ${result.logPath}`] : []),
+        "",
+      ].join("\n"),
+    );
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`register-self failed: ${(err as Error).message}\n`);
+    process.exit(1);
+  }
 }
 if (command === "identity") {
   const identity = await readDeviceIdentity().catch(() => undefined);
@@ -434,7 +485,7 @@ const listening = daemon.start();
 // script (packages/behaviors/remote-claude/src/hooks/pretooluse.ts)
 // reads CR_DAEMON_URL to know where to POST the approval request.
 if (!process.env.CR_DAEMON_URL) {
-  process.env.CR_DAEMON_URL = `http://${listening.host}:${listening.port}`;
+  process.env.CR_DAEMON_URL = localDaemonUrl(listening.host, listening.port);
 }
 // Same path for the per-machine auth token. The hook script needs it
 // to pass the daemon's Bearer auth gate. This token never leaves the
@@ -567,7 +618,7 @@ async function openSiteWs(reason: "startup" | "reload"): Promise<DaemonReloadRes
       siteUrl: url,
       deviceId,
       token,
-      relayTo: `http://${listening.host}:${listening.port}`,
+      relayTo: localDaemonUrl(listening.host, listening.port),
       // In-process: site-ws-client adds this Bearer header on every
       // relay fetch so the daemon's auth gate accepts it. No network
       // hop — the token never leaves this Bun process.
@@ -733,6 +784,13 @@ function siteUrlToWsUrl(siteUrl: string): string {
   } catch {
     return siteUrl;
   }
+}
+
+function localDaemonUrl(host: string, port: number): string {
+  if (host === "0.0.0.0" || host === "::" || host === "[::]") {
+    return `http://127.0.0.1:${port}`;
+  }
+  return `http://${host}:${port}`;
 }
 
 function parseEnvFirstParty(raw: string | undefined): Iterable<[string, string]> {

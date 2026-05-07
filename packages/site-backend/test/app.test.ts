@@ -127,9 +127,11 @@ describe("self-host command helper", () => {
       command: string;
     };
     expect(body.command).toContain("git clone https://github.com/darkhtk/deskrelay.git");
-    expect(body.command).toContain("login-task install --start");
-    expect(body.command).toContain("Invoke-RestMethod -Method Post");
-    expect(body.command).toContain(`Authorization = 'Bearer ${TOKEN}'`);
+    expect(body.command).toContain("register-self");
+    expect(body.command).toContain(`--server '${body.preferredUrl}'`);
+    expect(body.command).toContain(`--site-token '${TOKEN}'`);
+    expect(body.command).toContain("--workspace-roots $workspaceRoots");
+    expect(body.command).not.toContain("Invoke-RestMethod -Method Post");
     expect(body.preferredUrl).toMatch(/^http:\/\//);
     expect(body.urls.length).toBeGreaterThan(0);
   });

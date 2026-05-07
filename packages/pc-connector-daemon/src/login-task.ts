@@ -29,6 +29,7 @@ export interface LoginTaskLaunch {
   command: string;
   args: string[];
   cwd: string;
+  env?: Record<string, string | undefined>;
 }
 
 export interface InstallLoginTaskOptions {
@@ -125,10 +126,7 @@ export async function installLoginTask(
   // run on Windows fails the persistence step and the daemon dies on
   // logout/reboot — caught after an alpha tester's device went offline
   // overnight despite a successful initial pair.
-  const create = await runner(
-    "powershell.exe",
-    buildWindowsRegisterTaskArgs(taskName, scriptPath),
-  );
+  const create = await runner("powershell.exe", buildWindowsRegisterTaskArgs(taskName, scriptPath));
   if (create.code !== 0) {
     throw new Error(`failed to create login task: ${combineOutput(create)}`);
   }
@@ -299,6 +297,10 @@ export function buildWindowsLoginTaskScript(launch: LoginTaskLaunch, logPath: st
   const logDir = dirname(logPath);
   const lockPath = join(logDir, WINDOWS_LOGIN_TASK_LOCK_NAME);
   const argv = launch.args.map(psSingleQuoted).join(", ");
+  const envLines = Object.entries(launch.env ?? {})
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `$env:${key} = ${psSingleQuoted(value)}`);
   return [
     "$ErrorActionPreference = 'Continue'",
     `$logDir = ${psSingleQuoted(logDir)}`,
@@ -315,6 +317,7 @@ export function buildWindowsLoginTaskScript(launch: LoginTaskLaunch, logPath: st
     `$exe = ${psSingleQuoted(launch.command)}`,
     `$argv = @(${argv})`,
     `$cwd = ${psSingleQuoted(launch.cwd)}`,
+    ...envLines,
     "try {",
     "while ($true) {",
     "  try {",
