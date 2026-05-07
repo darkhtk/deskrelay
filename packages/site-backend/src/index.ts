@@ -4,5 +4,6 @@ export {
   type DeviceRegistry as ProxyDeviceRegistry,
   DeviceRegistryError,
   InMemoryDeviceRegistry,
+  JsonFileDeviceRegistry,
   type RegisterDeviceInput as RegisterProxyDeviceInput,
 } from "./device-registry.ts";

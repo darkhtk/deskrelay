@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { DeviceRegistryError, InMemoryDeviceRegistry } from "../src/device-registry.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  DeviceRegistryError,
+  InMemoryDeviceRegistry,
+  JsonFileDeviceRegistry,
+} from "../src/device-registry.ts";
 
 describe("InMemoryDeviceRegistry", () => {
   test("starts empty", () => {
@@ -63,5 +70,35 @@ describe("InMemoryDeviceRegistry", () => {
     const d = r.register({ daemonUrl: "http://x:1" });
     expect(r.unregister(d.id)).toBe(true);
     expect(r.unregister(d.id)).toBe(false);
+  });
+});
+
+describe("JsonFileDeviceRegistry", () => {
+  test("persists registered, renamed, and removed devices across instances", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "deskrelay-devices-"));
+    try {
+      const file = join(dir, "devices.json");
+      const first = new JsonFileDeviceRegistry(file);
+      const device = first.register({
+        daemonUrl: "http://127.0.0.1:18091/",
+        label: "Other PC",
+        authToken: "daemon-token",
+      });
+      first.rename(device.id, "Renamed PC");
+
+      const second = new JsonFileDeviceRegistry(file);
+      expect(second.list()).toEqual([
+        {
+          ...device,
+          label: "Renamed PC",
+          daemonUrl: "http://127.0.0.1:18091",
+        },
+      ]);
+
+      expect(second.unregister(device.id)).toBe(true);
+      expect(new JsonFileDeviceRegistry(file).list()).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

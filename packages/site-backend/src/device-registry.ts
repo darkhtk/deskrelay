@@ -1,5 +1,6 @@
 // DeviceRegistry — the site's authoritative list of "devices" the user
-// owns. The self-host backend stores them in process memory.
+// owns. Self-host can persist this list to disk so registered PCs survive
+// backend restarts.
 //
 // A "device" in M2 = a daemon URL the site can reach via HTTP. It carries
 // a stable id (random UUID-like) the browser uses for routing, plus a
@@ -10,6 +11,8 @@
 // the daemon directly anymore.
 
 import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export interface Device {
   id: string;
@@ -50,6 +53,12 @@ export interface DeviceRegistry {
 
 export class InMemoryDeviceRegistry implements DeviceRegistry {
   readonly #devices = new Map<string, Device>();
+
+  constructor(initialDevices: Device[] = []) {
+    for (const device of initialDevices) {
+      this.#devices.set(device.id, device);
+    }
+  }
 
   list(): Device[] {
     return [...this.#devices.values()];
@@ -97,6 +106,34 @@ export class InMemoryDeviceRegistry implements DeviceRegistry {
   }
 }
 
+export class JsonFileDeviceRegistry extends InMemoryDeviceRegistry {
+  constructor(readonly filePath: string) {
+    super(readDevicesFile(filePath));
+  }
+
+  register(input: RegisterDeviceInput): Device {
+    const device = super.register(input);
+    this.#save();
+    return device;
+  }
+
+  unregister(id: string): boolean {
+    const removed = super.unregister(id);
+    if (removed) this.#save();
+    return removed;
+  }
+
+  rename(id: string, label: string): Device | undefined {
+    const updated = super.rename(id, label);
+    if (updated) this.#save();
+    return updated;
+  }
+
+  #save(): void {
+    writeDevicesFile(this.filePath, this.list());
+  }
+}
+
 export function normalizeDaemonUrl(raw: string): string {
   let url: URL;
   try {
@@ -113,6 +150,50 @@ export function normalizeDaemonUrl(raw: string): string {
   // Drop trailing slash and any query/hash so the registry's uniqueness
   // check works on canonical form.
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+function readDevicesFile(path: string): Device[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const parsed = JSON.parse(raw) as unknown;
+  const items = Array.isArray(parsed)
+    ? parsed
+    : typeof parsed === "object" &&
+        parsed !== null &&
+        Array.isArray((parsed as { devices?: unknown }).devices)
+      ? (parsed as { devices: unknown[] }).devices
+      : [];
+  return items.filter(isDeviceRecord).map((device) => ({
+    id: device.id,
+    label: device.label,
+    daemonUrl: normalizeDaemonUrl(device.daemonUrl),
+    ...(device.authToken ? { authToken: device.authToken } : {}),
+    registeredAt: device.registeredAt,
+  }));
+}
+
+function writeDevicesFile(path: string, devices: Device[]): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify({ devices }, null, 2)}\n`, "utf8");
+  renameSync(tmp, path);
+}
+
+function isDeviceRecord(value: unknown): value is Device {
+  if (typeof value !== "object" || value === null) return false;
+  const device = value as Record<string, unknown>;
+  return (
+    typeof device.id === "string" &&
+    typeof device.label === "string" &&
+    typeof device.daemonUrl === "string" &&
+    typeof device.registeredAt === "string" &&
+    (device.authToken === undefined || typeof device.authToken === "string")
+  );
 }
 
 function hostFromUrl(url: string): string {

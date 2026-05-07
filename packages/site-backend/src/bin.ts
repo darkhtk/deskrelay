@@ -3,9 +3,9 @@
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createSiteApp } from "./app.ts";
-import { InMemoryDeviceRegistry } from "./device-registry.ts";
+import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
 
 const DEFAULT_ANNOUNCEMENT_URL =
   "https://raw.githubusercontent.com/darkhtk/deskrelay/main/ANNOUNCEMENT.txt";
@@ -21,9 +21,13 @@ if (!token && process.env.CR_SITE_AUTH_OPTIONAL !== "1") {
 
 const localDaemonToken = process.env.CR_CONNECTOR_DAEMON_TOKEN ?? (await readLocalDaemonToken());
 const announcementUrl = resolveAnnouncementUrl();
+const deviceRegistryFile = process.env.CR_SITE_DEVICE_REGISTRY_FILE ?? defaultDeviceRegistryFile();
+const registry = deviceRegistryFile
+  ? new JsonFileDeviceRegistry(deviceRegistryFile)
+  : new InMemoryDeviceRegistry();
 
 const app = createSiteApp({
-  registry: new InMemoryDeviceRegistry(),
+  registry,
   ...(token ? { token } : {}),
   ...(process.env.SITE_ANNOUNCEMENT ? { announcement: process.env.SITE_ANNOUNCEMENT } : {}),
   ...(announcementUrl ? { announcementUrl } : {}),
@@ -92,6 +96,16 @@ function resolveAnnouncementUrl(): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed || trimmed === "0" || trimmed.toLowerCase() === "false") return undefined;
   return trimmed;
+}
+
+function defaultDeviceRegistryFile(): string | undefined {
+  if (process.env.CR_SITE_TOKEN_FILE) {
+    return join(dirname(process.env.CR_SITE_TOKEN_FILE), "state", "site-devices.json");
+  }
+  if (process.env.CR_NAS_DEV_ROOT) {
+    return join(process.env.CR_NAS_DEV_ROOT, "state", "site-devices.json");
+  }
+  return undefined;
 }
 
 function defaultAuthFilePath(): string {

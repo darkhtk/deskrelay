@@ -124,46 +124,13 @@ Set-Location -LiteralPath `$repo
 git pull --ff-only
 bun install
 
-`$targetHost = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Where-Object { `$_.InterfaceAlias -like '*Tailscale*' -and `$_.IPAddress -notlike '127.*' } |
-  Select-Object -First 1 -ExpandProperty IPAddress)
-if (-not `$targetHost) {
-  `$targetHost = Read-Host 'Enter this PC Tailscale/LAN IP or hostname'
-}
-if (-not `$targetHost) {
-  throw 'A Tailscale/LAN IP or hostname is required.'
-}
-
 `$workspaceRoots = Join-Path `$HOME 'Projects'
 if (-not (Test-Path -LiteralPath `$workspaceRoots)) {
   New-Item -ItemType Directory -Force -Path `$workspaceRoots | Out-Null
 }
 
-`$env:CR_CONNECTOR_HOST = `$targetHost
-`$env:CR_CONNECTOR_PORT = '18091'
-`$env:CR_CONNECTOR_WORKSPACE_ROOTS = `$workspaceRoots
-[Environment]::SetEnvironmentVariable('CR_CONNECTOR_HOST', `$targetHost, 'User')
-[Environment]::SetEnvironmentVariable('CR_CONNECTOR_PORT', '18091', 'User')
-[Environment]::SetEnvironmentVariable('CR_CONNECTOR_WORKSPACE_ROOTS', `$workspaceRoots, 'User')
+bun run packages/pc-connector-daemon/src/bin.ts register-self --server $preferredUrlQ --site-token $siteTokenQ --workspace-roots `$workspaceRoots --label `$env:COMPUTERNAME
 
-`$tokenText = bun run packages/pc-connector-daemon/src/bin.ts auth-token | Out-String
-if (`$tokenText -notmatch 'token:\s*(\S+)') {
-  throw "Could not read daemon token. Output:`n`$tokenText"
-}
-`$daemonToken = `$Matches[1]
-
-bun run packages/pc-connector-daemon/src/bin.ts login-task install --start
-Start-Sleep -Seconds 3
-
-`$daemonUrl = "http://`${targetHost}:18091"
-`$label = "`$env:COMPUTERNAME"
-`$body = @{ daemonUrl = `$daemonUrl; label = `$label; authToken = `$daemonToken } | ConvertTo-Json -Compress
-Invoke-RestMethod -Method Post -Uri "$preferredUrl/api/devices" -Headers @{
-  Authorization = "Bearer $($env:CR_SITE_TOKEN)"
-  'content-type' = 'application/json'
-} -Body `$body -TimeoutSec 15 | Out-Null
-
-Write-Host "Registered `$label at `$daemonUrl"
 Write-Host "Open DeskRelay: $preferredUrl"
 "@
 

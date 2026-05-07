@@ -79,6 +79,7 @@ if ((Test-Path $envFile) -and -not $Force) {
   $daemonUrl = "http://${DaemonUrlHost}:$DaemonPort"
   $authFile = Join-Path $connectorState "auth.json"
   $stateFile = Join-Path $connectorState "daemon.json"
+  $deviceRegistryFile = Join-Path $stateRoot "site-devices.json"
   $processFile = Join-Path $stateRoot "dev-processes.json"
   $workspaceRootsValue = if ([string]::IsNullOrWhiteSpace($WorkspaceRoots)) { $workspaceDir } else { $WorkspaceRoots }
 
@@ -92,6 +93,7 @@ if ((Test-Path $envFile) -and -not $Force) {
 `$env:CR_SITE_PORT = '$SitePort'
 `$env:CR_SITE_TOKEN = $(Quote-PsString $SiteToken)
 `$env:CR_SITE_TOKEN_FILE = $(Quote-PsString $siteTokenFile)
+`$env:CR_SITE_DEVICE_REGISTRY_FILE = $(Quote-PsString $deviceRegistryFile)
 `$env:CR_SITE_AUTH_OPTIONAL = '0'
 `$env:CR_SITE_USAGE_DISABLED = '1'
 `$env:CR_SITE_BACKEND_URL = $(Quote-PsString $siteUrl)
