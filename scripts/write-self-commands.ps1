@@ -110,18 +110,18 @@ $urlsText = ($urls | ForEach-Object { "$($_.Kind): $($_.Url)" }) -join "`r`n"
 $registerOtherPc = @"
 # DeskRelay - register another PC
 # Paste this whole block into PowerShell on the PC you want to control.
-# It downloads DeskRelay's idempotent bootstrap script from GitHub,
-# fixes/reclones a stale `$HOME\deskrelay folder when needed, starts
-# the connector on 0.0.0.0, detects the matching Tailscale/LAN address,
-# verifies server-to-connector access, then registers that PC in this
-# DeskRelay instance.
+# The only embedded values are this server URL and Site token.
+# The installer downloaded from GitHub does the rest: fixes/reclones a
+# stale `$HOME\deskrelay folder, installs dependencies, starts the connector
+# on 0.0.0.0, detects the matching Tailscale/LAN address, verifies
+# server-to-connector access, then registers this PC.
 
 `$ErrorActionPreference = 'Stop'
-`$bootstrap = Join-Path `$env:TEMP 'deskrelay-register-other-pc.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/register-other-pc.ps1' -OutFile `$bootstrap
+`$installer = Join-Path `$env:TEMP 'deskrelay-install-connector.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1' -OutFile `$installer
 
 `$workspaceRoots = Join-Path `$HOME 'Projects'
-powershell -ExecutionPolicy Bypass -File `$bootstrap -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME
+powershell -ExecutionPolicy Bypass -File `$installer -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME
 
 Write-Host "Open DeskRelay: $preferredUrl"
 "@

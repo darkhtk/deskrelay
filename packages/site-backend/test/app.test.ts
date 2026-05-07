@@ -128,9 +128,9 @@ describe("self-host command helper", () => {
     };
     expect(body.preferredUrl).toBe("http://100.64.1.2:18193");
     expect(body.command).toContain(
-      "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/register-other-pc.ps1",
+      "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1",
     );
-    expect(body.command).toContain("register-other-pc.ps1");
+    expect(body.command).toContain("deskrelay-install-connector.ps1");
     expect(body.command).toContain(`-Server '${body.preferredUrl}'`);
     expect(body.command).toContain(`-SiteToken '${TOKEN}'`);
     expect(body.command).toContain("-WorkspaceRoots $workspaceRoots");

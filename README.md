@@ -106,6 +106,7 @@ notepad .\REGISTER-OTHER-PC.txt
 
 그 안의 내용을 제어하고 싶은 다른 PC의 PowerShell에 통째로 붙여넣습니다. 그러면 그 PC에서 다음 작업이 자동으로 진행됩니다.
 
+- GitHub에서 최신 `scripts/install-connector.ps1` 다운로드
 - `$HOME\deskrelay` 설치 또는 업데이트
 - 기존 폴더 상태가 이상하면 백업 후 새로 clone
 - connector daemon을 `0.0.0.0:18091`로 로그인 작업 등록 및 실행
