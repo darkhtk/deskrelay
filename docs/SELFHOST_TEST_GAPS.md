@@ -2,6 +2,8 @@
 
 이 문서는 `bun run test:selfhost-virtual`과 `bun run test:selfhost-failures`가 어디까지 검증하고, 무엇을 아직 실제 환경 검증으로 남겨두는지 기록한다.
 
+요소별 상세 테스트 케이스는 [SELFHOST_TEST_CASES.md](SELFHOST_TEST_CASES.md)에 둔다.
+
 ## 현재 자동 테스트가 확인하는 것
 
 ### `test:selfhost-virtual`

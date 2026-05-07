@@ -80,5 +80,6 @@ scripts/*smoke*.ts               smoke/e2e checks
 
 ## 관련 문서
 
+- [Self-host 테스트 케이스](SELFHOST_TEST_CASES.md)
 - [Self-host 테스트 한계](SELFHOST_TEST_GAPS.md)
 - [최근 테스트 결함](SELFHOST_DEFECTS.md)
