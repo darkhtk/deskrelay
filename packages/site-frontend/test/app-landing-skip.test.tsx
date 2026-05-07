@@ -39,9 +39,9 @@ describe("App landing flow", () => {
         screen.getAllByRole("button", { name: t("landing.cta.start") }).length,
       ).toBeGreaterThan(0);
     });
-    expect(screen.getByRole("heading", { name: "설치와 진단 wizard" })).toBeTruthy();
-    expect(document.body.textContent).toContain("다른 PC 등록 명령은");
-    expect(screen.getByRole("tab", { name: /서버 PC/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "자동 설치와 진단" })).toBeTruthy();
+    expect(document.body.textContent).toContain("서버 자동 확인");
+    expect(document.body.textContent).toContain("다른 PC 등록 명령");
   });
 
   test("an authenticated landing user can view and copy the remote registration command", async () => {
@@ -76,12 +76,11 @@ describe("App landing flow", () => {
     });
 
     render(() => <Landing authed onTokenLogin={vi.fn()} />);
-    fireEvent.click(screen.getByRole("tab", { name: /다른 PC/ }));
 
     await waitFor(() => {
       expect(document.body.textContent).toContain("powershell -ExecutionPolicy Bypass");
     });
-    fireEvent.click(screen.getByRole("button", { name: "명령 복사" }));
+    fireEvent.click(screen.getByRole("button", { name: "등록 명령 복사" }));
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(

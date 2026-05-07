@@ -114,7 +114,7 @@ $registerOtherPc = @"
 # The installer downloaded from GitHub does the rest: fixes/reclones a
 # stale `$HOME\deskrelay folder, installs dependencies, starts the connector
 # on 0.0.0.0, detects the matching Tailscale/LAN address, verifies
-# server-to-connector access, then registers this PC.
+# server-to-connector access, registers this PC, then opens DeskRelay.
 
 `$ErrorActionPreference = 'Stop'
 `$installer = Join-Path `$env:TEMP 'deskrelay-install-connector.ps1'
@@ -123,7 +123,12 @@ Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkh
 `$workspaceRoots = Join-Path `$HOME 'Projects'
 powershell -ExecutionPolicy Bypass -File `$installer -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME
 
-Write-Host "Open DeskRelay: $preferredUrl"
+try {
+  Start-Process $preferredUrlQ
+  Write-Host "Opened DeskRelay: $preferredUrl"
+} catch {
+  Write-Host "Open DeskRelay: $preferredUrl"
+}
 "@
 
 $startServer = @"

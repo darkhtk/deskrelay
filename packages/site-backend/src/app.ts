@@ -532,7 +532,7 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
     "# The installer downloaded from GitHub does the rest: fixes/reclones a",
     "# stale $HOME\\deskrelay folder, installs dependencies, starts the connector",
     "# on 0.0.0.0, detects the matching Tailscale/LAN address, verifies",
-    "# server-to-connector access, then registers this PC.",
+    "# server-to-connector access, registers this PC, then opens DeskRelay.",
     "",
     "$ErrorActionPreference = 'Stop'",
     "$installer = Join-Path $env:TEMP 'deskrelay-install-connector.ps1'",
@@ -541,7 +541,12 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
     "$workspaceRoots = Join-Path $HOME 'Projects'",
     `powershell -ExecutionPolicy Bypass -File $installer -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -WorkspaceRoots $workspaceRoots -Label $env:COMPUTERNAME`,
     "",
-    `Write-Host ${quotePs(`Open DeskRelay: ${siteUrl}`)}`,
+    "try {",
+    `  Start-Process ${quotePs(siteUrl)}`,
+    `  Write-Host ${quotePs(`Opened DeskRelay: ${siteUrl}`)}`,
+    "} catch {",
+    `  Write-Host ${quotePs(`Open DeskRelay: ${siteUrl}`)}`,
+    "}",
   ].join("\n");
 }
 

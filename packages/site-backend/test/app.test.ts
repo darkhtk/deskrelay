@@ -135,6 +135,8 @@ describe("self-host command helper", () => {
     expect(body.command).toContain(`-SiteToken '${TOKEN}'`);
     expect(body.command).toContain("-WorkspaceRoots $workspaceRoots");
     expect(body.command).toContain("Invoke-WebRequest");
+    expect(body.command).toContain("Start-Process");
+    expect(body.command).toContain("Opened DeskRelay");
     expect(body.command).not.toContain("Invoke-RestMethod -Method Post");
     expect(body.preferredUrl).toMatch(/^http:\/\//);
     expect(body.urls.length).toBeGreaterThan(0);

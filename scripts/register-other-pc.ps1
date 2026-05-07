@@ -51,3 +51,10 @@ powershell @argsList
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }
+
+try {
+  Start-Process $Server
+  Write-Host "Opened DeskRelay: $Server"
+} catch {
+  Write-Host "Open DeskRelay: $Server"
+}
