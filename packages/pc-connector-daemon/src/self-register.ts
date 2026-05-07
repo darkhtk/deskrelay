@@ -99,7 +99,11 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
   const advertised = await probeDaemonStatus(fetchImpl, daemonUrl, auth.token, 5_000);
   if (!advertised.ok) {
     const state = await readStateFile().catch(() => undefined);
-    if (state?.host === "127.0.0.1" || state?.host === "localhost") {
+    if (
+      state?.host &&
+      isLocalOnlyHost(state.host) &&
+      !areEquivalentListenHosts(state.host, listenHost)
+    ) {
       throw new Error(
         `connector is still bound to ${state.host}:${state.port}; expected ${listenHost}:${port}. Reinstall the login task and retry.`,
       );
@@ -346,6 +350,15 @@ function normalizeServerUrl(raw: string): string {
 
 function formatHostForUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function isLocalOnlyHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function areEquivalentListenHosts(left: string, right: string): boolean {
+  const normalize = (host: string) => (host === "localhost" ? "127.0.0.1" : host);
+  return normalize(left) === normalize(right);
 }
 
 function defaultDeviceLabel(): string {

@@ -11,6 +11,7 @@
     "check": "biome check .",
     "typecheck": "bun --filter '*' typecheck",
     "test": "bun --filter '*' test",
+    "test:selfhost-failures": "bun run scripts/selfhost-install-failure-smoke.ts",
     "test:selfhost-virtual": "bun run scripts/selfhost-virtual-e2e.ts",
     "build": "bun --filter '*' build"
   },
