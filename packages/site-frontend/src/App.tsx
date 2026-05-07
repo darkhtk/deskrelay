@@ -213,14 +213,6 @@ export const App: Component = () => {
       </Show>
 
       <Show when={!legalPage()}>
-        <Show when={!chatReady()}>
-          <header class="app-header">
-            <div class="header-left">
-              <h1>{t("app.title")}</h1>
-            </div>
-          </header>
-        </Show>
-
         <Show when={landingReopened() || !landingDismissed() || !hasAccess()}>
           <Landing
             onTokenLogin={handleTokenLogin}
