@@ -8,6 +8,7 @@ import {
   parsePending,
 } from "../src/components/ApprovalModal.tsx";
 import { getAlwaysAllowedTools } from "../src/device-prefs.ts";
+import { t } from "../src/i18n.ts";
 
 const DEV_ID = "dev_approval_1";
 const START = Date.parse("2026-05-02T00:00:00.000Z");
@@ -50,7 +51,8 @@ describe("ApprovalModal deadline handling", () => {
       sessionId: "sess_1",
       expiresAt,
     });
-    expect(approvalDeadlineMs(parsed!, START)).toBe(START + 60_000);
+    if (!parsed) throw new Error("pending approval did not parse");
+    expect(approvalDeadlineMs(parsed, START)).toBe(START + 60_000);
   });
 
   test("falls back below the daemon timeout when old events omit expiresAt", () => {
@@ -102,7 +104,9 @@ describe("ApprovalModal deadline handling", () => {
     });
 
     const buttons = [...container.querySelectorAll("button")];
-    const alwaysAllow = buttons.find((button) => /always/i.test(button.textContent ?? ""));
+    const alwaysAllow = buttons.find(
+      (button) => button.textContent?.trim() === t("approval.always-allow"),
+    );
     expect(alwaysAllow).toBeTruthy();
     if (!alwaysAllow) throw new Error("always-allow button missing");
     fireEvent.click(alwaysAllow);

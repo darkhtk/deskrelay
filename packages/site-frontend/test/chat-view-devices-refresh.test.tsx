@@ -2,6 +2,7 @@ import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ChatView } from "../src/components/ChatView.tsx";
+import { t } from "../src/i18n.ts";
 
 const DEV = {
   id: "dev_refresh_1",
@@ -227,7 +228,7 @@ describe("ChatView device refresh bridge", () => {
     fireEvent.click(oldSession);
 
     const newChat = container.querySelector(
-      'button[aria-label="New chat"]',
+      `button[aria-label="${t("chat.sidebar.new.button")}"]`,
     ) as HTMLButtonElement | null;
     if (!newChat) throw new Error("new chat button missing");
     fireEvent.click(newChat);
@@ -352,7 +353,7 @@ describe("ChatView device refresh bridge", () => {
     });
 
     const sidebarToggle = container.querySelector(
-      'button[aria-label="Toggle sidebar"]',
+      `button[aria-label="${t("chat.toggle-sidebar")}"]`,
     ) as HTMLButtonElement | null;
     if (!sidebarToggle) throw new Error("sidebar toggle missing");
     fireEvent.click(sidebarToggle);
@@ -367,7 +368,7 @@ describe("ChatView device refresh bridge", () => {
     expect(container.querySelector(".session-search")).toBeNull();
 
     const searchToggle = container.querySelector(
-      'button[aria-label="Toggle session search"]',
+      `button[aria-label="${t("chat.sidebar.search.toggle")}"]`,
     ) as HTMLButtonElement | null;
     if (!searchToggle) throw new Error("session search toggle missing");
     fireEvent.click(searchToggle);
@@ -377,7 +378,7 @@ describe("ChatView device refresh bridge", () => {
     fireEvent.input(searchInput, { target: { value: "Tabbed" } });
 
     const skillsTab = [...container.querySelectorAll('[role="tab"]')].find(
-      (button) => button.textContent === "Skills",
+      (button) => button.textContent === t("chat.sidebar.tab.skills"),
     ) as HTMLButtonElement | undefined;
     if (!skillsTab) throw new Error("skills tab missing");
     fireEvent.click(skillsTab);
@@ -396,7 +397,7 @@ describe("ChatView device refresh bridge", () => {
     expect(builtinSkill).toBeTruthy();
 
     const sessionsTab = [...container.querySelectorAll('[role="tab"]')].find(
-      (button) => button.textContent === "Sessions",
+      (button) => button.textContent === t("chat.sidebar.tab.sessions"),
     ) as HTMLButtonElement | undefined;
     if (!sessionsTab) throw new Error("sessions tab missing");
     fireEvent.click(sessionsTab);
@@ -404,7 +405,7 @@ describe("ChatView device refresh bridge", () => {
     expect(restoredSearch?.value).toBe("Tabbed");
 
     const permissionsTab = [...container.querySelectorAll('[role="tab"]')].find(
-      (button) => button.textContent === "Permissions",
+      (button) => button.textContent === t("chat.sidebar.tab.permissions"),
     ) as HTMLButtonElement | undefined;
     if (!permissionsTab) throw new Error("permissions tab missing");
     fireEvent.click(permissionsTab);
@@ -414,7 +415,9 @@ describe("ChatView device refresh bridge", () => {
       expect(container.textContent).toContain("default");
     });
     const removePermission = container.querySelector(
-      'button[aria-label="Remove Bash(git status:*)"]',
+      `button[aria-label="${t("chat.sidebar.permissions.remove", {
+        item: "Bash(git status:*)",
+      })}"]`,
     ) as HTMLButtonElement | null;
     if (!removePermission) throw new Error("remove permission button missing");
     fireEvent.click(removePermission);
@@ -424,7 +427,7 @@ describe("ChatView device refresh bridge", () => {
     if (!grepPermission) throw new Error("grep permission button missing");
     fireEvent.click(grepPermission);
     const savePermission = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "Save",
+      (button) => button.textContent === t("chat.sidebar.permissions.save"),
     ) as HTMLButtonElement | undefined;
     if (!savePermission) throw new Error("save permission button missing");
     fireEvent.click(savePermission);
@@ -434,7 +437,7 @@ describe("ChatView device refresh bridge", () => {
         path: "C:\\Users\\darkh\\.claude\\settings.json",
         allow: ["Grep(*)"],
       });
-      expect(container.textContent).toContain("Permissions saved.");
+      expect(container.textContent).toContain(t("chat.sidebar.permissions.saved"));
     });
   });
 
@@ -981,7 +984,9 @@ describe("ChatView device refresh bridge", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Fresh Laptop (Local) (offline)");
+      expect(container.textContent).toContain(
+        t("chat.sidebar.device.offline-prefix", { label: "Fresh Laptop (Local)" }),
+      );
     });
     expect(sessionsRequests).toBe(0);
 
@@ -993,7 +998,9 @@ describe("ChatView device refresh bridge", () => {
       expect(behaviorRequests).toBeGreaterThan(1);
       expect(sessionsRequests).toBeGreaterThan(0);
       expect(container.textContent).toContain("Fresh Laptop");
-      expect(container.textContent).not.toContain("Fresh Laptop (Local) (offline)");
+      expect(container.textContent).not.toContain(
+        t("chat.sidebar.device.offline-prefix", { label: "Fresh Laptop (Local)" }),
+      );
     });
   });
 
@@ -1156,7 +1163,7 @@ describe("ChatView device refresh bridge", () => {
     });
 
     const newChat = container.querySelector(
-      'button[aria-label="New chat"]',
+      `button[aria-label="${t("chat.sidebar.new.button")}"]`,
     ) as HTMLButtonElement | null;
     if (!newChat) throw new Error("new chat button missing");
     fireEvent.click(newChat);
@@ -1357,7 +1364,9 @@ describe("ChatView device refresh bridge", () => {
       expect(scroller.scrollTop).toBe(1234);
       expect(container.textContent).not.toContain("message 0");
       expect(container.textContent).toContain("message 104");
-      expect(container.textContent).toContain("latest 100 transcript events");
+      expect(container.textContent).toContain(
+        t("chat.error.session-event-limited", { count: 100 }),
+      );
       expect(container.textContent).not.toContain("8 MiB");
     });
   });
@@ -1487,12 +1496,14 @@ describe("ChatView device refresh bridge", () => {
     fireEvent.change(permissionSelect, { target: { value: "plan" } });
 
     const newChat = container.querySelector(
-      'button[aria-label="New chat"]',
+      `button[aria-label="${t("chat.sidebar.new.button")}"]`,
     ) as HTMLButtonElement | null;
     if (!newChat) throw new Error("new chat button missing");
     fireEvent.click(newChat);
 
-    const start = [...container.querySelectorAll("button")].find((b) => b.textContent === "Start");
+    const start = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === t("new-chat.actions.start"),
+    );
     if (!start) throw new Error("new chat start button missing");
     fireEvent.click(start);
 
@@ -1535,8 +1546,9 @@ describe("ChatView device refresh bridge", () => {
     expect(chatParams?.permissionMode).toBe("plan");
     await waitFor(() => {
       expect(container.textContent).toContain("final string live");
-      expect(container.textContent).toContain("permission mode: default");
-      expect(container.textContent).toContain("requested plan");
+      expect(container.textContent).toContain(
+        t("pm.status.mismatch", { actual: "default", requested: "plan" }),
+      );
       expect(permissionSelect.value).toBe("default");
       expect(scroller.scrollTop).toBe(987);
     });

@@ -1,6 +1,7 @@
 import { fireEvent, render } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { type SessionEntry, SessionList } from "../src/components/SessionList.tsx";
+import { t } from "../src/i18n.ts";
 
 const sample = (overrides: Partial<SessionEntry> = {}): SessionEntry => ({
   sessionId: "sess_1",
@@ -17,7 +18,7 @@ afterEach(() => {
 describe("SessionList — rendering", () => {
   test("empty list shows the placeholder", () => {
     const { container } = render(() => <SessionList entries={[]} />);
-    expect(container.textContent).toContain("No conversation history");
+    expect(container.textContent).toContain(t("sl.empty"));
   });
 
   test("renders one row per entry with title + cwd basename + ago", () => {
@@ -84,7 +85,7 @@ describe("SessionList — delete arm-then-confirm", () => {
     expect(onDelete).not.toHaveBeenCalled();
     expect(container.querySelector(".session-item-delete-armed")).toBeTruthy();
     expect((container.querySelector(".session-item-delete-armed") as HTMLElement).textContent).toBe(
-      "Delete?",
+      t("sl.delete.label"),
     );
   });
 
@@ -112,7 +113,7 @@ describe("SessionList — delete arm-then-confirm", () => {
     const deleteButton = container.querySelector(".session-item-delete") as HTMLButtonElement;
     expect(row.disabled).toBe(true);
     expect(deleteButton.disabled).toBe(true);
-    expect(deleteButton.textContent).toBe("Deleting...");
+    expect(deleteButton.textContent).toBe(t("sl.delete.progress"));
     fireEvent.click(deleteButton);
     expect(onDelete).not.toHaveBeenCalled();
   });
@@ -196,7 +197,7 @@ describe("SessionList — groupByCwd", () => {
     const button = container.querySelector(".session-group-delete") as HTMLButtonElement;
     fireEvent.click(button);
     expect(onDeleteGroup).not.toHaveBeenCalled();
-    expect(button.textContent).toBe("Delete all?");
+    expect(button.textContent).toBe(t("sl.delete-group.label"));
 
     fireEvent.click(button);
     expect(onDeleteGroup).toHaveBeenCalledWith("/x/alpha", entries);
@@ -218,7 +219,9 @@ describe("SessionList — groupByCwd", () => {
     ));
 
     expect(container.querySelector(".session-group-progress")).toBeTruthy();
-    expect(container.textContent).toContain("Deleting sessions... 1/2");
+    expect(container.textContent).toContain(
+      t("sl.delete-group.progress-count", { done: 1, total: 2 }),
+    );
     const button = container.querySelector(".session-group-delete") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.click(button);

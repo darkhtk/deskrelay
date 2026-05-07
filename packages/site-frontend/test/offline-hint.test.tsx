@@ -6,6 +6,7 @@
 import { fireEvent, render } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { OfflineHint, isDaemonOfflineMessage } from "../src/components/OfflineHint.tsx";
+import { t } from "../src/i18n.ts";
 
 describe("isDaemonOfflineMessage", () => {
   test("matches en/ko/ja/ru offline messages", () => {
@@ -81,10 +82,9 @@ describe("<OfflineHint />", () => {
         onPickDevice={onPickDevice}
       />
     ));
-    expect(container.textContent).toContain("Selected device: Office PC");
-    expect(container.textContent).toContain("that PC");
-    const pickButton = [...container.querySelectorAll("button")].find((button) =>
-      /pick device/i.test(button.textContent ?? ""),
+    expect(container.textContent).toContain(t("offline.help.device", { label: "Office PC" }));
+    const pickButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === t("offline.pick-device"),
     );
     expect(pickButton).toBeTruthy();
     if (!pickButton) throw new Error("pick device button missing");

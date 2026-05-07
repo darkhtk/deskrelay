@@ -10,7 +10,7 @@ import { App } from "../src/App.tsx";
 import { ChatView } from "../src/components/ChatView.tsx";
 import { LoginCard } from "../src/components/LoginCard.tsx";
 import { OfflineHint } from "../src/components/OfflineHint.tsx";
-import { setLocale } from "../src/i18n.ts";
+import { setLocale, t } from "../src/i18n.ts";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -36,7 +36,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  setLocale("en");
+  setLocale("ko");
   window.localStorage.clear();
 });
 
@@ -61,10 +61,10 @@ describe("LoginCard", () => {
     const onTokenLogin = vi.fn();
     render(() => <LoginCard onTokenLogin={onTokenLogin} />);
 
-    const submit = screen.getByRole("button", { name: "Connect" });
+    const submit = screen.getByRole("button", { name: t("login.token.submit") });
     expect(submit).toBeDisabled();
 
-    fireEvent.input(screen.getByPlaceholderText("CR_SITE_TOKEN"), {
+    fireEvent.input(screen.getByPlaceholderText(t("login.token.placeholder")), {
       target: { value: "tok-1" },
     });
     expect(submit).not.toBeDisabled();
@@ -74,7 +74,7 @@ describe("LoginCard", () => {
 });
 
 describe("settings and chrome invariants", () => {
-  test("language, devices, diagnostics, and hard refresh live in unified settings", () => {
+  test("general settings, devices, diagnostics, and hard refresh live in unified settings", () => {
     const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
 
@@ -93,8 +93,8 @@ describe("settings and chrome invariants", () => {
   test("signed-out App renders the self-host landing CTA", async () => {
     const { container } = render(() => <App />);
     await waitFor(() => {
-      const found = [...container.querySelectorAll("button")].find((button) =>
-        /open app/i.test(button.textContent ?? ""),
+      const found = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === t("landing.cta.start"),
       );
       if (!found) throw new Error("Landing CTA missing");
     });
@@ -103,27 +103,28 @@ describe("settings and chrome invariants", () => {
   test("self-host privacy and terms links are available from main app chrome", async () => {
     const { container } = render(() => <App />);
     await waitFor(() => {
-      expect(container.querySelector('.alpha-banner a[href="/privacy"]')?.textContent).toMatch(
-        /privacy/i,
+      expect(container.querySelector('.alpha-banner a[href="/privacy"]')?.textContent).toBe(
+        t("app.alpha-banner.privacy"),
       );
-      expect(container.querySelector('.alpha-banner a[href="/terms"]')?.textContent).toMatch(
-        /terms/i,
+      expect(container.querySelector('.alpha-banner a[href="/terms"]')?.textContent).toBe(
+        t("app.alpha-banner.terms"),
       );
     });
   });
 
   test("privacy and terms links are hidden once the chat app is open", async () => {
-    window.localStorage.setItem("cr.locale", "en");
     const { container } = render(() => <App />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
-    fireEvent.input(await screen.findByPlaceholderText("CR_SITE_TOKEN"), {
+    const openButton = screen.getAllByRole("button", { name: t("landing.cta.start") })[0];
+    if (!openButton) throw new Error("landing CTA missing");
+    fireEvent.click(openButton);
+    fireEvent.input(await screen.findByPlaceholderText(t("login.token.placeholder")), {
       target: { value: "tok-1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    fireEvent.click(screen.getByRole("button", { name: t("login.token.submit") }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Back to main screen" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: t("app.back-home") })).toBeTruthy();
       expect(container.querySelector('a[href="/privacy"]')).toBeNull();
       expect(container.querySelector('a[href="/terms"]')).toBeNull();
     });
@@ -143,7 +144,7 @@ describe("settings and chrome invariants", () => {
 
     const { container } = render(() => <App />);
     await waitFor(() => {
-      expect(container.textContent).toContain("Privacy for self-hosted DeskRelay");
+      expect(container.textContent).toContain(t("legal.privacy.title"));
       expect(container.querySelector('a[href="/privacy"]')).toBeNull();
       expect(container.querySelector('a[href="/terms"]')).toBeNull();
     });
@@ -164,8 +165,8 @@ describe("settings and chrome invariants", () => {
     const { container } = render(() => <App />);
     await waitFor(() => {
       const text = container.textContent ?? "";
-      expect(text).toContain("Privacy for self-hosted DeskRelay");
-      expect(text).toContain("do not receive, store, or process your chats");
+      expect(text).toContain(t("legal.privacy.title"));
+      expect(text).toContain(t("legal.privacy.section.1.body"));
       expect(text).toContain("Site token");
     });
   });
@@ -186,8 +187,8 @@ describe("settings and chrome invariants", () => {
     const { container } = render(() => <App />);
     await waitFor(() => {
       const text = container.textContent ?? "";
-      expect(text).toContain("Self-hosted DeskRelay 개인정보");
-      expect(text).toContain("DeskRelay 관리자는 사용자의 채팅");
+      expect(text).toContain(t("legal.privacy.title"));
+      expect(text).toContain(t("legal.privacy.section.1.body"));
       expect(text).toContain("Site token");
     });
   });
@@ -207,19 +208,21 @@ describe("settings and chrome invariants", () => {
     const { container } = render(() => <App />);
     await waitFor(() => {
       const text = container.textContent ?? "";
-      expect(text).toContain("Terms for self-hosted DeskRelay");
-      expect(text).toContain("do not provide a hosted service");
-      expect(text).toContain("Do not expose connector or site ports");
+      expect(text).toContain(t("legal.terms.title"));
+      expect(text).toContain(t("legal.terms.intro"));
+      expect(text).toContain(t("legal.terms.section.2.body"));
     });
   });
 
   test("self-host token can move from Landing into the app flow", async () => {
     render(() => <App />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
-    fireEvent.input(await screen.findByPlaceholderText("CR_SITE_TOKEN"), {
+    const openButton = screen.getAllByRole("button", { name: t("landing.cta.start") })[0];
+    if (!openButton) throw new Error("landing CTA missing");
+    fireEvent.click(openButton);
+    fireEvent.input(await screen.findByPlaceholderText(t("login.token.placeholder")), {
       target: { value: "tok-1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    fireEvent.click(screen.getByRole("button", { name: t("login.token.submit") }));
 
     await waitFor(() => {
       expect(window.localStorage.getItem("cr.site-token")).toBe("tok-1");

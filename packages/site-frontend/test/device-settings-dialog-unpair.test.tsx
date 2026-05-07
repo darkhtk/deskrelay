@@ -17,6 +17,7 @@ import {
   setDeviceDefaultCwd,
   setDeviceSecurityProfile,
 } from "../src/device-prefs.ts";
+import { t } from "../src/i18n.ts";
 
 const SAMPLE_DEVICE = {
   id: "dev_unpair_1",
@@ -115,7 +116,7 @@ describe("DeviceSettingsDialog — unpair", () => {
     fireEvent.input(cwdInput, { target: { value: "C:\\work\\saved" } });
 
     const saveButtons = [...container.querySelectorAll("button.primary-button")].filter(
-      (button) => button.textContent?.trim() === "Save",
+      (button) => button.textContent?.trim() === t("dsd.identity.save"),
     );
     const cwdSaveButton = saveButtons[1] as HTMLButtonElement | undefined;
     if (!cwdSaveButton) throw new Error("cwd Save button missing");
@@ -185,7 +186,7 @@ describe("DeviceSettingsDialog — unpair", () => {
     if (!labelInput) throw new Error("device label input missing");
     fireEvent.input(labelInput, { target: { value: "renamed" } });
     const buttons = [...container.querySelectorAll("button.primary-button")];
-    const saveBtn = buttons.find((b) => b.textContent?.trim() === "Save");
+    const saveBtn = buttons.find((b) => b.textContent?.trim() === t("dsd.identity.save"));
     if (!saveBtn) throw new Error("Save button missing");
     fireEvent.click(saveBtn);
 

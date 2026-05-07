@@ -65,30 +65,34 @@ function staticTranslationRefs(): string[] {
 
 describe("locale dictionaries", () => {
   const dictionaries = localeDictionaries();
-  const english = dictionaries.en ?? {};
+  const korean = dictionaries.ko ?? {};
 
-  test("all locale dictionaries expose the same keys as English", () => {
+  test("only the Korean locale dictionary is enabled for now", () => {
+    expect(Object.keys(dictionaries).sort()).toEqual(["ko"]);
+  });
+
+  test("all locale dictionaries expose the same keys as Korean", () => {
     const mismatches = Object.entries(dictionaries)
-      .filter(([locale]) => locale !== "en")
+      .filter(([locale]) => locale !== "ko")
       .flatMap(([locale, messages]) => [
-        ...sortedKeys(english)
+        ...sortedKeys(korean)
           .filter((key) => !(key in messages))
           .map((key) => `${locale} missing ${key}`),
         ...sortedKeys(messages)
-          .filter((key) => !(key in english))
+          .filter((key) => !(key in korean))
           .map((key) => `${locale} extra ${key}`),
       ]);
 
     expect(mismatches).toEqual([]);
   });
 
-  test("all locale placeholders match English", () => {
+  test("all locale placeholders match Korean", () => {
     const mismatches = Object.entries(dictionaries)
-      .filter(([locale]) => locale !== "en")
+      .filter(([locale]) => locale !== "ko")
       .flatMap(([locale, messages]) =>
-        sortedKeys(english).flatMap((key) => {
+        sortedKeys(korean).flatMap((key) => {
           if (!(key in messages)) return [];
-          const expected = placeholders(english[key] ?? "").join(",");
+          const expected = placeholders(korean[key] ?? "").join(",");
           const actual = placeholders(messages[key] ?? "").join(",");
           return expected === actual
             ? []
@@ -99,8 +103,8 @@ describe("locale dictionaries", () => {
     expect(mismatches).toEqual([]);
   });
 
-  test("English locale contains all statically referenced translation keys", () => {
-    const missing = staticTranslationRefs().filter((key) => !(key in english));
+  test("Korean locale contains all statically referenced translation keys", () => {
+    const missing = staticTranslationRefs().filter((key) => !(key in korean));
     const labeledMissing = missing.map((key) => `${key} from ${relative(packageRoot, sourceRoot)}`);
 
     expect(labeledMissing).toEqual([]);

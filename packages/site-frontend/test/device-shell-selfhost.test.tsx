@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceShell } from "../src/components/DeviceShell.tsx";
+import { t } from "../src/i18n.ts";
 
 const OLD_DEVICE = {
   id: "dev_old",
@@ -78,7 +79,7 @@ describe("DeviceShell self-host registration UX", () => {
 
     const urlInput = container.querySelector('input[type="url"]') as HTMLInputElement | null;
     const labelInput = container.querySelector(
-      'input[placeholder="Label"]',
+      `input[placeholder="${t("ds.add.selfhost.label.placeholder")}"]`,
     ) as HTMLInputElement | null;
     const tokenInput = container.querySelector(
       'input[placeholder="daemon token"]',
@@ -89,8 +90,8 @@ describe("DeviceShell self-host registration UX", () => {
     fireEvent.input(labelInput, { target: { value: NEW_DEVICE.label } });
     fireEvent.input(tokenInput, { target: { value: "daemon-token-2" } });
 
-    const addButton = [...container.querySelectorAll("button")].find((button) =>
-      /add device/i.test(button.textContent ?? ""),
+    const addButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === t("ds.add.selfhost.submit"),
     ) as HTMLButtonElement | undefined;
     if (!addButton) throw new Error("add device button missing");
     fireEvent.click(addButton);
@@ -107,7 +108,7 @@ describe("DeviceShell self-host registration UX", () => {
         label: NEW_DEVICE.label,
         authToken: "daemon-token-2",
       });
-      expect(container.textContent).toContain("connected and ready");
+      expect(container.textContent).toContain("연결이 확인되어 사용할 수 있습니다");
     });
   });
 
@@ -149,18 +150,18 @@ describe("DeviceShell self-host registration UX", () => {
     const { container } = render(() => <DeviceShell />);
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Register another PC by copy-paste");
+      expect(container.textContent).toContain(t("ds.add.command.title"));
     });
 
-    const copyButton = [...container.querySelectorAll("button")].find((button) =>
-      /copy registration command/i.test(button.textContent ?? ""),
+    const copyButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === t("ds.add.command.copy"),
     ) as HTMLButtonElement | undefined;
     if (!copyButton) throw new Error("copy command button missing");
     fireEvent.click(copyButton);
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("powershell register command");
-      expect(container.textContent).toContain("Registration command copied");
+      expect(container.textContent).toContain(t("ds.add.command.copied"));
       expect(container.querySelector("textarea")).toBeNull();
     });
   });
@@ -208,18 +209,18 @@ describe("DeviceShell self-host registration UX", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Register another PC by copy-paste");
+      expect(container.textContent).toContain(t("ds.add.command.title"));
     });
 
-    const copyButton = [...container.querySelectorAll("button")].find((button) =>
-      /copy registration command/i.test(button.textContent ?? ""),
+    const copyButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === t("ds.add.command.copy"),
     ) as HTMLButtonElement | undefined;
     if (!copyButton) throw new Error("copy command button missing");
     fireEvent.click(copyButton);
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("powershell register command");
-      expect(container.textContent).toContain("Waiting for the other PC to register");
+      expect(container.textContent).toContain(t("ds.add.command.waiting"));
     });
 
     listedDevices = [OLD_DEVICE, NEW_DEVICE];
@@ -232,7 +233,7 @@ describe("DeviceShell self-host registration UX", () => {
         expect(selected?.textContent).toContain(NEW_DEVICE.label);
         expect(onDevicesChanged).toHaveBeenCalled();
         expect(onDeviceSelected).toHaveBeenCalledWith(NEW_DEVICE.id);
-        expect(container.textContent).toContain("New laptop (Local) registered and selected.");
+        expect(container.textContent).toContain("등록 완료");
       },
       { timeout: 2500 },
     );
@@ -276,18 +277,18 @@ describe("DeviceShell self-host registration UX", () => {
     const { container } = render(() => <DeviceShell />);
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Register another PC by copy-paste");
+      expect(container.textContent).toContain(t("ds.add.command.title"));
     });
 
-    const copyButton = [...container.querySelectorAll("button")].find((button) =>
-      /copy removal command/i.test(button.textContent ?? ""),
+    const copyButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === t("ds.add.command.remove-copy"),
     ) as HTMLButtonElement | undefined;
     if (!copyButton) throw new Error("copy removal command button missing");
     fireEvent.click(copyButton);
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("powershell remove command");
-      expect(container.textContent).toContain("Removal command copied");
+      expect(container.textContent).toContain(t("ds.add.command.remove-copied"));
       expect(container.querySelector("textarea")).toBeNull();
     });
   });

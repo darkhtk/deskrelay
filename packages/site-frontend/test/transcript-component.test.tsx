@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { type ClaudeStreamEvent, api } from "../src/api.ts";
 import { Transcript } from "../src/components/Transcript.tsx";
+import { t } from "../src/i18n.ts";
 
 function ev(...e: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
   return e;
@@ -14,7 +15,7 @@ afterEach(() => {
 describe("Transcript (Solid)", () => {
   test("empty events shows the placeholder", () => {
     const { container } = render(() => <Transcript events={ev()} />);
-    expect(container.textContent).toContain("No messages yet");
+    expect(container.textContent).toContain(t("tx.empty"));
   });
 
   test("renders an assistant text bubble", () => {

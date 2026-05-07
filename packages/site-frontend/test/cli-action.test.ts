@@ -5,14 +5,15 @@ import {
   describeCliActionFromEnvelope,
   shouldAppendClaudeEventToTranscript,
 } from "../src/claude/cli-action.ts";
+import { t } from "../src/i18n.ts";
 
 describe("CLI action descriptions", () => {
   test("describes run lifecycle envelopes", () => {
-    expect(describeCliActionFromEnvelope("run.started", {})).toBe("Starting Claude CLI");
-    expect(describeCliActionFromEnvelope("run.finished", {})).toBe("Claude CLI finished");
-    expect(describeCliActionFromEnvelope("run.error", {})).toBe("Claude CLI error");
+    expect(describeCliActionFromEnvelope("run.started", {})).toBe(t("cli.action.starting"));
+    expect(describeCliActionFromEnvelope("run.finished", {})).toBe(t("cli.action.finished"));
+    expect(describeCliActionFromEnvelope("run.error", {})).toBe(t("cli.action.error"));
     expect(describeCliActionFromEnvelope("adapter.meta", { phase: "approval_pending" })).toBe(
-      "Waiting for permission approval",
+      t("cli.action.approval-waiting"),
     );
   });
 
@@ -22,19 +23,19 @@ describe("CLI action descriptions", () => {
         type: "assistant",
         message: { content: [{ type: "tool_use", name: "Bash", input: {} }] },
       }),
-    ).toBe("Running Bash");
+    ).toBe(t("cli.action.tool.bash"));
     expect(
       describeCliActionFromClaudeEvent({
         type: "assistant",
         message: { content: [{ type: "tool_use", name: "Read", input: {} }] },
       }),
-    ).toBe("Reading files");
+    ).toBe(t("cli.action.tool.read"));
     expect(
       describeCliActionFromClaudeEvent({
         type: "assistant",
         message: { content: [{ type: "tool_use", name: "mcp__server__tool", input: {} }] },
       }),
-    ).toBe("Using MCP tool");
+    ).toBe(t("cli.action.tool.mcp"));
   });
 
   test("describes text and tool-result phases", () => {
@@ -43,13 +44,13 @@ describe("CLI action descriptions", () => {
         type: "assistant",
         message: { content: [{ type: "text", text: "hello" }] },
       }),
-    ).toBe("Writing response");
+    ).toBe(t("cli.action.responding"));
     expect(
       describeCliActionFromClaudeEvent({
         type: "user",
         message: { content: [{ type: "tool_result", content: "ok" }] },
       }),
-    ).toBe("Reading tool result");
+    ).toBe(t("cli.action.tool-result"));
   });
 
   test("keeps user-facing Claude events in the transcript", () => {

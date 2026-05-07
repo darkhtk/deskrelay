@@ -6,8 +6,7 @@ import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
-import { LocaleChooser } from "./components/LocaleChooser.tsx";
-import { LOCALES, LOCALE_LABELS, hasExplicitLocale, locale, setLocale, t } from "./i18n.ts";
+import { t } from "./i18n.ts";
 import { scrollToBottomOnSend, setScrollToBottomOnSend } from "./ui-prefs.ts";
 
 type SettingsTab = "general" | "devices" | "diagnostics";
@@ -104,7 +103,7 @@ export const App: Component = () => {
     setLandingDismissed(false);
   };
 
-  const [pickedLocale, setPickedLocale] = createSignal(hasExplicitLocale());
+  const [pickedLocale, setPickedLocale] = createSignal(true);
   const [landingDismissed, setLandingDismissed] = createSignal(false);
   const [landingReopened, setLandingReopened] = createSignal(false);
 
@@ -222,10 +221,6 @@ export const App: Component = () => {
           />
         </Show>
 
-        <Show when={!landingReopened() && landingDismissed() && hasAccess() && !pickedLocale()}>
-          <LocaleChooser onPicked={() => setPickedLocale(true)} />
-        </Show>
-
         <Show when={chatReady()}>
           <ChatView
             onClearAccess={handleClearAccess}
@@ -323,20 +318,6 @@ export const App: Component = () => {
 const LanguageSettings: Component = () => (
   <section class="settings-card">
     <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
-    <div class="settings-row" role="radiogroup" aria-label={t("lang.settings.title")}>
-      <For each={LOCALES}>
-        {(id) => (
-          <button
-            type="button"
-            class={`secondary-button${id === locale() ? " primary-button" : ""}`}
-            aria-pressed={id === locale()}
-            onClick={() => setLocale(id)}
-          >
-            {LOCALE_LABELS[id]}
-          </button>
-        )}
-      </For>
-    </div>
     <label class="settings-check-row">
       <input
         type="checkbox"

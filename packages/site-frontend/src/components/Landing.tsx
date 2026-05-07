@@ -1,6 +1,6 @@
 import { type Component, For, type JSX, Show, createSignal } from "solid-js";
 import releaseNotesMarkdown from "../content/release-notes.md?raw";
-import { LOCALES, LOCALE_LABELS, locale, setLocale, t } from "../i18n.ts";
+import { t } from "../i18n.ts";
 import { LoginCard } from "./LoginCard.tsx";
 
 type MarkdownBlock =
@@ -43,22 +43,6 @@ export const Landing: Component<LandingProps> = (props) => {
     <>
       <section class="landing-hero">
         <div class="landing-hero-inner">
-          <div class="landing-language-row" aria-label="Language">
-            <For each={LOCALES}>
-              {(id) => (
-                <button
-                  type="button"
-                  class={`landing-language-btn${
-                    id === locale() ? " landing-language-btn-active" : ""
-                  }`}
-                  aria-pressed={id === locale()}
-                  onClick={() => setLocale(id)}
-                >
-                  {LOCALE_LABELS[id]}
-                </button>
-              )}
-            </For>
-          </div>
           <h1 class="landing-headline">
             <For each={t("landing.headline").split("\n")}>
               {(line, index) => (

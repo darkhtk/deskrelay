@@ -4,6 +4,7 @@
 import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ConnectionDiagnostics } from "../src/components/ConnectionDiagnostics.tsx";
+import { t } from "../src/i18n.ts";
 
 const SAMPLE_DEVICE = {
   id: "dev_diag_1",
@@ -66,7 +67,7 @@ describe("ConnectionDiagnostics", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("remote-claude loaded");
+      expect(container.textContent).toContain(t("conn-diag.claude.loaded", { version: "0.0.1" }));
     });
     expect(container.textContent).toContain("remote-claude@0.0.1");
     expect(container.textContent).toContain("restricted");
@@ -96,10 +97,12 @@ describe("ConnectionDiagnostics", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("cannot reach daemon");
+      expect(container.textContent).toContain(
+        t("conn-diag.daemon.error", { error: "device offline" }),
+      );
     });
     expect(container.textContent).toContain("Home PC");
-    expect(container.textContent).toContain("Connection diagnostics");
+    expect(container.textContent).toContain(t("conn-diag.title"));
   });
 
   test("Refresh button is rendered and clickable", async () => {
@@ -124,13 +127,14 @@ describe("ConnectionDiagnostics", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("remote-claude loaded");
+      expect(container.textContent).toContain(t("conn-diag.claude.loaded", { version: "0.0.1" }));
     });
-    const refresh = [...container.querySelectorAll("button")].find((button) =>
-      /Refresh/i.test(button.textContent ?? ""),
+    const refresh = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === t("conn-diag.action.refresh"),
     );
     expect(refresh).toBeTruthy();
-    fireEvent.click(refresh!);
+    if (!refresh) throw new Error("refresh button missing");
+    fireEvent.click(refresh);
 
     await waitFor(() => {
       expect(diagnosticsCalls).toBeGreaterThan(1);

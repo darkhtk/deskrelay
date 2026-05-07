@@ -5,6 +5,7 @@
 import { fireEvent, render } from "@solidjs/testing-library";
 import { describe, expect, test, vi } from "vitest";
 import { Composer } from "../src/components/Composer.tsx";
+import { t } from "../src/i18n.ts";
 
 function setup(props: Parameters<typeof Composer>[0] = { onSend: vi.fn() }) {
   const utils = render(() => <Composer {...props} />);
@@ -122,7 +123,7 @@ describe("Composer — slash picker", () => {
     const { textarea, container } = setup();
     fireEvent.input(textarea, { target: { value: "/loo" } });
     const item = container.querySelector(".slash-suggest-item");
-    expect(item?.textContent).toContain("planned");
+    expect(item?.textContent).toContain(t("composer.slash.paid"));
   });
 
   test("custom runtime slash commands can include user skills", () => {
@@ -140,7 +141,7 @@ describe("Composer — Stop / inFlight mode", () => {
     const { sendBtn, stopBtn } = setup({ onSend: vi.fn(), inFlight: true });
     expect(stopBtn).toBeTruthy();
     expect(stopBtn.hidden).toBe(false);
-    expect(sendBtn.getAttribute("aria-label")).toBe("Send");
+    expect(sendBtn.getAttribute("aria-label")).toBe(t("composer.send.aria"));
     // While in flight the send button is greyed; the stop button is the
     // active affordance.
     expect(sendBtn).toBeDisabled();
