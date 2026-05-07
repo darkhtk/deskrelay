@@ -52,8 +52,18 @@ export const Landing: Component<LandingProps> = (props) => {
               )}
             </For>
           </div>
-          <h1 class="landing-headline" innerHTML={t("landing.headline").replace(/\n/g, "<br/>")} />
-          <p class="landing-subhead">{t("landing.subhead")}</p>
+          <h1 class="landing-headline">
+            <For each={t("landing.headline").split("\n")}>
+              {(line, index) => (
+                <>
+                  <Show when={index() > 0}>
+                    <br />
+                  </Show>
+                  {line}
+                </>
+              )}
+            </For>
+          </h1>
           <div class="landing-cta-row">
             <button
               type="button"
@@ -63,44 +73,7 @@ export const Landing: Component<LandingProps> = (props) => {
             >
               {t("landing.cta.start")}
             </button>
-            <a class="secondary-button landing-cta" href="#how">
-              {t("landing.cta.how")}
-            </a>
           </div>
-        </div>
-      </section>
-
-      <section class="landing-features">
-        <article class="landing-feature">
-          <h3>{t("landing.feature1.title")}</h3>
-          <p>{t("landing.feature1.body")}</p>
-        </article>
-        <article class="landing-feature">
-          <h3>{t("landing.feature2.title")}</h3>
-          <p>{t("landing.feature2.body")}</p>
-        </article>
-        <article class="landing-feature">
-          <h3>{t("landing.feature3.title")}</h3>
-          <p>{t("landing.feature3.body")}</p>
-        </article>
-      </section>
-
-      <section id="how" class="landing-how">
-        <h2 class="landing-h2">{t("landing.how.title")}</h2>
-        <ol class="landing-steps">
-          <li innerHTML={renderMarkdown(t("landing.how.step1"))} />
-          <li innerHTML={renderMarkdown(t("landing.how.step2"))} />
-          <li innerHTML={renderMarkdown(t("landing.how.step3"))} />
-        </ol>
-        <div class="landing-cta-row" style={{ "justify-content": "center" }}>
-          <button
-            type="button"
-            class="primary-button landing-cta"
-            onClick={() => void open()}
-            disabled={opening()}
-          >
-            {t("landing.how.cta")}
-          </button>
         </div>
       </section>
 
@@ -158,12 +131,3 @@ export const Landing: Component<LandingProps> = (props) => {
     </>
   );
 };
-
-function renderMarkdown(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/`(.+?)`/g, "<code>$1</code>");
-}
