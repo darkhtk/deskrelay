@@ -1,7 +1,11 @@
 import { type Component, For, Show, createSignal } from "solid-js";
 import { ApiError, api, clearToken, getToken, setToken } from "./api.ts";
 import { AnnouncementBanner } from "./components/AnnouncementBanner.tsx";
-import { ChatView, type ContextUsageSnapshot } from "./components/ChatView.tsx";
+import {
+  ChatView,
+  type ContextUsageOverview,
+  type ContextUsageSnapshot,
+} from "./components/ChatView.tsx";
 import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
@@ -21,9 +25,22 @@ type DeviceSelectionRequest = {
   seq: number;
 };
 
-const ContextUsageBattery: Component<{ usage: ContextUsageSnapshot | null; visible: boolean }> = (
-  props,
-) => {
+const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { session: null, week: null };
+
+function nextWeekResetLabel(): string {
+  const reset = new Date();
+  const day = reset.getDay();
+  const daysUntilMonday = (8 - day) % 7 || 7;
+  reset.setDate(reset.getDate() + daysUntilMonday);
+  reset.setHours(0, 0, 0, 0);
+  return `reset ${reset.getMonth() + 1}/${reset.getDate()} 00:00`;
+}
+
+const ContextUsageBattery: Component<{
+  usage: ContextUsageSnapshot | null;
+  label: string;
+  resetLabel: string;
+}> = (props) => {
   const remaining = () => props.usage?.remainingPercent ?? null;
   const known = () => remaining() !== null;
   const level = () => {
@@ -39,7 +56,9 @@ const ContextUsageBattery: Component<{ usage: ContextUsageSnapshot | null; visib
   };
   const title = () => {
     const value = remaining();
-    return value === null ? "Context remaining unavailable" : `Context remaining ${percentText()}`;
+    return value === null
+      ? `${props.label} context unavailable - ${props.resetLabel}`
+      : `${props.label} context remaining ${percentText()} - ${props.resetLabel}`;
   };
   const fillWidth = () => {
     const value = remaining();
@@ -47,22 +66,42 @@ const ContextUsageBattery: Component<{ usage: ContextUsageSnapshot | null; visib
   };
 
   return (
-    <Show when={props.visible}>
-      <output
-        class={`context-battery context-battery-${level()}`}
-        aria-label={title()}
-        title={title()}
-        data-known={known() ? "true" : "false"}
-      >
-        <span class="context-battery-label">ctx</span>
+    <output
+      class={`context-meter context-battery-${level()}`}
+      aria-label={title()}
+      title={title()}
+      data-known={known() ? "true" : "false"}
+    >
+      <span class="context-battery">
+        <span class="context-battery-label">{props.label}</span>
         <span class="context-battery-shell" aria-hidden="true">
           <span class="context-battery-fill" style={{ width: fillWidth() }} />
         </span>
         <span class="context-battery-value">{percentText()}</span>
-      </output>
-    </Show>
+      </span>
+      <span class="context-meter-reset">{props.resetLabel}</span>
+    </output>
   );
 };
+
+const ContextUsageMeters: Component<{ usage: ContextUsageOverview; visible: boolean }> = (
+  props,
+) => (
+  <Show when={props.visible}>
+    <div class="context-meter-group">
+      <ContextUsageBattery
+        usage={props.usage.session}
+        label="current session"
+        resetLabel="reset: new session/compact"
+      />
+      <ContextUsageBattery
+        usage={props.usage.week}
+        label="current week"
+        resetLabel={nextWeekResetLabel()}
+      />
+    </div>
+  </Show>
+);
 
 export const App: Component = () => {
   const [localToken, setLocalToken] = createSignal<string | null>(getToken());
@@ -134,7 +173,7 @@ export const App: Component = () => {
     id: null,
     seq: 0,
   });
-  const [contextUsage, setContextUsage] = createSignal<ContextUsageSnapshot | null>(null);
+  const [contextUsage, setContextUsage] = createSignal<ContextUsageOverview>(EMPTY_CONTEXT_USAGE);
 
   const notifyDevicesChanged = () => {
     setDevicesRevision((value) => value + 1);
@@ -203,7 +242,7 @@ export const App: Component = () => {
         </div>
         <AnnouncementBanner />
         <div class="alpha-banner-right">
-          <ContextUsageBattery usage={contextUsage()} visible={chatReady()} />
+          <ContextUsageMeters usage={contextUsage()} visible={chatReady()} />
         </div>
       </div>
 

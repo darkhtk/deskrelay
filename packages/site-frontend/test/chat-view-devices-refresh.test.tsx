@@ -62,7 +62,7 @@ describe("ChatView device refresh bridge", () => {
     let sessionsRequests = 0;
     let sessionsListParams: Record<string, unknown> | null = null;
     let contextUsageRequests = 0;
-    let contextUsageParams: Record<string, unknown> | null = null;
+    const contextUsageParams: Array<Record<string, unknown>> = [];
     const contextUsageSnapshots: Array<unknown> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -115,7 +115,7 @@ describe("ChatView device refresh bridge", () => {
         }
         if (body.method === "context.usage") {
           contextUsageRequests += 1;
-          contextUsageParams = body.params ?? null;
+          contextUsageParams.push(body.params ?? {});
           return new Response(
             JSON.stringify({
               result: {
@@ -148,15 +148,13 @@ describe("ChatView device refresh bridge", () => {
     expect(sessionsListParams).toMatchObject({ limit: 200, dedupeSessionIds: true });
     await waitFor(() => {
       expect(contextUsageRequests).toBe(1);
-      expect(contextUsageParams).toMatchObject({
-        cwd: ".",
-      });
-      expect(contextUsageParams).not.toHaveProperty("sessionId");
-      expect(contextUsageSnapshots).toContainEqual({
-        remainingPercent: 88,
-        usedPercent: 12,
-        source: "text",
-      });
+      const weekRequest = contextUsageParams.find((params) => !("sessionId" in params));
+      expect(weekRequest).toMatchObject({ cwd: "." });
+      expect(contextUsageSnapshots).toContainEqual(
+        expect.objectContaining({
+          week: { remainingPercent: 88, usedPercent: 12, source: "text" },
+        }),
+      );
     });
     expect(requestedUrls.some((url) => url.endsWith(`/api/devices/${DEV.id}/behaviors`))).toBe(
       true,
@@ -1679,9 +1677,16 @@ describe("ChatView device refresh bridge", () => {
     });
     await waitFor(() => {
       expect(contextUsageSnapshots).toContainEqual({
-        remainingPercent: 94.1,
-        usedPercent: 5.9,
-        source: "text",
+        session: expect.objectContaining({
+          remainingPercent: 94.1,
+          usedPercent: 5.9,
+          source: "text",
+        }),
+        week: expect.objectContaining({
+          remainingPercent: 94.1,
+          usedPercent: 5.9,
+          source: "text",
+        }),
       });
     });
   });

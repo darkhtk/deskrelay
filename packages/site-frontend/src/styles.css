@@ -2961,15 +2961,25 @@ pre .copy-button:hover {
   justify-content: flex-end;
   margin-left: auto;
 }
-.context-battery {
+.context-meter-group {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 86px;
+  align-items: flex-start;
+  gap: 14px;
+}
+.context-meter {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
+}
+.context-battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .context-battery-label {
   color: var(--text-faint);
@@ -3022,6 +3032,12 @@ pre .copy-button:hover {
   min-width: 28px;
   text-align: right;
   color: var(--text-muted);
+}
+.context-meter-reset {
+  color: var(--text-faint);
+  font-size: 9px;
+  line-height: 1.1;
+  padding-left: 1px;
 }
 
 /* Permission mode picker — sits at the sidebar bottom (above the
@@ -4039,8 +4055,10 @@ dialog.approval-modal-root,
   .alpha-banner-feedback {
     display: none;
   }
+  .context-meter-group {
+    gap: 8px;
+  }
   .context-battery {
-    min-width: 62px;
     gap: 4px;
   }
   .context-battery-label {
@@ -4048,6 +4066,9 @@ dialog.approval-modal-root,
   }
   .context-battery-shell {
     width: 24px;
+  }
+  .context-meter-reset {
+    font-size: 8px;
   }
   .mode-banner {
     margin: 8px 16px 0;
