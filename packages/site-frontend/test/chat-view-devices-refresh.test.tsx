@@ -146,9 +146,19 @@ describe("ChatView device refresh bridge", () => {
     });
     expect(sessionsRequests).toBe(1);
     expect(sessionsListParams).toMatchObject({ limit: 200, dedupeSessionIds: true });
-    expect(contextUsageRequests).toBe(0);
-    expect(contextUsageParams).toEqual([]);
-    expect(contextUsageSnapshots).toContainEqual({ session: null, week: null });
+    await waitFor(() => {
+      expect(contextUsageRequests).toBe(1);
+      expect(contextUsageParams[0]).toMatchObject({
+        cwd: ".",
+        permissionMode: "default",
+      });
+      expect(contextUsageParams[0]).not.toHaveProperty("scope");
+      expect(contextUsageSnapshots).toContainEqual({
+        ctx: { remainingPercent: 88, usedPercent: 12, source: "text" },
+        session: null,
+        week: null,
+      });
+    });
     expect(requestedUrls.some((url) => url.endsWith(`/api/devices/${DEV.id}/behaviors`))).toBe(
       true,
     );
@@ -159,7 +169,7 @@ describe("ChatView device refresh bridge", () => {
     ).toBe(true);
   });
 
-  test("does not poll global usage because Claude extra-usage opens a browser tab", async () => {
+  test("polls CTX with /context but does not poll global Session/Week usage", async () => {
     vi.useFakeTimers();
     let contextUsageRequests = 0;
     const contextUsageParams: Array<Record<string, unknown>> = [];
@@ -226,14 +236,18 @@ describe("ChatView device refresh bridge", () => {
     ));
 
     await vi.waitFor(() => {
-      expect(contextUsageRequests).toBe(0);
+      expect(contextUsageRequests).toBe(1);
     });
-    expect(contextUsageParams).toEqual([]);
+    expect(contextUsageParams[0]).toMatchObject({ cwd: "." });
+    expect(contextUsageParams[0]).not.toHaveProperty("scope");
 
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
 
-    expect(contextUsageRequests).toBe(0);
-    expect(contextUsageParams).toEqual([]);
+    await vi.waitFor(() => {
+      expect(contextUsageRequests).toBe(2);
+    });
+    expect(contextUsageParams[1]).toMatchObject({ cwd: "." });
+    expect(contextUsageParams[1]).not.toHaveProperty("scope");
   });
 
   test("uses the saved device default cwd for New Chat even after selecting an older session", async () => {
@@ -1676,6 +1690,11 @@ describe("ChatView device refresh bridge", () => {
     });
     await waitFor(() => {
       expect(contextUsageSnapshots).toContainEqual({
+        ctx: expect.objectContaining({
+          remainingPercent: 94.1,
+          usedPercent: 5.9,
+          source: "text",
+        }),
         session: expect.objectContaining({
           remainingPercent: 78,
           usedPercent: 22,

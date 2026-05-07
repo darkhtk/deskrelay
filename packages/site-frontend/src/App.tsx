@@ -25,7 +25,7 @@ type DeviceSelectionRequest = {
   seq: number;
 };
 
-const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { session: null, week: null };
+const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { ctx: null, session: null, week: null };
 
 function nextWeekResetLabel(): string {
   const reset = new Date();
@@ -98,6 +98,7 @@ const ContextUsageMeters: Component<{ usage: ContextUsageOverview; visible: bool
 ) => (
   <Show when={props.visible}>
     <div class="context-meter-group">
+      <ContextUsageBattery usage={props.usage.ctx} label="CTX" resetLabel="auto compact" />
       <ContextUsageBattery
         usage={props.usage.session}
         label="Session"
