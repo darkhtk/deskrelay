@@ -15,7 +15,7 @@
 //   - hasExtraContent() lets attachments keep send enabled even when text
 //     is empty.
 
-import { type Component, For, Show, createSignal } from "solid-js";
+import { type Component, For, Show, createEffect, createSignal } from "solid-js";
 import {
   BUILTIN_SLASH_COMMANDS,
   type SlashCommand,
@@ -77,6 +77,16 @@ export const Composer: Component<ComposerProps> = (props) => {
   };
 
   let inputEl!: HTMLTextAreaElement;
+  let slashPickerEl: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    const idx = highlight();
+    if (idx < 0 || suggestions().length === 0) return;
+    requestAnimationFrame(() => {
+      const active = slashPickerEl?.querySelector<HTMLElement>(".slash-suggest-active");
+      active?.scrollIntoView({ block: "nearest" });
+    });
+  });
 
   function refreshSlash(next: string) {
     const matches = filterSlashCommands(next, commands());
@@ -184,7 +194,7 @@ export const Composer: Component<ComposerProps> = (props) => {
   return (
     <>
       <Show when={suggestions().length > 0}>
-        <div class="slash-picker-root">
+        <div class="slash-picker-root" ref={slashPickerEl}>
           <ul class="slash-picker">
             <For each={suggestions()}>
               {(c, i) => (
