@@ -2693,6 +2693,58 @@ pre .copy-button:hover {
   font-size: 14px;
   padding: 10px 20px;
 }
+.landing-release-notes {
+  padding: 0 24px 56px;
+}
+.landing-release-notes-inner {
+  max-width: 640px;
+  margin: 0 auto;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+.landing-release-notes h2 {
+  margin: 0 0 18px;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.landing-release-notes h3 {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.landing-release-notes p {
+  margin: 0 0 12px;
+}
+.landing-release-notes ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.landing-release-notes li {
+  margin: 0 0 8px;
+}
+.landing-release-notes strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.landing-release-notes code {
+  background: var(--code-chip);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 1px 5px;
+}
+.landing-release-notes a {
+  color: var(--accent-coral);
+  text-decoration: none;
+}
+.landing-release-notes a:hover {
+  text-decoration: underline;
+}
 .landing-features {
   max-width: 1000px;
   margin: 0 auto;

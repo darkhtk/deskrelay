@@ -35,6 +35,8 @@ describe("App landing flow", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("button", { name: "Open app" }).length).toBeGreaterThan(0);
     });
+    expect(screen.getByRole("heading", { name: "Release notes" })).toBeTruthy();
+    expect(document.body.textContent).toContain("CLI permissions can be edited");
   });
 
   test("a stored token still lets the user review the landing screen first", async () => {
@@ -49,7 +51,9 @@ describe("App landing flow", () => {
     window.localStorage.setItem("cr.locale", "en");
     render(() => <App />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
+    const openButton = screen.getAllByRole("button", { name: "Open app" })[0];
+    if (!openButton) throw new Error("open button missing");
+    fireEvent.click(openButton);
     fireEvent.input(await screen.findByPlaceholderText("CR_SITE_TOKEN"), {
       target: { value: "tok-abc" },
     });
@@ -83,7 +87,9 @@ describe("App landing flow", () => {
     });
 
     render(() => <App />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Open app" })[0]!);
+    const openButton = screen.getAllByRole("button", { name: "Open app" })[0];
+    if (!openButton) throw new Error("open button missing");
+    fireEvent.click(openButton);
 
     await waitFor(() => {
       expect(window.localStorage.getItem("cr.site-token")).toBe("tok-local");
