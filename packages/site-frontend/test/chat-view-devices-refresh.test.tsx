@@ -62,6 +62,7 @@ describe("ChatView device refresh bridge", () => {
     let sessionsRequests = 0;
     let sessionsListParams: Record<string, unknown> | null = null;
     let contextUsageRequests = 0;
+    let usageLimitsRequests = 0;
     const contextUsageParams: Array<Record<string, unknown>> = [];
     const contextUsageSnapshots: Array<unknown> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -127,6 +128,31 @@ describe("ChatView device refresh bridge", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           );
         }
+        if (body.method === "usage.limits") {
+          usageLimitsRequests += 1;
+          return new Response(
+            JSON.stringify({
+              result: {
+                session: {
+                  remainingPercent: 98,
+                  usedPercent: 2,
+                  source: "event",
+                  resetAt: "2026-05-07T06:20:00.000Z",
+                  rateLimitType: "five_hour",
+                },
+                week: {
+                  remainingPercent: 71,
+                  usedPercent: 29,
+                  source: "event",
+                  resetAt: "2026-05-10T10:59:59.000Z",
+                  rateLimitType: "seven_day",
+                },
+                checkedAt: "2026-05-07T00:00:00.000Z",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
       }
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -148,6 +174,7 @@ describe("ChatView device refresh bridge", () => {
     expect(sessionsListParams).toMatchObject({ limit: 200, dedupeSessionIds: true });
     await waitFor(() => {
       expect(contextUsageRequests).toBe(1);
+      expect(usageLimitsRequests).toBe(1);
       expect(contextUsageParams[0]).toMatchObject({
         cwd: ".",
         permissionMode: "default",
@@ -155,8 +182,20 @@ describe("ChatView device refresh bridge", () => {
       expect(contextUsageParams[0]).not.toHaveProperty("scope");
       expect(contextUsageSnapshots).toContainEqual({
         ctx: { remainingPercent: 88, usedPercent: 12, source: "text" },
-        session: null,
-        week: null,
+        session: {
+          remainingPercent: 98,
+          usedPercent: 2,
+          source: "event",
+          resetAt: "2026-05-07T06:20:00.000Z",
+          rateLimitType: "five_hour",
+        },
+        week: {
+          remainingPercent: 71,
+          usedPercent: 29,
+          source: "event",
+          resetAt: "2026-05-10T10:59:59.000Z",
+          rateLimitType: "seven_day",
+        },
       });
     });
     expect(requestedUrls.some((url) => url.endsWith(`/api/devices/${DEV.id}/behaviors`))).toBe(
@@ -169,9 +208,10 @@ describe("ChatView device refresh bridge", () => {
     ).toBe(true);
   });
 
-  test("polls CTX with /context but does not poll global Session/Week usage", async () => {
+  test("polls CTX with /context and Session/Week with Claude usage limits", async () => {
     vi.useFakeTimers();
     let contextUsageRequests = 0;
+    let usageLimitsRequests = 0;
     const contextUsageParams: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -223,6 +263,31 @@ describe("ChatView device refresh bridge", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           );
         }
+        if (body.method === "usage.limits") {
+          usageLimitsRequests += 1;
+          return new Response(
+            JSON.stringify({
+              result: {
+                session: {
+                  remainingPercent: 98,
+                  usedPercent: 2,
+                  source: "event",
+                  resetAt: "2026-05-07T06:20:00.000Z",
+                  rateLimitType: "five_hour",
+                },
+                week: {
+                  remainingPercent: 71,
+                  usedPercent: 29,
+                  source: "event",
+                  resetAt: "2026-05-10T10:59:59.000Z",
+                  rateLimitType: "seven_day",
+                },
+                checkedAt: "2026-05-07T00:00:00.000Z",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
       }
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -237,6 +302,7 @@ describe("ChatView device refresh bridge", () => {
 
     await vi.waitFor(() => {
       expect(contextUsageRequests).toBe(1);
+      expect(usageLimitsRequests).toBe(1);
     });
     expect(contextUsageParams[0]).toMatchObject({ cwd: "." });
     expect(contextUsageParams[0]).not.toHaveProperty("scope");
@@ -245,6 +311,7 @@ describe("ChatView device refresh bridge", () => {
 
     await vi.waitFor(() => {
       expect(contextUsageRequests).toBe(2);
+      expect(usageLimitsRequests).toBe(2);
     });
     expect(contextUsageParams[1]).toMatchObject({ cwd: "." });
     expect(contextUsageParams[1]).not.toHaveProperty("scope");

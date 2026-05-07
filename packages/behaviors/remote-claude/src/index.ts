@@ -177,6 +177,13 @@ interface ContextUsageResult {
   checkedAt: string;
 }
 
+interface UsageLimitsResult {
+  session: ContextUsageSnapshot | null;
+  week: ContextUsageSnapshot | null;
+  sonnetWeek: ContextUsageSnapshot | null;
+  checkedAt: string;
+}
+
 interface PermissionsInspectParams {
   cwd?: string;
 }
@@ -368,6 +375,15 @@ export const behaviorDef: RunBehaviorOptions = {
         eventCount: result.eventCount,
         checkedAt: new Date().toISOString(),
       };
+    });
+
+    ctx.onRequest<Record<string, never>, UsageLimitsResult>("usage.limits", async () => {
+      try {
+        return await fetchClaudeUsageLimits();
+      } catch (err) {
+        ctx.logger.warn("Claude usage limits unavailable", { error: (err as Error).message });
+        return emptyUsageLimitsResult();
+      }
     });
 
     ctx.onRequest<PermissionsInspectParams, PermissionsInspectResult>(
@@ -716,6 +732,83 @@ function rateLimitUsageFromEvent(
     ...(resetAt ? { resetAt } : {}),
     ...(status ? { status } : {}),
   };
+}
+
+async function fetchClaudeUsageLimits(): Promise<UsageLimitsResult> {
+  const token = await readClaudeOAuthAccessToken();
+  if (!token) return emptyUsageLimitsResult();
+
+  const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+    method: "GET",
+    signal: AbortSignal.timeout(5000),
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "user-agent": "claude-code/2.1.132",
+      "anthropic-beta": "oauth-2025-04-20",
+    },
+  });
+  if (!res.ok) throw new Error(`Claude usage API returned HTTP ${res.status}`);
+  const body = asRecord(await res.json());
+  if (!body) return emptyUsageLimitsResult();
+  return {
+    session: usageLimitSnapshot(body.five_hour, "five_hour"),
+    week: usageLimitSnapshot(body.seven_day, "seven_day"),
+    sonnetWeek: usageLimitSnapshot(body.seven_day_sonnet, "seven_day_sonnet"),
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+function emptyUsageLimitsResult(): UsageLimitsResult {
+  return {
+    session: null,
+    week: null,
+    sonnetWeek: null,
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+async function readClaudeOAuthAccessToken(): Promise<string | null> {
+  const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+  if (envToken) return envToken;
+
+  const configDir = process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
+  try {
+    const raw = await readFile(join(configDir, ".credentials.json"), "utf8");
+    const credentials = asRecord(JSON.parse(raw));
+    const oauth = asRecord(credentials?.claudeAiOauth);
+    const accessToken = typeof oauth?.accessToken === "string" ? oauth.accessToken.trim() : "";
+    return accessToken || null;
+  } catch {
+    return null;
+  }
+}
+
+function usageLimitSnapshot(value: unknown, rateLimitType: string): ContextUsageSnapshot | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const usedPercent = firstPercent(record, ["utilization", "used_percentage", "usedPercentage"]);
+  if (usedPercent === null) return null;
+  const resetAt = usageLimitResetAt(record);
+  return {
+    remainingPercent: clampPercent(100 - usedPercent),
+    usedPercent,
+    source: "event",
+    rateLimitType,
+    ...(resetAt ? { resetAt } : {}),
+  };
+}
+
+function usageLimitResetAt(record: Record<string, unknown>): string | undefined {
+  const value = record.resets_at ?? record.resetsAt;
+  if (typeof value === "string" && value.trim()) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+  }
+  const epochSeconds = numericValue(value);
+  return epochSeconds !== null && epochSeconds > 0
+    ? new Date(epochSeconds * 1000).toISOString()
+    : undefined;
 }
 
 function contextUsageFromEvent(event: unknown): ContextUsageSnapshot | null {

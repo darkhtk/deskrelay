@@ -108,6 +108,13 @@ interface ContextUsageResult {
   checkedAt: string;
 }
 
+interface UsageLimitsResult {
+  session: ContextUsageSnapshot | null;
+  week: ContextUsageSnapshot | null;
+  sonnetWeek?: ContextUsageSnapshot | null;
+  checkedAt: string;
+}
+
 export function latestContextUsageSnapshot(
   events: ClaudeStreamEvent[],
 ): ContextUsageSnapshot | null {
@@ -695,15 +702,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [probedContextUsage, setProbedContextUsage] = createSignal<ContextUsageSnapshot | null>(
     null,
   );
+  const [probedUsageLimits, setProbedUsageLimits] = createSignal<{
+    session: ContextUsageSnapshot | null;
+    week: ContextUsageSnapshot | null;
+  }>({ session: null, week: null });
   const contextUsage = createMemo<ContextUsageOverview>(() => ({
     ctx: probedContextUsage() ?? latestContextUsageSnapshot(transcript()),
-    session: latestRateLimitUsageSnapshot(transcript(), "five_hour"),
-    week: latestRateLimitUsageSnapshot(transcript(), "weekly"),
+    session: probedUsageLimits().session ?? latestRateLimitUsageSnapshot(transcript(), "five_hour"),
+    week: probedUsageLimits().week ?? latestRateLimitUsageSnapshot(transcript(), "weekly"),
   }));
   let contextUsageRequestSeq = 0;
+  let usageLimitsRequestSeq = 0;
   function clearContextUsage() {
     contextUsageRequestSeq += 1;
+    usageLimitsRequestSeq += 1;
     setProbedContextUsage(null);
+    setProbedUsageLimits({ session: null, week: null });
   }
 
   const [cwd, setCwd] = createSignal<string>("");
@@ -1000,6 +1014,21 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
   }
 
+  async function refreshUsageLimits(deviceId: string, instanceId: string) {
+    const seq = ++usageLimitsRequestSeq;
+    try {
+      const res = await api.callBehavior<UsageLimitsResult>(deviceId, instanceId, "usage.limits");
+      if (seq !== usageLimitsRequestSeq) return;
+      if (res.error) return;
+      setProbedUsageLimits({
+        session: res.result?.session ?? null,
+        week: res.result?.week ?? null,
+      });
+    } catch {
+      if (seq === usageLimitsRequestSeq) setProbedUsageLimits({ session: null, week: null });
+    }
+  }
+
   createEffect(() => {
     if (devices.loading || behaviors.loading) return;
     const deviceId = effectiveDeviceId();
@@ -1009,11 +1038,13 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return;
     }
     void refreshContextUsage(deviceId, instanceId);
+    void refreshUsageLimits(deviceId, instanceId);
     const timer = setInterval(() => {
       const currentDeviceId = effectiveDeviceId();
       const currentInstanceId = remoteClaudeInstance();
       if (!currentDeviceId || !currentInstanceId) return;
       void refreshContextUsage(currentDeviceId, currentInstanceId);
+      void refreshUsageLimits(currentDeviceId, currentInstanceId);
     }, CONTEXT_USAGE_POLL_MS);
     onCleanup(() => clearInterval(timer));
   });
@@ -1735,7 +1766,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         setLastPermissionModeRequest(requestedModeForRun);
         setPermissionModeStatus("unknown");
       }
-      if (chatAccepted) void refreshContextUsage(dev, inst);
+      if (chatAccepted) {
+        void refreshContextUsage(dev, inst);
+        void refreshUsageLimits(dev, inst);
+      }
       abort.abort();
       setRunning(false);
       setCliAction(null);

@@ -205,4 +205,70 @@ describe("remote-claude behavior chat request", () => {
       status: "allowed",
     });
   });
+
+  test("usage.limits reads Claude subscription usage through local OAuth", async () => {
+    const { ctx, handlers } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const usageLimits = handlers.get("usage.limits");
+    if (!usageLimits) throw new Error("usage.limits handler missing");
+
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "test-oauth-token";
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://api.anthropic.com/api/oauth/usage");
+      const headers = init?.headers as Record<string, string>;
+      expect(headers.authorization).toBe("Bearer test-oauth-token");
+      return new Response(
+        JSON.stringify({
+          five_hour: {
+            utilization: 2,
+            resets_at: "2026-05-07T06:20:00.810233+00:00",
+          },
+          seven_day: {
+            utilization: 29,
+            resets_at: "2026-05-10T10:59:59.810260+00:00",
+          },
+          seven_day_sonnet: {
+            utilization: 1,
+            resets_at: "2026-05-10T11:00:00.810270+00:00",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      const result = (await usageLimits({})) as {
+        session: { remainingPercent: number; usedPercent: number; resetAt?: string } | null;
+        week: { remainingPercent: number; usedPercent: number; resetAt?: string } | null;
+        sonnetWeek: { remainingPercent: number; usedPercent: number; resetAt?: string } | null;
+        checkedAt: string;
+      };
+
+      expect(result.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(result.session).toMatchObject({
+        remainingPercent: 98,
+        usedPercent: 2,
+        resetAt: "2026-05-07T06:20:00.810Z",
+      });
+      expect(result.week).toMatchObject({
+        remainingPercent: 71,
+        usedPercent: 29,
+        resetAt: "2026-05-10T10:59:59.810Z",
+      });
+      expect(result.sonnetWeek).toMatchObject({
+        remainingPercent: 99,
+        usedPercent: 1,
+        resetAt: "2026-05-10T11:00:00.810Z",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalToken === undefined) {
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = undefined;
+      } else {
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = originalToken;
+      }
+    }
+  });
 });
