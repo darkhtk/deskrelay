@@ -132,6 +132,52 @@ describe("remote-claude behavior chat request", () => {
     expect(saved.permissions?.defaultMode).toBe("default");
   });
 
+  test("inspects and deletes project skills from the active cwd", async () => {
+    const { ctx, handlers } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const inspect = handlers.get("skills.inspect");
+    const remove = handlers.get("skills.delete");
+    if (!inspect || !remove) throw new Error("skills handlers missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-skills-"));
+    tempDirs.push(cwd);
+    const skillDir = join(cwd, ".claude", "skills", "local-skill");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: local-skill",
+        "description: Local project helper",
+        "---",
+        "",
+        "# Local project helper",
+      ].join("\n"),
+    );
+
+    const inspected = (await inspect({ cwd, skills: ["local-skill", "runtime-only"] })) as {
+      skills: Array<{ name: string; description?: string; removable: boolean; path?: string }>;
+    };
+    const localSkill = inspected.skills.find((skill) => skill.name === "local-skill");
+    expect(localSkill?.description).toBe("Local project helper");
+    expect(localSkill?.removable).toBe(true);
+    expect(localSkill?.path).toBe(skillDir);
+    expect(inspected.skills.find((skill) => skill.name === "runtime-only")?.removable).toBe(false);
+
+    const deleted = (await remove({ cwd, name: "local-skill", path: skillDir })) as {
+      deleted: boolean;
+      skill: { name: string };
+    };
+    expect(deleted.deleted).toBe(true);
+    expect(deleted.skill.name).toBe("local-skill");
+
+    const after = (await inspect({ cwd, skills: ["runtime-only"] })) as {
+      skills: Array<{ name: string }>;
+    };
+    expect(after.skills.some((skill) => skill.name === "local-skill")).toBe(false);
+  });
+
   test("context.usage returns a compact snapshot from Claude /context output", async () => {
     const { ctx, handlers } = makeCtx();
     await behaviorDef.start(ctx);

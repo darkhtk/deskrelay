@@ -24,7 +24,8 @@
 // listing/monitoring, future sessions space TBD.
 
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type RunBehaviorOptions, runBehavior } from "@claude-remote/behavior-sdk/runtime";
@@ -213,6 +214,34 @@ interface PermissionsUpdateResult {
   source: PermissionSourceSummary;
 }
 
+interface SkillsInspectParams {
+  cwd?: string;
+  skills?: unknown[];
+}
+
+interface SkillSummary {
+  name: string;
+  description?: string;
+  path?: string;
+  source: "user" | "project" | "runtime";
+  removable: boolean;
+}
+
+interface SkillsInspectResult {
+  skills: SkillSummary[];
+}
+
+interface SkillDeleteParams {
+  cwd?: string;
+  name?: string;
+  path?: string;
+}
+
+interface SkillDeleteResult {
+  deleted: boolean;
+  skill: SkillSummary;
+}
+
 // Per-run abort registry. Each in-flight `chat` call registers its
 // AbortController under runId; the `interrupt` JSON-RPC method looks it
 // up and aborts. When the chat completes (success or error) we
@@ -326,6 +355,21 @@ export const behaviorDef: RunBehaviorOptions = {
           ctx.logger.warn("slash command probe stderr", { line });
         },
       });
+    });
+
+    ctx.onRequest<SkillsInspectParams, SkillsInspectResult>("skills.inspect", async (params) => {
+      const cwd = typeof params?.cwd === "string" && params.cwd.trim() ? params.cwd : process.cwd();
+      return await inspectClaudeSkills(cwd, params?.skills);
+    });
+
+    ctx.onRequest<SkillDeleteParams, SkillDeleteResult>("skills.delete", async (params) => {
+      const cwd = typeof params?.cwd === "string" && params.cwd.trim() ? params.cwd : process.cwd();
+      const target = await matchingSkill(cwd, params?.name, params?.path);
+      if (!target) {
+        throw new Error("skills.delete: skill is not removable");
+      }
+      await rm(target.path as string, { recursive: true, force: true });
+      return { deleted: true, skill: target };
     });
 
     ctx.onRequest<ContextUsageParams, ContextUsageResult>("context.usage", async (params) => {
@@ -576,6 +620,113 @@ function permissionSourcesForCwd(cwd: string): Array<{ label: string; path: stri
     { label: "Project settings", path: join(cwd, ".claude", "settings.json") },
     { label: "Project local settings", path: join(cwd, ".claude", "settings.local.json") },
   ];
+}
+
+function skillSourcesForCwd(cwd: string): Array<{ source: SkillSummary["source"]; root: string }> {
+  return [
+    { source: "user", root: join(homedir(), ".claude", "skills") },
+    { source: "project", root: join(cwd, ".claude", "skills") },
+  ];
+}
+
+async function inspectClaudeSkills(
+  cwd: string,
+  runtimeSkills: unknown,
+): Promise<SkillsInspectResult> {
+  const byKey = new Map<string, SkillSummary>();
+  for (const source of skillSourcesForCwd(cwd)) {
+    for (const skill of await readSkillSource(source.root, source.source)) {
+      byKey.set(skill.name.toLowerCase(), skill);
+    }
+  }
+  if (Array.isArray(runtimeSkills)) {
+    for (const value of runtimeSkills) {
+      const name = normalizeSkillName(value);
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!byKey.has(key)) {
+        byKey.set(key, { name, source: "runtime", removable: false });
+      }
+    }
+  }
+  return {
+    skills: [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
+async function readSkillSource(
+  root: string,
+  source: SkillSummary["source"],
+): Promise<SkillSummary[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: SkillSummary[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const name = normalizeSkillName(entry.name);
+    if (!name) continue;
+    const path = join(root, entry.name);
+    out.push({
+      name,
+      path,
+      source,
+      removable: true,
+      ...(await readSkillDescription(path)),
+    });
+  }
+  return out;
+}
+
+async function readSkillDescription(path: string): Promise<{ description?: string }> {
+  try {
+    const raw = await readFile(join(path, "SKILL.md"), "utf8");
+    const frontmatter = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+    const fromFrontmatter = frontmatter?.[1]
+      ?.split(/\r?\n/)
+      .find((line) => /^description\s*:/i.test(line))
+      ?.replace(/^description\s*:\s*/i, "")
+      .trim()
+      .replace(/^["']|["']$/g, "");
+    if (fromFrontmatter) return { description: fromFrontmatter };
+    const paragraph = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("#") && !line.startsWith("---"));
+    return paragraph ? { description: paragraph } : {};
+  } catch {
+    return {};
+  }
+}
+
+async function matchingSkill(
+  cwd: string,
+  requestedName: unknown,
+  requestedPath: unknown,
+): Promise<SkillSummary | null> {
+  const name = normalizeSkillName(requestedName);
+  if (!name) return null;
+  const inspected = await inspectClaudeSkills(cwd, [name]);
+  const requestedResolved =
+    typeof requestedPath === "string" && requestedPath.trim() ? resolve(requestedPath) : null;
+  return (
+    inspected.skills.find((skill) => {
+      if (!skill.removable || !skill.path) return false;
+      if (skill.name.toLowerCase() !== name.toLowerCase()) return false;
+      return !requestedResolved || sameFilesystemPath(skill.path, requestedResolved);
+    }) ?? null
+  );
+}
+
+function normalizeSkillName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().replace(/^\/+/, "");
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(trimmed)) return null;
+  return trimmed;
 }
 
 function matchingPermissionSource(

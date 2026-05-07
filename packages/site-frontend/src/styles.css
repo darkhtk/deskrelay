@@ -1438,6 +1438,65 @@ body.sidebar-open {
 .sidebar-token.skill-added {
   color: var(--accent-coral);
 }
+.sidebar-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-skill-row {
+  display: grid;
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 1px 0;
+  text-align: left;
+  line-height: 1.35;
+}
+.sidebar-skill-row-deleting {
+  opacity: 0.55;
+}
+.sidebar-skill-name {
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: left;
+}
+.sidebar-skill-row.skill-builtin .sidebar-skill-name {
+  color: var(--text-muted);
+}
+.sidebar-skill-row.skill-added .sidebar-skill-name {
+  color: var(--accent-coral);
+}
+.sidebar-skill-description {
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.sidebar-skill-delete {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 0;
+  min-width: 18px;
+  text-align: right;
+}
+.sidebar-skill-delete:hover,
+.sidebar-skill-delete-armed {
+  color: var(--danger);
+}
+.sidebar-skill-delete:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
 .sidebar-command-list {
   display: flex;
   flex-direction: column;

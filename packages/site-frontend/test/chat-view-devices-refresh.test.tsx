@@ -566,11 +566,11 @@ describe("ChatView device refresh bridge", () => {
       expect(container.textContent).toContain("simplify");
       expect(container.textContent).toContain("/status");
     });
-    const addedSkill = [...container.querySelectorAll(".sidebar-token.skill-added")].find(
-      (item) => item.textContent === "deep-review",
+    const addedSkill = [...container.querySelectorAll(".sidebar-skill-row.skill-added")].find(
+      (item) => item.querySelector(".sidebar-skill-name")?.textContent === "deep-review",
     );
-    const builtinSkill = [...container.querySelectorAll(".sidebar-token.skill-builtin")].find(
-      (item) => item.textContent === "simplify",
+    const builtinSkill = [...container.querySelectorAll(".sidebar-skill-row.skill-builtin")].find(
+      (item) => item.querySelector(".sidebar-skill-name")?.textContent === "simplify",
     );
     expect(addedSkill).toBeTruthy();
     expect(builtinSkill).toBeTruthy();

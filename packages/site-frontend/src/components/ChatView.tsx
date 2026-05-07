@@ -32,6 +32,7 @@ import {
   type RuntimeSlashCommands,
   isKnownClaudeCommandName,
   mergeRuntimeSlashCommands,
+  normalizeSlashCommandName,
 } from "../claude/slash-commands.ts";
 import {
   CLAUDE_PERMISSION_MODES,
@@ -454,6 +455,26 @@ interface PermissionsInspectViewResult extends PermissionsInspectResult {
 interface RuntimeSkillView {
   name: string;
   kind: "builtin" | "added";
+  description: string;
+  path?: string;
+  removable: boolean;
+}
+
+interface SkillInspectSummary {
+  name: string;
+  description?: string;
+  path?: string;
+  source: "user" | "project" | "runtime";
+  removable: boolean;
+}
+
+interface SkillsInspectResult {
+  skills: SkillInspectSummary[];
+}
+
+interface SkillDeleteResult {
+  deleted: boolean;
+  skill: SkillInspectSummary;
 }
 
 const ALL_PERMISSION_ENTRY = "*";
@@ -598,7 +619,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setSelectedClaudeModel(dev ? getDeviceClaudeModel(dev) : null);
   });
 
-  const [runtimeSlashCommands] = createResource(
+  const [runtimeSlashCommands, { refetch: refetchRuntimeSlashCommands }] = createResource(
     () => {
       const d = effectiveDeviceId();
       const i = remoteClaudeInstance();
@@ -622,6 +643,39 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     },
   );
   const composerSlashCommands = createMemo(() => mergeRuntimeSlashCommands(runtimeSlashCommands()));
+  const runtimeSkills = () =>
+    (runtimeSlashCommands()?.skills ?? []).filter(
+      (skill): skill is string => typeof skill === "string" && skill.trim().length > 0,
+    );
+  const [skillDetails, { refetch: refetchSkillDetails, mutate: mutateSkillDetails }] =
+    createResource(
+      () => {
+        const d = effectiveDeviceId();
+        const i = remoteClaudeInstance();
+        if (!d || !i) return null;
+        return {
+          deviceId: d,
+          instanceId: i,
+          cwd: cwd().trim() || getDeviceDefaultCwd(d) || ".",
+          skills: runtimeSkills(),
+        };
+      },
+      async (input) => {
+        if (!input) return null;
+        try {
+          const res = await api.callBehavior<SkillsInspectResult>(
+            input.deviceId,
+            input.instanceId,
+            "skills.inspect",
+            { cwd: input.cwd, skills: input.skills },
+          );
+          if (res.error) return null;
+          return res.result ?? null;
+        } catch {
+          return null;
+        }
+      },
+    );
 
   const behaviorReadyRetryCounts = new Map<string, number>();
   createEffect(() => {
@@ -924,18 +978,125 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setSavingPermissionPath(null);
     }
   };
-  const runtimeSkills = () =>
-    (runtimeSlashCommands()?.skills ?? []).filter(
-      (skill): skill is string => typeof skill === "string" && skill.trim().length > 0,
-    );
+  const [armedSkillKey, setArmedSkillKey] = createSignal<string | null>(null);
+  const [deletingSkillKeys, setDeletingSkillKeys] = createSignal<Record<string, boolean>>({});
+  let skillArmTimer: ReturnType<typeof setTimeout> | null = null;
+  const skillDetailsByName = () => {
+    const map = new Map<string, SkillInspectSummary>();
+    for (const skill of skillDetails()?.skills ?? []) {
+      map.set(skillNameKey(skill.name), skill);
+    }
+    return map;
+  };
+  const skillHintByName = () => {
+    const map = new Map<string, string>();
+    for (const command of composerSlashCommands()) {
+      const key = skillCommandKey(command.name);
+      if (key) map.set(key, command.hint);
+    }
+    return map;
+  };
   const runtimeSkillItems = (): RuntimeSkillView[] =>
-    runtimeSkills().map((name) => ({
-      name,
-      kind: isKnownClaudeCommandName(name) ? "builtin" : "added",
-    }));
+    runtimeSkills().map((name) => {
+      const details = skillDetailsByName().get(skillNameKey(name));
+      const hint = skillHintByName().get(skillCommandKey(name) ?? "");
+      const known = isKnownClaudeCommandName(name);
+      return {
+        name,
+        kind: known ? "builtin" : "added",
+        description:
+          details?.description ??
+          hint ??
+          (known
+            ? t("chat.sidebar.skills.default-builtin-description")
+            : t("chat.sidebar.skills.default-added-description")),
+        ...(details?.path ? { path: details.path } : {}),
+        removable: Boolean(details?.removable),
+      };
+    });
+
+  function skillNameKey(name: string): string {
+    return name.trim().replace(/^\/+/, "").toLowerCase();
+  }
+
+  function skillCommandKey(name: string): string | null {
+    return normalizeSlashCommandName(name)?.toLowerCase() ?? null;
+  }
+
+  function skillDeleteKey(skill: RuntimeSkillView): string {
+    return skill.path ?? skillNameKey(skill.name);
+  }
+
+  function setSkillDeleting(key: string, deleting: boolean) {
+    setDeletingSkillKeys((current) => {
+      const next = { ...current };
+      if (deleting) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+  }
+
+  function clearSkillArm() {
+    setArmedSkillKey(null);
+    if (skillArmTimer) {
+      clearTimeout(skillArmTimer);
+      skillArmTimer = null;
+    }
+  }
+
+  function armSkillDelete(key: string) {
+    clearSkillArm();
+    setArmedSkillKey(key);
+    skillArmTimer = setTimeout(() => {
+      setArmedSkillKey(null);
+      skillArmTimer = null;
+    }, 3000);
+  }
+
+  async function handleSkillDelete(skill: RuntimeSkillView) {
+    if (!skill.removable) return;
+    const key = skillDeleteKey(skill);
+    if (deletingSkillKeys()[key]) return;
+    if (armedSkillKey() !== key) {
+      armSkillDelete(key);
+      return;
+    }
+    clearSkillArm();
+    const deviceId = effectiveDeviceId();
+    const instanceId = remoteClaudeInstance();
+    if (!deviceId || !instanceId) return;
+    setSkillDeleting(key, true);
+    setError(null);
+    try {
+      const res = await api.callBehavior<SkillDeleteResult>(deviceId, instanceId, "skills.delete", {
+        cwd: cwd().trim() || getDeviceDefaultCwd(deviceId) || ".",
+        name: skill.name,
+        ...(skill.path ? { path: skill.path } : {}),
+      });
+      if (res.error) throw new Error(res.error.message);
+      mutateSkillDetails((current) =>
+        current
+          ? {
+              skills: current.skills.filter(
+                (item) =>
+                  skillNameKey(item.name) !== skillNameKey(skill.name) ||
+                  (skill.path && item.path && item.path !== skill.path),
+              ),
+            }
+          : current,
+      );
+      await refetchRuntimeSlashCommands();
+      await refetchSkillDetails();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSkillDeleting(key, false);
+    }
+  }
 
   onCleanup(() => {
     if (sessionNoticeTimer) clearTimeout(sessionNoticeTimer);
+    if (skillArmTimer) clearTimeout(skillArmTimer);
   });
 
   const [showNewChat, setShowNewChat] = createSignal(false);
@@ -2223,19 +2384,64 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                       when={runtimeSkillItems().length > 0}
                       fallback={<p class="sidebar-empty">{t("chat.sidebar.skills.empty")}</p>}
                     >
-                      <div class="sidebar-token-list">
+                      <div class="sidebar-skill-list">
                         <For each={runtimeSkillItems()}>
-                          {(skill) => (
-                            <span
-                              class="sidebar-token"
-                              classList={{
-                                "skill-builtin": skill.kind === "builtin",
-                                "skill-added": skill.kind === "added",
-                              }}
-                            >
-                              {skill.name}
-                            </span>
-                          )}
+                          {(skill) => {
+                            const deleteKey = () => skillDeleteKey(skill);
+                            const isArmed = () => armedSkillKey() === deleteKey();
+                            const isDeleting = () => Boolean(deletingSkillKeys()[deleteKey()]);
+                            return (
+                              <div
+                                class="sidebar-skill-row"
+                                classList={{
+                                  "skill-builtin": skill.kind === "builtin",
+                                  "skill-added": skill.kind === "added",
+                                  "sidebar-skill-row-armed": isArmed(),
+                                  "sidebar-skill-row-deleting": isDeleting(),
+                                }}
+                              >
+                                <span class="sidebar-skill-name">{skill.name}</span>
+                                <span class="sidebar-skill-description" title={skill.description}>
+                                  {skill.description}
+                                </span>
+                                <Show when={skill.removable}>
+                                  <button
+                                    type="button"
+                                    class="sidebar-skill-delete"
+                                    classList={{
+                                      "sidebar-skill-delete-armed": isArmed(),
+                                      "sidebar-skill-delete-deleting": isDeleting(),
+                                    }}
+                                    aria-label={
+                                      isDeleting()
+                                        ? t("chat.sidebar.skills.delete-progress")
+                                        : isArmed()
+                                          ? t("chat.sidebar.skills.delete-confirm", {
+                                              name: skill.name,
+                                            })
+                                          : t("chat.sidebar.skills.delete", { name: skill.name })
+                                    }
+                                    title={
+                                      isDeleting()
+                                        ? t("chat.sidebar.skills.delete-progress")
+                                        : t("chat.sidebar.skills.delete", { name: skill.name })
+                                    }
+                                    disabled={isDeleting()}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleSkillDelete(skill);
+                                    }}
+                                  >
+                                    {isDeleting()
+                                      ? t("chat.sidebar.skills.delete-progress")
+                                      : isArmed()
+                                        ? t("chat.sidebar.skills.delete-label")
+                                        : "×"}
+                                  </button>
+                                </Show>
+                              </div>
+                            );
+                          }}
                         </For>
                       </div>
                     </Show>
