@@ -149,9 +149,9 @@ describe("ChatView device refresh bridge", () => {
     await waitFor(() => {
       expect(contextUsageRequests).toBe(1);
       expect(contextUsageParams).toMatchObject({
-        cwd: "C:\\Users\\darkh\\Projects\\claude-remote-platform",
-        sessionId: "sess_initial_1",
+        cwd: ".",
       });
+      expect(contextUsageParams).not.toHaveProperty("sessionId");
       expect(contextUsageSnapshots).toContainEqual({
         remainingPercent: 88,
         usedPercent: 12,
@@ -166,6 +166,87 @@ describe("ChatView device refresh bridge", () => {
         url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`),
       ),
     ).toBe(true);
+  });
+
+  test("polls device context usage every five minutes without tying it to a session", async () => {
+    vi.useFakeTimers();
+    let contextUsageRequests = 0;
+    const contextUsageParams: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${DEV.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.0-test",
+              loadedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          method?: string;
+          params?: Record<string, unknown>;
+        };
+        if (body.method === "sessions.list") {
+          return new Response(JSON.stringify({ result: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (body.method === "context.usage") {
+          contextUsageRequests += 1;
+          contextUsageParams.push(body.params ?? {});
+          return new Response(
+            JSON.stringify({
+              result: {
+                usage: { remainingPercent: 91, usedPercent: 9, source: "text" },
+                eventCount: 3,
+                checkedAt: "2026-05-07T00:00:00.000Z",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    await vi.waitFor(() => {
+      expect(contextUsageRequests).toBe(1);
+    });
+    expect(contextUsageParams[0]).toMatchObject({ cwd: "." });
+    expect(contextUsageParams[0]).not.toHaveProperty("sessionId");
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+    await vi.waitFor(() => {
+      expect(contextUsageRequests).toBe(2);
+    });
+    expect(contextUsageParams[1]).toMatchObject({ cwd: "." });
+    expect(contextUsageParams[1]).not.toHaveProperty("sessionId");
   });
 
   test("uses the saved device default cwd for New Chat even after selecting an older session", async () => {

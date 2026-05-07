@@ -67,6 +67,7 @@ const BEHAVIOR_READY_RETRY_MS = 1000;
 const BEHAVIOR_READY_MAX_RETRIES = 15;
 const DEVICE_OFFLINE_REFETCH_MS = 1500;
 const STREAM_OPEN_GRACE_MS = 2500;
+const CONTEXT_USAGE_POLL_MS = 5 * 60 * 1000;
 const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
 
@@ -350,13 +351,6 @@ function isClaudeSystemInit(event: unknown): boolean {
   if (!event || typeof event !== "object") return false;
   const e = event as { type?: unknown; subtype?: unknown };
   return e.type === "system" && e.subtype === "init";
-}
-
-function sessionIdFromSystemInit(event: unknown): string | null {
-  if (!event || typeof event !== "object") return null;
-  const e = event as { type?: unknown; subtype?: unknown; session_id?: unknown };
-  if (e.type !== "system" || e.subtype !== "init") return null;
-  return typeof e.session_id === "string" && e.session_id.trim() ? e.session_id : null;
 }
 
 function isLocalSlashCommandText(value: string): boolean {
@@ -650,14 +644,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [probedContextUsage, setProbedContextUsage] = createSignal<ContextUsageSnapshot | null>(
     null,
   );
-  const contextUsage = createMemo(
-    () => probedContextUsage() ?? latestContextUsageSnapshot(transcript()),
-  );
+  const contextUsage = createMemo(() => probedContextUsage());
   let contextUsageRequestSeq = 0;
-  let lastContextUsageProbeKey: string | null = null;
   function clearProbedContextUsage() {
     contextUsageRequestSeq += 1;
-    lastContextUsageProbeKey = null;
     setProbedContextUsage(null);
   }
 
@@ -930,24 +920,29 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
   }
 
-  function contextUsageProbeKey(input: {
+  interface ContextUsageProbeInput {
     deviceId: string;
     instanceId: string;
     cwd: string;
-    sessionId: string;
-  }): string {
-    return `${input.deviceId}\n${input.instanceId}\n${input.cwd}\n${input.sessionId}`;
-  }
-
-  async function refreshContextUsageAfterRun(input: {
-    deviceId: string;
-    instanceId: string;
-    cwd: string;
-    sessionId: string;
     permissionMode: ClaudePermissionMode;
     model: string | null;
-  }) {
-    lastContextUsageProbeKey = contextUsageProbeKey(input);
+  }
+
+  function deviceContextUsageCwd(deviceId: string): string {
+    return getDeviceDefaultCwd(deviceId) || ".";
+  }
+
+  function contextUsageProbeInputFor(deviceId: string, instanceId: string): ContextUsageProbeInput {
+    return {
+      deviceId,
+      instanceId,
+      cwd: deviceContextUsageCwd(deviceId),
+      permissionMode: confirmedPermissionMode() ?? requestedPermissionMode(),
+      model: selectedClaudeModel(),
+    };
+  }
+
+  async function refreshContextUsage(input: ContextUsageProbeInput) {
     const seq = ++contextUsageRequestSeq;
     try {
       const res = await api.callBehavior<ContextUsageResult>(
@@ -956,7 +951,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         "context.usage",
         {
           cwd: input.cwd,
-          sessionId: input.sessionId,
           permissionMode: input.permissionMode,
           ...(input.model ? { model: input.model } : {}),
         },
@@ -970,26 +964,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   createEffect(() => {
-    if (running() || devices.loading || behaviors.loading || sessions.loading) return;
+    if (devices.loading || behaviors.loading) return;
     const deviceId = effectiveDeviceId();
     const instanceId = remoteClaudeInstance();
-    const summary = selectedSession() ?? (sessions() ?? [])[0] ?? null;
-    if (!deviceId || !instanceId || !summary) return;
-    const key = contextUsageProbeKey({
-      deviceId,
-      instanceId,
-      cwd: summary.cwd,
-      sessionId: summary.sessionId,
-    });
-    if (lastContextUsageProbeKey === key) return;
-    void refreshContextUsageAfterRun({
-      deviceId,
-      instanceId,
-      cwd: summary.cwd,
-      sessionId: summary.sessionId,
-      permissionMode: confirmedPermissionMode() ?? requestedPermissionMode(),
-      model: selectedClaudeModel(),
-    });
+    if (!deviceId || !instanceId) {
+      clearProbedContextUsage();
+      return;
+    }
+    const input = contextUsageProbeInputFor(deviceId, instanceId);
+    void refreshContextUsage(input);
+    const timer = setInterval(() => {
+      const currentDeviceId = effectiveDeviceId();
+      const currentInstanceId = remoteClaudeInstance();
+      if (!currentDeviceId || !currentInstanceId) return;
+      void refreshContextUsage(contextUsageProbeInputFor(currentDeviceId, currentInstanceId));
+    }, CONTEXT_USAGE_POLL_MS);
+    onCleanup(() => clearInterval(timer));
   });
 
   function handleScrollToBottomClick() {
@@ -1219,7 +1209,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (selectedSession()?.sessionId === id) {
       setSelectedSession(null);
       setTranscript([]);
-      clearProbedContextUsage();
       resetConfirmedPermissionMode();
     }
     mutateSessions((current) => (current ?? []).filter((session) => session.sessionId !== id));
@@ -1298,7 +1287,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (selectedSession()?.cwd === cwdToDelete) {
       setSelectedSession(null);
       setTranscript([]);
-      clearProbedContextUsage();
       setCwd("");
       resetConfirmedPermissionMode();
     }
@@ -1315,13 +1303,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   async function selectSession(id: string, _entry: SessionEntry | undefined) {
     const summary = (sessions() ?? []).find((s) => s.sessionId === id) ?? null;
     setSelectedSession(summary);
-    clearProbedContextUsage();
     setError(null);
     setShowNewChat(false);
     setSidebarOpen(false);
     if (!summary) {
       setTranscript([]);
-      clearProbedContextUsage();
       return;
     }
     setCwd(summary.cwd);
@@ -1371,7 +1357,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (isMissingSessionFileError(message)) {
         setSelectedSession(null);
         setTranscript([]);
-        clearProbedContextUsage();
         setCwd("");
         resetConfirmedPermissionMode();
         void refetchSessions();
@@ -1380,7 +1365,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       }
       setError(message);
       setTranscript([]);
-      clearProbedContextUsage();
     }
   }
 
@@ -1392,7 +1376,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setShowNewChat(true);
     setSelectedSession(null);
     setTranscript([]);
-    clearProbedContextUsage();
     setError(null);
     resetConfirmedPermissionMode();
   }
@@ -1423,7 +1406,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setNextPermissionMode(input.permissionMode);
     setShowNewChat(false);
     setTranscript([]);
-    clearProbedContextUsage();
     setError(null);
     setSelectedSession(null);
     resetConfirmedPermissionMode();
@@ -1465,7 +1447,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
     if (command === "clear") {
       setTranscript([]);
-      clearProbedContextUsage();
       setError(null);
       resetConfirmedPermissionMode();
       appendLocalAssistantMessage("Transcript cleared.");
@@ -1613,7 +1594,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setActiveRunId(runId);
     setLastPermissionModeRequest(requestedModeForRun);
     setPermissionModeStatus("pending");
-    let runSessionId = selectedSession()?.sessionId ?? null;
     let streamFinished = false;
 
     let markStreamReady = () => {};
@@ -1644,7 +1624,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           if (e.kind === "claude.event" && e.content) {
             if (activeRunId() === runId && isClaudeSystemInit(e.content)) {
               streamSawSystemInit = true;
-              runSessionId = sessionIdFromSystemInit(e.content) ?? runSessionId;
               const actualMode = permissionModeFromSystemInit(e.content);
               if (actualMode) {
                 confirmPermissionMode(actualMode, requestedModeForRun);
@@ -1722,15 +1701,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         setLastPermissionModeRequest(requestedModeForRun);
         setPermissionModeStatus("unknown");
       }
-      if (chatAccepted && streamFinished && runSessionId) {
-        void refreshContextUsageAfterRun({
-          deviceId: dev,
-          instanceId: inst,
-          cwd: cwdForRun,
-          sessionId: runSessionId,
-          permissionMode: confirmedPermissionMode() ?? requestedModeForRun,
-          model: modelForRun,
-        });
+      if (chatAccepted && streamFinished) {
+        void refreshContextUsage(contextUsageProbeInputFor(dev, inst));
       }
       abort.abort();
       setRunning(false);
