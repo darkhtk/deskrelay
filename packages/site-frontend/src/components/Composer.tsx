@@ -84,7 +84,9 @@ export const Composer: Component<ComposerProps> = (props) => {
     if (idx < 0 || suggestions().length === 0) return;
     requestAnimationFrame(() => {
       const active = slashPickerEl?.querySelector<HTMLElement>(".slash-suggest-active");
-      active?.scrollIntoView({ block: "nearest" });
+      if (typeof active?.scrollIntoView === "function") {
+        active.scrollIntoView({ block: "nearest" });
+      }
     });
   });
 

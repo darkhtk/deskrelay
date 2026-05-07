@@ -6,9 +6,18 @@ import { setLocale, t } from "../src/i18n.ts";
 beforeEach(() => {
   setLocale("ko");
   window.localStorage.removeItem("cr.locale");
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  );
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   setLocale("ko");
   window.localStorage.clear();
 });

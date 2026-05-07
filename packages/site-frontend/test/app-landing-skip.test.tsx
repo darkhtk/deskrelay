@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { App } from "../src/App.tsx";
+import { Landing } from "../src/components/Landing.tsx";
 import { t } from "../src/i18n.ts";
 
 beforeEach(() => {
@@ -38,8 +39,56 @@ describe("App landing flow", () => {
         screen.getAllByRole("button", { name: t("landing.cta.start") }).length,
       ).toBeGreaterThan(0);
     });
-    expect(screen.getByRole("heading", { name: "릴리즈 노트" })).toBeTruthy();
-    expect(document.body.textContent).toContain("CLI 권한을 편집할 수 있습니다");
+    expect(screen.getByRole("heading", { name: "설치와 진단 wizard" })).toBeTruthy();
+    expect(document.body.textContent).toContain("다른 PC 등록 명령은");
+    expect(screen.getByRole("tab", { name: /서버 PC/ })).toBeTruthy();
+  });
+
+  test("an authenticated landing user can view and copy the remote registration command", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/self/register-other-pc-command")) {
+        return new Response(
+          JSON.stringify({
+            preferredUrl: "http://100.64.1.2:18193",
+            urls: [{ kind: "tailscale", url: "http://100.64.1.2:18193" }],
+            command:
+              'powershell -ExecutionPolicy Bypass -Command "irm https://example.invalid/install.ps1 | iex"',
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/__deskrelay/local-site-token")) {
+        return new Response(JSON.stringify({ token: "tok-local" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    render(() => <Landing authed onTokenLogin={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: /다른 PC/ }));
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("powershell -ExecutionPolicy Bypass");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "명령 복사" }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        expect.stringContaining("powershell -ExecutionPolicy Bypass"),
+      );
+      expect(screen.getByRole("button", { name: "복사됨" })).toBeTruthy();
+    });
   });
 
   test("a stored token for this self-host server opens the chat directly", async () => {
