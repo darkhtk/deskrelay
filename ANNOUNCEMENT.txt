@@ -1,1 +1,1 @@
-DeskRelay self-host notices are loaded from the public Git repository while your server is running.
+DeskRelay self-host 업데이트: 다른 PC 등록 명령이 더 견고해졌습니다. Settings -> Devices에서 등록 명령을 다시 복사하면 서버의 Tailscale/LAN URL을 우선 사용하고, 대상 PC의 기존 폴더 상태가 꼬여 있어도 백업 후 새로 설치해 등록합니다.
