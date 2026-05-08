@@ -574,7 +574,6 @@ function isTailscaleUrl(raw: string): boolean {
 function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string }): string {
   const siteUrl = input.siteUrl.replace(/\/+$/, "");
   const serverPort = getUrlPort(siteUrl);
-  const openUrl = `${siteUrl}/#site-token=${encodeURIComponent(input.siteToken)}`;
   return [
     "# DeskRelay - register another PC",
     "# Paste this whole block into PowerShell on the PC you want to control.",
@@ -594,13 +593,6 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
     "",
     "$workspaceRoots = Join-Path $HOME 'Projects'",
     `powershell -ExecutionPolicy Bypass -File $installer -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -WorkspaceRoots $workspaceRoots -Label $env:COMPUTERNAME -Port ${DEFAULT_CONNECTOR_PORT}`,
-    "",
-    "try {",
-    `  Start-Process ${quotePs(openUrl)}`,
-    `  Write-Host ${quotePs(`Opened DeskRelay: ${siteUrl}`)}`,
-    "} catch {",
-    `  Write-Host ${quotePs(`Open DeskRelay: ${siteUrl}`)}`,
-    "}",
   ].join("\n");
 }
 

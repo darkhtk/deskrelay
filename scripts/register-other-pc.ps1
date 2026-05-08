@@ -51,11 +51,3 @@ powershell @argsList
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
 }
-
-try {
-  $openUrl = "$($Server.TrimEnd('/'))/#site-token=$([System.Uri]::EscapeDataString($SiteToken))"
-  Start-Process $openUrl
-  Write-Host "Opened DeskRelay: $Server"
-} catch {
-  Write-Host "Open DeskRelay: $Server"
-}

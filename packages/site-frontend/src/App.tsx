@@ -39,15 +39,22 @@ const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { ctx: null, session: null, we
 function consumeSiteTokenFromUrl(): string | null {
   if (typeof window === "undefined") return null;
   const hash = (window.location.hash ?? "").replace(/^#/, "");
-  if (!hash) return null;
-  const params = new URLSearchParams(hash);
-  const token = params.get("site-token")?.trim();
+  const hashParams = new URLSearchParams(hash);
+  let token = hashParams.get("site-token")?.trim();
+  if (!token) {
+    try {
+      token = new URL(window.location.href).searchParams.get("site-token")?.trim();
+    } catch {
+      token = undefined;
+    }
+  }
   if (!token) return null;
   clearBaseUrl();
   setToken(token);
   try {
     const clean = new URL(window.location.href);
     clean.hash = "";
+    clean.searchParams.delete("site-token");
     window.history.replaceState(null, "", clean.toString());
   } catch {
     // Keeping the token in storage is the important part; URL cleanup is best effort.

@@ -10,7 +10,8 @@ param(
   [string]$Label = "",
   [string]$Repo = "",
   [string]$RepoUrl = "https://github.com/darkhtk/deskrelay.git",
-  [int]$Port = 18091
+  [int]$Port = 18091,
+  [switch]$NoOpenBrowser
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,27 @@ function Invoke-Native {
   & $Command @Arguments
   if ($LASTEXITCODE -ne 0) {
     throw "$Command $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+  }
+}
+
+function Get-DeskRelayOpenUrl {
+  param([string]$ServerUrl, [string]$Token)
+  return "$($ServerUrl.TrimEnd('/'))/#site-token=$([System.Uri]::EscapeDataString($Token))"
+}
+
+function Open-DeskRelaySite {
+  param([string]$ServerUrl, [string]$Token)
+  $openUrl = Get-DeskRelayOpenUrl -ServerUrl $ServerUrl -Token $Token
+  if ($NoOpenBrowser) {
+    Write-Host "Open DeskRelay with Site token already embedded: $openUrl"
+    return
+  }
+  try {
+    Start-Process $openUrl
+    Write-Host "Opened DeskRelay with Site token already embedded: $ServerUrl"
+  } catch {
+    Write-Host "Could not open the browser automatically."
+    Write-Host "Open DeskRelay with Site token already embedded: $openUrl"
   }
 }
 
@@ -398,3 +420,4 @@ Invoke-Native "bun" @(
 
 Write-Host "External connector URL verified: http://$($endpoint.Host):$Port"
 Write-Host "Registered $Label with DeskRelay server: $serverUrl"
+Open-DeskRelaySite -ServerUrl $serverUrl -Token $SiteToken
