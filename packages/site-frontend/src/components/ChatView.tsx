@@ -51,6 +51,7 @@ import {
   setDeviceClaudeModel,
 } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
+import { instructionScopePlaceholder } from "../instruction-copy.ts";
 import { applyTemporaryInstructionsToMessage, scrollToBottomOnSend } from "../ui-prefs.ts";
 import { ApprovalModal } from "./ApprovalModal.tsx";
 import { Attachments, type AttachmentsAPI, imagesFromClipboard } from "./Attachments.tsx";
@@ -2643,7 +2644,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                           <textarea
                             class="sidebar-instruction-textarea"
                             value={instructionDraft(source)}
-                            placeholder={t("chat.sidebar.instructions.placeholder")}
+                            placeholder={instructionScopePlaceholder(source.scope)}
                             disabled={savingInstructionScope() === source.scope || source.readonly}
                             onInput={(event) =>
                               setInstructionDraft(source, event.currentTarget.value)

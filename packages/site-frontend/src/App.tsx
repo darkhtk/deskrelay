@@ -31,6 +31,11 @@ import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
 import { t } from "./i18n.ts";
 import {
+  instructionScopeEmptyDescription,
+  instructionScopePlaceholder,
+  temporaryInstructionPlaceholder,
+} from "./instruction-copy.ts";
+import {
   scrollToBottomOnSend,
   FACTORY_TEMPORARY_INSTRUCTION_PREFS,
   getTemporaryInstructionPrefs,
@@ -772,6 +777,7 @@ const InstructionSettings: Component<{
           label={t("instructions.temp.label")}
           help={t("instructions.temp.help")}
           value={tempDraft().content}
+          placeholder={temporaryInstructionPlaceholder()}
           onInput={(value) => {
             setTempSaved(false);
             setTempDraft({ content: value });
@@ -873,7 +879,7 @@ const InstructionSourceEditor: Component<{
     <textarea
       class="instruction-textarea instruction-source-textarea"
       value={props.value}
-      placeholder={t("instructions.placeholder")}
+      placeholder={instructionScopePlaceholder(props.source.scope)}
       disabled={props.saving || Boolean(props.source.error)}
       onInput={(event) => props.onInput(event.currentTarget.value)}
     />
@@ -936,7 +942,7 @@ const InstructionSourceViewer: Component<{
     if (props.source.error) {
       return t("instructions.content.error", { error: props.source.error });
     }
-    if (!props.source.exists) return t("instructions.content.missing");
+    if (!props.source.exists) return instructionScopeEmptyDescription(props.source.scope);
     return t("instructions.content.empty");
   };
 
@@ -1044,6 +1050,7 @@ const InstructionTextarea: Component<{
   label: string;
   help: string;
   value: string;
+  placeholder?: string;
   onInput: (value: string) => void;
 }> = (props) => (
   <label class="instruction-field">
@@ -1052,7 +1059,7 @@ const InstructionTextarea: Component<{
     <textarea
       class="instruction-textarea"
       value={props.value}
-      placeholder={t("instructions.placeholder")}
+      placeholder={props.placeholder ?? t("instructions.placeholder")}
       onInput={(event) => props.onInput(event.currentTarget.value)}
     />
   </label>
