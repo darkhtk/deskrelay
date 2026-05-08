@@ -237,6 +237,66 @@ describe("ChatView device refresh bridge", () => {
     });
   });
 
+  test("does not clear the saved chat device for the initial empty selection request", async () => {
+    localStorage.setItem("cr.chat-selected-device-id", OTHER_DEV.id);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV, OTHER_DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      for (const device of [DEV, OTHER_DEV]) {
+        if (url.endsWith(`/api/devices/${device.id}/behaviors`) && method === "GET") {
+          return new Response(
+            JSON.stringify([
+              {
+                instanceId: "remote-claude",
+                name: "remote-claude",
+                version: "0.0.0-test",
+                loadedAt: "2026-04-30T00:00:00.000Z",
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (
+          url.endsWith(`/api/devices/${device.id}/behaviors/remote-claude/request`) &&
+          method === "POST"
+        ) {
+          return new Response(JSON.stringify({ result: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+        requestedDeviceSelection={{ id: null, seq: 0 }}
+      />
+    ));
+
+    await waitFor(() => {
+      const select = container.querySelector(
+        ".sidebar-section-devices select",
+      ) as HTMLSelectElement | null;
+      expect(select?.value).toBe(OTHER_DEV.id);
+      expect(storedSelectedDevice()).toMatchObject({
+        id: OTHER_DEV.id,
+        label: OTHER_DEV.label,
+        daemonUrl: OTHER_DEV.daemonUrl,
+      });
+    });
+  });
+
   test("clears a saved chat device when it no longer exists", async () => {
     localStorage.setItem("cr.chat-selected-device-id", "dev_missing");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

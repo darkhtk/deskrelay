@@ -821,7 +821,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   createEffect(() => {
     const request = props.requestedDeviceSelection;
-    if (!request || appliedDeviceSelectionSeq() === request.seq) return;
+    if (!request || request.seq <= 0 || appliedDeviceSelectionSeq() === request.seq) return;
     if (!request.id) {
       selectDeviceId(null);
       setAppliedDeviceSelectionSeq(request.seq);
