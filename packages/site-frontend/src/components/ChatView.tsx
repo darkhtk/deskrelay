@@ -80,6 +80,12 @@ const SIDEBAR_MIN_WIDTH = 260;
 const SIDEBAR_MAX_WIDTH = SIDEBAR_MIN_WIDTH * 2;
 const SIDEBAR_RESIZE_KEYBOARD_STEP = 20;
 
+interface StoredChatDeviceSelection {
+  id?: string;
+  label?: string;
+  daemonUrl?: string;
+}
+
 function latestTranscriptEvents(events: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
   return events.length > SESSION_TRANSCRIPT_EVENT_LIMIT
     ? events.slice(-SESSION_TRANSCRIPT_EVENT_LIMIT)
@@ -110,21 +116,99 @@ function writeSidebarWidth(value: number) {
   }
 }
 
-function readStoredChatSelectedDeviceId(): string | null {
+function cleanStoredDeviceSelection(selection: StoredChatDeviceSelection): StoredChatDeviceSelection | null {
+  const next: StoredChatDeviceSelection = {};
+  if (typeof selection.id === "string" && selection.id.trim()) next.id = selection.id.trim();
+  if (typeof selection.label === "string" && selection.label.trim()) {
+    next.label = selection.label.trim();
+  }
+  if (typeof selection.daemonUrl === "string" && selection.daemonUrl.trim()) {
+    next.daemonUrl = selection.daemonUrl.trim();
+  }
+  return next.id || next.label || next.daemonUrl ? next : null;
+}
+
+function normalizeStoredDeviceUrl(value: string | undefined): string | null {
+  if (!value?.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    url.hash = "";
+    url.search = "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return value.trim().replace(/\/+$/, "");
+  }
+}
+
+function deviceSelectionFromDevice(device: Device): StoredChatDeviceSelection {
+  return {
+    id: device.id,
+    label: device.label,
+    daemonUrl: device.daemonUrl,
+  };
+}
+
+function sameStoredDeviceSelection(
+  a: StoredChatDeviceSelection | null,
+  b: StoredChatDeviceSelection | null,
+): boolean {
+  const left = a ? cleanStoredDeviceSelection(a) : null;
+  const right = b ? cleanStoredDeviceSelection(b) : null;
+  return (
+    (left?.id ?? "") === (right?.id ?? "") &&
+    (left?.label ?? "") === (right?.label ?? "") &&
+    normalizeStoredDeviceUrl(left?.daemonUrl) === normalizeStoredDeviceUrl(right?.daemonUrl)
+  );
+}
+
+function resolveStoredDeviceSelection(
+  selection: StoredChatDeviceSelection | null,
+  list: Device[] | undefined,
+): Device | null {
+  const stored = selection ? cleanStoredDeviceSelection(selection) : null;
+  if (!stored || !list?.length) return null;
+  if (stored.id) {
+    const byId = list.find((device) => device.id === stored.id);
+    if (byId) return byId;
+  }
+  const storedUrl = normalizeStoredDeviceUrl(stored.daemonUrl);
+  if (storedUrl) {
+    const byUrl = list.find((device) => normalizeStoredDeviceUrl(device.daemonUrl) === storedUrl);
+    if (byUrl) return byUrl;
+  }
+  if (stored.label) {
+    const byLabel = list.find((device) => device.label === stored.label);
+    if (byLabel) return byLabel;
+  }
+  return null;
+}
+
+function readStoredChatDeviceSelection(): StoredChatDeviceSelection | null {
   if (typeof localStorage === "undefined") return null;
   try {
     const value = localStorage.getItem(CHAT_SELECTED_DEVICE_STORAGE_KEY)?.trim();
-    return value || null;
+    if (!value) return null;
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object") {
+        return cleanStoredDeviceSelection(parsed as StoredChatDeviceSelection);
+      }
+    } catch {
+      // Older builds stored just the device id as a plain string.
+    }
+    return cleanStoredDeviceSelection({ id: value });
   } catch {
     return null;
   }
 }
 
-function writeStoredChatSelectedDeviceId(deviceId: string | null) {
+function writeStoredChatDeviceSelection(selection: StoredChatDeviceSelection | null) {
   if (typeof localStorage === "undefined") return;
   try {
-    if (deviceId) {
-      localStorage.setItem(CHAT_SELECTED_DEVICE_STORAGE_KEY, deviceId);
+    const next = selection ? cleanStoredDeviceSelection(selection) : null;
+    if (next) {
+      localStorage.setItem(CHAT_SELECTED_DEVICE_STORAGE_KEY, JSON.stringify(next));
     } else {
       localStorage.removeItem(CHAT_SELECTED_DEVICE_STORAGE_KEY);
     }
@@ -706,18 +790,33 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (revision > 0) void refetchDevices();
   });
 
+  const initialDeviceSelection = readStoredChatDeviceSelection();
+  const [storedDeviceSelection, setStoredDeviceSelection] =
+    createSignal<StoredChatDeviceSelection | null>(initialDeviceSelection);
   const [selectedDeviceId, setSelectedDeviceId] = createSignal<string | null>(
-    readStoredChatSelectedDeviceId(),
+    initialDeviceSelection?.id ?? null,
   );
   const [appliedDeviceSelectionSeq, setAppliedDeviceSelectionSeq] = createSignal<number | null>(
     null,
   );
-  const effectiveDeviceId = () => selectedDeviceId() ?? defaultDeviceId(devices());
+  const effectiveDeviceId = () => {
+    const selected = selectedDeviceId();
+    const list = devices();
+    if (selected && (!list || list.some((device) => device.id === selected))) return selected;
+    return resolveStoredDeviceSelection(storedDeviceSelection(), list)?.id ?? defaultDeviceId(list);
+  };
   const [selectedClaudeModel, setSelectedClaudeModel] = createSignal<string | null>(null);
 
   function selectDeviceId(deviceId: string | null) {
+    const device = deviceId ? (devices() ?? []).find((d) => d.id === deviceId) : null;
+    const nextSelection = device
+      ? deviceSelectionFromDevice(device)
+      : deviceId
+        ? ({ id: deviceId } satisfies StoredChatDeviceSelection)
+        : null;
     setSelectedDeviceId(deviceId);
-    writeStoredChatSelectedDeviceId(deviceId);
+    setStoredDeviceSelection(nextSelection);
+    writeStoredChatDeviceSelection(nextSelection);
   }
 
   createEffect(() => {
@@ -737,8 +836,28 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   createEffect(() => {
     const selected = selectedDeviceId();
     const list = devices();
-    if (!selected || !list) return;
-    if (list.some((d) => d.id === selected)) return;
+    if (!list) return;
+    const stored = storedDeviceSelection();
+    const resolved = resolveStoredDeviceSelection(stored, list);
+    if (resolved) {
+      if (selected !== resolved.id) setSelectedDeviceId(resolved.id);
+      const canonical = deviceSelectionFromDevice(resolved);
+      if (!sameStoredDeviceSelection(stored, canonical)) {
+        setStoredDeviceSelection(canonical);
+        writeStoredChatDeviceSelection(canonical);
+      }
+      return;
+    }
+    if (!selected) return;
+    const selectedDevice = list.find((d) => d.id === selected);
+    if (selectedDevice) {
+      const canonical = deviceSelectionFromDevice(selectedDevice);
+      if (!sameStoredDeviceSelection(stored, canonical)) {
+        setStoredDeviceSelection(canonical);
+        writeStoredChatDeviceSelection(canonical);
+      }
+      return;
+    }
     selectDeviceId(null);
     setSelectedSession(null);
     setTranscript([]);
