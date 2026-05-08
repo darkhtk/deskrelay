@@ -398,7 +398,8 @@ export const behaviorDef: RunBehaviorOptions = {
         ...(permissionMode ? { permissionMode } : {}),
         ...(model ? { model } : {}),
         ...(params.command ? { command: params.command } : {}),
-        extraArgs: ["--max-budget-usd", "0.01"],
+        // Internal usage probes must not create user-visible transcript rows.
+        extraArgs: ["--no-session-persistence", "--max-budget-usd", "0.01"],
         onEvent: (event) => {
           events.push(event);
         },

@@ -143,6 +143,10 @@ export async function listSessions(options: ListSessionsOptions = {}): Promise<S
   const seenSessionIds = new Set<string>();
   for (const info of filteredByTime) {
     const metadata = await extractSessionMetadata(info.path);
+    if (metadata.internalCommandOnly) {
+      await unlink(info.path).catch(() => undefined);
+      continue;
+    }
     const cwd = metadata.cwd ?? info.cwd;
     if (options.cwd !== undefined && options.cwd !== cwd) continue;
     if (options.dedupeSessionIds && seenSessionIds.has(info.sessionId)) continue;
@@ -456,7 +460,10 @@ interface SessionMetadata {
   title: string;
   fullTitle?: string;
   cwd?: string;
+  internalCommandOnly?: boolean;
 }
+
+const INTERNAL_LOCAL_COMMANDS = new Set(["/context", "/status", "/usage"]);
 
 async function extractSessionMetadata(jsonlPath: string): Promise<SessionMetadata> {
   let raw: string;
@@ -469,7 +476,9 @@ async function extractSessionMetadata(jsonlPath: string): Promise<SessionMetadat
   let title = "";
   let fullTitle: string | undefined;
   let cwd: string | undefined;
-  for (const line of raw.split(/\r?\n/, 50)) {
+  let sawInternalLocalCommand = false;
+  let sawRegularUserText = false;
+  for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let parsed: unknown;
     try {
@@ -479,21 +488,25 @@ async function extractSessionMetadata(jsonlPath: string): Promise<SessionMetadat
     }
 
     cwd ??= eventCwd(parsed);
-    if (!title) {
-      const text = firstUserText(parsed);
-      if (text) {
-        const collapsed = text.replace(/\s+/g, " ").trim();
-        if (collapsed.length > 0) {
-          fullTitle = collapsed;
-          title =
-            collapsed.length > TITLE_MAX_LEN
-              ? `${collapsed.slice(0, TITLE_MAX_LEN - 3)}...`
-              : collapsed;
-        }
+    for (const text of userTextParts(parsed)) {
+      if (isInternalLocalCommandText(text)) {
+        sawInternalLocalCommand = true;
+        continue;
+      }
+      const collapsed = text.replace(/\s+/g, " ").trim();
+      if (collapsed.length > 0) {
+        sawRegularUserText = true;
+      }
+      if (!title && collapsed.length > 0) {
+        fullTitle = collapsed;
+        title =
+          collapsed.length > TITLE_MAX_LEN
+            ? `${collapsed.slice(0, TITLE_MAX_LEN - 3)}...`
+            : collapsed;
       }
     }
 
-    if (title && cwd !== undefined) {
+    if (sawRegularUserText && title && cwd !== undefined) {
       return fullTitle && fullTitle !== title ? { title, fullTitle, cwd } : { title, cwd };
     }
   }
@@ -502,27 +515,37 @@ async function extractSessionMetadata(jsonlPath: string): Promise<SessionMetadat
     title,
     ...(fullTitle && fullTitle !== title ? { fullTitle } : {}),
     ...(cwd !== undefined ? { cwd } : {}),
+    ...(sawInternalLocalCommand && !sawRegularUserText ? { internalCommandOnly: true } : {}),
   };
 }
 
-function firstUserText(event: unknown): string | undefined {
-  if (typeof event !== "object" || event === null) return undefined;
+function userTextParts(event: unknown): string[] {
+  if (typeof event !== "object" || event === null) return [];
   const e = event as Record<string, unknown>;
-  if (e.type !== "user") return undefined;
+  if (e.type !== "user") return [];
   // claude writes user events as { type: "user", message: { role, content } }
   // where content is either a string or an array of content blocks.
   const message = e.message as Record<string, unknown> | undefined;
-  if (!message) return undefined;
-  if (typeof message.content === "string") return message.content;
+  if (!message) return [];
+  if (typeof message.content === "string") return [message.content];
   if (Array.isArray(message.content)) {
+    const texts: string[] = [];
     for (const block of message.content) {
       if (typeof block === "object" && block !== null) {
         const b = block as Record<string, unknown>;
-        if (b.type === "text" && typeof b.text === "string") return b.text;
+        if (b.type === "text" && typeof b.text === "string") texts.push(b.text);
       }
     }
+    return texts;
   }
-  return undefined;
+  return [];
+}
+
+function isInternalLocalCommandText(text: string): boolean {
+  if (!text.includes("<local-command-caveat>")) return false;
+  if (!text.includes("</local-command-caveat>")) return false;
+  const command = text.match(/<command-name>\s*([^<]+?)\s*<\/command-name>/)?.[1]?.trim();
+  return command !== undefined && INTERNAL_LOCAL_COMMANDS.has(command);
 }
 
 function eventCwd(event: unknown): string | undefined {

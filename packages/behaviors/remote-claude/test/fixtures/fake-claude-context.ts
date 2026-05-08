@@ -3,6 +3,11 @@
 // stream-json shape that Claude Code returns for the `/context` slash
 // command, including both assistant text and a result string.
 
+if (!process.argv.includes("--no-session-persistence")) {
+  process.stderr.write("missing --no-session-persistence\n");
+  process.exit(2);
+}
+
 const text = [
   "## Context Usage",
   "",

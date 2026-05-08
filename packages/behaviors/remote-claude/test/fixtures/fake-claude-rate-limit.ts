@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
 
+if (!process.argv.includes("--no-session-persistence")) {
+  process.stderr.write("missing --no-session-persistence\n");
+  process.exit(2);
+}
+
 const lines = [
   {
     type: "rate_limit_event",
