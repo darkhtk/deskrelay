@@ -291,18 +291,8 @@ body.sidebar-open {
   transition: none;
 }
 
-.sidebar-resize-handle.is-dragging::after {
-  left: 7px;
-  width: 2px;
-  background: var(--border-strong);
-}
-
 .sidebar-resize-handle:focus-visible {
   outline: none;
-}
-
-.sidebar-resize-handle.will-collapse::after {
-  background: var(--accent-coral);
 }
 
 body.sidebar-resizing {
