@@ -101,6 +101,10 @@ describe("settings and chrome invariants", () => {
 
     expect(appSource).toContain('t("lang.settings.title")');
     expect(appSource).toContain('["general", "devices", "diagnostics", "instructions"]');
+    expect(appSource).toContain("saveDeviceInstructionSource");
+    expect(appSource).toContain("deleteDeviceInstructionSource");
+    expect(appSource).toContain("formatInstructionLoadError");
+    expect(chatViewSource).toContain("formatInstructionLoadError");
     expect(appSource).toContain("app.settings.tab.${value}");
     expect(appSource).toContain('t("app.hard-refresh")');
     expect(appSource).toContain('t("settings.usage.show-ctx")');

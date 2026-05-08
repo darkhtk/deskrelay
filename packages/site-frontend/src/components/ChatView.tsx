@@ -595,6 +595,19 @@ function instructionExpectedHash(source: ClaudeInstructionSource): { expectedHas
   return source.hash ? { expectedHash: source.hash } : {};
 }
 
+function formatInstructionLoadError(err: unknown): string {
+  const message = (err as Error).message || String(err);
+  const normalized = message.toLowerCase();
+  if (
+    normalized === "not found" ||
+    normalized.includes("http 404") ||
+    normalized.includes("404 not found")
+  ) {
+    return `${message} - 실행 중인 DeskRelay 서버 또는 선택한 디바이스 connector가 지침 API를 지원하지 않는 오래된 코드입니다. 서버와 connector를 최신 코드로 재시작하세요.`;
+  }
+  return message;
+}
+
 function updateInstructionSourceResult(
   current: InstructionsInspectViewResult | null | undefined,
   updated: ClaudeInstructionSource,
@@ -1086,7 +1099,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         return {
           cwd: input.cwd,
           sources: completeWorkspaceInstructionSources([], input.cwd),
-          error: (err as Error).message,
+          error: formatInstructionLoadError(err),
         };
       }
     },
@@ -1149,7 +1162,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setInstructionEditStatus({
         scope: source.scope,
         kind: "error",
-        message: (err as Error).message,
+        message: formatInstructionLoadError(err),
       });
     } finally {
       setSavingInstructionScope(null);
@@ -1186,7 +1199,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setInstructionEditStatus({
         scope: source.scope,
         kind: "error",
-        message: (err as Error).message,
+        message: formatInstructionLoadError(err),
       });
     } finally {
       setSavingInstructionScope(null);

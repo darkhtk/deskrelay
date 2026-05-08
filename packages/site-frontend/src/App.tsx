@@ -12,6 +12,7 @@ import {
   api,
   clearBaseUrl,
   clearToken,
+  type ClaudeInstructionScope,
   type ClaudeInstructionSource,
   type Device,
   type DeviceCleanupEntry,
@@ -558,7 +559,7 @@ const InstructionSettings: Component<{
     return { deviceId, cwd: "" };
   });
 
-  const [snapshot, { refetch: refetchInstructions }] = createResource(
+  const [snapshot, { refetch: refetchInstructions, mutate: mutateInstructions }] = createResource(
     instructionInput,
     async (input) => {
       if (!input) return null;
@@ -568,7 +569,7 @@ const InstructionSettings: Component<{
         return {
           cwd: input.cwd || null,
           sources: [],
-          error: (err as Error).message,
+          error: formatInstructionLoadError(err),
         };
       }
     },
@@ -584,6 +585,99 @@ const InstructionSettings: Component<{
   const deviceInstructionSources = createMemo(() =>
     instructionSources().filter((source) => source.scope === "user" || source.scope === "managed"),
   );
+  const [deviceInstructionDrafts, setDeviceInstructionDrafts] = createSignal<
+    Record<string, string>
+  >({});
+  const [savingDeviceInstructionScope, setSavingDeviceInstructionScope] =
+    createSignal<ClaudeInstructionScope | null>(null);
+  const [deviceInstructionEditStatus, setDeviceInstructionEditStatus] = createSignal<{
+    scope: ClaudeInstructionScope;
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  createEffect(() => {
+    const result = snapshot();
+    if (!result || result.error) return;
+    const next: Record<string, string> = {};
+    for (const source of deviceInstructionSources()) {
+      next[source.scope] = source.content;
+    }
+    setDeviceInstructionDrafts(next);
+  });
+
+  const deviceInstructionDraft = (source: ClaudeInstructionSource): string =>
+    deviceInstructionDrafts()[source.scope] ?? source.content;
+  const deviceInstructionDirty = (source: ClaudeInstructionSource): boolean =>
+    !sameInstructionContent(deviceInstructionDraft(source), source.content);
+  const setDeviceInstructionDraft = (source: ClaudeInstructionSource, content: string) => {
+    setDeviceInstructionEditStatus(null);
+    setDeviceInstructionDrafts((current) => ({ ...current, [source.scope]: content }));
+  };
+  const resetDeviceInstructionDraft = (source: ClaudeInstructionSource) => {
+    setDeviceInstructionEditStatus(null);
+    setDeviceInstructionDraft(source, source.content);
+  };
+  const saveDeviceInstructionSource = async (source: ClaudeInstructionSource) => {
+    const deviceId = effectiveDeviceId();
+    if (!deviceId || source.readonly) return;
+    setSavingDeviceInstructionScope(source.scope);
+    setDeviceInstructionEditStatus(null);
+    try {
+      const updated = await api.writeInstruction(deviceId, source.scope, {
+        content: deviceInstructionDraft(source),
+        ...instructionExpectedHash(source),
+      });
+      mutateInstructions((current) => updateDeviceInstructionSnapshot(current, updated));
+      await refetchInstructions();
+      setDeviceInstructionEditStatus({
+        scope: source.scope,
+        kind: "success",
+        message: t("instructions.status.saved"),
+      });
+    } catch (err) {
+      setDeviceInstructionEditStatus({
+        scope: source.scope,
+        kind: "error",
+        message: formatInstructionLoadError(err),
+      });
+    } finally {
+      setSavingDeviceInstructionScope(null);
+    }
+  };
+  const deleteDeviceInstructionSource = async (source: ClaudeInstructionSource) => {
+    const deviceId = effectiveDeviceId();
+    if (!deviceId || source.readonly || !source.exists) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(t("chat.sidebar.instructions.delete.confirm", { label: source.label }))
+    ) {
+      return;
+    }
+    setSavingDeviceInstructionScope(source.scope);
+    setDeviceInstructionEditStatus(null);
+    try {
+      const updated = await api.deleteInstruction(deviceId, source.scope, {
+        ...instructionExpectedHash(source),
+      });
+      mutateInstructions((current) => updateDeviceInstructionSnapshot(current, updated));
+      setDeviceInstructionDraft(updated, updated.content);
+      await refetchInstructions();
+      setDeviceInstructionEditStatus({
+        scope: source.scope,
+        kind: "success",
+        message: t("instructions.status.deleted"),
+      });
+    } catch (err) {
+      setDeviceInstructionEditStatus({
+        scope: source.scope,
+        kind: "error",
+        message: formatInstructionLoadError(err),
+      });
+    } finally {
+      setSavingDeviceInstructionScope(null);
+    }
+  };
 
   function saveTemporary(): void {
     setTemporaryInstructionPrefs(tempDraft());
@@ -660,6 +754,15 @@ const InstructionSettings: Component<{
             title={t("instructions.device.sources.title")}
             help={t("instructions.device.sources.help")}
             sources={deviceInstructionSources()}
+            editable
+            draft={deviceInstructionDraft}
+            dirty={deviceInstructionDirty}
+            savingScope={savingDeviceInstructionScope()}
+            status={deviceInstructionEditStatus()}
+            onInput={setDeviceInstructionDraft}
+            onReset={resetDeviceInstructionDraft}
+            onSave={(source) => void saveDeviceInstructionSource(source)}
+            onDelete={(source) => void deleteDeviceInstructionSource(source)}
           />
         </Show>
       </Show>
@@ -701,6 +804,15 @@ const InstructionSourceGroup: Component<{
   title: string;
   help: string;
   sources: ClaudeInstructionSource[];
+  editable?: boolean;
+  draft?: (source: ClaudeInstructionSource) => string;
+  dirty?: (source: ClaudeInstructionSource) => boolean;
+  savingScope?: ClaudeInstructionScope | null;
+  status?: { scope: ClaudeInstructionScope; kind: "success" | "error"; message: string } | null;
+  onInput?: (source: ClaudeInstructionSource, value: string) => void;
+  onReset?: (source: ClaudeInstructionSource) => void;
+  onSave?: (source: ClaudeInstructionSource) => void;
+  onDelete?: (source: ClaudeInstructionSource) => void;
 }> = (props) => (
   <div class="instruction-source-group">
     <Show when={props.title || props.help}>
@@ -713,7 +825,95 @@ const InstructionSourceGroup: Component<{
         </Show>
       </div>
     </Show>
-    <For each={props.sources}>{(source) => <InstructionSourceViewer source={source} />}</For>
+    <For each={props.sources}>
+      {(source) => (
+        <Show
+          when={props.editable && !source.readonly}
+          fallback={<InstructionSourceViewer source={source} />}
+        >
+          <InstructionSourceEditor
+            source={source}
+            value={props.draft?.(source) ?? source.content}
+            dirty={props.dirty?.(source) ?? false}
+            saving={props.savingScope === source.scope}
+            status={props.status?.scope === source.scope ? props.status : null}
+            onInput={(value) => props.onInput?.(source, value)}
+            onReset={() => props.onReset?.(source)}
+            onSave={() => props.onSave?.(source)}
+            onDelete={() => props.onDelete?.(source)}
+          />
+        </Show>
+      )}
+    </For>
+  </div>
+);
+
+const InstructionSourceEditor: Component<{
+  source: ClaudeInstructionSource;
+  value: string;
+  dirty: boolean;
+  saving: boolean;
+  status: { kind: "success" | "error"; message: string } | null;
+  onInput: (value: string) => void;
+  onReset: () => void;
+  onSave: () => void;
+  onDelete: () => void;
+}> = (props) => (
+  <div class="instruction-source">
+    <div class="instruction-source-header">
+      <div>
+        <div class="instruction-field-label">{props.source.label}</div>
+        <div class="instruction-field-help">{props.source.path || t("instructions.path.none")}</div>
+      </div>
+      <span class="instruction-source-state">
+        {props.source.exists ? t("instructions.source.exists") : t("instructions.source.missing")}
+      </span>
+    </div>
+    <Show when={props.source.error}>{(message) => <p class="settings-error">{message()}</p>}</Show>
+    <textarea
+      class="instruction-textarea instruction-source-textarea"
+      value={props.value}
+      placeholder={t("instructions.placeholder")}
+      disabled={props.saving || Boolean(props.source.error)}
+      onInput={(event) => props.onInput(event.currentTarget.value)}
+    />
+    <Show when={props.status}>
+      {(status) => (
+        <p class={status().kind === "error" ? "settings-error" : "settings-success"}>
+          {status().message}
+        </p>
+      )}
+    </Show>
+    <div class="settings-row instruction-actions">
+      <Show when={props.source.exists}>
+        <button
+          type="button"
+          class="secondary-button danger"
+          onClick={props.onDelete}
+          disabled={props.saving || Boolean(props.source.error)}
+        >
+          {props.saving ? t("instructions.status.saving") : t("chat.sidebar.instructions.delete")}
+        </button>
+      </Show>
+      <Show when={props.dirty}>
+        <button
+          type="button"
+          class="secondary-button"
+          onClick={props.onReset}
+          disabled={props.saving || Boolean(props.source.error)}
+        >
+          {t("chat.sidebar.instructions.revert")}
+        </button>
+        <button
+          type="button"
+          class="primary-button"
+          onClick={props.onSave}
+          disabled={props.saving || Boolean(props.source.error)}
+        >
+          {props.saving ? t("instructions.status.saving") : t("instructions.save")}
+        </button>
+      </Show>
+    </div>
   </div>
 );
 
@@ -769,6 +969,42 @@ function completeInstructionSources(
   return INSTRUCTION_SOURCE_ORDER.map(
     (scope) => byScope.get(scope) ?? fallbackInstructionSource(scope, cwd),
   );
+}
+
+function sameInstructionContent(a: string, b: string): boolean {
+  return a === b;
+}
+
+function instructionExpectedHash(source: ClaudeInstructionSource): { expectedHash?: string } {
+  if (!source.exists) return { expectedHash: "missing" };
+  return source.hash ? { expectedHash: source.hash } : {};
+}
+
+function updateDeviceInstructionSnapshot(
+  current:
+    | { cwd: string | null; sources: ClaudeInstructionSource[]; error?: string }
+    | null
+    | undefined,
+  updated: ClaudeInstructionSource,
+): { cwd: string | null; sources: ClaudeInstructionSource[] } {
+  const cwd = current?.cwd ?? null;
+  const sources = completeInstructionSources(current?.sources ?? [], cwd ?? "").map((source) =>
+    source.scope === updated.scope ? updated : source,
+  );
+  return { cwd, sources };
+}
+
+function formatInstructionLoadError(err: unknown): string {
+  const message = (err as Error).message || String(err);
+  const normalized = message.toLowerCase();
+  if (
+    normalized === "not found" ||
+    normalized.includes("http 404") ||
+    normalized.includes("404 not found")
+  ) {
+    return `${message} - 실행 중인 DeskRelay 서버 또는 선택한 디바이스 connector가 지침 API를 지원하지 않는 오래된 코드입니다. 서버와 connector를 최신 코드로 재시작하세요.`;
+  }
+  return message;
 }
 
 function fallbackInstructionSource(
