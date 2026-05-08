@@ -271,9 +271,9 @@ body.sidebar-open {
 .sidebar-resize-handle {
   position: absolute;
   top: 0;
-  right: -4px;
+  right: -8px;
   bottom: 0;
-  width: 8px;
+  width: 16px;
   cursor: col-resize;
   touch-action: none;
   z-index: 3;
@@ -284,17 +284,16 @@ body.sidebar-open {
   position: absolute;
   top: 12px;
   bottom: 12px;
-  left: 3px;
+  left: 7px;
   width: 1px;
   border-radius: 999px;
   background: transparent;
   transition: background 120ms ease, width 120ms ease, left 120ms ease;
 }
 
-.sidebar-resize-handle:hover::after,
 .sidebar-resize-handle:focus-visible::after,
 .sidebar-resize-handle.is-dragging::after {
-  left: 2px;
+  left: 7px;
   width: 2px;
   background: var(--border-strong);
 }
