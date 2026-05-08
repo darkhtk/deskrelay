@@ -243,22 +243,13 @@ export const DeviceSettingsDialog: Component<DeviceSettingsDialogProps> = (props
         onClick={() => props.onClose()}
         aria-label={t("dsd.close.aria")}
       />
-      <div
-        class="approval-card"
-        style={{
-          width: "min(640px, 95vw)",
-          "max-width": "640px",
-          "max-height": "85vh",
-          "overflow-y": "auto",
-        }}
-      >
+      <div class="approval-card settings-dialog settings-dialog-narrow">
         <div class="approval-header">
           <span class="approval-title">{props.device.label}</span>
           <button
             type="button"
-            class="sidebar-action"
+            class="sidebar-action settings-dialog-close"
             onClick={() => props.onClose()}
-            style={{ "margin-left": "auto", width: "auto", padding: "4px 10px" }}
             aria-label={t("app.dialog.close")}
           >
             x

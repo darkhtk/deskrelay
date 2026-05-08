@@ -448,70 +448,63 @@ export const App: Component = () => {
             onClick={() => setSettingsOpen(false)}
             aria-label={t("app.settings.close")}
           />
-          <div
-            class="approval-card settings-dialog"
-            style={{
-              width: "min(780px, 95vw)",
-              "max-width": "780px",
-              "max-height": "86vh",
-              "overflow-y": "auto",
-            }}
-          >
+          <div class="approval-card settings-dialog">
             <div class="approval-header">
               <span class="approval-title">{t("app.settings.title")}</span>
               <button
                 type="button"
-                class="sidebar-action"
+                class="sidebar-action settings-dialog-close"
                 onClick={() => setSettingsOpen(false)}
-                style={{ "margin-left": "auto", width: "auto", padding: "4px 10px" }}
                 aria-label={t("app.dialog.close")}
               >
                 x
               </button>
             </div>
 
-            <nav class="settings-tabs">
-              <For each={["general", "devices", "diagnostics", "instructions"] as const}>
-                {(value) => (
-                  <button
-                    type="button"
-                    class={`settings-tab${settingsTab() === value ? " active" : ""}`}
-                    onClick={() => setSettingsTab(value)}
-                  >
-                    {t(`app.settings.tab.${value}`)}
-                  </button>
-                )}
-              </For>
-            </nav>
+            <div class="settings-dialog-shell">
+              <nav class="settings-tabs settings-tab-rail">
+                <For each={["general", "devices", "diagnostics", "instructions"] as const}>
+                  {(value) => (
+                    <button
+                      type="button"
+                      class={`settings-tab${settingsTab() === value ? " active" : ""}`}
+                      onClick={() => setSettingsTab(value)}
+                    >
+                      {t(`app.settings.tab.${value}`)}
+                    </button>
+                  )}
+                </For>
+              </nav>
 
-            <div class="settings-dialog-body">
-              <Show when={settingsTab() === "general"}>
-                <LanguageSettings onClearAccess={handleSettingsClearAccess} />
-              </Show>
-              <Show when={settingsTab() === "devices"}>
-                <DeviceShell
-                  initialSelectedDeviceId={settingsDeviceId()}
-                  onDevicesChanged={notifyDevicesChanged}
-                  onDeviceSelected={activateRegisteredDevice}
-                  onManualCleanupRequired={handleManualCleanupRequired}
-                />
-              </Show>
-              <Show when={settingsTab() === "diagnostics"}>
-                <ConnectionDiagnostics
-                  initialSelectedDeviceId={settingsDeviceId()}
-                  devicesRevision={devicesRevision()}
-                  onOpenDevices={(deviceId) => {
-                    setSettingsDeviceId(deviceId);
-                    setSettingsTab("devices");
-                  }}
-                />
-              </Show>
-              <Show when={settingsTab() === "instructions"}>
-                <InstructionSettings
-                  initialDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
-                  devicesRevision={devicesRevision()}
-                />
-              </Show>
+              <div class="settings-dialog-body">
+                <Show when={settingsTab() === "general"}>
+                  <LanguageSettings onClearAccess={handleSettingsClearAccess} />
+                </Show>
+                <Show when={settingsTab() === "devices"}>
+                  <DeviceShell
+                    initialSelectedDeviceId={settingsDeviceId()}
+                    onDevicesChanged={notifyDevicesChanged}
+                    onDeviceSelected={activateRegisteredDevice}
+                    onManualCleanupRequired={handleManualCleanupRequired}
+                  />
+                </Show>
+                <Show when={settingsTab() === "diagnostics"}>
+                  <ConnectionDiagnostics
+                    initialSelectedDeviceId={settingsDeviceId()}
+                    devicesRevision={devicesRevision()}
+                    onOpenDevices={(deviceId) => {
+                      setSettingsDeviceId(deviceId);
+                      setSettingsTab("devices");
+                    }}
+                  />
+                </Show>
+                <Show when={settingsTab() === "instructions"}>
+                  <InstructionSettings
+                    initialDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
+                    devicesRevision={devicesRevision()}
+                  />
+                </Show>
+              </div>
             </div>
           </div>
         </dialog>
@@ -521,70 +514,79 @@ export const App: Component = () => {
 };
 
 const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => (
-  <section class="settings-card">
-    <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
-    <div class="settings-toggle-row">
-      <div class="settings-toggle-copy">
-        <span class="settings-toggle-title">{t("settings.theme.title")}</span>
-        <span class="settings-toggle-help">{t("settings.theme.help")}</span>
+  <div class="settings-stack">
+    <section class="settings-card">
+      <h3 class="settings-card-title">{t("settings.theme.title")}</h3>
+      <div class="settings-toggle-row">
+        <div class="settings-toggle-copy">
+          <span class="settings-toggle-title">{t("settings.theme.title")}</span>
+          <span class="settings-toggle-help">{t("settings.theme.help")}</span>
+        </div>
+        <div class="settings-segmented" role="radiogroup" aria-label={t("settings.theme.title")}>
+          <For each={["light", "dark"] as AppTheme[]}>
+            {(value) => (
+              <button
+                type="button"
+                class={`settings-segment${appTheme() === value ? " active" : ""}`}
+                role="radio"
+                aria-checked={appTheme() === value ? "true" : "false"}
+                onClick={() => setAppTheme(value)}
+              >
+                {t(`settings.theme.${value}`)}
+              </button>
+            )}
+          </For>
+        </div>
       </div>
-      <div class="settings-segmented" role="radiogroup" aria-label={t("settings.theme.title")}>
-        <For each={["light", "dark"] as AppTheme[]}>
-          {(value) => (
-            <button
-              type="button"
-              class={`settings-segment${appTheme() === value ? " active" : ""}`}
-              role="radio"
-              aria-checked={appTheme() === value ? "true" : "false"}
-              onClick={() => setAppTheme(value)}
-            >
-              {t(`settings.theme.${value}`)}
-            </button>
-          )}
-        </For>
+    </section>
+
+    <section class="settings-card">
+      <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
+      <label class="settings-check-row">
+        <input
+          type="checkbox"
+          checked={scrollToBottomOnSend()}
+          onChange={(event) => setScrollToBottomOnSend(event.currentTarget.checked)}
+        />
+        {t("lang.settings.scroll-on-send")}
+      </label>
+      <label class="settings-check-row">
+        <input
+          type="checkbox"
+          checked={showCtxUsageMeter()}
+          onChange={(event) => setShowCtxUsageMeter(event.currentTarget.checked)}
+        />
+        {t("settings.usage.show-ctx")}
+      </label>
+      <label class="settings-check-row">
+        <input
+          type="checkbox"
+          checked={showSessionUsageMeter()}
+          onChange={(event) => setShowSessionUsageMeter(event.currentTarget.checked)}
+        />
+        {t("settings.usage.show-session")}
+      </label>
+      <label class="settings-check-row">
+        <input
+          type="checkbox"
+          checked={showWeekUsageMeter()}
+          onChange={(event) => setShowWeekUsageMeter(event.currentTarget.checked)}
+        />
+        {t("settings.usage.show-week")}
+      </label>
+    </section>
+
+    <section class="settings-card settings-danger-section">
+      <div class="settings-row">
+        <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>
+          {t("app.hard-refresh")}
+        </button>
+        <button type="button" class="secondary-button danger" onClick={props.onClearAccess}>
+          {t("app.clear-access")}
+        </button>
       </div>
-    </div>
-    <label class="settings-check-row">
-      <input
-        type="checkbox"
-        checked={scrollToBottomOnSend()}
-        onChange={(event) => setScrollToBottomOnSend(event.currentTarget.checked)}
-      />
-      {t("lang.settings.scroll-on-send")}
-    </label>
-    <label class="settings-check-row">
-      <input
-        type="checkbox"
-        checked={showCtxUsageMeter()}
-        onChange={(event) => setShowCtxUsageMeter(event.currentTarget.checked)}
-      />
-      {t("settings.usage.show-ctx")}
-    </label>
-    <label class="settings-check-row">
-      <input
-        type="checkbox"
-        checked={showSessionUsageMeter()}
-        onChange={(event) => setShowSessionUsageMeter(event.currentTarget.checked)}
-      />
-      {t("settings.usage.show-session")}
-    </label>
-    <label class="settings-check-row">
-      <input
-        type="checkbox"
-        checked={showWeekUsageMeter()}
-        onChange={(event) => setShowWeekUsageMeter(event.currentTarget.checked)}
-      />
-      {t("settings.usage.show-week")}
-    </label>
-    <div class="settings-row">
-      <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>
-        {t("app.hard-refresh")}
-      </button>
-      <button type="button" class="secondary-button danger" onClick={props.onClearAccess}>
-        {t("app.clear-access")}
-      </button>
-    </div>
-  </section>
+    </section>
+  </div>
 );
 
 const InstructionSettings: Component<{

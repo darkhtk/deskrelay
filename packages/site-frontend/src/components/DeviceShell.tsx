@@ -90,8 +90,8 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
   };
 
   return (
-    <div class="settings-stack">
-      <section class="settings-card">
+    <div class="settings-device-layout">
+      <section class="settings-card settings-device-list">
         <h3 class="settings-card-title">{t("ds.section.devices")}</h3>
         <Show
           when={(devices() ?? []).length > 0}
@@ -99,24 +99,20 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
         >
           <For each={devices() ?? []}>
             {(device: Device) => (
-              <div class="settings-list-item">
+              <div
+                class="settings-list-item settings-device-list-item"
+                classList={{ selected: selected() === device.id }}
+              >
                 <button
                   type="button"
-                  class="settings-list-item-main"
-                  style={{
-                    background: "transparent",
-                    border: "0",
-                    padding: "0",
-                    cursor: "pointer",
-                    "text-align": "left",
-                  }}
+                  class="settings-list-item-main settings-device-picker"
                   aria-pressed={selected() === device.id}
                   onClick={() => setSelected(device.id)}
                 >
                   <span class="settings-list-item-title">
                     {deviceDisplayName(device)}
                     <Show when={selected() === device.id}>
-                      <span style={{ color: "var(--accent-coral)", "margin-left": "8px" }}>*</span>
+                      <span class="settings-selected-marker">*</span>
                     </Show>
                   </span>
                   <span class="settings-list-item-meta">{device.daemonUrl}</span>
@@ -143,16 +139,18 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
 
       <Show when={selectedDevice()} keyed>
         {(device) => (
-          <DeviceSettingsPanel
-            device={device}
-            devices={devices() ?? []}
-            onChanged={() => void notifyDevicesChanged()}
-            onDevicesRemoved={handleRemoved}
-            onManualCleanupRequired={props.onManualCleanupRequired}
-            onUnpaired={(id) => {
-              if (selected() === id) setSelected(null);
-            }}
-          />
+          <div class="settings-device-detail">
+            <DeviceSettingsPanel
+              device={device}
+              devices={devices() ?? []}
+              onChanged={() => void notifyDevicesChanged()}
+              onDevicesRemoved={handleRemoved}
+              onManualCleanupRequired={props.onManualCleanupRequired}
+              onUnpaired={(id) => {
+                if (selected() === id) setSelected(null);
+              }}
+            />
+          </div>
         )}
       </Show>
     </div>

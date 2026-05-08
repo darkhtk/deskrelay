@@ -4007,6 +4007,40 @@ dialog.approval-modal-root,
   flex-direction: column;
   gap: 14px;
 }
+.settings-dialog {
+  width: min(900px, 95vw);
+  max-width: 900px;
+  max-height: 86vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.settings-dialog-narrow {
+  width: min(640px, 95vw);
+  max-width: 640px;
+  overflow-y: auto;
+}
+.settings-dialog .approval-header {
+  flex: 0 0 auto;
+}
+.settings-dialog-close {
+  margin-left: auto;
+  width: auto;
+  padding: 4px 10px;
+}
+.settings-dialog-shell {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 28px;
+  min-height: 0;
+}
+.settings-dialog-body {
+  min-width: 0;
+  max-height: calc(86vh - 108px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
 .settings-card {
   background: transparent;
   border: 0;
@@ -4230,20 +4264,65 @@ dialog.approval-modal-root,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.settings-device-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+.settings-device-list {
+  min-width: 0;
+}
+.settings-device-list-item {
+  align-items: flex-start;
+}
+.settings-device-list-item.selected .settings-list-item-title {
+  font-weight: 700;
+}
+.settings-device-picker {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.settings-device-picker:focus-visible {
+  outline: 2px solid var(--accent-coral);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.settings-selected-marker {
+  color: var(--accent-coral);
+  margin-left: 8px;
+}
+.settings-device-detail {
+  min-width: 0;
+}
+.settings-danger-section {
+  padding-top: 12px;
+}
 .settings-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+.settings-tab-rail {
+  align-content: flex-start;
+  align-items: stretch;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 2px;
 }
 .settings-tab {
   background: transparent;
   color: var(--text-muted);
   border: 0;
   border-radius: 0;
-  padding: 4px 12px;
+  padding: 6px 0;
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;
+  text-align: left;
 }
 .settings-tab.active {
   background: transparent;
@@ -4252,6 +4331,28 @@ dialog.approval-modal-root,
 }
 .settings-tab:hover {
   color: var(--text);
+}
+@media (max-width: 760px) {
+  .settings-dialog {
+    max-height: 90vh;
+    gap: 14px;
+  }
+  .settings-dialog-shell,
+  .settings-device-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .settings-tab-rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .settings-tab {
+    padding: 4px 0;
+  }
+  .settings-dialog-body {
+    max-height: calc(90vh - 140px);
+  }
 }
 .settings-section-heading {
   display: flex;

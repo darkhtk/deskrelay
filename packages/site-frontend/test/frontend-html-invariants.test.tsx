@@ -120,7 +120,9 @@ describe("settings and chrome invariants", () => {
     expect(appSource).toContain("window.caches");
     expect(appSource).toContain("navigator.serviceWorker");
     expect(appSource).toContain('url.searchParams.set("reload"');
-    expect(chatViewSource).toContain("profile-settings-action");
+    expect(appSource).toContain("settings-dialog-shell");
+    expect(appSource).toContain("settings-tab-rail");
+    expect(chatViewSource).not.toContain("profile-settings-action");
     expect(chatViewSource).not.toContain("DeviceSettingsDialog");
     expect(chatViewSource).not.toContain("LocalePicker");
   });
