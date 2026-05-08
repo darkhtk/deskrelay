@@ -218,6 +218,14 @@ export interface BrowserClientContext {
   isLocal: boolean;
 }
 
+export interface DeskRelayBuildInfo {
+  version: string;
+  commit: string;
+  shortCommit: string;
+  dirty: boolean;
+  source: "env" | "git" | "package" | "unknown";
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -314,7 +322,11 @@ async function readResponse(res: Response): Promise<unknown> {
 }
 
 export const api = {
-  health: () => request<{ ok: true; version: string; devices: number }>("GET", "/healthz"),
+  health: () =>
+    request<{ ok: true; version: string; devices: number; build?: DeskRelayBuildInfo }>(
+      "GET",
+      "/healthz",
+    ),
   localSiteToken: () => readLocalSiteToken(),
   browserClientContext: () => readBrowserClientContext(),
 
@@ -418,6 +430,7 @@ export const api = {
     request<{
       ok: boolean;
       startedAt: string;
+      build?: DeskRelayBuildInfo;
       listening?: { host: string; port: number };
       behaviors?: Array<{
         name: string;

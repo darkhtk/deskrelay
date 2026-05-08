@@ -15,11 +15,20 @@ const SAMPLE_DEVICE = {
   lastSeenAt: "2026-04-30T00:01:00.000Z",
 };
 
+const SERVER_BUILD = {
+  version: "0.0.0",
+  commit: "abcdef1234567890",
+  shortCommit: "abcdef123456",
+  dirty: false,
+  source: "git",
+};
+
 function diagnosticsResponse(over: Partial<Record<string, unknown>> = {}) {
   return new Response(
     JSON.stringify({
       ok: true,
       startedAt: "2026-04-30T00:00:00.000Z",
+      build: SERVER_BUILD,
       listening: { host: "127.0.0.1", port: 18091 },
       behaviors: [{ instanceId: "remote-claude", name: "remote-claude", version: "0.0.1" }],
       brokerStats: { spaces: 0, subscribers: 0, bufferedEvents: 0 },
@@ -59,6 +68,12 @@ describe("ConnectionDiagnostics", () => {
       if (url.endsWith(`/api/devices/${SAMPLE_DEVICE.id}/diagnostics`)) {
         return diagnosticsResponse();
       }
+      if (url.endsWith("/healthz")) {
+        return new Response(
+          JSON.stringify({ ok: true, version: "0.0.0", devices: 1, build: SERVER_BUILD }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       return new Response("{}", { status: 200 });
     });
 
@@ -68,6 +83,7 @@ describe("ConnectionDiagnostics", () => {
 
     await waitFor(() => {
       expect(container.textContent).toContain(t("conn-diag.claude.loaded", { version: "0.0.1" }));
+      expect(container.textContent).toContain("일치");
     });
     expect(container.textContent).toContain("remote-claude@0.0.1");
     expect(container.textContent).toContain("restricted");
@@ -119,6 +135,17 @@ describe("ConnectionDiagnostics", () => {
         diagnosticsCalls += 1;
         return diagnosticsResponse();
       }
+      if (url.endsWith("/healthz")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            version: "0.0.0",
+            devices: 1,
+            build: { ...SERVER_BUILD, commit: "ffffffffffffffff", shortCommit: "ffffffffffff" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       return new Response("{}", { status: 200 });
     });
 
@@ -128,6 +155,7 @@ describe("ConnectionDiagnostics", () => {
 
     await waitFor(() => {
       expect(container.textContent).toContain(t("conn-diag.claude.loaded", { version: "0.0.1" }));
+      expect(container.textContent).toContain("불일치");
     });
     const refresh = [...container.querySelectorAll("button")].find(
       (button) => button.textContent?.trim() === t("conn-diag.action.refresh"),

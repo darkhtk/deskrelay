@@ -1,4 +1,5 @@
 import { networkInterfaces } from "node:os";
+import { type DeskRelayBuildInfo, getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 import {
@@ -14,6 +15,7 @@ export interface SiteAppOptions {
   token?: string;
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   version?: string;
+  build?: DeskRelayBuildInfo;
   announcement?: string;
   announcementUrl?: string;
   announcementPollMs?: number;
@@ -31,11 +33,13 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const registry = options.registry;
   const localToken = options.localDaemonToken;
   const announcements = createAnnouncementSource(options, fetchImpl);
+  const build = options.build ?? getDeskRelayBuildInfo();
 
   app.get("/healthz", (c) =>
     c.json({
       ok: true,
-      version: options.version ?? "0.0.0",
+      version: options.version ?? build.version,
+      build,
       devices: registry.list().length,
     }),
   );

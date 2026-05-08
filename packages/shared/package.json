@@ -10,6 +10,7 @@
     "./event": "./src/event.ts",
     "./manifest": "./src/manifest.ts",
     "./space": "./src/space.ts",
+    "./version": "./src/version.ts",
     "./license": "./src/license.ts",
     "./license-jwt": "./src/license-jwt.ts"
   },

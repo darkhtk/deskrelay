@@ -21,6 +21,7 @@ import { BehaviorHostError, type BehaviorHostLogRecord } from "@deskrelay/behavi
 import { InProcessSubscriptionBroker } from "@deskrelay/core";
 import type { EventEnvelope } from "@deskrelay/shared/event";
 import { type SpaceId, isSpaceId } from "@deskrelay/shared/space";
+import { getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { ApprovalQueue } from "./approvals.ts";
 import { BehaviorFetcher, BehaviorFetcherError } from "./behavior-fetcher.ts";
 import { BehaviorRegistry, BehaviorRegistryError } from "./behavior-registry.ts";
@@ -288,6 +289,7 @@ export class Daemon {
     return jsonResponse(200, {
       ok: true,
       startedAt: this.#startedAt,
+      build: getDeskRelayBuildInfo(),
       listening: this.#listening,
       behaviors: summaries,
       brokerStats: this.broker.stats(),

@@ -61,6 +61,17 @@ describe("Daemon HTTP API — basics", () => {
     expect(d.behaviors).toEqual([]);
   });
 
+  test("GET /status exposes connector build info", async () => {
+    const r = await http("GET", "/status");
+    expect(r.status).toBe(200);
+    const d = r.data as {
+      build?: { version?: string; commit?: string; shortCommit?: string; dirty?: boolean };
+    };
+    expect(d.build?.version).toBe("0.0.0");
+    expect(typeof d.build?.shortCommit).toBe("string");
+    expect(typeof d.build?.dirty).toBe("boolean");
+  });
+
   test("unknown route returns 404", async () => {
     const r = await http("GET", "/no-such-thing");
     expect(r.status).toBe(404);

@@ -1,5 +1,5 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
-import { type Device, api } from "../api.ts";
+import { type DeskRelayBuildInfo, type Device, api } from "../api.ts";
 import { deviceDisplayName } from "../device-display.ts";
 import { t } from "../i18n.ts";
 
@@ -29,6 +29,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   );
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
   const [diagnosticsError, setDiagnosticsError] = createSignal<Error | null>(null);
+  const [health, { refetch: refetchHealth }] = createResource(() => api.health().catch(() => null));
 
   createEffect(() => {
     const list = devices();
@@ -68,6 +69,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   );
 
   function refresh(): void {
+    void refetchHealth();
     void refetchDevices();
     if (selectedDevice()) void refetchDiagnostics();
   }
@@ -95,6 +97,16 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     if (value === true) return "ok";
     if (value === false) return "bad";
     return "warning";
+  };
+
+  const buildTone = (): Tone => {
+    if (diagnostics.loading || health.loading) return "pending";
+    const server = health()?.build;
+    const connector = diagnostics()?.build;
+    const same = sameBuild(server, connector);
+    if (same === true) return "ok";
+    if (same === false) return "warning";
+    return "pending";
   };
 
   const rows = (): StatusRow[] => {
@@ -133,6 +145,11 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         detail: daemonDetail,
         action: diagnosticsError() ? t("conn-diag.action.refresh") : undefined,
         onAction: diagnosticsError() ? refresh : undefined,
+      },
+      {
+        tone: buildTone(),
+        label: "버전",
+        detail: buildDetail(health()?.build, snapshot?.build),
       },
       {
         tone: deviceConnectionTone(),
@@ -179,7 +196,11 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           : t("conn-diag.not-read"),
       },
       {
-        tone: !snapshot ? "warning" : snapshot.workspaceRoots?.mode === "restricted" ? "warning" : "ok",
+        tone: !snapshot
+          ? "warning"
+          : snapshot.workspaceRoots?.mode === "restricted"
+            ? "warning"
+            : "ok",
         label: t("conn-diag.row.workspace"),
         detail: t("conn-diag.workspace.detail", {
           mode: workspaceMode,
@@ -286,7 +307,9 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
 
       <Show when={(diagnostics()?.workspaceRoots?.roots ?? []).length > 0}>
         <div class="connection-diagnostics-list">
-          <div class="connection-diagnostics-list-title">{t("dsd.diagnostics.workspace-roots")}</div>
+          <div class="connection-diagnostics-list-title">
+            {t("dsd.diagnostics.workspace-roots")}
+          </div>
           <For each={diagnostics()?.workspaceRoots?.roots ?? []}>
             {(root) => <code>{root}</code>}
           </For>
@@ -295,7 +318,9 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
 
       <Show when={(diagnostics()?.behaviors ?? []).length > 0}>
         <div class="connection-diagnostics-list">
-          <div class="connection-diagnostics-list-title">{t("dsd.diagnostics.loaded-behaviors")}</div>
+          <div class="connection-diagnostics-list-title">
+            {t("dsd.diagnostics.loaded-behaviors")}
+          </div>
           <For each={diagnostics()?.behaviors ?? []}>
             {(behavior) => (
               <code>
@@ -326,4 +351,40 @@ function formatTime(value: string): string {
 
 function formatOptionalTime(value: string | undefined): string {
   return value ? formatTime(value) : t("conn-diag.unknown");
+}
+
+function sameBuild(
+  server: DeskRelayBuildInfo | undefined,
+  connector: DeskRelayBuildInfo | undefined,
+): boolean | null {
+  if (!server || !connector) return null;
+  if (
+    !server.commit ||
+    !connector.commit ||
+    server.commit === "unknown" ||
+    connector.commit === "unknown"
+  ) {
+    return null;
+  }
+  return server.commit === connector.commit && server.dirty === connector.dirty;
+}
+
+function buildDetail(
+  server: DeskRelayBuildInfo | undefined,
+  connector: DeskRelayBuildInfo | undefined,
+): string {
+  const serverLabel = buildLabel(server);
+  const connectorLabel = buildLabel(connector);
+  const same = sameBuild(server, connector);
+  if (same === true) return `server ${serverLabel} · connector ${connectorLabel} · 일치`;
+  if (same === false) {
+    return `server ${serverLabel} · connector ${connectorLabel} · 불일치: 서버와 connector를 같은 git 버전으로 재시작하세요`;
+  }
+  return `server ${serverLabel} · connector ${connectorLabel} · 확인 필요`;
+}
+
+function buildLabel(build: DeskRelayBuildInfo | undefined): string {
+  if (!build) return "unknown";
+  const dirty = build.dirty ? "+dirty" : "";
+  return `${build.shortCommit || build.version || "unknown"}${dirty}`;
 }

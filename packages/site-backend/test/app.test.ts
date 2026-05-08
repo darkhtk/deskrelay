@@ -79,7 +79,17 @@ describe("/healthz (unauth)", () => {
   test("reports ok + device count", async () => {
     const res = await setup.app.fetch(new Request("http://site.local/healthz"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, version: "0.0.0", devices: 0 });
+    const body = (await res.json()) as {
+      ok: boolean;
+      version: string;
+      devices: number;
+      build?: { version?: string; shortCommit?: string };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.version).toBe("0.0.0");
+    expect(body.devices).toBe(0);
+    expect(body.build?.version).toBe("0.0.0");
+    expect(typeof body.build?.shortCommit).toBe("string");
   });
 });
 
