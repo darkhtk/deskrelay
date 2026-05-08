@@ -288,14 +288,17 @@ body.sidebar-open {
   width: 1px;
   border-radius: 999px;
   background: transparent;
-  transition: background 120ms ease, width 120ms ease, left 120ms ease;
+  transition: none;
 }
 
-.sidebar-resize-handle:focus-visible::after,
 .sidebar-resize-handle.is-dragging::after {
   left: 7px;
   width: 2px;
   background: var(--border-strong);
+}
+
+.sidebar-resize-handle:focus-visible {
+  outline: none;
 }
 
 .sidebar-resize-handle.will-collapse::after {
