@@ -47,23 +47,35 @@ export const CwdPicker: Component<CwdPickerProps> = (props) => {
   // an empty path, so typing-from-scratch still works.
   const [roots, setRoots] = createSignal<FsRootsResponse | null>(null);
   let activeFetch = 0;
+  let rootsRequestDevice: string | null = null;
+  let rootsRequest: Promise<FsRootsResponse> | null = null;
   let inputEl!: HTMLInputElement;
 
   createEffect(() => {
     const id = props.deviceId;
     if (!id) {
       setRoots(null);
+      rootsRequestDevice = null;
+      rootsRequest = null;
       return;
     }
-    void api
-      .fsRoots(id)
-      .then((r) => setRoots(r))
-      .catch(() => {
-        // Older daemons (pre-allowlist) don't ship /fs/roots — treat as
-        // unrestricted so the picker keeps its prior behaviour.
-        setRoots({ mode: "unrestricted", roots: [] });
-      });
+    void loadRoots(id);
   });
+
+  function loadRoots(deviceId: string): Promise<FsRootsResponse> {
+    if (rootsRequestDevice === deviceId && rootsRequest) return rootsRequest;
+    rootsRequestDevice = deviceId;
+    rootsRequest = api
+      .fsRoots(deviceId)
+      .catch((): FsRootsResponse => {
+        return { mode: "unrestricted", roots: [] };
+      })
+      .then((next) => {
+        if (props.deviceId === deviceId) setRoots(next);
+        return next;
+      });
+    return rootsRequest;
+  }
 
   function endsWithSep(value: string): boolean {
     return /[\\/]$/.test(value);
@@ -80,11 +92,101 @@ export const CwdPicker: Component<CwdPickerProps> = (props) => {
     return p.includes("\\") ? "\\" : "/";
   }
 
+  function isWindowsish(value: string): boolean {
+    return /^[A-Za-z]:[\\/]/.test(value) || value.includes("\\");
+  }
+
+  function normalizeForCompare(value: string, ignoreCase: boolean): string {
+    let normalized = String(value ?? "").trim().replace(/\\/g, "/");
+    while (
+      normalized.length > 1 &&
+      normalized.endsWith("/") &&
+      !/^[A-Za-z]:\/$/.test(normalized)
+    ) {
+      normalized = normalized.slice(0, -1);
+    }
+    return ignoreCase ? normalized.toLowerCase() : normalized;
+  }
+
+  function pathsEqual(a: string, b: string): boolean {
+    const ignoreCase = isWindowsish(a) || isWindowsish(b);
+    return normalizeForCompare(a, ignoreCase) === normalizeForCompare(b, ignoreCase);
+  }
+
+  function isInsideClientRoot(value: string, root: string): boolean {
+    const ignoreCase = isWindowsish(value) || isWindowsish(root);
+    const candidate = normalizeForCompare(value, ignoreCase);
+    const base = normalizeForCompare(root, ignoreCase);
+    return candidate === base || candidate.startsWith(`${base}/`);
+  }
+
+  function rootsMatchingPrefix(value: string, rootList: string[]): string[] {
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed) return rootList;
+    return rootList.filter((root) => {
+      const ignoreCase = isWindowsish(trimmed) || isWindowsish(root);
+      const candidate = normalizeForCompare(trimmed, ignoreCase);
+      const base = normalizeForCompare(root, ignoreCase);
+      return base.startsWith(candidate);
+    });
+  }
+
+  function pathName(value: string): string {
+    const normalized = String(value ?? "").replace(/[\\/]+$/, "");
+    const idx = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+    return idx === -1 ? normalized || value : normalized.slice(idx + 1) || value;
+  }
+
+  function rootEntry(root: string): FsEntry {
+    return {
+      name: pathName(root),
+      fullPath: root,
+      isDir: true,
+    };
+  }
+
+  function planLookup(
+    value: string,
+    rootConfig: FsRootsResponse,
+  ):
+    | { kind: "remote"; lookup: string; filterPrefix: string }
+    | { kind: "local"; entries: FsEntry[]; status: string | null } {
+    const trimmed = String(value ?? "").trim();
+    const lookup = endsWithSep(trimmed) ? trimmed : extractParent(trimmed);
+    const filterPrefix = endsWithSep(trimmed) ? "" : extractBasename(trimmed);
+
+    if (rootConfig.mode !== "restricted") {
+      return { kind: "remote", lookup, filterPrefix };
+    }
+
+    if (!trimmed || trimmed === "/" || trimmed === "\\") {
+      return { kind: "remote", lookup: "", filterPrefix: "" };
+    }
+
+    const exactRoot = rootConfig.roots.find((root) => pathsEqual(trimmed, root));
+    if (exactRoot) {
+      return { kind: "remote", lookup: exactRoot, filterPrefix: "" };
+    }
+
+    if (!lookup || !rootConfig.roots.some((root) => isInsideClientRoot(lookup, root))) {
+      const matches = rootsMatchingPrefix(trimmed, rootConfig.roots);
+      if (matches.length > 0) {
+        return { kind: "local", entries: matches.map(rootEntry), status: null };
+      }
+      return {
+        kind: "local",
+        entries: [],
+        status: t("cwd.status.outside-roots"),
+      };
+    }
+
+    return { kind: "remote", lookup, filterPrefix };
+  }
+
   async function loadSuggestions(rawValue: string): Promise<void> {
-    if (!props.deviceId) return;
+    const deviceId = props.deviceId;
+    if (!deviceId) return;
     const value = String(rawValue ?? "");
-    const lookup = endsWithSep(value) ? value : extractParent(value);
-    const filterPrefix = endsWithSep(value) ? "" : extractBasename(value);
 
     activeFetch += 1;
     const my = activeFetch;
@@ -93,8 +195,21 @@ export const CwdPicker: Component<CwdPickerProps> = (props) => {
     setHighlight(-1);
 
     try {
-      const res = await api.fsList(props.deviceId, lookup);
+      const rootConfig = await loadRoots(deviceId);
       if (my !== activeFetch) return;
+      const plan = planLookup(value, rootConfig);
+      if (plan.kind === "local") {
+        setLastErrorMsg(null);
+        setSuggestions(plan.entries);
+        setStatus(plan.entries.length > 0 ? null : plan.status);
+        setHighlight(plan.entries.length > 0 ? 0 : -1);
+        return;
+      }
+
+      const res = await api.fsList(deviceId, plan.lookup);
+      if (my !== activeFetch) return;
+      setLastErrorMsg(null);
+      const filterPrefix = plan.filterPrefix;
       const lower = filterPrefix.toLowerCase();
       const filtered = res.entries
         .filter((e) => !lower || e.name.toLowerCase().startsWith(lower))
