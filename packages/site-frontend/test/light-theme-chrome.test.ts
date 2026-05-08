@@ -8,12 +8,12 @@ describe("light theme browser chrome", () => {
     const html = read("../index.html");
     const manifest = JSON.parse(read("../public/manifest.webmanifest"));
 
-    expect(html).toContain('<meta name="theme-color" content="#faf9f5" />');
+    expect(html).toContain('<meta name="theme-color" content="#f7f7f7" />');
     expect(html).toContain(
       '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
     );
-    expect(manifest.background_color).toBe("#faf9f5");
-    expect(manifest.theme_color).toBe("#faf9f5");
+    expect(manifest.background_color).toBe("#f7f7f7");
+    expect(manifest.theme_color).toBe("#f7f7f7");
   });
 
   test("keeps installed-app chrome light while app dark mode stays scoped to CSS", () => {

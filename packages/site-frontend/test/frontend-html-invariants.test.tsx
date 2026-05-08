@@ -43,9 +43,9 @@ afterEach(() => {
 const pkgRoot = resolve(process.cwd());
 
 describe("static index.html", () => {
-  test('theme-color meta is "#faf9f5"', () => {
+  test('theme-color meta is "#f7f7f7"', () => {
     const html = readFileSync(resolve(pkgRoot, "index.html"), "utf8");
-    expect(html).toContain('content="#faf9f5"');
+    expect(html).toContain('content="#f7f7f7"');
   });
 });
 

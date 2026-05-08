@@ -1,18 +1,18 @@
-/* DeskRelay light theme. Tokens mirror the warm, quiet Claude.ai
-   surface: cream background, coral accent, and restrained borders. */
+/* DeskRelay theme tokens. Light mode mirrors Codex's neutral white/gray
+   surface; dark mode mirrors Codex's charcoal app background. */
 
 :root {
   color-scheme: light;
-  --bg: #faf9f5;
-  --bg-soft: #f5f3ec;
+  --bg: #f7f7f7;
+  --bg-soft: #f1f1f1;
   --surface-card: #ffffff;
   --surface-raised: #ffffff;
   --surface: #ffffff;
-  --text: #1f1d1a;
-  --text-muted: #7a7570;
-  --text-faint: #a8a29a;
-  --border-subtle: #e8e6e0;
-  --border-strong: #d6d2c9;
+  --text: #1b1b1b;
+  --text-muted: #6f6f6f;
+  --text-faint: #9a9a9a;
+  --border-subtle: #e5e5e5;
+  --border-strong: #cfcfcf;
   --accent: #cc7a55;
   --accent-coral: #cc7a55;
   --accent-coral-strong: #b86847;
@@ -21,18 +21,18 @@
   --ink-button: #1f1d1a;
   --ink-button-hover: #3a332d;
   --ink-button-text: #ffffff;
-  --code-chip: #f0eee8;
-  --code-bg: #f5f3ec;
+  --code-chip: #eeeeee;
+  --code-bg: #f1f1f1;
   --danger: #c44747;
   --danger-soft: rgba(196, 71, 71, 0.1);
   --success: #2f8a4f;
   --warning: #c49a47;
   --warning-soft: rgba(196, 154, 71, 0.12);
-  --overlay-scrim: rgba(20, 16, 10, 0.08);
-  --mobile-sidebar-scrim: rgba(250, 249, 245, 0.82);
-  --shadow-sm: 0 1px 2px rgba(20, 16, 10, 0.04), 0 1px 3px rgba(20, 16, 10, 0.06);
-  --shadow-md: 0 8px 24px rgba(20, 16, 10, 0.08);
-  --shadow-lg: 0 24px 60px rgba(20, 16, 10, 0.18);
+  --overlay-scrim: rgba(33, 33, 33, 0.08);
+  --mobile-sidebar-scrim: rgba(247, 247, 247, 0.82);
+  --shadow-sm: 0 1px 2px rgba(33, 33, 33, 0.04), 0 1px 3px rgba(33, 33, 33, 0.06);
+  --shadow-md: 0 8px 24px rgba(33, 33, 33, 0.08);
+  --shadow-lg: 0 24px 60px rgba(33, 33, 33, 0.18);
   --chat-transcript-max: 760px;
   font-family: "Tiempos Headline", "Charter", "Iowan Old Style", Georgia, "Pretendard",
     "Noto Sans KR", serif;
@@ -1770,7 +1770,7 @@ body.sidebar-open {
 
 select.text-input {
   appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%237a7570'><path d='M3 5l3 3 3-3'/></svg>");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%236f6f6f'><path d='M3 5l3 3 3-3'/></svg>");
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 12px;
