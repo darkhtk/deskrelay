@@ -42,11 +42,11 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #000000;
-  --bg-soft: #101010;
-  --surface-card: #050505;
-  --surface-raised: #0d0d0d;
-  --surface: #050505;
+  --bg: #212121;
+  --bg-soft: #2a2a2a;
+  --surface-card: #303030;
+  --surface-raised: #303030;
+  --surface: #303030;
   --text: #ffffff;
   --text-muted: #b8b8b8;
   --text-faint: #777777;
