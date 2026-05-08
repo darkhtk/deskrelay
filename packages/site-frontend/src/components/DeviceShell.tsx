@@ -1,6 +1,6 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
 import { type Device, api } from "../api.ts";
-import { deviceDisplayName } from "../device-display.ts";
+import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { clearDevicePrefs } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
@@ -51,7 +51,20 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
     return (devices() ?? []).find((device) => device.id === id) ?? null;
   };
 
-  const remove = async (id: string) => {
+  const isServerDevice = (device: Device) => deviceDisplayRole(device) === "Server";
+
+  const handleRemoved = (ids: string[]) => {
+    const removed = new Set(ids);
+    if (selected() && removed.has(selected() as string)) setSelected(null);
+    mutate((current) => (current ?? []).filter((device) => !removed.has(device.id)));
+  };
+
+  const remove = async (device: Device) => {
+    if (isServerDevice(device)) {
+      setError(t("ds.devices.server.blocked"));
+      return;
+    }
+    const id = device.id;
     if (removingIds().has(id)) return;
     if (!confirm(t("ds.devices.remove.confirm"))) return;
     setError(null);
@@ -59,8 +72,7 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
     try {
       await api.unregisterDevice(id);
       clearDevicePrefs(id);
-      if (selected() === id) setSelected(null);
-      mutate((current) => (current ?? []).filter((device) => device.id !== id));
+      handleRemoved([id]);
       void notifyDevicesChanged().catch((err) => {
         setError((err as Error).message);
       });
@@ -103,14 +115,19 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
                   </span>
                   <span class="settings-list-item-meta">{device.daemonUrl}</span>
                 </button>
-                <button
-                  type="button"
-                  class="danger-button"
-                  onClick={() => void remove(device.id)}
-                  disabled={removingIds().has(device.id)}
+                <Show
+                  when={!isServerDevice(device)}
+                  fallback={<span class="settings-list-item-meta">{t("ds.devices.server.locked")}</span>}
                 >
-                  {removingIds().has(device.id) ? t("dsd.unpair.busy") : t("ds.devices.remove")}
-                </button>
+                  <button
+                    type="button"
+                    class="danger-button"
+                    onClick={() => void remove(device)}
+                    disabled={removingIds().has(device.id)}
+                  >
+                    {removingIds().has(device.id) ? t("dsd.unpair.busy") : t("ds.devices.remove")}
+                  </button>
+                </Show>
               </div>
             )}
           </For>
@@ -122,10 +139,11 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
         {(device) => (
           <DeviceSettingsPanel
             device={device}
+            devices={devices() ?? []}
             onChanged={() => void notifyDevicesChanged()}
+            onDevicesRemoved={handleRemoved}
             onUnpaired={(id) => {
               if (selected() === id) setSelected(null);
-              void notifyDevicesChanged();
             }}
           />
         )}

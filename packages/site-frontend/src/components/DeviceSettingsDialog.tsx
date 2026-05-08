@@ -1,12 +1,15 @@
 import { type Component, Show, createSignal } from "solid-js";
 import { type Device, api } from "../api.ts";
+import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { clearDevicePrefs, getDeviceDefaultCwd, setDeviceDefaultCwd } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { CwdPicker } from "./CwdPicker.tsx";
 
 export interface DeviceSettingsPanelProps {
   device: Device;
+  devices?: Device[] | undefined;
   onChanged: () => void;
+  onDevicesRemoved?: ((deviceIds: string[]) => void) | undefined;
   onUnpaired?: ((deviceId: string) => void) | undefined;
   onClose?: (() => void) | undefined;
 }
@@ -25,7 +28,12 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
   const [cwdSaved, setCwdSaved] = createSignal(false);
 
   const [unpairBusy, setUnpairBusy] = createSignal(false);
+  const [unpairAllBusy, setUnpairAllBusy] = createSignal(false);
   const [unpairError, setUnpairError] = createSignal<string | null>(null);
+
+  const isServerDevice = (device: Device) => deviceDisplayRole(device) === "Server";
+  const currentIsServer = () => isServerDevice(props.device);
+  const globalDevices = () => props.devices ?? [];
 
   async function saveLabel() {
     const next = label().trim();
@@ -54,12 +62,17 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
   }
 
   async function unpair() {
+    if (currentIsServer()) {
+      setUnpairError(t("dsd.unpair.server.blocked"));
+      return;
+    }
     if (!confirm(t("dsd.unpair.confirm", { label: props.device.label }))) return;
     setUnpairBusy(true);
     setUnpairError(null);
     try {
       await api.unregisterDevice(props.device.id);
       clearDevicePrefs(props.device.id);
+      props.onDevicesRemoved?.([props.device.id]);
       props.onUnpaired?.(props.device.id);
       props.onChanged();
       props.onClose?.();
@@ -67,6 +80,46 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
       setUnpairError((err as Error).message);
       setUnpairBusy(false);
     }
+  }
+
+  async function unpairAllDevices() {
+    const list = globalDevices();
+    if (list.length === 0 || unpairAllBusy()) return;
+    if (!confirm(t("dsd.unpair.all.confirm", { count: String(list.length) }))) return;
+
+    setUnpairAllBusy(true);
+    setUnpairError(null);
+    const ordered = [...list].sort((left, right) => {
+      return Number(isServerDevice(left)) - Number(isServerDevice(right));
+    });
+    const removedIds: string[] = [];
+    const failures: string[] = [];
+
+    for (const device of ordered) {
+      try {
+        await api.unregisterDevice(device.id);
+        clearDevicePrefs(device.id);
+        removedIds.push(device.id);
+      } catch (err) {
+        failures.push(`${deviceDisplayName(device)}: ${(err as Error).message}`);
+      }
+    }
+
+    if (removedIds.length > 0) {
+      props.onDevicesRemoved?.(removedIds);
+      if (!props.onDevicesRemoved) {
+        for (const id of removedIds) props.onUnpaired?.(id);
+      }
+      props.onChanged();
+    }
+
+    if (failures.length > 0) {
+      setUnpairError(t("dsd.unpair.all.partial", { errors: failures.join("; ") }));
+      setUnpairAllBusy(false);
+      return;
+    }
+
+    props.onClose?.();
   }
 
   return (
@@ -128,17 +181,39 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
 
       <section class="settings-card">
         <h3 class="settings-card-title danger">{t("dsd.section.danger")}</h3>
-        <p class="settings-card-help">{t("dsd.danger.help")}</p>
-        <div class="settings-row">
-          <button
-            type="button"
-            class="danger-button"
-            onClick={() => void unpair()}
-            disabled={unpairBusy()}
-          >
-            {unpairBusy() ? t("dsd.unpair.busy") : t("dsd.unpair")}
-          </button>
-        </div>
+        <p class="settings-card-help">
+          {currentIsServer() ? t("dsd.unpair.server.help") : t("dsd.danger.help")}
+        </p>
+        <Show
+          when={!currentIsServer()}
+          fallback={<p class="settings-card-help">{t("dsd.unpair.server.blocked")}</p>}
+        >
+          <div class="settings-row">
+            <button
+              type="button"
+              class="danger-button"
+              data-testid="device-unpair-button"
+              onClick={() => void unpair()}
+              disabled={unpairBusy()}
+            >
+              {unpairBusy() ? t("dsd.unpair.busy") : t("dsd.unpair")}
+            </button>
+          </div>
+        </Show>
+        <Show when={globalDevices().length > 0}>
+          <div class="settings-row">
+            <button
+              type="button"
+              class="danger-button"
+              data-testid="device-unpair-all-button"
+              onClick={() => void unpairAllDevices()}
+              disabled={unpairAllBusy()}
+            >
+              {unpairAllBusy() ? t("dsd.unpair.all.busy") : t("dsd.unpair.all")}
+            </button>
+          </div>
+          <p class="settings-card-help">{t("dsd.unpair.all.help")}</p>
+        </Show>
         <Show when={unpairError()}>
           {(message) => <span class="settings-error">{message()}</span>}
         </Show>
@@ -190,8 +265,10 @@ export const DeviceSettingsDialog: Component<DeviceSettingsDialogProps> = (props
 
         <DeviceSettingsPanel
           device={props.device}
+          devices={props.devices}
           onChanged={props.onChanged}
           onClose={props.onClose}
+          onDevicesRemoved={props.onDevicesRemoved}
           onUnpaired={props.onUnpaired}
         />
       </div>

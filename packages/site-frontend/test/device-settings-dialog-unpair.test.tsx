@@ -26,6 +26,13 @@ const SAMPLE_DEVICE = {
   registeredAt: "2026-04-30T00:00:00.000Z",
 };
 
+const SERVER_DEVICE = {
+  id: "dev_server_1",
+  label: "Local dev (HOMEDEV)",
+  daemonUrl: "http://127.0.0.1:18191",
+  registeredAt: "2026-04-30T00:00:00.000Z",
+};
+
 beforeEach(() => {
   try {
     window.localStorage.clear();
@@ -246,5 +253,58 @@ describe("DeviceSettingsDialog — unpair", () => {
     // Prefs untouched on failure path — re-trying unpair after fixing
     // the server picks up where the user left off.
     expect(getDeviceDefaultCwd(SAMPLE_DEVICE.id)).toBe("/keep-on-failure");
+  });
+
+  test("blocks individual server removal but allows explicit server + all devices removal", async () => {
+    setDeviceDefaultCwd(SAMPLE_DEVICE.id, "/remote-work");
+    setDeviceDefaultCwd(SERVER_DEVICE.id, "/server-work");
+    const deletedIds: string[] = [];
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "DELETE" && url.includes("/api/devices/")) {
+        deletedIds.push(decodeURIComponent(url.split("/").pop() ?? ""));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const onClose = vi.fn();
+    const onChanged = vi.fn();
+    const onUnpaired = vi.fn();
+    const onDevicesRemoved = vi.fn();
+
+    const { container } = render(() => (
+      <DeviceSettingsDialog
+        device={SERVER_DEVICE}
+        devices={[SERVER_DEVICE, SAMPLE_DEVICE]}
+        onClose={onClose}
+        onChanged={onChanged}
+        onDevicesRemoved={onDevicesRemoved}
+        onUnpaired={onUnpaired}
+      />
+    ));
+
+    expect(container.querySelector('[data-testid="device-unpair-button"]')).toBeNull();
+    expect(container.textContent ?? "").toContain(t("dsd.unpair.server.blocked"));
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const removeAllButton = container.querySelector(
+      '[data-testid="device-unpair-all-button"]',
+    ) as HTMLButtonElement | null;
+    if (!removeAllButton) throw new Error("remove all button missing");
+    fireEvent.click(removeAllButton);
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    expect(deletedIds).toEqual([SAMPLE_DEVICE.id, SERVER_DEVICE.id]);
+    expect(onDevicesRemoved).toHaveBeenCalledWith([SAMPLE_DEVICE.id, SERVER_DEVICE.id]);
+    expect(onUnpaired).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(getDeviceDefaultCwd(SAMPLE_DEVICE.id)).toBeNull();
+    expect(getDeviceDefaultCwd(SERVER_DEVICE.id)).toBeNull();
   });
 });
