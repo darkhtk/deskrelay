@@ -178,6 +178,101 @@ function Ensure-ConnectorFirewallRule {
   }
 }
 
+function Stop-ProcessTree {
+  param([int]$ProcessId)
+  if (-not $ProcessId -or $ProcessId -eq $PID) {
+    return
+  }
+  $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" -ErrorAction SilentlyContinue)
+  foreach ($child in $children) {
+    Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+  }
+  try {
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+    Write-Host "Stopped stale DeskRelay process pid=$ProcessId"
+  } catch {
+    Write-Warning "Could not stop stale DeskRelay process pid=${ProcessId}: $($_.Exception.Message)"
+  }
+}
+
+function Stop-WindowsLoginTask {
+  param([string]$TaskName = "DeskRelay Connector")
+  if ($env:OS -notlike "*Windows*") {
+    return
+  }
+  try {
+    schtasks.exe /End /TN $TaskName 2>$null | Out-Null
+  } catch {
+    # Best effort.
+  }
+  try {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($task) {
+      Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+      Write-Host "Removed stale login task: $TaskName"
+      return
+    }
+  } catch {
+    # Fall through to schtasks.
+  }
+  try {
+    schtasks.exe /Delete /TN $TaskName /F 2>$null | Out-Null
+  } catch {
+    # Already absent or unsupported.
+  }
+}
+
+function Get-DeskRelaySupervisorPids {
+  $matches = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+      $cmd = [string]$_.CommandLine
+      $cmd -and (
+        $cmd -like "*cr-connector-login-task.ps1*"
+      )
+    } |
+    Select-Object -ExpandProperty ProcessId)
+  return @($matches | Where-Object { $_ -and [int]$_ -ne $PID } | Sort-Object -Unique)
+}
+
+function Get-PortOwnerPids {
+  param([int]$Port)
+  $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+  return @($listeners |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    Where-Object { $_ -and [int]$_ -ne $PID })
+}
+
+function Test-PortFree {
+  param([int]$Port)
+  return @(Get-PortOwnerPids -Port $Port).Count -eq 0
+}
+
+function Stop-StaleConnector {
+  param([int]$Port)
+  Stop-WindowsLoginTask
+
+  $pids = @()
+  $pids += @(Get-DeskRelaySupervisorPids)
+  $pids += @(Get-PortOwnerPids -Port $Port)
+  $pids = @($pids | Where-Object { $_ } | Sort-Object -Unique)
+  foreach ($processId in $pids) {
+    Stop-ProcessTree -ProcessId ([int]$processId)
+  }
+
+  $deadline = (Get-Date).AddSeconds(8)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-PortFree -Port $Port) {
+      return
+    }
+    Start-Sleep -Milliseconds 250
+  }
+
+  $remaining = @(Get-PortOwnerPids -Port $Port)
+  if ($remaining.Count -gt 0) {
+    throw "TCP $Port is still held by process id(s): $($remaining -join ', '). Close those processes or rerun PowerShell as Administrator, then run this registration command again."
+  }
+}
+
 function Normalize-RepoUrl {
   param([string]$Url)
   $value = $Url.Trim().TrimEnd("/")
@@ -272,6 +367,7 @@ Write-Host "DeskRelay server: $serverUrl"
 Write-Host "This PC connector will listen on 0.0.0.0:$Port"
 Write-Host "This PC will be registered as $($endpoint.Kind): http://$($endpoint.Host):$Port"
 Ensure-ConnectorFirewallRule -Port $Port
+Stop-StaleConnector -Port $Port
 
 Ensure-DeskRelayRepo -Path $Repo -Url $RepoUrl
 
