@@ -123,20 +123,27 @@ describe("self-host command helper", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       preferredUrl: string;
+      serverPort: number;
+      connectorPort: number;
       siteToken: string;
       urls: Array<{ kind: string; url: string }>;
       command: string;
     };
     expect(body.preferredUrl).toBe("http://100.64.1.2:18193");
+    expect(body.serverPort).toBe(18193);
+    expect(body.connectorPort).toBe(18091);
     expect(body.siteToken).toBe(TOKEN);
     expect(body.command).toContain(
       "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1",
     );
     expect(body.command).toContain("deskrelay-install-connector.ps1");
     expect(body.command).toContain(`# Server URL: ${body.preferredUrl}`);
+    expect(body.command).toContain("# Server port: 18193");
+    expect(body.command).toContain("# Connector port: 18091");
     expect(body.command).toContain(`# Site token: ${TOKEN}`);
     expect(body.command).toContain(`-Server '${body.preferredUrl}'`);
     expect(body.command).toContain(`-SiteToken '${TOKEN}'`);
+    expect(body.command).toContain("-Port 18091");
     expect(body.command).toContain("-WorkspaceRoots $workspaceRoots");
     expect(body.command).toContain("Invoke-WebRequest");
     expect(body.command).toContain("Start-Process");
@@ -161,16 +168,22 @@ describe("self-host command helper", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       preferredUrl: string;
+      serverPort: number;
+      connectorPort: number;
       siteToken: string;
       urls: Array<{ kind: string; url: string }>;
       command: string;
     };
+    expect(body.serverPort).toBe(18193);
+    expect(body.connectorPort).toBe(18091);
     expect(body.siteToken).toBe(TOKEN);
     expect(body.command).toContain(
       "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/remove-connector.ps1",
     );
     expect(body.command).toContain("deskrelay-remove-connector.ps1");
     expect(body.command).toContain(`# Server URL: ${body.preferredUrl}`);
+    expect(body.command).toContain("# Server port: 18193");
+    expect(body.command).toContain("# Connector port: 18091");
     expect(body.command).toContain(`# Site token: ${TOKEN}`);
     expect(body.command).toContain(`-Server '${body.preferredUrl}'`);
     expect(body.command).toContain(`-SiteToken '${TOKEN}'`);

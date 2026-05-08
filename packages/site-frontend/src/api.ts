@@ -153,6 +153,8 @@ export interface FsRootsResponse {
 
 export interface RegisterOtherPcCommandResponse {
   preferredUrl: string;
+  serverPort: number;
+  connectorPort: number;
   siteToken: string;
   urls: Array<{ kind: string; url: string }>;
   command: string;
@@ -160,6 +162,8 @@ export interface RegisterOtherPcCommandResponse {
 
 export interface RemoveOtherPcCommandResponse {
   preferredUrl: string;
+  serverPort: number;
+  connectorPort: number;
   siteToken: string;
   urls: Array<{ kind: string; url: string }>;
   command: string;

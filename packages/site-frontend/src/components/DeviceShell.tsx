@@ -14,7 +14,12 @@ import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
 
 type DeviceCommandKind = "register" | "remove";
-type DeviceCommandMeta = { preferredUrl: string; siteToken: string };
+type DeviceCommandMeta = {
+  preferredUrl: string;
+  serverPort: number;
+  connectorPort: number;
+  siteToken: string;
+};
 const REGISTER_COMMAND_WATCH_MS = 60_000;
 const REGISTER_COMMAND_POLL_MS = 1_500;
 
@@ -220,7 +225,12 @@ const AddDeviceCard: Component<{
     try {
       const result =
         kind === "register" ? await api.registerOtherPcCommand() : await api.removeOtherPcCommand();
-      setCommandMeta({ preferredUrl: result.preferredUrl, siteToken: result.siteToken });
+      setCommandMeta({
+        preferredUrl: result.preferredUrl,
+        serverPort: result.serverPort,
+        connectorPort: result.connectorPort,
+        siteToken: result.siteToken,
+      });
       if (kind === "register") {
         void startRegistrationWatch();
       }
@@ -352,6 +362,12 @@ const AddDeviceCard: Component<{
             <div class="settings-command-meta" aria-label={t("ds.add.command.meta")}>
               <span>
                 <strong>{t("ds.add.command.server-url")}</strong>: {meta().preferredUrl}
+              </span>
+              <span>
+                <strong>{t("ds.add.command.server-port")}</strong>: {meta().serverPort}
+              </span>
+              <span>
+                <strong>{t("ds.add.command.connector-port")}</strong>: {meta().connectorPort}
               </span>
               <span>
                 <strong>{t("ds.add.command.site-token")}</strong>: {meta().siteToken}

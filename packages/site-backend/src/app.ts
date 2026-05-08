@@ -21,6 +21,8 @@ export interface SiteAppOptions {
   selfHostUrl?: string;
 }
 
+const DEFAULT_CONNECTOR_PORT = 18091;
+
 export function createSiteApp(options: SiteAppOptions): Hono {
   const app = new Hono();
   const fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]> =
@@ -59,6 +61,8 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const preferredUrl = pickRemoteAccessUrl(urls);
     return c.json({
       preferredUrl,
+      serverPort: getUrlPort(preferredUrl),
+      connectorPort: DEFAULT_CONNECTOR_PORT,
       siteToken: options.token,
       urls,
       command: buildRegisterOtherPcCommand({
@@ -76,6 +80,8 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const preferredUrl = pickRemoteAccessUrl(urls);
     return c.json({
       preferredUrl,
+      serverPort: getUrlPort(preferredUrl),
+      connectorPort: DEFAULT_CONNECTOR_PORT,
       siteToken: options.token,
       urls,
       command: buildRemoveOtherPcCommand({
@@ -527,6 +533,7 @@ function isTailscaleUrl(raw: string): boolean {
 
 function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string }): string {
   const siteUrl = input.siteUrl.replace(/\/+$/, "");
+  const serverPort = getUrlPort(siteUrl);
   const openUrl = `${siteUrl}/#site-token=${encodeURIComponent(input.siteToken)}`;
   return [
     "# DeskRelay - register another PC",
@@ -537,6 +544,8 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
     "# on 0.0.0.0, detects the matching Tailscale/LAN address, verifies",
     "# server-to-connector access, registers this PC, then opens DeskRelay.",
     `# Server URL: ${siteUrl}`,
+    `# Server port: ${serverPort}`,
+    `# Connector port: ${DEFAULT_CONNECTOR_PORT}`,
     `# Site token: ${input.siteToken}`,
     "",
     "$ErrorActionPreference = 'Stop'",
@@ -544,7 +553,7 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
     "Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1' -OutFile $installer",
     "",
     "$workspaceRoots = Join-Path $HOME 'Projects'",
-    `powershell -ExecutionPolicy Bypass -File $installer -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -WorkspaceRoots $workspaceRoots -Label $env:COMPUTERNAME`,
+    `powershell -ExecutionPolicy Bypass -File $installer -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -WorkspaceRoots $workspaceRoots -Label $env:COMPUTERNAME -Port ${DEFAULT_CONNECTOR_PORT}`,
     "",
     "try {",
     `  Start-Process ${quotePs(openUrl)}`,
@@ -557,6 +566,7 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
 
 function buildRemoveOtherPcCommand(input: { siteUrl: string; siteToken: string }): string {
   const siteUrl = input.siteUrl.replace(/\/+$/, "");
+  const serverPort = getUrlPort(siteUrl);
   return [
     "# DeskRelay - remove this PC from a self-host server",
     "# Paste this whole block into PowerShell on the PC you want to remove.",
@@ -565,18 +575,32 @@ function buildRemoveOtherPcCommand(input: { siteUrl: string; siteToken: string }
     "# removes the connector login task, clears local connector state, and",
     "# stops any connector still listening on the default port.",
     `# Server URL: ${siteUrl}`,
+    `# Server port: ${serverPort}`,
+    `# Connector port: ${DEFAULT_CONNECTOR_PORT}`,
     `# Site token: ${input.siteToken}`,
     "",
     "$ErrorActionPreference = 'Stop'",
     "$remover = Join-Path $env:TEMP 'deskrelay-remove-connector.ps1'",
     "Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/remove-connector.ps1' -OutFile $remover",
     "",
-    `powershell -ExecutionPolicy Bypass -File $remover -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -Port 18091`,
+    `powershell -ExecutionPolicy Bypass -File $remover -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -Port ${DEFAULT_CONNECTOR_PORT}`,
   ].join("\n");
 }
 
 function quotePs(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+function getUrlPort(value: string): number {
+  try {
+    const url = new URL(value);
+    if (url.port) return Number(url.port);
+    if (url.protocol === "https:") return 443;
+    if (url.protocol === "http:") return 80;
+  } catch {
+    // The downstream install/remove scripts still validate the URL before use.
+  }
+  return 0;
 }
 
 async function probeDaemonStatus(

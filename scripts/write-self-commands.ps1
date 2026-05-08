@@ -118,6 +118,8 @@ $registerOtherPc = @"
 # on 0.0.0.0, detects the matching Tailscale/LAN address, verifies
 # server-to-connector access, registers this PC, then opens DeskRelay.
 # Server URL: $preferredUrl
+# Server port: $frontendPort
+# Connector port: 18091
 # Site token: $($env:CR_SITE_TOKEN)
 
 `$ErrorActionPreference = 'Stop'
@@ -125,7 +127,7 @@ $registerOtherPc = @"
 Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1' -OutFile `$installer
 
 `$workspaceRoots = Join-Path `$HOME 'Projects'
-powershell -ExecutionPolicy Bypass -File `$installer -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME
+powershell -ExecutionPolicy Bypass -File `$installer -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME -Port 18091
 
 try {
   Start-Process $openUrlQ
@@ -141,6 +143,8 @@ $removeOtherPc = @"
 # It unregisters matching device rows from this server, removes the connector
 # login task, clears local connector state, and stops the connector port.
 # Server URL: $preferredUrl
+# Server port: $frontendPort
+# Connector port: 18091
 # Site token: $($env:CR_SITE_TOKEN)
 
 `$ErrorActionPreference = 'Stop'
