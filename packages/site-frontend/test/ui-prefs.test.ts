@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  appTheme,
   applyTemporaryInstructionsToMessage,
   getTemporaryInstructionPrefs,
   resetTemporaryInstructionPrefs,
+  setAppTheme,
   setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
@@ -15,11 +17,28 @@ import {
 
 afterEach(() => {
   resetTemporaryInstructionPrefs();
+  setAppTheme("light");
   setShowCtxUsageMeter(true);
   setShowSessionUsageMeter(true);
   setShowWeekUsageMeter(true);
   localStorage.clear();
   sessionStorage.clear();
+});
+
+describe("theme preferences", () => {
+  test("default to light mode", () => {
+    expect(appTheme()).toBe("light");
+  });
+
+  test("can switch between light and dark", () => {
+    setAppTheme("dark");
+    expect(appTheme()).toBe("dark");
+    expect(localStorage.getItem("cr.theme")).toBe("dark");
+
+    setAppTheme("light");
+    expect(appTheme()).toBe("light");
+    expect(localStorage.getItem("cr.theme")).toBe("light");
+  });
 });
 
 describe("usage display preferences", () => {

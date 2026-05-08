@@ -5,6 +5,9 @@ const SHOW_CTX_USAGE_METER_KEY = "cr.show-ctx-usage-meter";
 const SHOW_SESSION_USAGE_METER_KEY = "cr.show-session-usage-meter";
 const SHOW_WEEK_USAGE_METER_KEY = "cr.show-week-usage-meter";
 const TEMP_INSTRUCTIONS_KEY = "cr.instructions.temp-session";
+const THEME_KEY = "cr.theme";
+
+export type AppTheme = "light" | "dark";
 
 export interface TemporaryInstructionPrefs {
   content: string;
@@ -27,6 +30,15 @@ function readOnByDefault(name: string): boolean {
     return globalThis.localStorage?.getItem(name) !== "false";
   } catch {
     return true;
+  }
+}
+
+function readTheme(): AppTheme {
+  try {
+    const value = globalThis.localStorage?.getItem(THEME_KEY);
+    return value === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
   }
 }
 
@@ -62,8 +74,15 @@ const [showWeekUsageMeter, setShowWeekUsageMeterSignal] = createSignal(
 const [temporaryInstructions, setTemporaryInstructionsSignal] = createSignal(
   readString(TEMP_INSTRUCTIONS_KEY, globalThis.sessionStorage),
 );
+const [appTheme, setAppThemeSignal] = createSignal<AppTheme>(readTheme());
 
-export { scrollToBottomOnSend, showCtxUsageMeter, showSessionUsageMeter, showWeekUsageMeter };
+export {
+  appTheme,
+  scrollToBottomOnSend,
+  showCtxUsageMeter,
+  showSessionUsageMeter,
+  showWeekUsageMeter,
+};
 
 export function setScrollToBottomOnSend(value: boolean): void {
   try {
@@ -95,6 +114,15 @@ export function setShowSessionUsageMeter(value: boolean): void {
 export function setShowWeekUsageMeter(value: boolean): void {
   writeOnByDefault(SHOW_WEEK_USAGE_METER_KEY, value);
   setShowWeekUsageMeterSignal(value);
+}
+
+export function setAppTheme(value: AppTheme): void {
+  try {
+    globalThis.localStorage?.setItem(THEME_KEY, value);
+  } catch {
+    // Private mode etc. The in-memory signal still updates for this tab.
+  }
+  setAppThemeSignal(value);
 }
 
 export function getTemporaryInstructionPrefs(): TemporaryInstructionPrefs {

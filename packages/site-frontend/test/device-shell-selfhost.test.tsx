@@ -4,34 +4,52 @@ import type { Device } from "../src/api.ts";
 import { DeviceShell } from "../src/components/DeviceShell.tsx";
 import { t } from "../src/i18n.ts";
 
-const OLD_DEVICE = {
-  id: "dev_old",
-  label: "Old desktop",
+const LOCAL_DEVICE = {
+  id: "dev_local",
+  label: "Local desktop",
   daemonUrl: "http://127.0.0.1:18091",
   registeredAt: "2026-04-30T00:00:00.000Z",
 };
 
-const NEW_DEVICE = {
-  id: "dev_new",
-  label: "New laptop",
-  daemonUrl: "http://127.0.0.1:18092",
+const TAILSCALE_DEVICE = {
+  id: "dev_tail",
+  label: "Travel laptop",
+  daemonUrl: "http://100.64.0.2:18091",
   registeredAt: "2026-04-30T00:01:00.000Z",
 };
 
-const EXISTING_OTHER_OFFLINE = {
-  id: "dev_other",
-  label: "Other PC",
-  daemonUrl: "http://127.0.0.1:18093",
+const SERVER_DEVICE = {
+  id: "dev_server",
+  label: "Local dev (HOMEDEV)",
+  daemonUrl: "http://127.0.0.1:18191",
   registeredAt: "2026-04-30T00:02:00.000Z",
-  connectionState: "offline" as const,
-};
-
-const EXISTING_OTHER_ONLINE = {
-  ...EXISTING_OTHER_OFFLINE,
-  connectionState: "online" as const,
 };
 
 const originalClipboard = navigator.clipboard;
+
+function stubDeviceFetch(devices: Device[], onDelete?: (id: string) => Response): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/api/devices") && method === "GET") {
+      return new Response(JSON.stringify(devices), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const deleteMatch = url.match(/\/api\/devices\/([^/]+)$/);
+    if (deleteMatch && method === "DELETE") {
+      return onDelete?.(deleteMatch[1] ?? "") ?? new Response(JSON.stringify({ ok: true }));
+    }
+    if (url.includes("/fs/list") || url.includes("/fs/roots")) {
+      return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  });
+}
 
 beforeEach(() => {
   Object.defineProperty(window, "location", {
@@ -50,370 +68,141 @@ afterEach(() => {
   localStorage.clear();
 });
 
-describe("DeviceShell self-host registration UX", () => {
-  test("selects a newly registered device without requiring a manual refresh", async () => {
-    let listedDevices = [OLD_DEVICE];
-    const onDevicesChanged = vi.fn();
-    const onDeviceSelected = vi.fn();
-    let postedBody: unknown;
+describe("DeviceShell self-host device management UX", () => {
+  test("lists devices and switches the selected settings panel locally", async () => {
+    stubDeviceFetch([LOCAL_DEVICE, TAILSCALE_DEVICE]);
 
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/api/devices") && method === "GET") {
-        return new Response(JSON.stringify(listedDevices), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.endsWith("/api/devices") && method === "POST") {
-        postedBody = JSON.parse(String(init?.body ?? "{}"));
-        listedDevices = [OLD_DEVICE, NEW_DEVICE];
-        return new Response(JSON.stringify(NEW_DEVICE), {
-          status: 201,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
-        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
-
-    const { container } = render(() => (
-      <DeviceShell onDevicesChanged={onDevicesChanged} onDeviceSelected={onDeviceSelected} />
-    ));
+    const { container } = render(() => <DeviceShell />);
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Old desktop");
+      expect(container.textContent).toContain("Local desktop (Local)");
+      expect(container.textContent).toContain("Travel laptop (Tailscale)");
+      expect(container.querySelector("#device-label")).toBeTruthy();
     });
 
-    const urlInput = container.querySelector('input[type="url"]') as HTMLInputElement | null;
-    const labelInput = container.querySelector(
-      `input[placeholder="${t("ds.add.selfhost.label.placeholder")}"]`,
-    ) as HTMLInputElement | null;
-    const tokenInput = container.querySelector(
-      'input[placeholder="daemon token"]',
-    ) as HTMLInputElement | null;
-    if (!urlInput || !labelInput || !tokenInput) throw new Error("add device inputs missing");
-
-    fireEvent.input(urlInput, { target: { value: NEW_DEVICE.daemonUrl } });
-    fireEvent.input(labelInput, { target: { value: NEW_DEVICE.label } });
-    fireEvent.input(tokenInput, { target: { value: "daemon-token-2" } });
-
-    const addButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === t("ds.add.selfhost.submit"),
+    const laptopButton = [...container.querySelectorAll(".settings-list-item-main")].find(
+      (button) => button.textContent?.includes("Travel laptop"),
     ) as HTMLButtonElement | undefined;
-    if (!addButton) throw new Error("add device button missing");
-    fireEvent.click(addButton);
+    if (!laptopButton) throw new Error("laptop device button missing");
+    fireEvent.click(laptopButton);
 
     await waitFor(() => {
       const selected = container.querySelector(
         '.settings-list-item-main[aria-pressed="true"]',
       ) as HTMLButtonElement | null;
-      expect(selected?.textContent).toContain(NEW_DEVICE.label);
-      expect(onDevicesChanged).toHaveBeenCalled();
-      expect(onDeviceSelected).toHaveBeenCalledWith(NEW_DEVICE.id);
-      expect(postedBody).toEqual({
-        daemonUrl: NEW_DEVICE.daemonUrl,
-        label: NEW_DEVICE.label,
-        authToken: "daemon-token-2",
-      });
-      expect(container.textContent).toContain("연결이 확인되어 사용할 수 있습니다");
+      expect(selected?.textContent).toContain("Travel laptop");
+      expect((container.querySelector("#device-label") as HTMLInputElement | null)?.value).toBe(
+        TAILSCALE_DEVICE.label,
+      );
     });
   });
 
-  test("copies the generated other-PC registration command from settings", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/api/devices") && method === "GET") {
-        return new Response(JSON.stringify([OLD_DEVICE]), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.endsWith("/api/self/register-other-pc-command") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            preferredUrl: "http://100.64.0.1:18193",
-            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
-            command: "powershell register command",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }
-      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
-        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
+  test("keeps other-PC registration commands out of the settings device tab", async () => {
+    stubDeviceFetch([LOCAL_DEVICE]);
 
     const { container } = render(() => <DeviceShell />);
 
     await waitFor(() => {
-      expect(container.textContent).toContain(t("ds.add.command.title"));
+      expect(container.textContent).toContain("Local desktop");
     });
 
-    const copyButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === t("ds.add.command.copy"),
-    ) as HTMLButtonElement | undefined;
-    if (!copyButton) throw new Error("copy command button missing");
-    fireEvent.click(copyButton);
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith("powershell register command");
-      expect(container.textContent).toContain(t("ds.add.command.copied"));
-      expect(container.querySelector("textarea")).toBeNull();
-    });
+    expect(container.textContent).not.toContain(t("ds.add.command.title"));
+    expect(container.querySelector('input[type="url"]')).toBeNull();
+    expect(container.querySelector('input[placeholder="daemon token"]')).toBeNull();
+    expect(container.querySelector("textarea")).toBeNull();
   });
 
-  test("selects another PC when the copied registration command finishes", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    let listedDevices = [OLD_DEVICE];
-    const onDevicesChanged = vi.fn();
-    const onDeviceSelected = vi.fn();
-
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/api/devices") && method === "GET") {
-        return new Response(JSON.stringify(listedDevices), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.endsWith("/api/self/register-other-pc-command") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            preferredUrl: "http://100.64.0.1:18193",
-            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
-            command: "powershell register command",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }
-      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
-        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
-
-    const { container } = render(() => (
-      <DeviceShell onDevicesChanged={onDevicesChanged} onDeviceSelected={onDeviceSelected} />
-    ));
-
-    await waitFor(() => {
-      expect(container.textContent).toContain(t("ds.add.command.title"));
-    });
-
-    const copyButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === t("ds.add.command.copy"),
-    ) as HTMLButtonElement | undefined;
-    if (!copyButton) throw new Error("copy command button missing");
-    fireEvent.click(copyButton);
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith("powershell register command");
-      expect(container.textContent).toContain(t("ds.add.command.waiting"));
-    });
-
-    listedDevices = [OLD_DEVICE, NEW_DEVICE];
-
-    await waitFor(
-      () => {
-        const selected = container.querySelector(
-          '.settings-list-item-main[aria-pressed="true"]',
-        ) as HTMLButtonElement | null;
-        expect(selected?.textContent).toContain(NEW_DEVICE.label);
-        expect(onDevicesChanged).toHaveBeenCalled();
-        expect(onDeviceSelected).toHaveBeenCalledWith(NEW_DEVICE.id);
-        expect(container.textContent).toContain("등록 완료");
-      },
-      { timeout: 2500 },
-    );
-  });
-
-  test("refreshes and selects an existing other PC when the copied command brings it online", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    let listedDevices: Device[] = [OLD_DEVICE, EXISTING_OTHER_OFFLINE];
-    const onDevicesChanged = vi.fn();
-    const onDeviceSelected = vi.fn();
-
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/api/devices") && method === "GET") {
-        return new Response(JSON.stringify(listedDevices), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.endsWith("/api/self/register-other-pc-command") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            preferredUrl: "http://100.64.0.1:18193",
-            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
-            command: "powershell register command",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }
-      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
-        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
-
-    const { container } = render(() => (
-      <DeviceShell onDevicesChanged={onDevicesChanged} onDeviceSelected={onDeviceSelected} />
-    ));
-
-    await waitFor(() => {
-      expect(container.textContent).toContain(EXISTING_OTHER_OFFLINE.label);
-    });
-
-    const copyButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === t("ds.add.command.copy"),
-    ) as HTMLButtonElement | undefined;
-    if (!copyButton) throw new Error("copy command button missing");
-    fireEvent.click(copyButton);
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith("powershell register command");
-      expect(container.textContent).toContain(t("ds.add.command.waiting"));
-    });
-
-    listedDevices = [OLD_DEVICE, EXISTING_OTHER_ONLINE];
-
-    await waitFor(
-      () => {
-        const selected = container.querySelector(
-          '.settings-list-item-main[aria-pressed="true"]',
-        ) as HTMLButtonElement | null;
-        expect(selected?.textContent).toContain(EXISTING_OTHER_ONLINE.label);
-        expect(onDevicesChanged).toHaveBeenCalled();
-        expect(onDeviceSelected).toHaveBeenCalledWith(EXISTING_OTHER_ONLINE.id);
-      },
-      { timeout: 2500 },
-    );
-  });
-
-  test("copies the generated other-PC removal command from settings", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/api/devices") && method === "GET") {
-        return new Response(JSON.stringify([OLD_DEVICE]), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.endsWith("/api/self/remove-other-pc-command") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            preferredUrl: "http://100.64.0.1:18193",
-            urls: [{ kind: "Tailscale", url: "http://100.64.0.1:18193" }],
-            command: "powershell remove command",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }
-      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
-        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
-
-    const { container } = render(() => <DeviceShell />);
-
-    await waitFor(() => {
-      expect(container.textContent).toContain(t("ds.add.command.title"));
-    });
-
-    const copyButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === t("ds.add.command.remove-copy"),
-    ) as HTMLButtonElement | undefined;
-    if (!copyButton) throw new Error("copy removal command button missing");
-    fireEvent.click(copyButton);
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith("powershell remove command");
-      expect(container.textContent).toContain(t("ds.add.command.remove-copied"));
-      expect(container.querySelector("textarea")).toBeNull();
-    });
-  });
-
-  test("removes a device optimistically and ignores duplicate remove clicks", async () => {
-    let listedDevices = [OLD_DEVICE];
+  test("locks server-device removal but still allows removing a registered connector", async () => {
+    let listedDevices: Device[] = [SERVER_DEVICE, TAILSCALE_DEVICE];
     let deleteCalls = 0;
-
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/api/devices") && method === "GET") {
-        return new Response(JSON.stringify(listedDevices), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.endsWith(`/api/devices/${OLD_DEVICE.id}`) && method === "DELETE") {
-        deleteCalls += 1;
-        listedDevices = [];
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.includes("/fs/list") || url.includes("/fs/roots")) {
-        return new Response(JSON.stringify({ path: "", parent: null, entries: [] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    stubDeviceFetch(listedDevices, (id) => {
+      deleteCalls += 1;
+      listedDevices = listedDevices.filter((device) => device.id !== id);
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const { container } = render(() => <DeviceShell />);
 
     await waitFor(() => {
-      expect(container.textContent).toContain(OLD_DEVICE.label);
+      expect(container.textContent).toContain("HOMEDEV (Server)");
+      expect(container.textContent).toContain(t("ds.devices.server.locked"));
+      expect(container.textContent).toContain("Travel laptop");
+    });
+
+    const remove = [...container.querySelectorAll(".danger-button")].find(
+      (button) => button.textContent?.trim() === t("ds.devices.remove"),
+    ) as HTMLButtonElement | undefined;
+    if (!remove) throw new Error("registered connector remove button missing");
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(deleteCalls).toBe(1);
+      expect(container.textContent).not.toContain("Travel laptop");
+      expect(container.textContent).toContain("HOMEDEV (Server)");
+    });
+  });
+
+  test("surfaces manual cleanup when connector cleanup fails during removal", async () => {
+    const onManualCleanupRequired = vi.fn();
+    stubDeviceFetch(
+      [LOCAL_DEVICE],
+      () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            cleanup: { ok: false, error: "connector offline", manualCommand: "remove command" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { container } = render(() => (
+      <DeviceShell onManualCleanupRequired={onManualCleanupRequired} />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Local desktop");
+    });
+
+    const remove = container.querySelector(".danger-button") as HTMLButtonElement | null;
+    if (!remove) throw new Error("remove button missing");
+    fireEvent.click(remove);
+
+    await waitFor(() => {
+      expect(onManualCleanupRequired).toHaveBeenCalledWith([
+        {
+          id: LOCAL_DEVICE.id,
+          label: LOCAL_DEVICE.label,
+          daemonUrl: LOCAL_DEVICE.daemonUrl,
+          cleanup: { ok: false, error: "connector offline", manualCommand: "remove command" },
+        },
+      ]);
+      expect(container.textContent).not.toContain("Local desktop");
+    });
+  });
+
+  test("removes a device optimistically and ignores duplicate remove clicks", async () => {
+    let listedDevices: Device[] = [LOCAL_DEVICE];
+    let deleteCalls = 0;
+    stubDeviceFetch(listedDevices, (id) => {
+      deleteCalls += 1;
+      listedDevices = listedDevices.filter((device) => device.id !== id);
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { container } = render(() => <DeviceShell />);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(LOCAL_DEVICE.label);
     });
 
     const remove = container.querySelector(".danger-button") as HTMLButtonElement | null;
@@ -423,7 +212,7 @@ describe("DeviceShell self-host registration UX", () => {
 
     await waitFor(() => {
       expect(deleteCalls).toBe(1);
-      expect(container.textContent).not.toContain(OLD_DEVICE.label);
+      expect(container.textContent).not.toContain(LOCAL_DEVICE.label);
     });
   });
 });

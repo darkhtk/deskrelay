@@ -16,7 +16,7 @@ describe("light theme browser chrome", () => {
     expect(manifest.theme_color).toBe("#faf9f5");
   });
 
-  test("keeps stale low-light chrome strings out of frontend theme surfaces", () => {
+  test("keeps installed-app chrome light while app dark mode stays scoped to CSS", () => {
     const staleChromePattern = new RegExp(
       [
         ["#0b", "0b0e"].join(""),
@@ -29,7 +29,6 @@ describe("light theme browser chrome", () => {
     const surfaces = [
       read("../index.html"),
       read("../public/manifest.webmanifest"),
-      read("../src/styles.css"),
       read("../src/components/DeviceShell.tsx"),
     ];
 
@@ -38,5 +37,9 @@ describe("light theme browser chrome", () => {
       expect(source).not.toMatch(/rgba\(0\s*,\s*0\s*,\s*0/i);
       expect(source).not.toMatch(/rgba\(31\s*,\s*29\s*,\s*26/i);
     }
+
+    const styles = read("../src/styles.css");
+    expect(styles).toContain(':root[data-theme="dark"]');
+    expect(styles).not.toMatch(/black-translucent|dark-theme/i);
   });
 });

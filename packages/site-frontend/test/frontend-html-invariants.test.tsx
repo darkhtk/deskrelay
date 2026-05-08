@@ -100,6 +100,9 @@ describe("settings and chrome invariants", () => {
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
 
     expect(appSource).toContain('t("lang.settings.title")');
+    expect(appSource).toContain("appTheme()");
+    expect(appSource).toContain("setAppTheme(value)");
+    expect(appSource).toContain('t("settings.theme.title")');
     expect(appSource).toContain('["general", "devices", "diagnostics", "instructions"]');
     expect(appSource).toContain("saveDeviceInstructionSource");
     expect(appSource).toContain("deleteDeviceInstructionSource");

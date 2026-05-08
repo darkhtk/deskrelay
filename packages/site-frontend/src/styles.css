@@ -7,22 +7,29 @@
   --bg-soft: #f5f3ec;
   --surface-card: #ffffff;
   --surface-raised: #ffffff;
+  --surface: #ffffff;
   --text: #1f1d1a;
   --text-muted: #7a7570;
   --text-faint: #a8a29a;
   --border-subtle: #e8e6e0;
   --border-strong: #d6d2c9;
+  --accent: #cc7a55;
   --accent-coral: #cc7a55;
   --accent-coral-strong: #b86847;
   --accent-soft: rgba(204, 122, 85, 0.1);
   --accent-soft-strong: rgba(204, 122, 85, 0.18);
   --ink-button: #1f1d1a;
   --ink-button-hover: #3a332d;
+  --ink-button-text: #ffffff;
   --code-chip: #f0eee8;
   --code-bg: #f5f3ec;
   --danger: #c44747;
   --danger-soft: rgba(196, 71, 71, 0.1);
   --success: #2f8a4f;
+  --warning: #c49a47;
+  --warning-soft: rgba(196, 154, 71, 0.12);
+  --overlay-scrim: rgba(20, 16, 10, 0.08);
+  --mobile-sidebar-scrim: rgba(250, 249, 245, 0.82);
   --shadow-sm: 0 1px 2px rgba(20, 16, 10, 0.04), 0 1px 3px rgba(20, 16, 10, 0.06);
   --shadow-md: 0 8px 24px rgba(20, 16, 10, 0.08);
   --shadow-lg: 0 24px 60px rgba(20, 16, 10, 0.18);
@@ -31,6 +38,40 @@
     "Noto Sans KR", serif;
   font-size: 15px;
   line-height: 1.6;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-soft: #101010;
+  --surface-card: #050505;
+  --surface-raised: #0d0d0d;
+  --surface: #050505;
+  --text: #ffffff;
+  --text-muted: #b8b8b8;
+  --text-faint: #777777;
+  --border-subtle: #242424;
+  --border-strong: #3a3a3a;
+  --accent: #ff8a65;
+  --accent-coral: #ff8a65;
+  --accent-coral-strong: #ffab91;
+  --accent-soft: rgba(255, 138, 101, 0.14);
+  --accent-soft-strong: rgba(255, 138, 101, 0.22);
+  --ink-button: #ffffff;
+  --ink-button-hover: #dedede;
+  --ink-button-text: #000000;
+  --code-chip: #181818;
+  --code-bg: #101010;
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.14);
+  --success: #57c783;
+  --warning: #d9a94a;
+  --warning-soft: rgba(217, 169, 74, 0.14);
+  --overlay-scrim: rgba(0, 0, 0, 0.54);
+  --mobile-sidebar-scrim: rgba(0, 0, 0, 0.72);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.36), 0 8px 24px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 16px 40px rgba(0, 0, 0, 0.48);
+  --shadow-lg: 0 24px 72px rgba(0, 0, 0, 0.72);
 }
 
 @media (min-width: 1024px) {
@@ -484,7 +525,7 @@ body.sidebar-open {
 }
 .composer-status-warning::before,
 .composer-status-queued::before {
-  background: #c49a47;
+  background: var(--warning);
 }
 .composer-status-danger::before {
   background: var(--danger);
@@ -964,7 +1005,7 @@ body.sidebar-open {
 }
 .primary-button {
   background: var(--ink-button);
-  color: #ffffff;
+  color: var(--ink-button-text);
   border: 0;
   border-radius: 999px;
   padding: 6px 14px;
@@ -1734,6 +1775,9 @@ select.text-input {
   background-position: right 8px center;
   background-size: 12px;
   padding-right: 28px;
+}
+:root[data-theme="dark"] select.text-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='%23b8b8b8'><path d='M3 5l3 3 3-3'/></svg>");
 }
 
 /* ---- Chat ---- */
@@ -3676,7 +3720,7 @@ dialog.approval-modal-root,
      it reads as page dimming, not as dark-mode. Sits outside the
      near-black tints that the light-theme-chrome guard test forbids
      (see test/light-theme-chrome.test.ts). */
-  background: rgba(20, 16, 10, 0.08);
+  background: var(--overlay-scrim);
   border: 0;
   cursor: default;
 }
@@ -3788,7 +3832,7 @@ dialog.approval-modal-root,
 }
 .approval-btn-allow {
   background: var(--ink-button);
-  color: #ffffff;
+  color: var(--ink-button-text);
   border-color: var(--ink-button);
 }
 .approval-btn-allow:hover {
@@ -4046,6 +4090,45 @@ dialog.approval-modal-root,
   width: 16px;
   height: 16px;
   accent-color: var(--accent-coral);
+}
+.settings-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+.settings-check-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-coral);
+}
+.settings-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+.settings-segment {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.settings-segment:hover {
+  color: var(--text);
+}
+.settings-segment.active {
+  background: var(--surface-card);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
 }
 .settings-add-device-row {
   padding-top: 8px;
@@ -4592,7 +4675,7 @@ dialog.approval-modal-root,
 }
 .toast {
   background: var(--ink-button);
-  color: #ffffff;
+  color: var(--ink-button-text);
   padding: 10px 16px;
   border-radius: 999px;
   font-size: 13px;
@@ -4655,7 +4738,7 @@ dialog.approval-modal-root,
   .sidebar-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(250, 249, 245, 0.82);
+    background: var(--mobile-sidebar-scrim);
     z-index: 40;
     opacity: 0;
     pointer-events: none;

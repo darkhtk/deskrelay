@@ -36,11 +36,14 @@ import {
   temporaryInstructionPlaceholder,
 } from "./instruction-copy.ts";
 import {
+  appTheme,
+  type AppTheme,
   scrollToBottomOnSend,
   FACTORY_TEMPORARY_INSTRUCTION_PREFS,
   getTemporaryInstructionPrefs,
   hasTemporaryInstructions,
   resetTemporaryInstructionPrefs,
+  setAppTheme,
   setScrollToBottomOnSend,
   setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
@@ -280,6 +283,12 @@ export const App: Component = () => {
     cwd: "",
   });
 
+  createEffect(() => {
+    const theme = appTheme();
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  });
+
   const notifyDevicesChanged = () => {
     setDevicesRevision((value) => value + 1);
   };
@@ -488,6 +497,27 @@ export const App: Component = () => {
 const LanguageSettings: Component = () => (
   <section class="settings-card">
     <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
+    <div class="settings-toggle-row">
+      <div class="settings-toggle-copy">
+        <span class="settings-toggle-title">{t("settings.theme.title")}</span>
+        <span class="settings-toggle-help">{t("settings.theme.help")}</span>
+      </div>
+      <div class="settings-segmented" role="radiogroup" aria-label={t("settings.theme.title")}>
+        <For each={["light", "dark"] as AppTheme[]}>
+          {(value) => (
+            <button
+              type="button"
+              class={`settings-segment${appTheme() === value ? " active" : ""}`}
+              role="radio"
+              aria-checked={appTheme() === value ? "true" : "false"}
+              onClick={() => setAppTheme(value)}
+            >
+              {t(`settings.theme.${value}`)}
+            </button>
+          )}
+        </For>
+      </div>
+    </div>
     <label class="settings-check-row">
       <input
         type="checkbox"
