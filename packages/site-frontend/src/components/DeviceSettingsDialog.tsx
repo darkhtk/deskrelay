@@ -1,6 +1,6 @@
 import { type Component, Show, createSignal } from "solid-js";
-import { type Device, api } from "../api.ts";
-import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
+import { type Device, type DeviceCleanupEntry, api } from "../api.ts";
+import { deviceDisplayRole } from "../device-display.ts";
 import { clearDevicePrefs, getDeviceDefaultCwd, setDeviceDefaultCwd } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { CwdPicker } from "./CwdPicker.tsx";
@@ -10,6 +10,7 @@ export interface DeviceSettingsPanelProps {
   devices?: Device[] | undefined;
   onChanged: () => void;
   onDevicesRemoved?: ((deviceIds: string[]) => void) | undefined;
+  onManualCleanupRequired?: ((devices: DeviceCleanupEntry[]) => void) | undefined;
   onUnpaired?: ((deviceId: string) => void) | undefined;
   onClose?: (() => void) | undefined;
 }
@@ -70,11 +71,21 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
     setUnpairBusy(true);
     setUnpairError(null);
     try {
-      await api.unregisterDevice(props.device.id);
+      const result = await api.unregisterDevice(props.device.id);
       clearDevicePrefs(props.device.id);
       props.onDevicesRemoved?.([props.device.id]);
       props.onUnpaired?.(props.device.id);
       props.onChanged();
+      if (result.cleanup && !result.cleanup.ok) {
+        props.onManualCleanupRequired?.([
+          {
+            id: props.device.id,
+            label: props.device.label,
+            daemonUrl: props.device.daemonUrl,
+            cleanup: result.cleanup,
+          },
+        ]);
+      }
       props.onClose?.();
     } catch (err) {
       setUnpairError((err as Error).message);
@@ -89,37 +100,28 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
 
     setUnpairAllBusy(true);
     setUnpairError(null);
-    const ordered = [...list].sort((left, right) => {
-      return Number(isServerDevice(left)) - Number(isServerDevice(right));
-    });
-    const removedIds: string[] = [];
-    const failures: string[] = [];
 
-    for (const device of ordered) {
-      try {
-        await api.unregisterDevice(device.id);
-        clearDevicePrefs(device.id);
-        removedIds.push(device.id);
-      } catch (err) {
-        failures.push(`${deviceDisplayName(device)}: ${(err as Error).message}`);
+    try {
+      const result = await api.unregisterAllDevices();
+      const entries = result.cleanup ?? [];
+      const removedIds = entries.length > 0 ? entries.map((entry) => entry.id) : list.map((d) => d.id);
+      for (const id of removedIds) clearDevicePrefs(id);
+      if (removedIds.length > 0) {
+        props.onDevicesRemoved?.(removedIds);
+        if (!props.onDevicesRemoved) {
+          for (const id of removedIds) props.onUnpaired?.(id);
+        }
+        props.onChanged();
       }
-    }
-
-    if (removedIds.length > 0) {
-      props.onDevicesRemoved?.(removedIds);
-      if (!props.onDevicesRemoved) {
-        for (const id of removedIds) props.onUnpaired?.(id);
+      const failures = entries.filter((entry) => !entry.cleanup.ok);
+      if (failures.length > 0) {
+        props.onManualCleanupRequired?.(failures);
       }
-      props.onChanged();
-    }
-
-    if (failures.length > 0) {
-      setUnpairError(t("dsd.unpair.all.partial", { errors: failures.join("; ") }));
+      props.onClose?.();
+    } catch (err) {
+      setUnpairError((err as Error).message);
       setUnpairAllBusy(false);
-      return;
     }
-
-    props.onClose?.();
   }
 
   return (
@@ -269,6 +271,7 @@ export const DeviceSettingsDialog: Component<DeviceSettingsDialogProps> = (props
           onChanged={props.onChanged}
           onClose={props.onClose}
           onDevicesRemoved={props.onDevicesRemoved}
+          onManualCleanupRequired={props.onManualCleanupRequired}
           onUnpaired={props.onUnpaired}
         />
       </div>

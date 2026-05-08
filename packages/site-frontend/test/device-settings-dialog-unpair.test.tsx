@@ -258,14 +258,33 @@ describe("DeviceSettingsDialog — unpair", () => {
   test("blocks individual server removal but allows explicit server + all devices removal", async () => {
     setDeviceDefaultCwd(SAMPLE_DEVICE.id, "/remote-work");
     setDeviceDefaultCwd(SERVER_DEVICE.id, "/server-work");
-    const deletedIds: string[] = [];
+    const deleteCalls: string[] = [];
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
-      if (method === "DELETE" && url.includes("/api/devices/")) {
-        deletedIds.push(decodeURIComponent(url.split("/").pop() ?? ""));
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (method === "DELETE" && url.endsWith("/api/devices")) {
+        deleteCalls.push(url);
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            cleanup: [
+              {
+                id: SAMPLE_DEVICE.id,
+                label: SAMPLE_DEVICE.label,
+                daemonUrl: SAMPLE_DEVICE.daemonUrl,
+                cleanup: { attempted: true, ok: true, status: 200 },
+              },
+              {
+                id: SERVER_DEVICE.id,
+                label: SERVER_DEVICE.label,
+                daemonUrl: SERVER_DEVICE.daemonUrl,
+                cleanup: { attempted: true, ok: true, status: 200 },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
       }
       return new Response("{}", { status: 200 });
     });
@@ -300,11 +319,77 @@ describe("DeviceSettingsDialog — unpair", () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    expect(deletedIds).toEqual([SAMPLE_DEVICE.id, SERVER_DEVICE.id]);
+    expect(deleteCalls).toHaveLength(1);
     expect(onDevicesRemoved).toHaveBeenCalledWith([SAMPLE_DEVICE.id, SERVER_DEVICE.id]);
     expect(onUnpaired).not.toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalledTimes(1);
     expect(getDeviceDefaultCwd(SAMPLE_DEVICE.id)).toBeNull();
     expect(getDeviceDefaultCwd(SERVER_DEVICE.id)).toBeNull();
+  });
+
+  test("sends cleanup failures to the main-screen recovery path after all-device removal", async () => {
+    const onClose = vi.fn();
+    const onChanged = vi.fn();
+    const onManualCleanupRequired = vi.fn();
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "DELETE" && url.endsWith("/api/devices")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            cleanup: [
+              {
+                id: SAMPLE_DEVICE.id,
+                label: SAMPLE_DEVICE.label,
+                daemonUrl: SAMPLE_DEVICE.daemonUrl,
+                cleanup: { attempted: true, ok: false, error: "offline" },
+              },
+              {
+                id: SERVER_DEVICE.id,
+                label: SERVER_DEVICE.label,
+                daemonUrl: SERVER_DEVICE.daemonUrl,
+                cleanup: { attempted: true, ok: true, status: 200 },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const { container } = render(() => (
+      <DeviceSettingsDialog
+        device={SERVER_DEVICE}
+        devices={[SERVER_DEVICE, SAMPLE_DEVICE]}
+        onClose={onClose}
+        onChanged={onChanged}
+        onManualCleanupRequired={onManualCleanupRequired}
+      />
+    ));
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const removeAllButton = container.querySelector(
+      '[data-testid="device-unpair-all-button"]',
+    ) as HTMLButtonElement | null;
+    if (!removeAllButton) throw new Error("remove all button missing");
+    fireEvent.click(removeAllButton);
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(onManualCleanupRequired).toHaveBeenCalledTimes(1);
+    expect(onManualCleanupRequired.mock.calls[0]?.[0]).toEqual([
+      {
+        id: SAMPLE_DEVICE.id,
+        label: SAMPLE_DEVICE.label,
+        daemonUrl: SAMPLE_DEVICE.daemonUrl,
+        cleanup: { attempted: true, ok: false, error: "offline" },
+      },
+    ]);
   });
 });

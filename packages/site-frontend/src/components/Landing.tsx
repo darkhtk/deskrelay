@@ -15,6 +15,7 @@ export interface LandingProps {
   onLocalAccessLogin?: () => boolean | Promise<boolean>;
   authed?: boolean;
   onProceed?: () => void;
+  manualCleanupNotice?: { count: number; labels: string[] } | null;
 }
 
 export const Landing: Component<LandingProps> = (props) => {
@@ -35,6 +36,10 @@ export const Landing: Component<LandingProps> = (props) => {
     () => (props.authed ? "ready" : null),
     async () => await api.registerOtherPcCommand(),
   );
+  const [removeCommand, { refetch: refetchRemoveCommand }] = createResource(
+    () => (props.authed ? "ready" : null),
+    async () => await api.removeOtherPcCommand(),
+  );
 
   const refreshAll = async () => {
     await Promise.all([
@@ -43,6 +48,7 @@ export const Landing: Component<LandingProps> = (props) => {
       refetchClientContext(),
       props.authed ? refetchDevices() : Promise.resolve(),
       props.authed ? refetchRegisterCommand() : Promise.resolve(),
+      props.authed ? refetchRemoveCommand() : Promise.resolve(),
     ]);
   };
 
@@ -86,6 +92,20 @@ export const Landing: Component<LandingProps> = (props) => {
   const serverPort = () => registerCommand()?.serverPort ?? null;
   const connectorPort = () => registerCommand()?.connectorPort ?? null;
   const siteToken = () => registerCommand()?.siteToken ?? "";
+  const manualCleanupCommand = () => {
+    if (!props.authed) return "Site token 인증 후 제거 명령을 생성합니다.";
+    if (removeCommand.loading) return "제거 명령 생성 중...";
+    if (removeCommand.error) return `제거 명령 생성 실패: ${(removeCommand.error as Error).message}`;
+    return removeCommand()?.command ?? "제거 명령을 생성하지 못했습니다.";
+  };
+  const manualCleanupLabel = () => {
+    const notice = props.manualCleanupNotice;
+    if (!notice) return "";
+    const names = notice.labels.length > 0 ? notice.labels.join(", ") : "알 수 없는 디바이스";
+    return notice.count > notice.labels.length
+      ? `${names} 외 ${notice.count - notice.labels.length}개`
+      : names;
+  };
   const matchingCurrentDevice = () => {
     const address = normalizeHost(clientContext()?.address ?? "");
     if (!address) return null;
@@ -335,6 +355,30 @@ export const Landing: Component<LandingProps> = (props) => {
               </For>
             </ul>
           </div>
+
+          <Show when={props.manualCleanupNotice}>
+            {(notice) => (
+              <div class="landing-cleanup-alert" role="alert">
+                <div class="landing-command-box-head">
+                  <span>수동 제거 필요</span>
+                  <div class="landing-command-meta">
+                    <span class="landing-command-url">
+                      자동 제거 미확인: {notice().count}대
+                    </span>
+                  </div>
+                </div>
+                <p>
+                  서버 목록에서는 제거됐지만, 다음 PC가 자동 uninstall 응답을 주지 않았습니다:
+                  {" "}
+                  {manualCleanupLabel()}
+                </p>
+                <p>해당 PC가 켜지면 PowerShell에 아래 제거 명령을 통째로 붙여넣으세요.</p>
+                <pre>
+                  <code>{manualCleanupCommand()}</code>
+                </pre>
+              </div>
+            )}
+          </Show>
 
           <div class="landing-command-box">
             <div class="landing-command-box-head">

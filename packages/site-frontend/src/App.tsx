@@ -1,5 +1,13 @@
 import { type Component, For, Show, createSignal } from "solid-js";
-import { ApiError, api, clearBaseUrl, clearToken, getToken, setToken } from "./api.ts";
+import {
+  ApiError,
+  api,
+  clearBaseUrl,
+  clearToken,
+  type DeviceCleanupEntry,
+  getToken,
+  setToken,
+} from "./api.ts";
 import { AnnouncementBanner } from "./components/AnnouncementBanner.tsx";
 import {
   ChatView,
@@ -32,6 +40,11 @@ type OpenSettingsOptions = {
 type DeviceSelectionRequest = {
   id: string | null;
   seq: number;
+};
+
+type ManualCleanupNotice = {
+  count: number;
+  labels: string[];
 };
 
 const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { ctx: null, session: null, week: null };
@@ -220,6 +233,8 @@ export const App: Component = () => {
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
   const [settingsDeviceId, setSettingsDeviceId] = createSignal<string | null>(null);
   const [devicesRevision, setDevicesRevision] = createSignal(0);
+  const [manualCleanupNotice, setManualCleanupNotice] =
+    createSignal<ManualCleanupNotice | null>(null);
   const [deviceSelectionRequest, setDeviceSelectionRequest] = createSignal<DeviceSelectionRequest>({
     id: null,
     seq: 0,
@@ -247,6 +262,19 @@ export const App: Component = () => {
     setSettingsTab(options.tab ?? "general");
     setSettingsDeviceId(options.deviceId ?? null);
     setSettingsOpen(true);
+  };
+
+  const handleManualCleanupRequired = (devices: DeviceCleanupEntry[]) => {
+    const labels = devices
+      .map((device) => device.label || device.daemonUrl)
+      .filter((label) => label.trim())
+      .slice(0, 6);
+    setManualCleanupNotice({ count: devices.length, labels });
+    setSettingsOpen(false);
+    setLandingReopened(true);
+    setLandingDismissed(false);
+    setPickedLocale(true);
+    notifyDevicesChanged();
   };
 
   const chatReady = () => !landingReopened() && landingDismissed() && hasAccess() && pickedLocale();
@@ -311,6 +339,7 @@ export const App: Component = () => {
             onLocalAccessLogin={handleLocalAccessLogin}
             authed={hasAccess()}
             onProceed={dismissLanding}
+            manualCleanupNotice={manualCleanupNotice()}
           />
         </Show>
 
@@ -389,6 +418,7 @@ export const App: Component = () => {
                   initialSelectedDeviceId={settingsDeviceId()}
                   onDevicesChanged={notifyDevicesChanged}
                   onDeviceSelected={activateRegisteredDevice}
+                  onManualCleanupRequired={handleManualCleanupRequired}
                 />
               </Show>
               <Show when={settingsTab() === "diagnostics"}>

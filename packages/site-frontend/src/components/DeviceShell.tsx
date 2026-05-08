@@ -1,5 +1,5 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
-import { type Device, api } from "../api.ts";
+import { type Device, type DeviceCleanupEntry, api } from "../api.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { clearDevicePrefs } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
@@ -8,6 +8,7 @@ import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
 export interface DeviceShellProps {
   onDevicesChanged?: () => void | Promise<void>;
   onDeviceSelected?: (id: string | null) => void;
+  onManualCleanupRequired?: (devices: DeviceCleanupEntry[]) => void;
   initialSelectedDeviceId?: string | null;
 }
 
@@ -70,9 +71,14 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
     setError(null);
     markRemoving(id, true);
     try {
-      await api.unregisterDevice(id);
+      const result = await api.unregisterDevice(id);
       clearDevicePrefs(id);
       handleRemoved([id]);
+      if (result.cleanup && !result.cleanup.ok) {
+        props.onManualCleanupRequired?.([
+          { id: device.id, label: device.label, daemonUrl: device.daemonUrl, cleanup: result.cleanup },
+        ]);
+      }
       void notifyDevicesChanged().catch((err) => {
         setError((err as Error).message);
       });
@@ -142,6 +148,7 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
             devices={devices() ?? []}
             onChanged={() => void notifyDevicesChanged()}
             onDevicesRemoved={handleRemoved}
+            onManualCleanupRequired={props.onManualCleanupRequired}
             onUnpaired={(id) => {
               if (selected() === id) setSelected(null);
             }}

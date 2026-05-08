@@ -160,14 +160,28 @@ export interface RegisterOtherPcCommandResponse {
   command: string;
 }
 
+export interface DeviceCleanupResult {
+  attempted: boolean;
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
+export interface DeviceCleanupEntry {
+  id: string;
+  label: string;
+  daemonUrl: string;
+  cleanup: DeviceCleanupResult;
+}
+
 export interface UnregisterDeviceResponse {
   ok: true;
-  cleanup?: {
-    attempted: boolean;
-    ok: boolean;
-    status?: number;
-    error?: string;
-  };
+  cleanup?: DeviceCleanupResult;
+}
+
+export interface UnregisterAllDevicesResponse {
+  ok: true;
+  cleanup: DeviceCleanupEntry[];
 }
 
 export interface RemoveOtherPcCommandResponse {
@@ -297,6 +311,7 @@ export const api = {
     }),
   unregisterDevice: (id: string) =>
     request<UnregisterDeviceResponse>("DELETE", `/api/devices/${id}`),
+  unregisterAllDevices: () => request<UnregisterAllDevicesResponse>("DELETE", "/api/devices"),
   renameDevice: (id: string, label: string) =>
     request<Device>("PATCH", `/api/devices/${id}`, { label }),
 

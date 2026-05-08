@@ -85,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 
 해제 명령은 GitHub에서 `scripts/remove-connector.ps1`을 내려받아 실행한다. 이 스크립트가 해당 PC의 Tailscale/LAN daemon URL 후보를 계산하고, 서버의 matching device row를 삭제하고, Windows login task와 local connector state를 제거하고, 남아 있는 connector listener를 종료한다. repo 폴더는 기본적으로 남긴다.
 
-브라우저 설정 다이얼로그의 `디바이스 제거`는 서버의 device row만 지우지 않는다. 선택한 디바이스의 daemon에 접근할 수 있으면 `/system/uninstall`을 호출해 Windows login task, connector auth/state/identity, behavior cache, login-task script, logs 폴더를 함께 제거한다. 등록 명령으로 `$HOME\deskrelay`에 설치된 source clone이면 프로세스 종료 뒤 repo 폴더 제거도 예약한다. 디바이스가 오프라인이거나 오래된 connector라 cleanup 요청이 실패해도, 브라우저 목록에서는 device row를 제거해 stale 디바이스가 남지 않게 한다.
+브라우저 설정 다이얼로그의 `디바이스 제거`는 서버의 device row만 지우지 않는다. 선택한 디바이스의 daemon에 접근할 수 있으면 `/system/uninstall`을 호출해 Windows login task, connector auth/state/identity, behavior cache, login-task script, logs 폴더를 함께 제거한다. 등록 명령으로 `$HOME\deskrelay`에 설치된 source clone이면 프로세스 종료 뒤 repo 폴더 제거도 예약한다. 디바이스가 오프라인이거나 오래된 connector라 cleanup 요청이 실패해도, 브라우저 목록에서는 device row를 제거해 stale 디바이스가 남지 않게 한다. 이 경우 앱은 메인 화면으로 돌아가 어떤 PC에 수동 cleanup이 필요한지 알리고, 그 PC에서 실행할 제거 명령을 보여준다.
 
 ## 구조 노드
 
