@@ -863,14 +863,15 @@ describe("ChatView device refresh bridge", () => {
     window.dispatchEvent(
       new MouseEvent("pointermove", { clientX: 240, bubbles: true, cancelable: true }),
     );
-    window.dispatchEvent(
-      new MouseEvent("pointerup", { clientX: 240, bubbles: true, cancelable: true }),
-    );
     await waitFor(() => {
       expect(localStorage.getItem("cr.sidebar-width")).toBe("260");
       expect(signedInPane.style.getPropertyValue("--sidebar-width")).toBe("260px");
       expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
+      expect(document.body.classList.contains("sidebar-resizing")).toBe(false);
     });
+    window.dispatchEvent(
+      new MouseEvent("pointerup", { clientX: 240, bubbles: true, cancelable: true }),
+    );
     fireEvent.click(sidebarToggle);
     await waitFor(() => {
       expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);

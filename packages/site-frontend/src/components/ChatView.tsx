@@ -1686,11 +1686,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     const startX = event.clientX;
     const startWidth = sidebarWidth();
     let rawWidth = startWidth;
+    let collapsedDuringDrag = false;
 
     const handleMove = (moveEvent: PointerEvent) => {
       moveEvent.preventDefault();
       rawWidth = startWidth + moveEvent.clientX - startX;
-      setSidebarResizeWillCollapse(rawWidth < SIDEBAR_MIN_WIDTH);
+      if (rawWidth < SIDEBAR_MIN_WIDTH) {
+        collapsedDuringDrag = true;
+        commitSidebarWidth(SIDEBAR_MIN_WIDTH);
+        setDesktopSidebarCollapsed(true);
+        setSidebarResizing(false);
+        setSidebarResizeWillCollapse(false);
+        clearSidebarResizeListeners();
+        return;
+      }
+      setDesktopSidebarCollapsed(false);
+      setSidebarResizeWillCollapse(false);
       setSidebarWidth(clampSidebarWidth(rawWidth));
     };
 
@@ -1698,6 +1709,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       clearSidebarResizeListeners();
       setSidebarResizing(false);
       setSidebarResizeWillCollapse(false);
+      if (collapsedDuringDrag) return;
       if (rawWidth < SIDEBAR_MIN_WIDTH) {
         commitSidebarWidth(SIDEBAR_MIN_WIDTH);
         setDesktopSidebarCollapsed(true);
