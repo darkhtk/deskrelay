@@ -122,6 +122,27 @@ describe("App landing flow", () => {
     expect(screen.queryByRole("button", { name: t("landing.cta.start") })).toBeNull();
   });
 
+  test("a site-token URL fragment is stored and opens the chat directly", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        href: "http://test.local/#site-token=tok-fragment",
+        hash: "#site-token=tok-fragment",
+        pathname: "/",
+        origin: "http://test.local",
+        replace: vi.fn(),
+        assign: vi.fn(),
+      },
+    });
+
+    render(() => <App />);
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("cr.site-token:http://test.local")).toBe("tok-fragment");
+      expect(screen.getByRole("button", { name: t("app.back-home") })).toBeTruthy();
+    });
+  });
+
   test("chat top-bar back button reopens the main landing screen", async () => {
     render(() => <App />);
 

@@ -102,6 +102,8 @@ $repoQ = Quote-PsString $repo
 $rootQ = Quote-PsString $root
 $preferredUrlQ = Quote-PsString $preferredUrl
 $siteTokenQ = Quote-PsString $env:CR_SITE_TOKEN
+$openUrl = "$preferredUrl/#site-token=$([System.Uri]::EscapeDataString($env:CR_SITE_TOKEN))"
+$openUrlQ = Quote-PsString $openUrl
 $envFileQ = Quote-PsString $envFile
 $frontendUrlQ = Quote-PsString $env:CR_DEV_FRONTEND_URL
 
@@ -124,7 +126,7 @@ Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkh
 powershell -ExecutionPolicy Bypass -File `$installer -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME
 
 try {
-  Start-Process $preferredUrlQ
+  Start-Process $openUrlQ
   Write-Host "Opened DeskRelay: $preferredUrl"
 } catch {
   Write-Host "Open DeskRelay: $preferredUrl"

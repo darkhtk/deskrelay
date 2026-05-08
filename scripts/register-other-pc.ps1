@@ -53,7 +53,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 try {
-  Start-Process $Server
+  $openUrl = "$($Server.TrimEnd('/'))/#site-token=$([System.Uri]::EscapeDataString($SiteToken))"
+  Start-Process $openUrl
   Write-Host "Opened DeskRelay: $Server"
 } catch {
   Write-Host "Open DeskRelay: $Server"

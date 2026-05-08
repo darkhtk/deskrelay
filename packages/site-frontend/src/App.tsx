@@ -36,6 +36,24 @@ type DeviceSelectionRequest = {
 
 const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { ctx: null, session: null, week: null };
 
+function consumeSiteTokenFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const hash = (window.location.hash ?? "").replace(/^#/, "");
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const token = params.get("site-token")?.trim();
+  if (!token) return null;
+  setToken(token);
+  try {
+    const clean = new URL(window.location.href);
+    clean.hash = "";
+    window.history.replaceState(null, "", clean.toString());
+  } catch {
+    // Keeping the token in storage is the important part; URL cleanup is best effort.
+  }
+  return token;
+}
+
 function nextWeekResetLabel(): string {
   const reset = new Date();
   const day = reset.getDay();
@@ -128,7 +146,7 @@ const ContextUsageMeters: Component<{ usage: ContextUsageOverview; visible: bool
 );
 
 export const App: Component = () => {
-  const initialToken = getToken();
+  const initialToken = consumeSiteTokenFromUrl() ?? getToken();
   const [localToken, setLocalToken] = createSignal<string | null>(initialToken);
   const hasAccess = () => Boolean(localToken());
 
