@@ -242,7 +242,7 @@ body.sidebar-open {
      children's intrinsic width. On mobile, that lets the chat column
      extend past the viewport whenever a single message contains an
      unbreakable string, producing a horizontal pan surface. */
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
   min-height: 0;
   position: relative;
 }
@@ -265,6 +265,51 @@ body.sidebar-open {
   gap: 16px;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.sidebar-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 3px;
+  width: 1px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 120ms ease, width 120ms ease, left 120ms ease;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.sidebar-resize-handle.is-dragging::after {
+  left: 2px;
+  width: 2px;
+  background: var(--border-strong);
+}
+
+.sidebar-resize-handle.will-collapse::after {
+  background: var(--accent-coral);
+}
+
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.sidebar-resizing * {
+  cursor: col-resize !important;
 }
 
 .sidebar-brand {
@@ -4731,6 +4776,9 @@ dialog.approval-modal-root,
        phones; otherwise WebKit can paint each frame on the CPU and the
        drawer "judders" perceptibly. */
     will-change: transform;
+  }
+  .sidebar-resize-handle {
+    display: none;
   }
   body.sidebar-open .sidebar {
     transform: translateX(0);

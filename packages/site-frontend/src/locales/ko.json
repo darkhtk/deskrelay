@@ -121,6 +121,7 @@
   "chat.sidebar.skills.delete-label": "삭제?",
   "chat.sidebar.skills.delete-progress": "삭제 중...",
   "chat.sidebar.skills.empty": "Claude CLI가 보고한 스킬이 없습니다.",
+  "chat.sidebar.resize": "사이드바 폭 조절",
   "chat.toggle-sidebar": "사이드바 토글",
   "cli.action.error": "Claude CLI 오류",
   "cli.action.finished": "Claude CLI 완료",

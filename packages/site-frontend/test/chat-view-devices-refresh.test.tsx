@@ -544,6 +544,45 @@ describe("ChatView device refresh bridge", () => {
       expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
     });
 
+    const signedInPane = container.querySelector("#signed-in-pane") as HTMLElement | null;
+    const resizeHandle = container.querySelector(".sidebar-resize-handle") as HTMLElement | null;
+    if (!signedInPane) throw new Error("signed-in pane missing");
+    if (!resizeHandle) throw new Error("sidebar resize handle missing");
+
+    resizeHandle.dispatchEvent(
+      new MouseEvent("pointerdown", { clientX: 260, bubbles: true, cancelable: true }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("pointermove", { clientX: 420, bubbles: true, cancelable: true }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("pointerup", { clientX: 420, bubbles: true, cancelable: true }),
+    );
+    await waitFor(() => {
+      expect(localStorage.getItem("cr.sidebar-width")).toBe("420");
+      expect(signedInPane.style.getPropertyValue("--sidebar-width")).toBe("420px");
+      expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
+    });
+
+    resizeHandle.dispatchEvent(
+      new MouseEvent("pointerdown", { clientX: 420, bubbles: true, cancelable: true }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("pointermove", { clientX: 240, bubbles: true, cancelable: true }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("pointerup", { clientX: 240, bubbles: true, cancelable: true }),
+    );
+    await waitFor(() => {
+      expect(localStorage.getItem("cr.sidebar-width")).toBe("260");
+      expect(signedInPane.style.getPropertyValue("--sidebar-width")).toBe("260px");
+      expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
+    });
+    fireEvent.click(sidebarToggle);
+    await waitFor(() => {
+      expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
+    });
+
     expect(container.querySelector(".session-search")).toBeNull();
 
     const searchToggle = container.querySelector(

@@ -74,11 +74,39 @@ const STREAM_OPEN_GRACE_MS = 2500;
 const CONTEXT_USAGE_POLL_MS = 5 * 60 * 1000;
 const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
+const SIDEBAR_WIDTH_STORAGE_KEY = "cr.sidebar-width";
+const SIDEBAR_MIN_WIDTH = 260;
+const SIDEBAR_MAX_WIDTH = SIDEBAR_MIN_WIDTH * 2;
+const SIDEBAR_RESIZE_KEYBOARD_STEP = 20;
 
 function latestTranscriptEvents(events: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
   return events.length > SESSION_TRANSCRIPT_EVENT_LIMIT
     ? events.slice(-SESSION_TRANSCRIPT_EVENT_LIMIT)
     : events;
+}
+
+function clampSidebarWidth(value: number): number {
+  if (!Number.isFinite(value)) return SIDEBAR_MIN_WIDTH;
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)));
+}
+
+function readSidebarWidth(): number {
+  if (typeof localStorage === "undefined") return SIDEBAR_MIN_WIDTH;
+  try {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    return clampSidebarWidth(stored);
+  } catch {
+    return SIDEBAR_MIN_WIDTH;
+  }
+}
+
+function writeSidebarWidth(value: number) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(value)));
+  } catch {
+    // Ignore private-mode/localStorage failures; the in-memory width still works.
+  }
 }
 
 function runErrorMessage(content: unknown): string | null {
@@ -1331,8 +1359,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [activeRunId, setActiveRunId] = createSignal<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = createSignal(false);
+  const [sidebarWidth, setSidebarWidth] = createSignal(readSidebarWidth());
+  const [sidebarResizing, setSidebarResizing] = createSignal(false);
+  const [sidebarResizeWillCollapse, setSidebarResizeWillCollapse] = createSignal(false);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   let transcriptScroller!: HTMLDivElement;
+  let sidebarResizeCleanup: (() => void) | undefined;
 
   function isTranscriptAtBottomNow(): boolean {
     if (!transcriptScroller) return true;
@@ -1456,11 +1488,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (typeof document === "undefined") return;
     document.body.classList.toggle("sidebar-open", sidebarOpen());
     document.body.classList.toggle("sidebar-collapsed", desktopSidebarCollapsed());
+    document.body.classList.toggle("sidebar-resizing", sidebarResizing());
   });
   onCleanup(() => {
+    sidebarResizeCleanup?.();
     if (typeof document !== "undefined") {
       document.body.classList.remove("sidebar-open");
       document.body.classList.remove("sidebar-collapsed");
+      document.body.classList.remove("sidebar-resizing");
     }
   });
 
@@ -1478,6 +1513,91 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return;
     }
     setDesktopSidebarCollapsed((v) => !v);
+  }
+
+  function commitSidebarWidth(value: number) {
+    const next = clampSidebarWidth(value);
+    setSidebarWidth(next);
+    writeSidebarWidth(next);
+  }
+
+  function clearSidebarResizeListeners() {
+    sidebarResizeCleanup?.();
+    sidebarResizeCleanup = undefined;
+  }
+
+  function beginSidebarResize(event: PointerEvent) {
+    if (isMobileSidebarViewport()) return;
+    event.preventDefault();
+    setDesktopSidebarCollapsed(false);
+    clearSidebarResizeListeners();
+
+    const startX = event.clientX;
+    const startWidth = sidebarWidth();
+    let rawWidth = startWidth;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault();
+      rawWidth = startWidth + moveEvent.clientX - startX;
+      setSidebarResizeWillCollapse(rawWidth < SIDEBAR_MIN_WIDTH);
+      setSidebarWidth(clampSidebarWidth(rawWidth));
+    };
+
+    const handleUp = () => {
+      clearSidebarResizeListeners();
+      setSidebarResizing(false);
+      setSidebarResizeWillCollapse(false);
+      if (rawWidth < SIDEBAR_MIN_WIDTH) {
+        commitSidebarWidth(SIDEBAR_MIN_WIDTH);
+        setDesktopSidebarCollapsed(true);
+        return;
+      }
+      commitSidebarWidth(rawWidth);
+    };
+
+    window.addEventListener("pointermove", handleMove, { passive: false });
+    window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointercancel", handleUp, { once: true });
+    sidebarResizeCleanup = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+    setSidebarResizing(true);
+    setSidebarResizeWillCollapse(false);
+  }
+
+  function handleSidebarResizeKeyDown(event: KeyboardEvent) {
+    if (isMobileSidebarViewport()) return;
+    const step = event.shiftKey ? SIDEBAR_RESIZE_KEYBOARD_STEP * 2 : SIDEBAR_RESIZE_KEYBOARD_STEP;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      if (sidebarWidth() <= SIDEBAR_MIN_WIDTH) {
+        commitSidebarWidth(SIDEBAR_MIN_WIDTH);
+        setDesktopSidebarCollapsed(true);
+        return;
+      }
+      setDesktopSidebarCollapsed(false);
+      commitSidebarWidth(sidebarWidth() - step);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setDesktopSidebarCollapsed(false);
+      commitSidebarWidth(sidebarWidth() + step);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      commitSidebarWidth(SIDEBAR_MIN_WIDTH);
+      setDesktopSidebarCollapsed(false);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      commitSidebarWidth(SIDEBAR_MAX_WIDTH);
+      setDesktopSidebarCollapsed(false);
+    }
   }
 
   function openSidebarForDevicePick() {
@@ -2203,7 +2323,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   return (
-    <section class="signed-in" id="signed-in-pane">
+    <section
+      class="signed-in"
+      id="signed-in-pane"
+      style={{ "--sidebar-width": `${sidebarWidth()}px` }}
+    >
       <Show when={sidebarOpen()}>
         <button
           type="button"
@@ -2882,6 +3006,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             </svg>
           </button>
         </div>
+        <div
+          class="sidebar-resize-handle"
+          classList={{
+            "is-dragging": sidebarResizing(),
+            "will-collapse": sidebarResizeWillCollapse(),
+          }}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("chat.sidebar.resize")}
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={sidebarWidth()}
+          tabIndex={0}
+          onPointerDown={beginSidebarResize}
+          onKeyDown={handleSidebarResizeKeyDown}
+        />
       </aside>
 
       <section class="chat" onPaste={handlePaste}>
