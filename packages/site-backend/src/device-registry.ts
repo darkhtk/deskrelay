@@ -72,7 +72,14 @@ export class InMemoryDeviceRegistry implements DeviceRegistry {
     const url = normalizeDaemonUrl(input.daemonUrl);
     for (const existing of this.#devices.values()) {
       if (existing.daemonUrl === url) {
-        throw new DeviceRegistryError(`device already registered: ${url}`, 409);
+        const updated: Device = {
+          ...existing,
+          label: input.label?.trim() || existing.label,
+          ...(input.authToken?.trim() ? { authToken: input.authToken.trim() } : {}),
+          registeredAt: new Date().toISOString(),
+        };
+        this.#devices.set(existing.id, updated);
+        return updated;
       }
     }
     const device: Device = {

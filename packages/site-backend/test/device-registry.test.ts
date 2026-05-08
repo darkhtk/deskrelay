@@ -45,17 +45,19 @@ describe("InMemoryDeviceRegistry", () => {
     expect(() => r.register({ daemonUrl: "not a url" })).toThrow(DeviceRegistryError);
   });
 
-  test("register rejects duplicate (canonicalized) daemonUrl with 409", () => {
+  test("register refreshes duplicate canonicalized daemonUrl in place", () => {
     const r = new InMemoryDeviceRegistry();
-    r.register({ daemonUrl: "http://127.0.0.1:18091" });
-    let caught: DeviceRegistryError | undefined;
-    try {
-      r.register({ daemonUrl: "http://127.0.0.1:18091/" });
-    } catch (err) {
-      caught = err as DeviceRegistryError;
-    }
-    expect(caught).toBeInstanceOf(DeviceRegistryError);
-    expect(caught?.status).toBe(409);
+    const first = r.register({ daemonUrl: "http://127.0.0.1:18091", authToken: "old" });
+    const second = r.register({
+      daemonUrl: "http://127.0.0.1:18091/?x=1#y",
+      label: "Updated",
+      authToken: "new",
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.label).toBe("Updated");
+    expect(second.daemonUrl).toBe("http://127.0.0.1:18091");
+    expect(second.authToken).toBe("new");
+    expect(r.list()).toHaveLength(1);
   });
 
   test("get returns the registered device, undefined for unknown id", () => {

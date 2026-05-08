@@ -253,12 +253,30 @@ describe("device CRUD", () => {
     expect(res.status).toBe(400);
   });
 
-  test("POST duplicate returns 409", async () => {
-    await setup.app.fetch(authedRequest("POST", "/api/devices", { daemonUrl: DAEMON_URL }));
-    const dup = await setup.app.fetch(
-      authedRequest("POST", "/api/devices", { daemonUrl: DAEMON_URL }),
+  test("POST duplicate refreshes label and daemon token in place", async () => {
+    const firstRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        label: "Old",
+        authToken: "old-token",
+      }),
     );
-    expect(dup.status).toBe(409);
+    const first = await firstRes.json();
+    const dup = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: `${DAEMON_URL}/`,
+        label: "New",
+        authToken: "new-token",
+      }),
+    );
+    expect(dup.status).toBe(201);
+    const refreshed = await dup.json();
+    expect(refreshed.id).toBe(first.id);
+    expect(refreshed.label).toBe("New");
+    expect(setup.registry.list()).toHaveLength(1);
+
+    await setup.app.fetch(authedRequest("GET", `/api/devices/${first.id}/behaviors`));
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer new-token");
   });
 
   test("GET /api/devices lists registered", async () => {

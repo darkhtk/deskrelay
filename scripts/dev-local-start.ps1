@@ -273,17 +273,10 @@ if (-not $NoBackend) {
 
 if (-not $NoRegisterDevice -and -not $NoDaemon -and -not $NoBackend -and -not $PrintOnly) {
   $headers = @{ Authorization = "Bearer $env:CR_SITE_TOKEN"; "content-type" = "application/json" }
-  $devices = @()
   try {
-    $devicesResponse = Invoke-RestMethod -Method Get -Uri "$env:CR_DEV_SITE_URL/api/devices" -Headers @{ Authorization = "Bearer $env:CR_SITE_TOKEN" } -TimeoutSec 5
-    $devices = @($devicesResponse | ForEach-Object { $_ })
+    Invoke-RestMethod -Method Get -Uri "$env:CR_DEV_SITE_URL/api/devices" -Headers @{ Authorization = "Bearer $env:CR_SITE_TOKEN" } -TimeoutSec 5 | Out-Null
   } catch {
-    $devices = @()
-  }
-  $matchingDevices = @($devices | Where-Object { [string]$_.daemonUrl -eq $env:CR_DEV_DAEMON_URL })
-  foreach ($device in $matchingDevices) {
-    $deviceId = [string]$device.id
-    Invoke-RestMethod -Method Delete -Uri "$env:CR_DEV_SITE_URL/api/devices/$deviceId" -Headers @{ Authorization = "Bearer $env:CR_SITE_TOKEN" } -TimeoutSec 10 | Out-Null
+    Write-Warning "Could not list existing devices before local registration; attempting registration anyway."
   }
   $label = "Local dev ($env:COMPUTERNAME)"
   $body = @{ daemonUrl = $env:CR_DEV_DAEMON_URL; label = $label; authToken = $auth.token } | ConvertTo-Json -Compress
