@@ -303,6 +303,52 @@ describe("device CRUD", () => {
     expect(setup.registry.list()).toHaveLength(0);
   });
 
+  test("DELETE /api/devices unregisters all devices and uninstalls remote PCs before the server PC", async () => {
+    const serverRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: "http://127.0.0.1:18191",
+        label: "Local dev (HOMEDEV)",
+        authToken: "server-token",
+      }),
+    );
+    const remoteRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        label: "Remote PC",
+        authToken: "remote-token",
+      }),
+    );
+    const server = await serverRes.json();
+    const remote = await remoteRes.json();
+
+    const del = await setup.app.fetch(authedRequest("DELETE", "/api/devices"));
+    expect(del.status).toBe(200);
+    const deleted = (await del.json()) as {
+      ok: boolean;
+      cleanup: Array<{
+        id: string;
+        label: string;
+        daemonUrl: string;
+        cleanup: { attempted: boolean; ok: boolean; status: number };
+      }>;
+    };
+
+    expect(deleted.ok).toBe(true);
+    expect(deleted.cleanup.map((entry) => entry.id)).toEqual([remote.id, server.id]);
+    expect(deleted.cleanup.every((entry) => entry.cleanup.ok)).toBe(true);
+
+    const uninstallCalls = setup.calls.filter((call) => call.url.endsWith("/system/uninstall"));
+    expect(uninstallCalls.map((call) => call.url)).toEqual([
+      `${DAEMON_URL}/system/uninstall`,
+      "http://127.0.0.1:18191/system/uninstall",
+    ]);
+    expect(uninstallCalls.map((call) => call.headers.authorization)).toEqual([
+      "Bearer remote-token",
+      "Bearer server-token",
+    ]);
+    expect(setup.registry.list()).toEqual([]);
+  });
+
   test("DELETE unknown id returns 404", async () => {
     const res = await setup.app.fetch(authedRequest("DELETE", "/api/devices/nope"));
     expect(res.status).toBe(404);

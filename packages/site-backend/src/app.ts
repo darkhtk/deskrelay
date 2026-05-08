@@ -22,6 +22,7 @@ export interface SiteAppOptions {
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
+const CONNECTOR_CLEANUP_TIMEOUT_MS = 5_000;
 
 export function createSiteApp(options: SiteAppOptions): Hono {
   const app = new Hono();
@@ -151,17 +152,21 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
   });
 
+  app.delete("/api/devices", async (c) => {
+    const devices = orderDevicesForRemoval(registry.list());
+    const cleanup = [];
+    for (const device of devices) {
+      cleanup.push(await unregisterDeviceWithCleanup(fetchImpl, registry, device, localToken));
+    }
+    return c.json({ ok: true, cleanup });
+  });
+
   app.delete("/api/devices/:id", async (c) => {
     const id = c.req.param("id");
     const device = registry.get(id);
     if (!device) return c.json({ error: `unknown device: ${id}` }, 404);
-    const cleanup = await requestDaemonUninstall(
-      fetchImpl,
-      device,
-      daemonToken(device, localToken),
-    );
-    registry.unregister(id);
-    return c.json({ ok: true, cleanup });
+    const result = await unregisterDeviceWithCleanup(fetchImpl, registry, device, localToken);
+    return c.json({ ok: true, cleanup: result.cleanup });
   });
 
   app.get("/api/devices/:id/behaviors", async (c) => {
@@ -459,6 +464,29 @@ interface DeviceCleanupResult {
   error?: string;
 }
 
+interface DeviceCleanupEntry {
+  id: string;
+  label: string;
+  daemonUrl: string;
+  cleanup: DeviceCleanupResult;
+}
+
+async function unregisterDeviceWithCleanup(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  registry: DeviceRegistry,
+  device: Device,
+  localToken?: string,
+): Promise<DeviceCleanupEntry> {
+  const cleanup = await requestDaemonUninstall(fetchImpl, device, daemonToken(device, localToken));
+  registry.unregister(device.id);
+  return {
+    id: device.id,
+    label: device.label,
+    daemonUrl: device.daemonUrl,
+    cleanup,
+  };
+}
+
 async function requestDaemonUninstall(
   fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
   device: Device,
@@ -471,6 +499,7 @@ async function requestDaemonUninstall(
       method: "POST",
       headers,
       body: JSON.stringify({ removeRepo: true }),
+      signal: AbortSignal.timeout(CONNECTOR_CLEANUP_TIMEOUT_MS),
     });
     if (res.ok) return { attempted: true, ok: true, status: res.status };
     const text = await res.text().catch(() => "");
@@ -482,6 +511,24 @@ async function requestDaemonUninstall(
     };
   } catch (err) {
     return { attempted: true, ok: false, error: (err as Error).message };
+  }
+}
+
+function orderDevicesForRemoval(devices: Device[]): Device[] {
+  return [...devices].sort((left, right) => {
+    return Number(isServerDevice(left)) - Number(isServerDevice(right));
+  });
+}
+
+function isServerDevice(device: Device): boolean {
+  const label = device.label.toLowerCase();
+  if (label.startsWith("local dev")) return true;
+  try {
+    const url = new URL(device.daemonUrl);
+    const port = url.port ? Number(url.port) : null;
+    return port === 18191;
+  } catch {
+    return false;
   }
 }
 

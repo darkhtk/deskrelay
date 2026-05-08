@@ -170,8 +170,10 @@ if (Test-Path -LiteralPath `$root) {
 
 $uninstallServer = @"
 # DeskRelay - uninstall this PC's self-host server
-# This stops DeskRelay, removes .self-server runtime state, and removes
-# generated command files. It does not delete the cloned git repository.
+# While the server is still running, this first asks every registered
+# connector to uninstall itself. Then it stops DeskRelay, removes
+# .self-server runtime state, and removes generated command files.
+# It does not delete the cloned git repository.
 
 Set-Location -LiteralPath $repoQ
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1 -Root $rootQ -RepoRoot $repoQ

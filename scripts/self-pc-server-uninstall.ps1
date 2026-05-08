@@ -62,9 +62,44 @@ function Remove-RepoIfRequested {
   Write-Host "Removed repo folder: $full"
 }
 
+function Invoke-RegisteredDeviceCleanup {
+  param([string]$SiteUrl, [string]$Token)
+  if ([string]::IsNullOrWhiteSpace($SiteUrl) -or [string]::IsNullOrWhiteSpace($Token)) {
+    Write-Warning "Skipping registered connector cleanup because server URL or Site token is missing."
+    return
+  }
+  $site = $SiteUrl.TrimEnd("/")
+  $headers = @{ Authorization = "Bearer $Token" }
+  try {
+    $devices = @(Invoke-RestMethod -Method Get -Uri "$site/api/devices" -Headers $headers -TimeoutSec 10)
+    if ($devices.Count -eq 0) {
+      Write-Host "No registered devices to clean up."
+      return
+    }
+    Write-Host "Requesting local uninstall on $($devices.Count) registered device(s)..."
+    $result = Invoke-RestMethod -Method Delete -Uri "$site/api/devices" -Headers $headers -TimeoutSec 90
+    $cleanup = @($result.cleanup)
+    $failed = @($cleanup | Where-Object { -not $_.cleanup.ok })
+    foreach ($entry in $cleanup) {
+      $status = if ($entry.cleanup.ok) { "ok" } else { "failed" }
+      Write-Host "  $status - $($entry.label) $($entry.daemonUrl)"
+    }
+    if ($failed.Count -gt 0) {
+      Write-Warning "Some registered devices were removed from the server but did not confirm local uninstall. Offline PCs must be cleaned manually if needed."
+    }
+  } catch {
+    Write-Warning "Could not request registered connector cleanup before server uninstall. $($_.Exception.Message)"
+  }
+}
+
 $repo = Get-RepoRoot -Explicit $RepoRoot
 $root = Get-FullPathNoResolve -Path $Root -Repo $repo
 $envFile = Join-Path $root "dev.env.ps1"
+
+if (Test-Path -LiteralPath $envFile) {
+  . $envFile
+  Invoke-RegisteredDeviceCleanup -SiteUrl $env:CR_DEV_SITE_URL -Token $env:CR_SITE_TOKEN
+}
 
 try {
   & (Join-Path $repo "scripts\dev-local-stop.ps1") -NasRoot $root -RepoRoot $repo
