@@ -4158,6 +4158,25 @@ dialog.approval-modal-root,
   outline: 2px solid color-mix(in srgb, var(--accent-coral) 40%, transparent);
   border-color: var(--accent-coral);
 }
+.instruction-content {
+  min-height: 48px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px;
+}
+.instruction-content-empty {
+  color: var(--text-muted);
+}
 .instruction-actions {
   justify-content: flex-end;
 }

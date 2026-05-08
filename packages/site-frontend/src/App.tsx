@@ -68,6 +68,20 @@ type ManualCleanupNotice = {
 };
 
 const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { ctx: null, session: null, week: null };
+const INSTRUCTION_SOURCE_ORDER: Array<ClaudeInstructionSource["scope"]> = [
+  "user",
+  "managed",
+  "project",
+  "projectClaude",
+  "local",
+];
+const INSTRUCTION_SOURCE_LABELS: Record<ClaudeInstructionSource["scope"], string> = {
+  user: "사용자 전역",
+  managed: "관리 정책",
+  project: "프로젝트",
+  projectClaude: ".claude 프로젝트",
+  local: "개인 로컬",
+};
 
 function consumeSiteTokenFromUrl(): string | null {
   if (typeof window === "undefined") return null;
@@ -577,7 +591,9 @@ const InstructionSettings: Component<{
     const id = effectiveDeviceId();
     return (devices() ?? []).find((device) => device.id === id) ?? null;
   });
-  const instructionSources = createMemo(() => snapshot()?.sources ?? []);
+  const instructionSources = createMemo(() =>
+    completeInstructionSources(snapshot()?.sources ?? [], cwdDraft().trim()),
+  );
   const deviceInstructionSources = createMemo(() =>
     instructionSources().filter((source) => source.scope === "user" || source.scope === "managed"),
   );
@@ -745,6 +761,17 @@ const InstructionSourceViewer: Component<{
     if (props.source.readonly) return t("instructions.source.readonly");
     return props.source.exists ? t("instructions.source.exists") : t("instructions.source.missing");
   };
+  const sourceBody = () => {
+    if (props.source.content.trim()) return props.source.content;
+    if (props.source.error === "cwd is not selected") {
+      return t("instructions.content.cwd-required");
+    }
+    if (props.source.error) {
+      return t("instructions.content.error", { error: props.source.error });
+    }
+    if (!props.source.exists) return t("instructions.content.missing");
+    return t("instructions.content.empty");
+  };
 
   return (
     <div class="instruction-source">
@@ -757,15 +784,58 @@ const InstructionSourceViewer: Component<{
         </div>
         <span class="instruction-source-state">{sourceState()}</span>
       </div>
-      <textarea
-        class="instruction-textarea"
-        value={props.source.content}
-        readonly
-        placeholder={t("instructions.placeholder")}
-      />
+      <pre
+        class="instruction-content"
+        classList={{ "instruction-content-empty": !props.source.content.trim() }}
+      >
+        {sourceBody()}
+      </pre>
     </div>
   );
 };
+
+function completeInstructionSources(
+  sources: ClaudeInstructionSource[],
+  cwd: string,
+): ClaudeInstructionSource[] {
+  const byScope = new Map(sources.map((source) => [source.scope, source]));
+  return INSTRUCTION_SOURCE_ORDER.map(
+    (scope) => byScope.get(scope) ?? fallbackInstructionSource(scope, cwd),
+  );
+}
+
+function fallbackInstructionSource(
+  scope: ClaudeInstructionSource["scope"],
+  cwd: string,
+): ClaudeInstructionSource {
+  const source: ClaudeInstructionSource = {
+    scope,
+    label: INSTRUCTION_SOURCE_LABELS[scope],
+    path: fallbackInstructionPath(scope, cwd),
+    readonly: scope === "managed",
+    exists: false,
+    content: "",
+  };
+  if (scope === "project" || scope === "projectClaude" || scope === "local") {
+    source.error = "cwd is not selected";
+  }
+  return source;
+}
+
+function fallbackInstructionPath(scope: ClaudeInstructionSource["scope"], cwd: string): string {
+  if (scope === "user") return "~/.claude/CLAUDE.md";
+  if (scope === "managed") return t("instructions.path.managed");
+  if (!cwd) return "";
+  if (scope === "project") return joinDisplayPath(cwd, "CLAUDE.md");
+  if (scope === "projectClaude") return joinDisplayPath(cwd, ".claude", "CLAUDE.md");
+  return joinDisplayPath(cwd, "CLAUDE.local.md");
+}
+
+function joinDisplayPath(base: string, ...parts: string[]): string {
+  const sep = base.includes("\\") ? "\\" : "/";
+  const trimmed = base.replace(/[\\/]+$/, "");
+  return [trimmed, ...parts].join(sep);
+}
 
 const InstructionTextarea: Component<{
   label: string;
