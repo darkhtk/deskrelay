@@ -4109,6 +4109,9 @@ dialog.approval-modal-root,
 .instruction-context-row {
   align-items: center;
 }
+.instruction-context-row .text-input {
+  max-width: 280px;
+}
 .instruction-status {
   flex-shrink: 0;
   color: var(--text-faint);
@@ -4164,6 +4167,26 @@ dialog.approval-modal-root,
   gap: 8px;
   border-top: 1px solid var(--border-subtle);
   padding-top: 14px;
+}
+.instruction-source-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.instruction-project-context {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 14px;
+}
+.instruction-project-context > div {
+  flex: 1;
+  min-width: 0;
+}
+.instruction-project-context .text-input {
+  flex: 1.4;
+  min-width: 220px;
 }
 .instruction-source-header {
   display: flex;

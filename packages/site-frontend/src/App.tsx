@@ -577,6 +577,16 @@ const InstructionSettings: Component<{
     const id = effectiveDeviceId();
     return (devices() ?? []).find((device) => device.id === id) ?? null;
   });
+  const instructionSources = createMemo(() => snapshot()?.sources ?? []);
+  const deviceInstructionSources = createMemo(() =>
+    instructionSources().filter((source) => source.scope === "user" || source.scope === "managed"),
+  );
+  const projectInstructionSources = createMemo(() =>
+    instructionSources().filter(
+      (source) =>
+        source.scope === "project" || source.scope === "projectClaude" || source.scope === "local",
+    ),
+  );
 
   function saveTemporary(): void {
     setTemporaryInstructionPrefs(tempDraft());
@@ -624,12 +634,6 @@ const InstructionSettings: Component<{
             </For>
           </Show>
         </select>
-        <input
-          class="text-input"
-          value={cwdDraft()}
-          placeholder={t("instructions.cwd.placeholder")}
-          onInput={(event) => setCwdDraft(event.currentTarget.value)}
-        />
         <button type="button" class="secondary-button" onClick={() => void refetchInstructions()}>
           {t("instructions.reload")}
         </button>
@@ -637,10 +641,7 @@ const InstructionSettings: Component<{
       <Show when={selectedDevice()}>
         {(device) => (
           <p class="settings-card-help">
-            {t("instructions.device.meta", {
-              label: device().label,
-              cwd: cwdDraft().trim() || t("instructions.cwd.none"),
-            })}
+            {t("instructions.device.meta", { label: device().label })}
           </p>
         )}
       </Show>
@@ -658,9 +659,25 @@ const InstructionSettings: Component<{
               <p class="settings-error">{t("instructions.load.failed", { error: message() })}</p>
             )}
           </Show>
-          <For each={snapshot()?.sources ?? []}>
-            {(source) => <InstructionSourceViewer source={source} />}
-          </For>
+          <InstructionSourceGroup
+            title={t("instructions.device.sources.title")}
+            help={t("instructions.device.sources.help")}
+            sources={deviceInstructionSources()}
+          />
+
+          <div class="instruction-project-context">
+            <div>
+              <div class="instruction-field-label">{t("instructions.project.sources.title")}</div>
+              <div class="instruction-field-help">{t("instructions.project.sources.help")}</div>
+            </div>
+            <input
+              class="text-input"
+              value={cwdDraft()}
+              placeholder={t("instructions.cwd.placeholder")}
+              onInput={(event) => setCwdDraft(event.currentTarget.value)}
+            />
+          </div>
+          <InstructionSourceGroup title="" help="" sources={projectInstructionSources()} />
         </Show>
       </Show>
 
@@ -697,10 +714,33 @@ const InstructionSettings: Component<{
   );
 };
 
+const InstructionSourceGroup: Component<{
+  title: string;
+  help: string;
+  sources: ClaudeInstructionSource[];
+}> = (props) => (
+  <div class="instruction-source-group">
+    <Show when={props.title || props.help}>
+      <div>
+        <Show when={props.title}>
+          <div class="instruction-field-label">{props.title}</div>
+        </Show>
+        <Show when={props.help}>
+          <div class="instruction-field-help">{props.help}</div>
+        </Show>
+      </div>
+    </Show>
+    <For each={props.sources}>{(source) => <InstructionSourceViewer source={source} />}</For>
+  </div>
+);
+
 const InstructionSourceViewer: Component<{
   source: ClaudeInstructionSource;
 }> = (props) => {
   const sourceState = () => {
+    if (props.source.error === "cwd is not selected") {
+      return t("instructions.source.cwd-required");
+    }
     if (props.source.error) return props.source.error;
     if (props.source.readonly) return t("instructions.source.readonly");
     return props.source.exists ? t("instructions.source.exists") : t("instructions.source.missing");
