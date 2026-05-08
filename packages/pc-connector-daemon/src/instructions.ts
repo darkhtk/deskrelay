@@ -108,6 +108,9 @@ async function readInstructionSource(
   if (cwd && !cwd.ok && scope !== "user" && scope !== "managed") {
     return emptySource(scope, meta, "", cwd.error);
   }
+  if (!cwd && scope !== "user" && scope !== "managed") {
+    return emptySource(scope, meta, "", "cwd is not selected");
+  }
   let target: ResolvedSource;
   try {
     target = resolveSourcePath(scope, cwd?.ok ? cwd.path : undefined, roots, false);

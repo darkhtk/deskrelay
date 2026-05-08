@@ -561,7 +561,15 @@ const InstructionSettings: Component<{
     instructionInput,
     async (input) => {
       if (!input) return null;
-      return await api.instructions(input.deviceId, input.cwd);
+      try {
+        return await api.instructions(input.deviceId, input.cwd);
+      } catch (err) {
+        return {
+          cwd: input.cwd || null,
+          sources: [],
+          error: (err as Error).message,
+        };
+      }
     },
   );
 
@@ -645,6 +653,11 @@ const InstructionSettings: Component<{
           when={!snapshot.loading}
           fallback={<p class="settings-card-help">{t("instructions.loading")}</p>}
         >
+          <Show when={(snapshot() as { error?: string } | null)?.error}>
+            {(message) => (
+              <p class="settings-error">{t("instructions.load.failed", { error: message() })}</p>
+            )}
+          </Show>
           <For each={snapshot()?.sources ?? []}>
             {(source) => <InstructionSourceViewer source={source} />}
           </For>

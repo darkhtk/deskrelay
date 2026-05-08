@@ -168,6 +168,7 @@ export interface ClaudeInstructionSource {
 export interface ClaudeInstructionsSnapshot {
   cwd: string | null;
   sources: ClaudeInstructionSource[];
+  error?: string;
 }
 
 export interface RegisterOtherPcCommandResponse {

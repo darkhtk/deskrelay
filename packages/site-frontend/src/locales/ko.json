@@ -360,6 +360,7 @@
   "instructions.device.empty": "등록된 디바이스 없음",
   "instructions.device.meta": "{label} · cwd {cwd}",
   "instructions.help": "선택된 디바이스에서 Claude CLI가 실제로 읽는 5가지 지침 소스를 표시합니다. 편집 기능은 아직 제공하지 않습니다.",
+  "instructions.load.failed": "지침 조회 실패: {error}",
   "instructions.loading": "지침을 불러오는 중...",
   "instructions.no-device": "먼저 디바이스를 선택하세요.",
   "instructions.path.none": "경로 없음",
