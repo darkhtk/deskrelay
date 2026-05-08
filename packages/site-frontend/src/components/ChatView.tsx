@@ -49,7 +49,7 @@ import {
   setDeviceClaudeModel,
 } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
-import { scrollToBottomOnSend } from "../ui-prefs.ts";
+import { applyCustomInstructionsToMessage, scrollToBottomOnSend } from "../ui-prefs.ts";
 import { ApprovalModal } from "./ApprovalModal.tsx";
 import { Attachments, type AttachmentsAPI, imagesFromClipboard } from "./Attachments.tsx";
 import { CapabilitiesBadge } from "./CapabilitiesBadge.tsx";
@@ -1818,6 +1818,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     const requestedModeForRun = requestedPermissionMode();
     const cwdForRun = cwd();
     const modelForRun = selectedClaudeModel();
+    const messageForRun = applyCustomInstructionsToMessage(message);
     const space = `remote-claude.run:${runId}`;
     const abort = new AbortController();
     setActiveRunId(runId);
@@ -1889,7 +1890,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         "chat",
         {
           cwd: cwdForRun,
-          message,
+          message: messageForRun,
           attachments: pendingAttachments,
           runId,
           permissionMode: requestedModeForRun,

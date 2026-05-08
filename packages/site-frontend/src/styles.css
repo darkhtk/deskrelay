@@ -4097,6 +4097,63 @@ dialog.approval-modal-root,
 .settings-tab:hover {
   color: var(--text);
 }
+.settings-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.instruction-settings {
+  gap: 14px;
+}
+.instruction-status {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.instruction-status-custom {
+  color: var(--accent-coral);
+  border-color: var(--accent-coral);
+}
+.instruction-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.instruction-field-label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.instruction-field-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.instruction-textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 10px;
+}
+.instruction-textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent-coral) 40%, transparent);
+  border-color: var(--accent-coral);
+}
+.instruction-actions {
+  justify-content: flex-end;
+}
 .text-button {
   background: transparent;
   border: 0;

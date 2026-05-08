@@ -21,7 +21,12 @@ import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
 import { t } from "./i18n.ts";
 import {
   scrollToBottomOnSend,
+  FACTORY_CUSTOM_INSTRUCTION_PREFS,
+  getCustomInstructionPrefs,
+  hasCustomInstructions,
+  resetCustomInstructionPrefs,
   setScrollToBottomOnSend,
+  setCustomInstructionPrefs,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
   setShowWeekUsageMeter,
@@ -30,7 +35,7 @@ import {
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
 
-type SettingsTab = "general" | "devices" | "diagnostics";
+type SettingsTab = "general" | "devices" | "diagnostics" | "instructions";
 
 type OpenSettingsOptions = {
   tab?: SettingsTab;
@@ -396,7 +401,7 @@ export const App: Component = () => {
             </div>
 
             <nav class="settings-tabs">
-              <For each={["general", "devices", "diagnostics"] as const}>
+              <For each={["general", "devices", "diagnostics", "instructions"] as const}>
                 {(value) => (
                   <button
                     type="button"
@@ -430,6 +435,9 @@ export const App: Component = () => {
                     setSettingsTab("devices");
                   }}
                 />
+              </Show>
+              <Show when={settingsTab() === "instructions"}>
+                <InstructionSettings />
               </Show>
             </div>
           </div>
@@ -480,6 +488,99 @@ const LanguageSettings: Component = () => (
       </button>
     </div>
   </section>
+);
+
+const InstructionSettings: Component = () => {
+  const [draft, setDraft] = createSignal(getCustomInstructionPrefs());
+  const [saved, setSaved] = createSignal(false);
+  const dirty = () => JSON.stringify(draft()) !== JSON.stringify(getCustomInstructionPrefs());
+  const statusKey = () =>
+    hasCustomInstructions(draft()) ? "instructions.status.custom" : "instructions.status.factory";
+
+  function update(scope: keyof ReturnType<typeof getCustomInstructionPrefs>, value: string): void {
+    setSaved(false);
+    setDraft((current) => ({ ...current, [scope]: value }));
+  }
+
+  function save(): void {
+    setCustomInstructionPrefs(draft());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  }
+
+  function resetFactory(): void {
+    resetCustomInstructionPrefs();
+    setDraft({ ...FACTORY_CUSTOM_INSTRUCTION_PREFS });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  }
+
+  return (
+    <section class="settings-card instruction-settings">
+      <div class="settings-section-heading">
+        <div>
+          <h3 class="settings-card-title">{t("instructions.title")}</h3>
+          <p class="settings-card-help">{t("instructions.help")}</p>
+        </div>
+        <span
+          class={`instruction-status${
+            hasCustomInstructions(draft()) ? " instruction-status-custom" : ""
+          }`}
+        >
+          {t(statusKey())}
+        </span>
+      </div>
+
+      <InstructionTextarea
+        label={t("instructions.global.label")}
+        help={t("instructions.global.help")}
+        value={draft().global}
+        onInput={(value) => update("global", value)}
+      />
+      <InstructionTextarea
+        label={t("instructions.local.label")}
+        help={t("instructions.local.help")}
+        value={draft().local}
+        onInput={(value) => update("local", value)}
+      />
+      <InstructionTextarea
+        label={t("instructions.session.label")}
+        help={t("instructions.session.help")}
+        value={draft().session}
+        onInput={(value) => update("session", value)}
+      />
+
+      <div class="settings-row instruction-actions">
+        <button type="button" class="secondary-button" onClick={resetFactory}>
+          {t("instructions.reset")}
+        </button>
+        <button type="button" class="primary-button" onClick={save} disabled={!dirty()}>
+          {t("instructions.save")}
+        </button>
+      </div>
+      <Show when={saved()}>
+        <span class="settings-saved">{t("instructions.saved")}</span>
+      </Show>
+    </section>
+  );
+};
+
+const InstructionTextarea: Component<{
+  label: string;
+  help: string;
+  value: string;
+  onInput: (value: string) => void;
+}> = (props) => (
+  <label class="instruction-field">
+    <span class="instruction-field-label">{props.label}</span>
+    <span class="instruction-field-help">{props.help}</span>
+    <textarea
+      class="instruction-textarea"
+      value={props.value}
+      placeholder={t("instructions.placeholder")}
+      onInput={(event) => props.onInput(event.currentTarget.value)}
+    />
+  </label>
 );
 
 async function hardRefreshApp(): Promise<void> {
