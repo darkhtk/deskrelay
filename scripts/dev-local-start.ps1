@@ -275,16 +275,19 @@ if (-not $NoRegisterDevice -and -not $NoDaemon -and -not $NoBackend -and -not $P
   $headers = @{ Authorization = "Bearer $env:CR_SITE_TOKEN"; "content-type" = "application/json" }
   $devices = @()
   try {
-    $devices = @(Invoke-RestMethod -Method Get -Uri "$env:CR_DEV_SITE_URL/api/devices" -Headers @{ Authorization = "Bearer $env:CR_SITE_TOKEN" } -TimeoutSec 5)
+    $devicesResponse = Invoke-RestMethod -Method Get -Uri "$env:CR_DEV_SITE_URL/api/devices" -Headers @{ Authorization = "Bearer $env:CR_SITE_TOKEN" } -TimeoutSec 5
+    $devices = @($devicesResponse | ForEach-Object { $_ })
   } catch {
     $devices = @()
   }
-  $existingDevice = $devices | Where-Object { $_.daemonUrl -eq $env:CR_DEV_DAEMON_URL } | Select-Object -First 1
-  if (-not $existingDevice) {
-    $label = "Local dev ($env:COMPUTERNAME)"
-    $body = @{ daemonUrl = $env:CR_DEV_DAEMON_URL; label = $label; authToken = $auth.token } | ConvertTo-Json -Compress
-    Invoke-RestMethod -Method Post -Uri "$env:CR_DEV_SITE_URL/api/devices" -Headers $headers -Body $body -TimeoutSec 10 | Out-Null
+  $matchingDevices = @($devices | Where-Object { [string]$_.daemonUrl -eq $env:CR_DEV_DAEMON_URL })
+  foreach ($device in $matchingDevices) {
+    $deviceId = [string]$device.id
+    Invoke-RestMethod -Method Delete -Uri "$env:CR_DEV_SITE_URL/api/devices/$deviceId" -Headers @{ Authorization = "Bearer $env:CR_SITE_TOKEN" } -TimeoutSec 10 | Out-Null
   }
+  $label = "Local dev ($env:COMPUTERNAME)"
+  $body = @{ daemonUrl = $env:CR_DEV_DAEMON_URL; label = $label; authToken = $auth.token } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri "$env:CR_DEV_SITE_URL/api/devices" -Headers $headers -Body $body -TimeoutSec 10 | Out-Null
 }
 
 if (-not $NoFrontend) {
