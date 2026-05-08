@@ -27,6 +27,13 @@ import { BehaviorRegistry, BehaviorRegistryError } from "./behavior-registry.ts"
 import { filePreviewErrorStatus, previewFile, safePreviewFilename } from "./file-preview.ts";
 import { FsError, listDir, makeDir } from "./fs.ts";
 import { gitStatus } from "./git.ts";
+import {
+  InstructionError,
+  deleteClaudeInstruction,
+  readClaudeInstructions,
+  writeClaudeInstruction,
+  type ClaudeInstructionScope,
+} from "./instructions.ts";
 import type { WorkspaceRoots } from "./workspaces.ts";
 
 /** Top-level pairing status surfaced via /status. Mirrors the
@@ -238,6 +245,16 @@ export class Daemon {
         if (!cwd) return jsonResponse(400, { error: "cwd query param is required" });
         const result = await gitStatus(cwd, this.#workspaceRoots);
         return jsonResponse(200, result);
+      }
+      if (req.method === "GET" && path === "/instructions") {
+        return await this.#handleInstructionsRead(url);
+      }
+      const matchInstruction = path.match(/^\/instructions\/([^/]+)$/);
+      if (matchInstruction && req.method === "PUT") {
+        return await this.#handleInstructionWrite(matchInstruction[1] ?? "", req);
+      }
+      if (matchInstruction && req.method === "DELETE") {
+        return await this.#handleInstructionDelete(matchInstruction[1] ?? "", req);
       }
       if (req.method === "POST" && path === "/pairing/reload") {
         return await this.#handlePairingReload();
@@ -553,12 +570,74 @@ export class Daemon {
     }
   }
 
-  /** POST /pairing/reload — invoked by `cr-connector pair NEWCODE` from a
-   *  separate process after it has written the new identity.json to disk.
-   *  Asks the host (bin.ts) to tear down the old SiteWsClient and start a
-   *  fresh one with the new credentials. Returning {reloaded:false}
-   *  means the host didn't wire reload (test harness, or the daemon was
-   *  already running without site-ws enabled). */
+  /** GET /instructions exposes the Claude Code instruction files used by this device. */
+  async #handleInstructionsRead(url: URL): Promise<Response> {
+    const cwd = url.searchParams.get("cwd") ?? undefined;
+    const snapshot = await readClaudeInstructions(cwd, this.#workspaceRoots);
+    return jsonResponse(200, snapshot);
+  }
+
+  async #handleInstructionWrite(scope: string, req: Request): Promise<Response> {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return jsonResponse(400, { error: "invalid JSON body" });
+    }
+    if (typeof body !== "object" || body === null) {
+      return jsonResponse(400, { error: "body must be an object" });
+    }
+    const b = body as Record<string, unknown>;
+    if (typeof b.content !== "string") {
+      return jsonResponse(400, { error: "content is required" });
+    }
+    try {
+      const source = await writeClaudeInstruction(
+        {
+          scope: scope as ClaudeInstructionScope,
+          content: b.content,
+          ...(typeof b.cwd === "string" ? { cwd: b.cwd } : {}),
+          ...(typeof b.expectedHash === "string" ? { expectedHash: b.expectedHash } : {}),
+        },
+        this.#workspaceRoots,
+      );
+      return jsonResponse(200, source);
+    } catch (err) {
+      if (err instanceof InstructionError) {
+        return jsonResponse(err.status, { error: err.message });
+      }
+      throw err;
+    }
+  }
+
+  async #handleInstructionDelete(scope: string, req: Request): Promise<Response> {
+    let body: unknown = {};
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
+    }
+    const b = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    try {
+      const source = await deleteClaudeInstruction(
+        {
+          scope: scope as ClaudeInstructionScope,
+          ...(typeof b.cwd === "string" ? { cwd: b.cwd } : {}),
+          ...(typeof b.expectedHash === "string" ? { expectedHash: b.expectedHash } : {}),
+        },
+        this.#workspaceRoots,
+      );
+      return jsonResponse(200, source);
+    } catch (err) {
+      if (err instanceof InstructionError) {
+        return jsonResponse(err.status, { error: err.message });
+      }
+      throw err;
+    }
+  }
+
+  /** Reloads the SiteWsClient after a separate `cr-connector pair NEWCODE` process
+   *  writes fresh identity material to disk. */
   async #handlePairingReload(): Promise<Response> {
     const reload = this.#options.reloadSiteWsClient;
     if (!reload) {

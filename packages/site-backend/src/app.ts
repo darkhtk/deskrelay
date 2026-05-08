@@ -319,6 +319,42 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     );
   });
 
+  app.get("/api/devices/:id/instructions", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return proxyJson(
+      fetchImpl,
+      "GET",
+      `${device.daemonUrl}/instructions?cwd=${encodeURIComponent(c.req.query("cwd") ?? "")}`,
+      undefined,
+      daemonToken(device, localToken),
+    );
+  });
+
+  app.put("/api/devices/:id/instructions/:scope", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return proxyJson(
+      fetchImpl,
+      "PUT",
+      `${device.daemonUrl}/instructions/${encodeURIComponent(c.req.param("scope"))}`,
+      await c.req.text(),
+      daemonToken(device, localToken),
+    );
+  });
+
+  app.delete("/api/devices/:id/instructions/:scope", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return proxyJson(
+      fetchImpl,
+      "DELETE",
+      `${device.daemonUrl}/instructions/${encodeURIComponent(c.req.param("scope"))}`,
+      await c.req.text(),
+      daemonToken(device, localToken),
+    );
+  });
+
   app.get("/api/devices/:id/diagnostics", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);

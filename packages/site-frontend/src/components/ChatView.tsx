@@ -49,7 +49,7 @@ import {
   setDeviceClaudeModel,
 } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
-import { applyCustomInstructionsToMessage, scrollToBottomOnSend } from "../ui-prefs.ts";
+import { applyTemporaryInstructionsToMessage, scrollToBottomOnSend } from "../ui-prefs.ts";
 import { ApprovalModal } from "./ApprovalModal.tsx";
 import { Attachments, type AttachmentsAPI, imagesFromClipboard } from "./Attachments.tsx";
 import { CapabilitiesBadge } from "./CapabilitiesBadge.tsx";
@@ -417,7 +417,7 @@ function isLocalSlashCommandText(value: string): boolean {
 }
 
 type SettingsOpenOptions = {
-  tab?: "general" | "devices" | "diagnostics";
+  tab?: "general" | "devices" | "diagnostics" | "instructions";
   deviceId?: string | null;
 };
 
@@ -544,6 +544,7 @@ export interface ChatViewProps {
    *  registered device once it appears in the refreshed sidebar list. */
   requestedDeviceSelection?: DeviceSelectionRequest;
   onContextUsageChange?: (usage: ContextUsageOverview) => void;
+  onActiveWorkspaceChange?: (workspace: { deviceId: string | null; cwd: string }) => void;
   showContextUsageMeter?: boolean;
 }
 
@@ -794,8 +795,15 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     props.onContextUsageChange?.(contextUsage());
   });
 
+  createEffect(() => {
+    const deviceId = effectiveDeviceId();
+    const activeCwd = deviceId ? cwd().trim() || getDeviceDefaultCwd(deviceId) || "" : "";
+    props.onActiveWorkspaceChange?.({ deviceId, cwd: activeCwd });
+  });
+
   onCleanup(() => {
     props.onContextUsageChange?.({ ctx: null, session: null, week: null });
+    props.onActiveWorkspaceChange?.({ deviceId: null, cwd: "" });
   });
 
   function setTransientSessionNotice(message: string) {
@@ -1818,7 +1826,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     const requestedModeForRun = requestedPermissionMode();
     const cwdForRun = cwd();
     const modelForRun = selectedClaudeModel();
-    const messageForRun = applyCustomInstructionsToMessage(message);
+    const messageForRun = applyTemporaryInstructionsToMessage(message);
     const space = `remote-claude.run:${runId}`;
     const abort = new AbortController();
     setActiveRunId(runId);

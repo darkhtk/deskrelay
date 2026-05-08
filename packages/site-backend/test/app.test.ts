@@ -421,6 +421,59 @@ describe("daemon proxy", () => {
     expect(setup.calls.at(-1)?.method).toBe("DELETE");
   });
 
+  test("GET .../instructions proxies cwd to daemon", async () => {
+    const id = await registeredDeviceId();
+    setup.setMockResponse(() => Response.json({ cwd: "C:\\repo", sources: [] }, { status: 200 }));
+    const res = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${id}/instructions?cwd=${encodeURIComponent("C:\\repo")}`),
+    );
+    expect(res.status).toBe(200);
+    expect(setup.calls.at(-1)?.url).toBe(
+      `${DAEMON_URL}/instructions?cwd=${encodeURIComponent("C:\\repo")}`,
+    );
+  });
+
+  test("PUT .../instructions/:scope forwards instruction edits", async () => {
+    const id = await registeredDeviceId();
+    setup.setMockResponse(() =>
+      Response.json({ scope: "project", content: "rules", exists: true }, { status: 200 }),
+    );
+    const res = await setup.app.fetch(
+      authedRequest("PUT", `/api/devices/${id}/instructions/project`, {
+        cwd: "C:\\repo",
+        content: "rules",
+        expectedHash: "missing",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const last = setup.calls.at(-1);
+    expect(last?.method).toBe("PUT");
+    expect(last?.url).toBe(`${DAEMON_URL}/instructions/project`);
+    expect(JSON.parse(last?.body ?? "{}")).toEqual({
+      cwd: "C:\\repo",
+      content: "rules",
+      expectedHash: "missing",
+    });
+  });
+
+  test("DELETE .../instructions/:scope forwards instruction deletion", async () => {
+    const id = await registeredDeviceId();
+    setup.setMockResponse(() =>
+      Response.json({ scope: "local", content: "", exists: false }, { status: 200 }),
+    );
+    const res = await setup.app.fetch(
+      authedRequest("DELETE", `/api/devices/${id}/instructions/local`, {
+        cwd: "C:\\repo",
+        expectedHash: "abc",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const last = setup.calls.at(-1);
+    expect(last?.method).toBe("DELETE");
+    expect(last?.url).toBe(`${DAEMON_URL}/instructions/local`);
+    expect(JSON.parse(last?.body ?? "{}")).toEqual({ cwd: "C:\\repo", expectedHash: "abc" });
+  });
+
   test("GET .../files/preview proxies image bytes without JSON decoding", async () => {
     const id = await registeredDeviceId();
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

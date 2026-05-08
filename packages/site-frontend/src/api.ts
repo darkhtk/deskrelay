@@ -151,6 +151,25 @@ export interface FsRootsResponse {
   roots: string[];
 }
 
+export type ClaudeInstructionScope = "user" | "project" | "projectClaude" | "local" | "managed";
+
+export interface ClaudeInstructionSource {
+  scope: ClaudeInstructionScope;
+  label: string;
+  path: string;
+  readonly: boolean;
+  exists: boolean;
+  content: string;
+  hash?: string;
+  mtimeMs?: number;
+  error?: string;
+}
+
+export interface ClaudeInstructionsSnapshot {
+  cwd: string | null;
+  sources: ClaudeInstructionSource[];
+}
+
 export interface RegisterOtherPcCommandResponse {
   preferredUrl: string;
   serverPort: number;
@@ -367,6 +386,32 @@ export const api = {
       behind?: number;
       error?: string;
     }>("GET", `/api/devices/${deviceId}/git/status?cwd=${encodeURIComponent(cwd)}`),
+
+  instructions: (deviceId: string, cwd: string) =>
+    request<ClaudeInstructionsSnapshot>(
+      "GET",
+      `/api/devices/${deviceId}/instructions?cwd=${encodeURIComponent(cwd)}`,
+    ),
+  writeInstruction: (
+    deviceId: string,
+    scope: ClaudeInstructionScope,
+    input: { cwd?: string; content: string; expectedHash?: string },
+  ) =>
+    request<ClaudeInstructionSource>(
+      "PUT",
+      `/api/devices/${deviceId}/instructions/${encodeURIComponent(scope)}`,
+      input,
+    ),
+  deleteInstruction: (
+    deviceId: string,
+    scope: ClaudeInstructionScope,
+    input: { cwd?: string; expectedHash?: string },
+  ) =>
+    request<ClaudeInstructionSource>(
+      "DELETE",
+      `/api/devices/${deviceId}/instructions/${encodeURIComponent(scope)}`,
+      input,
+    ),
 
   diagnostics: (deviceId: string) =>
     request<{

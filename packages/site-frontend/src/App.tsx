@@ -1,9 +1,20 @@
-import { type Component, For, Show, createSignal } from "solid-js";
+import {
+  type Component,
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+} from "solid-js";
 import {
   ApiError,
   api,
   clearBaseUrl,
   clearToken,
+  type ClaudeInstructionScope,
+  type ClaudeInstructionSource,
+  type Device,
   type DeviceCleanupEntry,
   getToken,
   setToken,
@@ -21,12 +32,12 @@ import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
 import { t } from "./i18n.ts";
 import {
   scrollToBottomOnSend,
-  FACTORY_CUSTOM_INSTRUCTION_PREFS,
-  getCustomInstructionPrefs,
-  hasCustomInstructions,
-  resetCustomInstructionPrefs,
+  FACTORY_TEMPORARY_INSTRUCTION_PREFS,
+  getTemporaryInstructionPrefs,
+  hasTemporaryInstructions,
+  resetTemporaryInstructionPrefs,
   setScrollToBottomOnSend,
-  setCustomInstructionPrefs,
+  setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
   setShowWeekUsageMeter,
@@ -45,6 +56,11 @@ type OpenSettingsOptions = {
 type DeviceSelectionRequest = {
   id: string | null;
   seq: number;
+};
+
+type ActiveWorkspace = {
+  deviceId: string | null;
+  cwd: string;
 };
 
 type ManualCleanupNotice = {
@@ -238,13 +254,18 @@ export const App: Component = () => {
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
   const [settingsDeviceId, setSettingsDeviceId] = createSignal<string | null>(null);
   const [devicesRevision, setDevicesRevision] = createSignal(0);
-  const [manualCleanupNotice, setManualCleanupNotice] =
-    createSignal<ManualCleanupNotice | null>(null);
+  const [manualCleanupNotice, setManualCleanupNotice] = createSignal<ManualCleanupNotice | null>(
+    null,
+  );
   const [deviceSelectionRequest, setDeviceSelectionRequest] = createSignal<DeviceSelectionRequest>({
     id: null,
     seq: 0,
   });
   const [contextUsage, setContextUsage] = createSignal<ContextUsageOverview>(EMPTY_CONTEXT_USAGE);
+  const [activeWorkspace, setActiveWorkspace] = createSignal<ActiveWorkspace>({
+    deviceId: null,
+    cwd: "",
+  });
 
   const notifyDevicesChanged = () => {
     setDevicesRevision((value) => value + 1);
@@ -355,6 +376,7 @@ export const App: Component = () => {
             devicesRevision={devicesRevision()}
             requestedDeviceSelection={deviceSelectionRequest()}
             onContextUsageChange={setContextUsage}
+            onActiveWorkspaceChange={setActiveWorkspace}
             showContextUsageMeter={showCtxUsageMeter()}
           />
         </Show>
@@ -437,7 +459,11 @@ export const App: Component = () => {
                 />
               </Show>
               <Show when={settingsTab() === "instructions"}>
-                <InstructionSettings />
+                <InstructionSettings
+                  initialDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
+                  activeCwd={activeWorkspace().cwd}
+                  devicesRevision={devicesRevision()}
+                />
               </Show>
             </div>
           </div>
@@ -490,29 +516,131 @@ const LanguageSettings: Component = () => (
   </section>
 );
 
-const InstructionSettings: Component = () => {
-  const [draft, setDraft] = createSignal(getCustomInstructionPrefs());
-  const [saved, setSaved] = createSignal(false);
-  const dirty = () => JSON.stringify(draft()) !== JSON.stringify(getCustomInstructionPrefs());
-  const statusKey = () =>
-    hasCustomInstructions(draft()) ? "instructions.status.custom" : "instructions.status.factory";
+const InstructionSettings: Component<{
+  initialDeviceId: string | null;
+  activeCwd: string;
+  devicesRevision: number;
+}> = (props) => {
+  const [selectedDeviceId, setSelectedDeviceId] = createSignal(props.initialDeviceId);
+  const [cwdDraft, setCwdDraft] = createSignal(props.activeCwd);
+  const [sourceDrafts, setSourceDrafts] = createSignal<Record<string, string>>({});
+  const [saveStatus, setSaveStatus] = createSignal<Record<string, string>>({});
+  const [tempDraft, setTempDraft] = createSignal(getTemporaryInstructionPrefs());
+  const [tempSaved, setTempSaved] = createSignal(false);
 
-  function update(scope: keyof ReturnType<typeof getCustomInstructionPrefs>, value: string): void {
-    setSaved(false);
-    setDraft((current) => ({ ...current, [scope]: value }));
+  const [devices] = createResource(
+    () => props.devicesRevision,
+    async () => {
+      try {
+        return await api.listDevices();
+      } catch {
+        return [] as Device[];
+      }
+    },
+  );
+
+  createEffect(() => {
+    const id = props.initialDeviceId;
+    if (id) setSelectedDeviceId(id);
+  });
+
+  createEffect(() => {
+    if (props.activeCwd && !cwdDraft()) setCwdDraft(props.activeCwd);
+  });
+
+  const effectiveDeviceId = createMemo(() => {
+    const picked = selectedDeviceId();
+    if (picked) return picked;
+    return devices()?.[0]?.id ?? null;
+  });
+
+  const instructionInput = createMemo(() => {
+    const deviceId = effectiveDeviceId();
+    if (!deviceId) return null;
+    return { deviceId, cwd: cwdDraft().trim() };
+  });
+
+  const [snapshot, { refetch: refetchInstructions }] = createResource(
+    instructionInput,
+    async (input) => {
+      if (!input) return null;
+      return await api.instructions(input.deviceId, input.cwd);
+    },
+  );
+
+  createEffect(() => {
+    const next: Record<string, string> = {};
+    for (const source of snapshot()?.sources ?? []) {
+      next[source.scope] = source.content;
+    }
+    setSourceDrafts(next);
+    setSaveStatus({});
+  });
+
+  const selectedDevice = createMemo(() => {
+    const id = effectiveDeviceId();
+    return (devices() ?? []).find((device) => device.id === id) ?? null;
+  });
+
+  async function saveSource(source: ClaudeInstructionSource): Promise<void> {
+    const input = instructionInput();
+    if (!input) return;
+    setSaveStatus((current) => ({ ...current, [source.scope]: t("instructions.status.saving") }));
+    try {
+      const updated = await api.writeInstruction(input.deviceId, source.scope, {
+        cwd: input.cwd,
+        content: sourceDrafts()[source.scope] ?? "",
+        ...instructionHashGuard(source),
+      });
+      setSourceDrafts((current) => ({ ...current, [updated.scope]: updated.content }));
+      setSaveStatus((current) => ({
+        ...current,
+        [source.scope]: t("instructions.status.saved"),
+      }));
+      void refetchInstructions();
+    } catch (err) {
+      setSaveStatus((current) => ({ ...current, [source.scope]: (err as Error).message }));
+    }
   }
 
-  function save(): void {
-    setCustomInstructionPrefs(draft());
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+  async function deleteSource(source: ClaudeInstructionSource): Promise<void> {
+    const input = instructionInput();
+    if (!input || source.readonly) return;
+    if (source.exists && !confirm(t("instructions.delete.confirm", { label: source.label })))
+      return;
+    setSaveStatus((current) => ({ ...current, [source.scope]: t("instructions.status.saving") }));
+    try {
+      const updated = await api.deleteInstruction(input.deviceId, source.scope, {
+        cwd: input.cwd,
+        ...instructionHashGuard(source),
+      });
+      setSourceDrafts((current) => ({ ...current, [updated.scope]: updated.content }));
+      setSaveStatus((current) => ({
+        ...current,
+        [source.scope]: t("instructions.status.deleted"),
+      }));
+      void refetchInstructions();
+    } catch (err) {
+      setSaveStatus((current) => ({ ...current, [source.scope]: (err as Error).message }));
+    }
   }
 
-  function resetFactory(): void {
-    resetCustomInstructionPrefs();
-    setDraft({ ...FACTORY_CUSTOM_INSTRUCTION_PREFS });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+  function updateSource(scope: ClaudeInstructionScope, value: string): void {
+    setSaveStatus((current) => ({ ...current, [scope]: "" }));
+    setSourceDrafts((current) => ({ ...current, [scope]: value }));
+  }
+
+  function saveTemporary(): void {
+    setTemporaryInstructionPrefs(tempDraft());
+    setTempSaved(true);
+    setTimeout(() => setTempSaved(false), 1500);
+  }
+
+  function resetTemporary(): void {
+    resetTemporaryInstructionPrefs();
+    setTempDraft({ ...FACTORY_TEMPORARY_INSTRUCTION_PREFS });
+    setTempSaved(true);
+    setTimeout(() => setTempSaved(false), 1500);
   }
 
   return (
@@ -524,46 +652,179 @@ const InstructionSettings: Component = () => {
         </div>
         <span
           class={`instruction-status${
-            hasCustomInstructions(draft()) ? " instruction-status-custom" : ""
+            hasTemporaryInstructions(tempDraft()) ? " instruction-status-custom" : ""
           }`}
         >
-          {t(statusKey())}
+          {hasTemporaryInstructions(tempDraft())
+            ? t("instructions.status.temporary")
+            : t("instructions.status.factory")}
         </span>
       </div>
 
-      <InstructionTextarea
-        label={t("instructions.global.label")}
-        help={t("instructions.global.help")}
-        value={draft().global}
-        onInput={(value) => update("global", value)}
-      />
-      <InstructionTextarea
-        label={t("instructions.local.label")}
-        help={t("instructions.local.help")}
-        value={draft().local}
-        onInput={(value) => update("local", value)}
-      />
-      <InstructionTextarea
-        label={t("instructions.session.label")}
-        help={t("instructions.session.help")}
-        value={draft().session}
-        onInput={(value) => update("session", value)}
-      />
-
-      <div class="settings-row instruction-actions">
-        <button type="button" class="secondary-button" onClick={resetFactory}>
-          {t("instructions.reset")}
-        </button>
-        <button type="button" class="primary-button" onClick={save} disabled={!dirty()}>
-          {t("instructions.save")}
+      <div class="settings-row instruction-context-row">
+        <select
+          class="text-input"
+          value={effectiveDeviceId() ?? ""}
+          onChange={(event) => setSelectedDeviceId(event.currentTarget.value || null)}
+        >
+          <Show
+            when={(devices() ?? []).length > 0}
+            fallback={<option value="">{t("instructions.device.empty")}</option>}
+          >
+            <For each={devices() ?? []}>
+              {(device) => <option value={device.id}>{device.label}</option>}
+            </For>
+          </Show>
+        </select>
+        <input
+          class="text-input"
+          value={cwdDraft()}
+          placeholder={t("instructions.cwd.placeholder")}
+          onInput={(event) => setCwdDraft(event.currentTarget.value)}
+        />
+        <button type="button" class="secondary-button" onClick={() => void refetchInstructions()}>
+          {t("instructions.reload")}
         </button>
       </div>
-      <Show when={saved()}>
-        <span class="settings-saved">{t("instructions.saved")}</span>
+      <Show when={selectedDevice()}>
+        {(device) => (
+          <p class="settings-card-help">
+            {t("instructions.device.meta", {
+              label: device().label,
+              cwd: cwdDraft().trim() || t("instructions.cwd.none"),
+            })}
+          </p>
+        )}
       </Show>
+
+      <Show
+        when={effectiveDeviceId()}
+        fallback={<p class="settings-card-help">{t("instructions.no-device")}</p>}
+      >
+        <Show
+          when={!snapshot.loading}
+          fallback={<p class="settings-card-help">{t("instructions.loading")}</p>}
+        >
+          <For each={snapshot()?.sources ?? []}>
+            {(source) => (
+              <InstructionSourceEditor
+                source={source}
+                value={sourceDrafts()[source.scope] ?? ""}
+                status={saveStatus()[source.scope] ?? ""}
+                onInput={(value) => updateSource(source.scope, value)}
+                onSave={() => void saveSource(source)}
+                onDelete={() => void deleteSource(source)}
+              />
+            )}
+          </For>
+        </Show>
+      </Show>
+
+      <div class="instruction-temp-block">
+        <InstructionTextarea
+          label={t("instructions.temp.label")}
+          help={t("instructions.temp.help")}
+          value={tempDraft().content}
+          onInput={(value) => {
+            setTempSaved(false);
+            setTempDraft({ content: value });
+          }}
+        />
+        <div class="settings-row instruction-actions">
+          <button type="button" class="secondary-button" onClick={resetTemporary}>
+            {t("instructions.reset")}
+          </button>
+          <button
+            type="button"
+            class="primary-button"
+            onClick={saveTemporary}
+            disabled={
+              JSON.stringify(tempDraft()) === JSON.stringify(getTemporaryInstructionPrefs())
+            }
+          >
+            {t("instructions.save")}
+          </button>
+        </div>
+        <Show when={tempSaved()}>
+          <span class="settings-saved">{t("instructions.saved")}</span>
+        </Show>
+      </div>
     </section>
   );
 };
+
+const InstructionSourceEditor: Component<{
+  source: ClaudeInstructionSource;
+  value: string;
+  status: string;
+  onInput: (value: string) => void;
+  onSave: () => void;
+  onDelete: () => void;
+}> = (props) => {
+  const dirty = () => props.value !== props.source.content;
+  const sourceState = () => {
+    if (props.source.error) return props.source.error;
+    if (props.source.readonly) return t("instructions.source.readonly");
+    return props.source.exists ? t("instructions.source.exists") : t("instructions.source.missing");
+  };
+
+  return (
+    <div class="instruction-source">
+      <div class="instruction-source-header">
+        <div>
+          <div class="instruction-field-label">{props.source.label}</div>
+          <div class="instruction-field-help">
+            {props.source.path || t("instructions.path.none")}
+          </div>
+        </div>
+        <span class="instruction-source-state">{sourceState()}</span>
+      </div>
+      <textarea
+        class="instruction-textarea"
+        value={props.value}
+        disabled={props.source.readonly}
+        placeholder={t("instructions.placeholder")}
+        onInput={(event) => props.onInput(event.currentTarget.value)}
+      />
+      <div class="settings-row instruction-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          disabled={!dirty()}
+          onClick={() => props.onInput(props.source.content)}
+        >
+          {t("instructions.revert")}
+        </button>
+        <button
+          type="button"
+          class="danger-button"
+          disabled={props.source.readonly || !props.source.exists}
+          onClick={props.onDelete}
+        >
+          {t("instructions.delete")}
+        </button>
+        <button
+          type="button"
+          class="primary-button"
+          disabled={props.source.readonly || !dirty()}
+          onClick={props.onSave}
+        >
+          {t("instructions.save")}
+        </button>
+      </div>
+      <Show when={props.status}>
+        <span class={props.status.includes("changed") ? "settings-error" : "settings-saved"}>
+          {props.status}
+        </span>
+      </Show>
+    </div>
+  );
+};
+
+function instructionHashGuard(source: ClaudeInstructionSource): { expectedHash?: string } {
+  if (!source.exists) return { expectedHash: "missing" };
+  return source.hash ? { expectedHash: source.hash } : {};
+}
 
 const InstructionTextarea: Component<{
   label: string;

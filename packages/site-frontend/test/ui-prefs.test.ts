@@ -1,20 +1,20 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
-  applyCustomInstructionsToMessage,
-  getCustomInstructionPrefs,
-  resetCustomInstructionPrefs,
-  setCustomInstructionPrefs,
+  applyTemporaryInstructionsToMessage,
+  getTemporaryInstructionPrefs,
+  resetTemporaryInstructionPrefs,
+  setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
   setShowWeekUsageMeter,
-  hasCustomInstructions,
+  hasTemporaryInstructions,
   showCtxUsageMeter,
   showSessionUsageMeter,
   showWeekUsageMeter,
 } from "../src/ui-prefs.ts";
 
 afterEach(() => {
-  resetCustomInstructionPrefs();
+  resetTemporaryInstructionPrefs();
   setShowCtxUsageMeter(true);
   setShowSessionUsageMeter(true);
   setShowWeekUsageMeter(true);
@@ -48,33 +48,22 @@ describe("usage display preferences", () => {
   });
 });
 
-describe("custom instruction preferences", () => {
+describe("temporary instruction preferences", () => {
   test("factory state is empty and does not alter messages", () => {
-    resetCustomInstructionPrefs();
+    resetTemporaryInstructionPrefs();
 
-    expect(getCustomInstructionPrefs()).toEqual({
-      global: "",
-      local: "",
-      session: "",
-    });
-    expect(hasCustomInstructions()).toBe(false);
-    expect(applyCustomInstructionsToMessage("ping")).toBe("ping");
+    expect(getTemporaryInstructionPrefs()).toEqual({ content: "" });
+    expect(hasTemporaryInstructions()).toBe(false);
+    expect(applyTemporaryInstructionsToMessage("ping")).toBe("ping");
   });
 
-  test("saved instructions are prepended only after the user edits them", () => {
-    setCustomInstructionPrefs({
-      global: "Answer in Korean.",
-      local: "",
-      session: "Be concise.",
-    });
+  test("session instructions are prepended only after the user edits them", () => {
+    setTemporaryInstructionPrefs({ content: "Be concise." });
 
-    const message = applyCustomInstructionsToMessage("ping");
+    const message = applyTemporaryInstructionsToMessage("ping");
 
-    expect(hasCustomInstructions()).toBe(true);
-    expect(message).toContain("<deskrelay-user-instructions>");
-    expect(message).toContain("## Global");
-    expect(message).toContain("Answer in Korean.");
-    expect(message).toContain("## Session");
+    expect(hasTemporaryInstructions()).toBe(true);
+    expect(message).toContain("<deskrelay-temporary-instructions>");
     expect(message).toContain("Be concise.");
     expect(message.endsWith("\n\nping")).toBe(true);
   });

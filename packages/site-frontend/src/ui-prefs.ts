@@ -4,20 +4,14 @@ const SCROLL_TO_BOTTOM_ON_SEND_KEY = "cr.scroll-to-bottom-on-send";
 const SHOW_CTX_USAGE_METER_KEY = "cr.show-ctx-usage-meter";
 const SHOW_SESSION_USAGE_METER_KEY = "cr.show-session-usage-meter";
 const SHOW_WEEK_USAGE_METER_KEY = "cr.show-week-usage-meter";
-const GLOBAL_INSTRUCTIONS_KEY = "cr.instructions.global";
-const LOCAL_INSTRUCTIONS_KEY = "cr.instructions.local";
-const SESSION_INSTRUCTIONS_KEY = "cr.instructions.session";
+const TEMP_INSTRUCTIONS_KEY = "cr.instructions.temp-session";
 
-export interface CustomInstructionPrefs {
-  global: string;
-  local: string;
-  session: string;
+export interface TemporaryInstructionPrefs {
+  content: string;
 }
 
-export const FACTORY_CUSTOM_INSTRUCTION_PREFS: CustomInstructionPrefs = {
-  global: "",
-  local: "",
-  session: "",
+export const FACTORY_TEMPORARY_INSTRUCTION_PREFS: TemporaryInstructionPrefs = {
+  content: "",
 };
 
 function readScrollToBottomOnSend(): boolean {
@@ -65,14 +59,8 @@ const [showSessionUsageMeter, setShowSessionUsageMeterSignal] = createSignal(
 const [showWeekUsageMeter, setShowWeekUsageMeterSignal] = createSignal(
   readOnByDefault(SHOW_WEEK_USAGE_METER_KEY),
 );
-const [globalInstructions, setGlobalInstructionsSignal] = createSignal(
-  readString(GLOBAL_INSTRUCTIONS_KEY, globalThis.localStorage),
-);
-const [localInstructions, setLocalInstructionsSignal] = createSignal(
-  readString(LOCAL_INSTRUCTIONS_KEY, globalThis.localStorage),
-);
-const [sessionInstructions, setSessionInstructionsSignal] = createSignal(
-  readString(SESSION_INSTRUCTIONS_KEY, globalThis.sessionStorage),
+const [temporaryInstructions, setTemporaryInstructionsSignal] = createSignal(
+  readString(TEMP_INSTRUCTIONS_KEY, globalThis.sessionStorage),
 );
 
 export { scrollToBottomOnSend, showCtxUsageMeter, showSessionUsageMeter, showWeekUsageMeter };
@@ -109,47 +97,35 @@ export function setShowWeekUsageMeter(value: boolean): void {
   setShowWeekUsageMeterSignal(value);
 }
 
-export function getCustomInstructionPrefs(): CustomInstructionPrefs {
-  return {
-    global: globalInstructions(),
-    local: localInstructions(),
-    session: sessionInstructions(),
-  };
+export function getTemporaryInstructionPrefs(): TemporaryInstructionPrefs {
+  return { content: temporaryInstructions() };
 }
 
-export function setCustomInstructionPrefs(value: CustomInstructionPrefs): void {
-  writeString(GLOBAL_INSTRUCTIONS_KEY, value.global, globalThis.localStorage);
-  writeString(LOCAL_INSTRUCTIONS_KEY, value.local, globalThis.localStorage);
-  writeString(SESSION_INSTRUCTIONS_KEY, value.session, globalThis.sessionStorage);
-  setGlobalInstructionsSignal(value.global);
-  setLocalInstructionsSignal(value.local);
-  setSessionInstructionsSignal(value.session);
+export function setTemporaryInstructionPrefs(value: TemporaryInstructionPrefs): void {
+  writeString(TEMP_INSTRUCTIONS_KEY, value.content, globalThis.sessionStorage);
+  setTemporaryInstructionsSignal(value.content);
 }
 
-export function resetCustomInstructionPrefs(): void {
-  setCustomInstructionPrefs(FACTORY_CUSTOM_INSTRUCTION_PREFS);
+export function resetTemporaryInstructionPrefs(): void {
+  setTemporaryInstructionPrefs(FACTORY_TEMPORARY_INSTRUCTION_PREFS);
 }
 
-export function hasCustomInstructions(value: CustomInstructionPrefs = getCustomInstructionPrefs()): boolean {
-  return Boolean(value.global.trim() || value.local.trim() || value.session.trim());
+export function hasTemporaryInstructions(
+  value: TemporaryInstructionPrefs = getTemporaryInstructionPrefs(),
+): boolean {
+  return Boolean(value.content.trim());
 }
 
-export function applyCustomInstructionsToMessage(
+export function applyTemporaryInstructionsToMessage(
   message: string,
-  value: CustomInstructionPrefs = getCustomInstructionPrefs(),
+  value: TemporaryInstructionPrefs = getTemporaryInstructionPrefs(),
 ): string {
-  const candidates: Array<[string, string]> = [
-    ["Global", value.global] as [string, string],
-    ["Local", value.local] as [string, string],
-    ["Session", value.session] as [string, string],
-  ];
-  const entries = candidates.filter(([, text]) => text.trim().length > 0);
-  if (entries.length === 0) return message;
+  if (!value.content.trim()) return message;
   const block = [
-    "<deskrelay-user-instructions>",
-    "These are user-managed DeskRelay instructions. Apply them only when they do not conflict with higher-priority instructions or the latest user request.",
-    ...entries.flatMap(([label, text]) => [``, `## ${label}`, text.trim()]),
-    "</deskrelay-user-instructions>",
+    "<deskrelay-temporary-instructions>",
+    "These are temporary DeskRelay instructions for this browser session. Apply them only when they do not conflict with higher-priority instructions or the latest user request.",
+    value.content.trim(),
+    "</deskrelay-temporary-instructions>",
   ].join("\n");
   return `${block}\n\n${message}`;
 }

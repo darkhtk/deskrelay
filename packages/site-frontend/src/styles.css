@@ -4106,6 +4106,9 @@ dialog.approval-modal-root,
 .instruction-settings {
   gap: 14px;
 }
+.instruction-context-row {
+  align-items: center;
+}
 .instruction-status {
   flex-shrink: 0;
   color: var(--text-faint);
@@ -4133,6 +4136,7 @@ dialog.approval-modal-root,
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .instruction-textarea {
   width: 100%;
@@ -4153,6 +4157,32 @@ dialog.approval-modal-root,
 }
 .instruction-actions {
   justify-content: flex-end;
+}
+.instruction-source {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 14px;
+}
+.instruction-source-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.instruction-source-state {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.instruction-temp-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 14px;
 }
 .text-button {
   background: transparent;
