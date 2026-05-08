@@ -108,18 +108,6 @@ $frontendUrlQ = Quote-PsString $env:CR_DEV_FRONTEND_URL
 $urlsText = ($urls | ForEach-Object { "$($_.Kind): $($_.Url)" }) -join "`r`n"
 
 $registerOtherPc = @"
-# DeskRelay - register another PC
-# Paste this whole block into PowerShell on the PC you want to control.
-# The only embedded values are this server URL and Site token.
-# The installer downloaded from GitHub does the rest: fixes/reclones a
-# stale `$HOME\deskrelay folder, installs dependencies, starts the connector
-# on 0.0.0.0, detects the matching Tailscale/LAN address, verifies
-# server-to-connector access, registers this PC, then opens DeskRelay.
-# Server URL: $preferredUrl
-# Server port: $frontendPort
-# Connector port: 18091
-# Site token: $($env:CR_SITE_TOKEN)
-
 `$ErrorActionPreference = 'Stop'
 `$installer = Join-Path `$env:TEMP 'deskrelay-install-connector.ps1'
 Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1' -OutFile `$installer

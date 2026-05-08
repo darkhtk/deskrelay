@@ -137,10 +137,7 @@ describe("self-host command helper", () => {
       "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1",
     );
     expect(body.command).toContain("deskrelay-install-connector.ps1");
-    expect(body.command).toContain(`# Server URL: ${body.preferredUrl}`);
-    expect(body.command).toContain("# Server port: 18193");
-    expect(body.command).toContain("# Connector port: 18091");
-    expect(body.command).toContain(`# Site token: ${TOKEN}`);
+    expect(body.command).not.toMatch(/^\s*#/m);
     expect(body.command).toContain(`-Server '${body.preferredUrl}'`);
     expect(body.command).toContain(`-SiteToken '${TOKEN}'`);
     expect(body.command).toContain("-Port 18091");
