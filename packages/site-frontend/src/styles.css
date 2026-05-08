@@ -3073,6 +3073,14 @@ pre .copy-button:hover {
   font-size: 13px;
   font-weight: 600;
 }
+.landing-command-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
 .landing-command-actions {
   display: inline-flex;
   align-items: center;
@@ -3939,6 +3947,24 @@ dialog.approval-modal-root,
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.35;
+}
+.settings-command-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.settings-command-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.settings-command-meta strong {
+  color: var(--text);
+  font-weight: 600;
 }
 .settings-command-textarea {
   width: 100%;

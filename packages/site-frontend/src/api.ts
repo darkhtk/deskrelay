@@ -153,12 +153,14 @@ export interface FsRootsResponse {
 
 export interface RegisterOtherPcCommandResponse {
   preferredUrl: string;
+  siteToken: string;
   urls: Array<{ kind: string; url: string }>;
   command: string;
 }
 
 export interface RemoveOtherPcCommandResponse {
   preferredUrl: string;
+  siteToken: string;
   urls: Array<{ kind: string; url: string }>;
   command: string;
 }

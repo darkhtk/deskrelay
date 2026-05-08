@@ -103,6 +103,7 @@ export const Landing: Component<LandingProps> = (props) => {
   };
   const deviceCount = () => devices()?.length ?? health()?.devices ?? 0;
   const remoteUrl = () => registerCommand()?.preferredUrl ?? "";
+  const siteToken = () => registerCommand()?.siteToken ?? "";
   const matchingCurrentDevice = () => {
     const address = normalizeHost(clientContext()?.address ?? "");
     if (!address) return null;
@@ -364,9 +365,14 @@ export const Landing: Component<LandingProps> = (props) => {
           <div class="landing-command-box">
             <div class="landing-command-box-head">
               <span>다른 PC 등록 명령</span>
-              <span class="landing-command-url">
-                {remoteUrl() ? `server URL: ${remoteUrl()}` : "Site token 확인 후 생성됩니다."}
-              </span>
+              <div class="landing-command-meta">
+                <span class="landing-command-url">
+                  {remoteUrl() ? `server URL: ${remoteUrl()}` : "Site token 확인 후 생성됩니다."}
+                </span>
+                <Show when={siteToken()}>
+                  {(token) => <span class="landing-command-url">Site token: {token()}</span>}
+                </Show>
+              </div>
             </div>
             <pre>
               <code>

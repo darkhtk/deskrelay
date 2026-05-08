@@ -14,6 +14,7 @@ import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
 
 type DeviceCommandKind = "register" | "remove";
+type DeviceCommandMeta = { preferredUrl: string; siteToken: string };
 const REGISTER_COMMAND_WATCH_MS = 60_000;
 const REGISTER_COMMAND_POLL_MS = 1_500;
 
@@ -179,6 +180,7 @@ const AddDeviceCard: Component<{
   const [commandBusy, setCommandBusy] = createSignal<DeviceCommandKind | null>(null);
   const [commandError, setCommandError] = createSignal<string | null>(null);
   const [commandText, setCommandText] = createSignal("");
+  const [commandMeta, setCommandMeta] = createSignal<DeviceCommandMeta | null>(null);
   const [commandTextKind, setCommandTextKind] = createSignal<DeviceCommandKind>("register");
   const [commandCopied, setCommandCopied] = createSignal<DeviceCommandKind | null>(null);
   const [registrationWatchActive, setRegistrationWatchActive] = createSignal(false);
@@ -213,10 +215,12 @@ const AddDeviceCard: Component<{
     setCommandError(null);
     setCommandCopied(null);
     setCommandText("");
+    setCommandMeta(null);
     setCommandTextKind(kind);
     try {
       const result =
         kind === "register" ? await api.registerOtherPcCommand() : await api.removeOtherPcCommand();
+      setCommandMeta({ preferredUrl: result.preferredUrl, siteToken: result.siteToken });
       if (kind === "register") {
         void startRegistrationWatch();
       }
@@ -343,6 +347,18 @@ const AddDeviceCard: Component<{
               : t("ds.add.command.remove-copy")}
           </button>
         </div>
+        <Show when={commandMeta()}>
+          {(meta) => (
+            <div class="settings-command-meta" aria-label={t("ds.add.command.meta")}>
+              <span>
+                <strong>{t("ds.add.command.server-url")}</strong>: {meta().preferredUrl}
+              </span>
+              <span>
+                <strong>{t("ds.add.command.site-token")}</strong>: {meta().siteToken}
+              </span>
+            </div>
+          )}
+        </Show>
         <Show when={commandCopied()}>
           {(kind) => (
             <span class="settings-success">

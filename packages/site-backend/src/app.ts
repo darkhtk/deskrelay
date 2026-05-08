@@ -59,6 +59,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const preferredUrl = pickRemoteAccessUrl(urls);
     return c.json({
       preferredUrl,
+      siteToken: options.token,
       urls,
       command: buildRegisterOtherPcCommand({
         siteUrl: preferredUrl,
@@ -75,6 +76,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const preferredUrl = pickRemoteAccessUrl(urls);
     return c.json({
       preferredUrl,
+      siteToken: options.token,
       urls,
       command: buildRemoveOtherPcCommand({
         siteUrl: preferredUrl,
@@ -534,6 +536,8 @@ function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string
     "# stale $HOME\\deskrelay folder, installs dependencies, starts the connector",
     "# on 0.0.0.0, detects the matching Tailscale/LAN address, verifies",
     "# server-to-connector access, registers this PC, then opens DeskRelay.",
+    `# Server URL: ${siteUrl}`,
+    `# Site token: ${input.siteToken}`,
     "",
     "$ErrorActionPreference = 'Stop'",
     "$installer = Join-Path $env:TEMP 'deskrelay-install-connector.ps1'",
@@ -560,6 +564,8 @@ function buildRemoveOtherPcCommand(input: { siteUrl: string; siteToken: string }
     "# Tailscale/LAN daemon URL, unregisters matching server device rows,",
     "# removes the connector login task, clears local connector state, and",
     "# stops any connector still listening on the default port.",
+    `# Server URL: ${siteUrl}`,
+    `# Site token: ${input.siteToken}`,
     "",
     "$ErrorActionPreference = 'Stop'",
     "$remover = Join-Path $env:TEMP 'deskrelay-remove-connector.ps1'",

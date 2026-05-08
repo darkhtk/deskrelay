@@ -117,6 +117,8 @@ $registerOtherPc = @"
 # stale `$HOME\deskrelay folder, installs dependencies, starts the connector
 # on 0.0.0.0, detects the matching Tailscale/LAN address, verifies
 # server-to-connector access, registers this PC, then opens DeskRelay.
+# Server URL: $preferredUrl
+# Site token: $($env:CR_SITE_TOKEN)
 
 `$ErrorActionPreference = 'Stop'
 `$installer = Join-Path `$env:TEMP 'deskrelay-install-connector.ps1'
@@ -138,6 +140,8 @@ $removeOtherPc = @"
 # Paste this whole block into PowerShell on the PC you want to remove.
 # It unregisters matching device rows from this server, removes the connector
 # login task, clears local connector state, and stops the connector port.
+# Server URL: $preferredUrl
+# Site token: $($env:CR_SITE_TOKEN)
 
 `$ErrorActionPreference = 'Stop'
 `$remover = Join-Path `$env:TEMP 'deskrelay-remove-connector.ps1'
