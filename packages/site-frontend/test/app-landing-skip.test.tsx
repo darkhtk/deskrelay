@@ -110,6 +110,25 @@ describe("App landing flow", () => {
     expect(screen.queryByRole("button", { name: t("landing.cta.start") })).toBeNull();
   });
 
+  test("chat top bar opens settings and access clearing lives in settings", async () => {
+    window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
+    render(() => <App />);
+
+    const settings = await screen.findByRole("button", { name: t("app.settings.aria") });
+    expect(document.querySelector("#profile-card")).toBeNull();
+    fireEvent.click(settings);
+
+    const clearAccess = await screen.findByRole("button", { name: t("app.clear-access") });
+    fireEvent.click(clearAccess);
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("cr.site-token:http://test.local")).toBeNull();
+      expect(screen.getAllByRole("button", { name: t("landing.cta.start") }).length).toBeGreaterThan(
+        0,
+      );
+    });
+  });
+
   test("a site-token URL fragment is stored and opens the chat directly", async () => {
     Object.defineProperty(window, "location", {
       configurable: true,

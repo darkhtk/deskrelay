@@ -237,6 +237,11 @@ export const App: Component = () => {
     setLandingDismissed(false);
   };
 
+  const handleSettingsClearAccess = () => {
+    setSettingsOpen(false);
+    handleClearAccess();
+  };
+
   const [pickedLocale, setPickedLocale] = createSignal(true);
   const [landingDismissed, setLandingDismissed] = createSignal(Boolean(initialToken));
   const [landingReopened, setLandingReopened] = createSignal(false);
@@ -327,27 +332,54 @@ export const App: Component = () => {
       <div class="alpha-banner" role="note" aria-label="Top bar">
         <div class="alpha-banner-legal">
           <Show when={chatReady()}>
-            <button
-              type="button"
-              class="alpha-banner-back"
-              onClick={reopenLanding}
-              aria-label={t("app.back-home")}
-              title={t("app.back-home")}
-            >
-              <svg
-                aria-hidden="true"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+            <>
+              <button
+                type="button"
+                class="alpha-banner-back"
+                onClick={reopenLanding}
+                aria-label={t("app.back-home")}
+                title={t("app.back-home")}
               >
-                <path d="m15 18-6-6 6-6" />
-              </svg>
-            </button>
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="alpha-banner-back alpha-banner-settings"
+                onClick={() =>
+                  openSettings({ tab: "general", deviceId: activeWorkspace().deviceId })
+                }
+                aria-label={t("app.settings.aria")}
+                title={t("app.settings.title")}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                  <path d="m4.9 4.9 2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1" />
+                </svg>
+              </button>
+            </>
           </Show>
           <Show when={mainPageChrome()}>
             <span class="alpha-banner-legal-text">{t("app.self-host")}</span>
@@ -454,7 +486,7 @@ export const App: Component = () => {
 
             <div class="settings-dialog-body">
               <Show when={settingsTab() === "general"}>
-                <LanguageSettings />
+                <LanguageSettings onClearAccess={handleSettingsClearAccess} />
               </Show>
               <Show when={settingsTab() === "devices"}>
                 <DeviceShell
@@ -488,7 +520,7 @@ export const App: Component = () => {
   );
 };
 
-const LanguageSettings: Component = () => (
+const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => (
   <section class="settings-card">
     <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
     <div class="settings-toggle-row">
@@ -547,6 +579,9 @@ const LanguageSettings: Component = () => (
     <div class="settings-row">
       <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>
         {t("app.hard-refresh")}
+      </button>
+      <button type="button" class="secondary-button danger" onClick={props.onClearAccess}>
+        {t("app.clear-access")}
       </button>
     </div>
   </section>
