@@ -4373,13 +4373,6 @@ dialog.approval-modal-root,
   font-size: 11px;
   white-space: nowrap;
 }
-.instruction-temp-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 14px;
-}
 .text-button {
   background: transparent;
   border: 0;

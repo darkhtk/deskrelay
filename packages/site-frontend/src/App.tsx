@@ -33,19 +33,13 @@ import { t } from "./i18n.ts";
 import {
   instructionScopeEmptyDescription,
   instructionScopePlaceholder,
-  temporaryInstructionPlaceholder,
 } from "./instruction-copy.ts";
 import {
   appTheme,
   type AppTheme,
   scrollToBottomOnSend,
-  FACTORY_TEMPORARY_INSTRUCTION_PREFS,
-  getTemporaryInstructionPrefs,
-  hasTemporaryInstructions,
-  resetTemporaryInstructionPrefs,
   setAppTheme,
   setScrollToBottomOnSend,
-  setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
   setShowWeekUsageMeter,
@@ -563,8 +557,6 @@ const InstructionSettings: Component<{
   devicesRevision: number;
 }> = (props) => {
   const [selectedDeviceId, setSelectedDeviceId] = createSignal(props.initialDeviceId);
-  const [tempDraft, setTempDraft] = createSignal(getTemporaryInstructionPrefs());
-  const [tempSaved, setTempSaved] = createSignal(false);
 
   const [devices] = createResource(
     () => props.devicesRevision,
@@ -714,19 +706,6 @@ const InstructionSettings: Component<{
     }
   };
 
-  function saveTemporary(): void {
-    setTemporaryInstructionPrefs(tempDraft());
-    setTempSaved(true);
-    setTimeout(() => setTempSaved(false), 1500);
-  }
-
-  function resetTemporary(): void {
-    resetTemporaryInstructionPrefs();
-    setTempDraft({ ...FACTORY_TEMPORARY_INSTRUCTION_PREFS });
-    setTempSaved(true);
-    setTimeout(() => setTempSaved(false), 1500);
-  }
-
   return (
     <section class="settings-card instruction-settings">
       <div class="settings-section-heading">
@@ -734,15 +713,6 @@ const InstructionSettings: Component<{
           <h3 class="settings-card-title">{t("instructions.title")}</h3>
           <p class="settings-card-help">{t("instructions.help")}</p>
         </div>
-        <span
-          class={`instruction-status${
-            hasTemporaryInstructions(tempDraft()) ? " instruction-status-custom" : ""
-          }`}
-        >
-          {hasTemporaryInstructions(tempDraft())
-            ? t("instructions.status.temporary")
-            : t("instructions.status.factory")}
-        </span>
       </div>
 
       <div class="settings-row instruction-context-row">
@@ -801,37 +771,6 @@ const InstructionSettings: Component<{
           />
         </Show>
       </Show>
-
-      <div class="instruction-temp-block">
-        <InstructionTextarea
-          label={t("instructions.temp.label")}
-          help={t("instructions.temp.help")}
-          value={tempDraft().content}
-          placeholder={temporaryInstructionPlaceholder()}
-          onInput={(value) => {
-            setTempSaved(false);
-            setTempDraft({ content: value });
-          }}
-        />
-        <div class="settings-row instruction-actions">
-          <button type="button" class="secondary-button" onClick={resetTemporary}>
-            {t("instructions.reset")}
-          </button>
-          <button
-            type="button"
-            class="primary-button"
-            onClick={saveTemporary}
-            disabled={
-              JSON.stringify(tempDraft()) === JSON.stringify(getTemporaryInstructionPrefs())
-            }
-          >
-            {t("instructions.save")}
-          </button>
-        </div>
-        <Show when={tempSaved()}>
-          <span class="settings-saved">{t("instructions.saved")}</span>
-        </Show>
-      </div>
     </section>
   );
 };
@@ -1075,25 +1014,6 @@ function joinDisplayPath(base: string, ...parts: string[]): string {
   const trimmed = base.replace(/[\\/]+$/, "");
   return [trimmed, ...parts].join(sep);
 }
-
-const InstructionTextarea: Component<{
-  label: string;
-  help: string;
-  value: string;
-  placeholder?: string;
-  onInput: (value: string) => void;
-}> = (props) => (
-  <label class="instruction-field">
-    <span class="instruction-field-label">{props.label}</span>
-    <span class="instruction-field-help">{props.help}</span>
-    <textarea
-      class="instruction-textarea"
-      value={props.value}
-      placeholder={props.placeholder ?? t("instructions.placeholder")}
-      onInput={(event) => props.onInput(event.currentTarget.value)}
-    />
-  </label>
-);
 
 async function hardRefreshApp(): Promise<void> {
   try {
