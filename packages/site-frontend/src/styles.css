@@ -1394,6 +1394,12 @@ body.sidebar-open {
 .sidebar-token-button:hover {
   color: var(--accent-coral);
 }
+.sidebar-inline-button.danger {
+  color: var(--danger);
+}
+.sidebar-inline-button.danger:hover {
+  color: var(--danger);
+}
 .sidebar-icon-button {
   width: 18px;
   height: 18px;
@@ -1426,6 +1432,26 @@ body.sidebar-open {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.sidebar-instruction-textarea {
+  width: 100%;
+  min-height: 116px;
+  max-height: 240px;
+  resize: vertical;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: 11px / 1.45 ui-monospace, monospace;
+  padding: 8px;
+}
+.sidebar-instruction-textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent-coral) 38%, transparent);
+  border-color: var(--accent-coral);
+}
+.sidebar-instruction-textarea:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 .sidebar-token {
   font-family: ui-monospace, monospace;

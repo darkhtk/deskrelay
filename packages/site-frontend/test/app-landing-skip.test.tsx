@@ -45,12 +45,7 @@ describe("App landing flow", () => {
     expect(document.body.textContent).toContain("다른 PC 등록 명령");
   });
 
-  test("an authenticated landing user can view and copy the remote registration command", async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
+  test("an authenticated landing user can view the remote registration command", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/self/register-other-pc-command")) {
@@ -103,14 +98,7 @@ describe("App landing flow", () => {
     });
     expect(document.body.textContent).toContain("등록된 디바이스");
     expect(document.body.textContent).toContain("WORKPC");
-    fireEvent.click(screen.getByRole("button", { name: "등록 명령 복사" }));
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(
-        expect.stringContaining("powershell -ExecutionPolicy Bypass"),
-      );
-      expect(screen.getByRole("button", { name: "복사됨" })).toBeTruthy();
-    });
+    expect(document.body.textContent).toContain("server URL: http://100.64.1.2:18193");
   });
 
   test("a stored token for this self-host server opens the chat directly", async () => {

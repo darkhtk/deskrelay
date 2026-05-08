@@ -68,13 +68,7 @@ type ManualCleanupNotice = {
 };
 
 const EMPTY_CONTEXT_USAGE: ContextUsageOverview = { ctx: null, session: null, week: null };
-const INSTRUCTION_SOURCE_ORDER: Array<ClaudeInstructionSource["scope"]> = [
-  "user",
-  "managed",
-  "project",
-  "projectClaude",
-  "local",
-];
+const INSTRUCTION_SOURCE_ORDER: Array<ClaudeInstructionSource["scope"]> = ["user", "managed"];
 const INSTRUCTION_SOURCE_LABELS: Record<ClaudeInstructionSource["scope"], string> = {
   user: "사용자 전역",
   managed: "관리 정책",
@@ -474,7 +468,6 @@ export const App: Component = () => {
               <Show when={settingsTab() === "instructions"}>
                 <InstructionSettings
                   initialDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
-                  activeCwd={activeWorkspace().cwd}
                   devicesRevision={devicesRevision()}
                 />
               </Show>
@@ -531,11 +524,9 @@ const LanguageSettings: Component = () => (
 
 const InstructionSettings: Component<{
   initialDeviceId: string | null;
-  activeCwd: string;
   devicesRevision: number;
 }> = (props) => {
   const [selectedDeviceId, setSelectedDeviceId] = createSignal(props.initialDeviceId);
-  const [cwdDraft, setCwdDraft] = createSignal(props.activeCwd);
   const [tempDraft, setTempDraft] = createSignal(getTemporaryInstructionPrefs());
   const [tempSaved, setTempSaved] = createSignal(false);
 
@@ -555,10 +546,6 @@ const InstructionSettings: Component<{
     if (id) setSelectedDeviceId(id);
   });
 
-  createEffect(() => {
-    if (props.activeCwd && !cwdDraft()) setCwdDraft(props.activeCwd);
-  });
-
   const effectiveDeviceId = createMemo(() => {
     const picked = selectedDeviceId();
     if (picked) return picked;
@@ -568,7 +555,7 @@ const InstructionSettings: Component<{
   const instructionInput = createMemo(() => {
     const deviceId = effectiveDeviceId();
     if (!deviceId) return null;
-    return { deviceId, cwd: cwdDraft().trim() };
+    return { deviceId, cwd: "" };
   });
 
   const [snapshot, { refetch: refetchInstructions }] = createResource(
@@ -592,16 +579,10 @@ const InstructionSettings: Component<{
     return (devices() ?? []).find((device) => device.id === id) ?? null;
   });
   const instructionSources = createMemo(() =>
-    completeInstructionSources(snapshot()?.sources ?? [], cwdDraft().trim()),
+    completeInstructionSources(snapshot()?.sources ?? [], ""),
   );
   const deviceInstructionSources = createMemo(() =>
     instructionSources().filter((source) => source.scope === "user" || source.scope === "managed"),
-  );
-  const projectInstructionSources = createMemo(() =>
-    instructionSources().filter(
-      (source) =>
-        source.scope === "project" || source.scope === "projectClaude" || source.scope === "local",
-    ),
   );
 
   function saveTemporary(): void {
@@ -680,20 +661,6 @@ const InstructionSettings: Component<{
             help={t("instructions.device.sources.help")}
             sources={deviceInstructionSources()}
           />
-
-          <div class="instruction-project-context">
-            <div>
-              <div class="instruction-field-label">{t("instructions.project.sources.title")}</div>
-              <div class="instruction-field-help">{t("instructions.project.sources.help")}</div>
-            </div>
-            <input
-              class="text-input"
-              value={cwdDraft()}
-              placeholder={t("instructions.cwd.placeholder")}
-              onInput={(event) => setCwdDraft(event.currentTarget.value)}
-            />
-          </div>
-          <InstructionSourceGroup title="" help="" sources={projectInstructionSources()} />
         </Show>
       </Show>
 

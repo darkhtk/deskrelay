@@ -17,6 +17,8 @@ import {
 } from "solid-js";
 import {
   ApiError,
+  type ClaudeInstructionScope,
+  type ClaudeInstructionSource,
   type ClaudeSessionSummary,
   type ClaudeSessionTranscript,
   type ClaudeStreamEvent,
@@ -427,7 +429,7 @@ type DeviceSelectionRequest = {
 };
 
 type PermissionModeStatus = "unconfirmed" | "pending" | "confirmed" | "mismatch" | "unknown";
-type SidebarTab = "sessions" | "permissions" | "skills";
+type SidebarTab = "sessions" | "permissions" | "instructions" | "skills";
 
 interface PermissionSourceSummary {
   label: string;
@@ -477,6 +479,12 @@ interface SkillDeleteResult {
   skill: SkillInspectSummary;
 }
 
+interface InstructionsInspectViewResult {
+  cwd: string;
+  sources: ClaudeInstructionSource[];
+  error?: string;
+}
+
 const ALL_PERMISSION_ENTRY = "*";
 const AVAILABLE_PERMISSION_TOOLS = [
   "Bash",
@@ -493,6 +501,11 @@ const AVAILABLE_PERMISSION_TOOLS = [
   "WebSearch",
   "TodoWrite",
   "Task",
+];
+const WORKSPACE_INSTRUCTION_SCOPES: ClaudeInstructionScope[] = [
+  "project",
+  "projectClaude",
+  "local",
 ];
 
 function permissionToolEntry(tool: string): string {
@@ -529,6 +542,68 @@ function updatePermissionSourceResult(
     ...current,
     sources: current.sources.map((source) => (source.path === updated.path ? updated : source)),
   };
+}
+
+function sameInstructionContent(a: string, b: string): boolean {
+  return a === b;
+}
+
+function instructionScopeLabel(scope: ClaudeInstructionScope): string {
+  if (scope === "project") return t("chat.sidebar.instructions.source.project");
+  if (scope === "projectClaude") return t("chat.sidebar.instructions.source.project-claude");
+  if (scope === "local") return t("chat.sidebar.instructions.source.local");
+  if (scope === "user") return t("chat.sidebar.instructions.source.user");
+  return t("chat.sidebar.instructions.source.managed");
+}
+
+function instructionPathForScope(scope: ClaudeInstructionScope, cwd: string): string {
+  if (scope === "user") return "~/.claude/CLAUDE.md";
+  if (scope === "managed") return t("instructions.path.managed");
+  const sep = cwd.includes("\\") ? "\\" : "/";
+  const base = cwd.replace(/[\\/]+$/, "");
+  if (scope === "project") return `${base}${sep}CLAUDE.md`;
+  if (scope === "projectClaude") return `${base}${sep}.claude${sep}CLAUDE.md`;
+  return `${base}${sep}CLAUDE.local.md`;
+}
+
+function fallbackWorkspaceInstructionSource(
+  scope: ClaudeInstructionScope,
+  cwd: string,
+): ClaudeInstructionSource {
+  return {
+    scope,
+    label: instructionScopeLabel(scope),
+    path: instructionPathForScope(scope, cwd),
+    readonly: false,
+    exists: false,
+    content: "",
+  };
+}
+
+function completeWorkspaceInstructionSources(
+  sources: ClaudeInstructionSource[],
+  cwd: string,
+): ClaudeInstructionSource[] {
+  const byScope = new Map(sources.map((source) => [source.scope, source]));
+  return WORKSPACE_INSTRUCTION_SCOPES.map(
+    (scope) => byScope.get(scope) ?? fallbackWorkspaceInstructionSource(scope, cwd),
+  );
+}
+
+function instructionExpectedHash(source: ClaudeInstructionSource): { expectedHash?: string } {
+  if (!source.exists) return { expectedHash: "missing" };
+  return source.hash ? { expectedHash: source.hash } : {};
+}
+
+function updateInstructionSourceResult(
+  current: InstructionsInspectViewResult | null | undefined,
+  updated: ClaudeInstructionSource,
+  cwd: string,
+): InstructionsInspectViewResult {
+  const sources = completeWorkspaceInstructionSources(current?.sources ?? [], cwd).map((source) =>
+    source.scope === updated.scope ? updated : source,
+  );
+  return { cwd, sources };
 }
 
 export interface ChatViewProps {
@@ -984,6 +1059,137 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       });
     } finally {
       setSavingPermissionPath(null);
+    }
+  };
+
+  const selectedSessionCwd = () => selectedSession()?.cwd?.trim() ?? "";
+  const [
+    workspaceInstructions,
+    { refetch: refetchWorkspaceInstructions, mutate: mutateWorkspaceInstructions },
+  ] = createResource(
+    () => {
+      if (selectedSidebarTab() !== "instructions") return null;
+      const deviceId = effectiveDeviceId();
+      const currentCwd = selectedSessionCwd();
+      if (!deviceId || !currentCwd) return null;
+      return { deviceId, cwd: currentCwd };
+    },
+    async (input) => {
+      if (!input) return null;
+      try {
+        const snapshot = await api.instructions(input.deviceId, input.cwd);
+        return {
+          cwd: snapshot.cwd ?? input.cwd,
+          sources: completeWorkspaceInstructionSources(snapshot.sources ?? [], input.cwd),
+        };
+      } catch (err) {
+        return {
+          cwd: input.cwd,
+          sources: completeWorkspaceInstructionSources([], input.cwd),
+          error: (err as Error).message,
+        };
+      }
+    },
+  );
+  const workspaceInstructionsResult = () =>
+    workspaceInstructions() as InstructionsInspectViewResult | null;
+  const workspaceInstructionSources = () => workspaceInstructionsResult()?.sources ?? [];
+  const workspaceInstructionsError = () => workspaceInstructionsResult()?.error ?? null;
+  const [instructionDrafts, setInstructionDrafts] = createSignal<Record<string, string>>({});
+  const [savingInstructionScope, setSavingInstructionScope] =
+    createSignal<ClaudeInstructionScope | null>(null);
+  const [instructionEditStatus, setInstructionEditStatus] = createSignal<{
+    scope: ClaudeInstructionScope;
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+  createEffect(() => {
+    const result = workspaceInstructionsResult();
+    if (!result || result.error) return;
+    const next: Record<string, string> = {};
+    for (const source of result.sources) {
+      next[source.scope] = source.content;
+    }
+    setInstructionDrafts(next);
+  });
+  const instructionDraft = (source: ClaudeInstructionSource): string =>
+    instructionDrafts()[source.scope] ?? source.content;
+  const instructionDraftDirty = (source: ClaudeInstructionSource): boolean =>
+    !sameInstructionContent(instructionDraft(source), source.content);
+  const setInstructionDraft = (source: ClaudeInstructionSource, content: string) => {
+    setInstructionEditStatus(null);
+    setInstructionDrafts((current) => ({ ...current, [source.scope]: content }));
+  };
+  const resetInstructionDraft = (source: ClaudeInstructionSource) => {
+    setInstructionEditStatus(null);
+    setInstructionDraft(source, source.content);
+  };
+  const saveWorkspaceInstructionSource = async (source: ClaudeInstructionSource) => {
+    const deviceId = effectiveDeviceId();
+    const currentCwd = selectedSessionCwd();
+    if (!deviceId || !currentCwd || source.readonly) return;
+    setSavingInstructionScope(source.scope);
+    setInstructionEditStatus(null);
+    try {
+      const updated = await api.writeInstruction(deviceId, source.scope, {
+        cwd: currentCwd,
+        content: instructionDraft(source),
+        ...instructionExpectedHash(source),
+      });
+      mutateWorkspaceInstructions((current) =>
+        updateInstructionSourceResult(current, updated, currentCwd),
+      );
+      await refetchWorkspaceInstructions();
+      setInstructionEditStatus({
+        scope: source.scope,
+        kind: "success",
+        message: t("chat.sidebar.instructions.saved"),
+      });
+    } catch (err) {
+      setInstructionEditStatus({
+        scope: source.scope,
+        kind: "error",
+        message: (err as Error).message,
+      });
+    } finally {
+      setSavingInstructionScope(null);
+    }
+  };
+  const deleteWorkspaceInstructionSource = async (source: ClaudeInstructionSource) => {
+    const deviceId = effectiveDeviceId();
+    const currentCwd = selectedSessionCwd();
+    if (!deviceId || !currentCwd || source.readonly || !source.exists) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(t("chat.sidebar.instructions.delete.confirm", { label: source.label }))
+    ) {
+      return;
+    }
+    setSavingInstructionScope(source.scope);
+    setInstructionEditStatus(null);
+    try {
+      const updated = await api.deleteInstruction(deviceId, source.scope, {
+        cwd: currentCwd,
+        ...instructionExpectedHash(source),
+      });
+      mutateWorkspaceInstructions((current) =>
+        updateInstructionSourceResult(current, updated, currentCwd),
+      );
+      setInstructionDraft(updated, updated.content);
+      await refetchWorkspaceInstructions();
+      setInstructionEditStatus({
+        scope: source.scope,
+        kind: "success",
+        message: t("chat.sidebar.instructions.deleted"),
+      });
+    } catch (err) {
+      setInstructionEditStatus({
+        scope: source.scope,
+        kind: "error",
+        message: (err as Error).message,
+      });
+    } finally {
+      setSavingInstructionScope(null);
     }
   };
   const [armedSkillKey, setArmedSkillKey] = createSignal<string | null>(null);
@@ -2095,6 +2301,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           <button
             type="button"
             role="tab"
+            aria-selected={selectedSidebarTab() === "instructions"}
+            class="sidebar-tab"
+            classList={{ "is-active": selectedSidebarTab() === "instructions" }}
+            onClick={() => setSelectedSidebarTab("instructions")}
+          >
+            {t("chat.sidebar.tab.instructions")}
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={selectedSidebarTab() === "skills"}
             class="sidebar-tab"
             classList={{ "is-active": selectedSidebarTab() === "skills" }}
@@ -2362,6 +2578,109 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                               </button>
                             </div>
                           </Show>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Show>
+            </Show>
+          </div>
+        </Show>
+
+        <Show when={selectedSidebarTab() === "instructions"}>
+          <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
+            <span class="sidebar-label">{t("chat.sidebar.instructions.title")}</span>
+            <Show
+              when={effectiveDeviceId() && selectedSessionCwd()}
+              fallback={
+                <p class="sidebar-empty">
+                  {effectiveDeviceId()
+                    ? t("chat.sidebar.instructions.select-session")
+                    : t("chat.sidebar.panel.not-ready")}
+                </p>
+              }
+            >
+              <Show
+                when={!workspaceInstructions.loading}
+                fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.loading")}</p>}
+              >
+                <Show
+                  when={!workspaceInstructionsError()}
+                  fallback={<p class="sidebar-empty">{workspaceInstructionsError()}</p>}
+                >
+                  <div class="sidebar-flat-list">
+                    <For each={workspaceInstructionSources()}>
+                      {(source) => (
+                        <div class="sidebar-info-block">
+                          <div class="sidebar-info-title">
+                            <span>{source.label}</span>
+                            <span class="sidebar-info-count">
+                              {source.exists
+                                ? t("chat.sidebar.instructions.exists")
+                                : t("chat.sidebar.instructions.missing")}
+                            </span>
+                          </div>
+                          <div class="sidebar-info-path" title={source.path}>
+                            {source.path || t("instructions.path.none")}
+                          </div>
+                          <Show when={source.error}>
+                            <p class="sidebar-empty">{source.error}</p>
+                          </Show>
+                          <textarea
+                            class="sidebar-instruction-textarea"
+                            value={instructionDraft(source)}
+                            placeholder={t("chat.sidebar.instructions.placeholder")}
+                            disabled={savingInstructionScope() === source.scope || source.readonly}
+                            onInput={(event) =>
+                              setInstructionDraft(source, event.currentTarget.value)
+                            }
+                          />
+                          <Show when={instructionEditStatus()?.scope === source.scope}>
+                            <p
+                              classList={{
+                                "sidebar-empty": instructionEditStatus()?.kind !== "error",
+                                "settings-error": instructionEditStatus()?.kind === "error",
+                                "settings-success": instructionEditStatus()?.kind === "success",
+                              }}
+                            >
+                              {instructionEditStatus()?.message}
+                            </p>
+                          </Show>
+                          <div class="sidebar-permission-actions">
+                            <Show when={source.exists}>
+                              <button
+                                type="button"
+                                class="sidebar-inline-button danger"
+                                onClick={() => void deleteWorkspaceInstructionSource(source)}
+                                disabled={savingInstructionScope() === source.scope}
+                              >
+                                {savingInstructionScope() === source.scope
+                                  ? t("chat.sidebar.instructions.saving")
+                                  : t("chat.sidebar.instructions.delete")}
+                              </button>
+                            </Show>
+                            <Show when={instructionDraftDirty(source)}>
+                              <button
+                                type="button"
+                                class="sidebar-inline-button"
+                                onClick={() => resetInstructionDraft(source)}
+                                disabled={savingInstructionScope() === source.scope}
+                              >
+                                {t("chat.sidebar.instructions.revert")}
+                              </button>
+                              <button
+                                type="button"
+                                class="sidebar-inline-button primary"
+                                onClick={() => void saveWorkspaceInstructionSource(source)}
+                                disabled={savingInstructionScope() === source.scope}
+                              >
+                                {savingInstructionScope() === source.scope
+                                  ? t("chat.sidebar.instructions.saving")
+                                  : t("chat.sidebar.instructions.save")}
+                              </button>
+                            </Show>
+                          </div>
                         </div>
                       )}
                     </For>

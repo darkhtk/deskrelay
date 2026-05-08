@@ -95,12 +95,12 @@ describe("settings and chrome invariants", () => {
     expect(styles).toMatch(/\.context-meter-reset\s*{[^}]*margin-left:\s*auto;/s);
   });
 
-  test("general settings, devices, diagnostics, and hard refresh live in unified settings", () => {
+  test("general settings, devices, diagnostics, instructions, and hard refresh live in unified settings", () => {
     const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
 
     expect(appSource).toContain('t("lang.settings.title")');
-    expect(appSource).toContain('["general", "devices", "diagnostics"]');
+    expect(appSource).toContain('["general", "devices", "diagnostics", "instructions"]');
     expect(appSource).toContain("app.settings.tab.${value}");
     expect(appSource).toContain('t("app.hard-refresh")');
     expect(appSource).toContain('t("settings.usage.show-ctx")');
