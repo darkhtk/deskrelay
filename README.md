@@ -22,7 +22,31 @@ bun install
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```
 
-실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, 저장소 최상위의 `DESKRELAY-SERVER-CODE.txt`와 `REGISTER-OTHER-PC.txt`에도 생성된다.
+실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, `.self-server\commands` 아래의 command 파일과 저장소 최상위 quick 파일에도 생성된다.
+
+상태를 확인하려면:
+
+```powershell
+Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
+```
+
+서버를 재시작하려면:
+
+```powershell
+Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
+```
+
+이전 서버를 관리자 권한 PowerShell이나 다른 터미널에서 띄운 상태라면 일반 터미널의 stop 명령으로 프로세스를 닫지 못할 수 있다. 그때는 서버를 띄웠던 터미널을 직접 닫거나, 관리자 PowerShell에서 `18191`, `18192`, `18193` 포트를 잡고 있는 프로세스를 종료한 뒤 다시 시작한다.
+
+```powershell
+Get-NetTCPConnection -LocalPort 18191,18192,18193 -State Listen |
+  Select-Object LocalPort, OwningProcess
+
+taskkill /PID <OwningProcess> /T /F
+```
 
 서버를 중지하려면:
 
@@ -46,10 +70,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 
 다른 PC 등록은 메인 화면이 담당한다. 서버를 열면 메인 화면의 등록 wizard에 서버 URL과 Site token이 포함된 PowerShell 명령이 표시된다. 그 명령을 드래그해서 통째로 복사한 뒤 제어하려는 Windows PC의 PowerShell에 붙여넣으면 된다. 설정 다이얼로그는 중복된 등록 UI를 갖지 않고, 이미 등록된 디바이스의 선택, 이름/기본 작업 디렉토리 관리, 제거만 담당한다.
 
-서버가 켜지면 저장소 최상위에도 아래 파일이 생성된다.
+서버가 켜지면 `.self-server\commands` 아래에 세부 command 파일이 생성되고, 저장소 최상위에도 자주 쓰는 quick 파일이 생성된다.
 
-- `REGISTER-OTHER-PC.txt`: 제어할 다른 Windows PC에 그대로 붙여넣는 등록 명령
-- `REMOVE-OTHER-PC.txt`: 등록을 해제할 Windows PC에 그대로 붙여넣는 해제 명령
+- `.self-server\commands\register-other-pc.txt`: 제어할 다른 Windows PC에 그대로 붙여넣는 등록 명령
+- `.self-server\commands\remove-other-pc.txt`: 등록을 해제할 Windows PC에 그대로 붙여넣는 해제 명령
+- `.self-server\commands\status-server.txt`: 현재 서버 URL, Site token, command 파일 위치 확인
+- `.self-server\commands\deskrelay-commands.txt`: 생성된 모든 운영 명령 모음
+- `REGISTER-OTHER-PC.txt`: 최상위 quick 등록 명령
+- `REMOVE-OTHER-PC.txt`: 최상위 quick 해제 명령
 - `DESKRELAY-SERVER-CODE.txt`: 서버 URL, Site token, command 파일 위치
 - `REMOVE-DESKRELAY-SERVER.txt`: 서버 PC의 self-host 상태 제거 명령
 
@@ -67,6 +95,7 @@ flowchart LR
   Frontend["Site frontend<br/>packages/site-frontend<br/>세션/권한/스킬/디바이스 UI"]
   Server["Self-host site server<br/>packages/site-backend<br/>:18193<br/>브라우저 API / proxy / self 명령 생성"]
   Registry[("Device registry<br/>server local state<br/>device id / label / daemonUrl / daemon token")]
+  Commands["Generated command files<br/>.self-server/commands<br/>top-level quick txt"]
 
   subgraph ServerPC["서버 PC"]
     ServerConnector["Connector daemon<br/>packages/pc-connector-daemon<br/>:18091<br/>daemon token"]
@@ -89,6 +118,7 @@ flowchart LR
   Browser -->|"HTTP/SSE"| Frontend
   Frontend -->|"API"| Server
   Server --> Registry
+  Server --> Commands
   Server -->|"HTTP + daemon token"| ServerConnector
   Server -->|"HTTP + daemon token"| Network
   Server -->|"/system/uninstall on device removal"| Network
@@ -138,9 +168,9 @@ sequenceDiagram
 flowchart TD
   A["1. 서버 PC에서 self-host site server 실행"]
   B["2. 서버 PC connector daemon 자동 등록"]
-  C["3. 메인 화면 등록 wizard에서 다른 PC 등록 명령 복사"]
+  C["3. 메인 화면 등록 wizard 또는 command 파일에서 다른 PC 등록 명령 복사"]
   D["4. 다른 PC PowerShell에 등록 명령 붙여넣기"]
-  E["5. repository 설치 / connector 시작"]
+  E["5. GitHub install-connector.ps1 실행<br/>repository 설치/update + connector 시작"]
   F["6. 다른 PC의 Tailscale/LAN daemonUrl 감지"]
   G{"7. 서버가 /status 접근 가능?"}
   H["8. server registry에 device row 등록"]
@@ -170,6 +200,14 @@ flowchart TD
 
   Install --> Process --> Local --> Remote --> Registered --> Claude --> Workspace --> Recovery --> Usable
 ```
+
+## 세션 목록과 내부 조회
+
+DeskRelay는 사용량과 상태 확인을 위해 Claude CLI의 `/context`, `/status`, `/usage` 같은 내부 조회 명령을 실행할 수 있다. 이런 조회는 사용자 대화가 아니므로 세션 목록을 오염시키면 안 된다.
+
+- 새 내부 조회는 `--no-session-persistence`로 실행해 Claude `.jsonl` 세션 파일을 만들지 않는다.
+- 예전 버전에서 만들어진 `<local-command-caveat>` 기반 내부 명령 전용 세션은 세션 목록을 읽을 때 자동으로 삭제한다.
+- 내부 조회 뒤에 실제 사용자 메시지가 섞인 세션은 삭제하지 않는다.
 
 ## 파워유저 관점의 핵심 목표
 
