@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import { loadOrCreateAuthToken } from "./auth-token.ts";
-import { defaultLoginTaskLaunch, installLoginTask } from "./login-task.ts";
+import { defaultLoginTaskLaunch, installLoginTask, removeLoginTask } from "./login-task.ts";
 import { readStateFile } from "./state-file.ts";
 
 export const DEFAULT_SELF_REGISTER_PORT = 18091;
@@ -18,6 +18,7 @@ export interface RegisterSelfOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   installTask?: typeof installLoginTask;
+  removeTask?: typeof removeLoginTask;
   loadAuthToken?: typeof loadOrCreateAuthToken;
   stopRecordedDaemon?: (port: number) => Promise<void>;
   stopPortOwner?: (port: number) => Promise<boolean>;
@@ -78,6 +79,7 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
     port,
     auth.token,
     options.stopPortOwner ?? stopListeningProcessOnPort,
+    options.removeTask ?? removeLoginTask,
   );
 
   const baseLaunch = defaultLoginTaskLaunch();
@@ -164,15 +166,46 @@ async function stopLocalConnectorPortIfPresent(
   port: number,
   token: string,
   stopPortOwner: (port: number) => Promise<boolean>,
+  removeTask: () => Promise<unknown>,
 ): Promise<void> {
   const probe = await probeDaemonStatus(fetchImpl, baseUrl, token, 1_000);
-  if (!probe.ok && probe.error !== "HTTP 401" && probe.error !== "HTTP 403") return;
+  const staleAuth = isStaleAuthProbe(probe);
+  if (!probe.ok && !staleAuth) return;
+  if (staleAuth) {
+    await removeTask().catch(() => undefined);
+  }
   const stopped = await stopPortOwner(port);
-  if (!stopped) return;
+  if (!stopped) {
+    if (staleAuth) await failIfStaleConnectorStillOwnsPort(fetchImpl, baseUrl, port, token);
+    return;
+  }
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     if (await isPortFree("127.0.0.1", port)) return;
     await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  if (staleAuth) await failIfStaleConnectorStillOwnsPort(fetchImpl, baseUrl, port, token);
+}
+
+function isStaleAuthProbe(probe: { ok: true } | { ok: false; error: string }): boolean {
+  return !probe.ok && (probe.error === "HTTP 401" || probe.error === "HTTP 403");
+}
+
+async function failIfStaleConnectorStillOwnsPort(
+  fetchImpl: typeof fetch,
+  baseUrl: string,
+  port: number,
+  token: string,
+): Promise<void> {
+  const probe = await probeDaemonStatus(fetchImpl, baseUrl, token, 1_000);
+  if (isStaleAuthProbe(probe)) {
+    throw new Error(
+      [
+        `stale DeskRelay connector is already listening on ${baseUrl} with a different daemon token.`,
+        "The installer stopped the login task but could not free the connector port automatically.",
+        `Close existing DeskRelay connector/bun/PowerShell processes or rerun PowerShell as Administrator, then run the registration command again. TCP port: ${port}.`,
+      ].join(" "),
+    );
   }
 }
 
@@ -200,14 +233,21 @@ async function stopListeningProcessOnPort(port: number): Promise<boolean> {
   const pids = await findWindowsListeningPids(port);
   const targets = pids.filter((pid) => pid > 0 && pid !== process.pid);
   if (targets.length === 0) return false;
+  let attempted = false;
   for (const pid of targets) {
-    await runCommand("taskkill.exe", ["/PID", String(pid), "/T", "/F"]).catch(() => ({
-      code: 1,
-      stdout: "",
-      stderr: "",
-    }));
+    const result = await runCommand("taskkill.exe", ["/PID", String(pid), "/T", "/F"]).catch(
+      () => ({
+        code: 1,
+        stdout: "",
+        stderr: "",
+      }),
+    );
+    if (result.code === 0) attempted = true;
   }
-  return true;
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const remaining = await findWindowsListeningPids(port);
+  const targetSet = new Set(targets);
+  return attempted && remaining.every((pid) => !targetSet.has(pid));
 }
 
 async function findWindowsListeningPids(port: number): Promise<number[]> {

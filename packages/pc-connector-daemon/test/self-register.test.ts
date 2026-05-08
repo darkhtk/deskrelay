@@ -76,6 +76,7 @@ describe("registerSelf", () => {
 
   test("stops a stale local connector before installing the login task", async () => {
     const port = 19092;
+    let staleTaskRemoved = false;
     let staleConnectorStopped = false;
     let installStartedAfterStop = false;
     const calls: Array<{ method: string; url: string; authorization?: string }> = [];
@@ -117,8 +118,13 @@ describe("registerSelf", () => {
       },
       loadAuthToken: async () => ({ token: "daemon-token", path: "auth.json", created: false }),
       stopRecordedDaemon: async () => undefined,
+      removeTask: async () => {
+        staleTaskRemoved = true;
+        return { supported: true, removed: true, taskName: "DeskRelay Connector" };
+      },
       stopPortOwner: async (port) => {
         expect(port).toBe(19092);
+        expect(staleTaskRemoved).toBe(true);
         staleConnectorStopped = true;
         return true;
       },
@@ -133,6 +139,60 @@ describe("registerSelf", () => {
       `GET http://100.64.1.2:${port}/status`,
       "GET http://deskrelay.test:18193/api/devices",
       "POST http://deskrelay.test:18193/api/devices",
+    ]);
+  });
+
+  test("fails with a stale-connector hint when a wrong-token local daemon cannot be stopped", async () => {
+    const port = 19097;
+    let staleTaskRemoved = false;
+    let installAttempted = false;
+    const calls: Array<{ method: string; url: string; authorization?: string }> = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const authorization = (init?.headers as Record<string, string> | undefined)?.authorization;
+      calls.push({
+        method: init?.method ?? "GET",
+        url,
+        ...(authorization ? { authorization } : {}),
+      });
+      if (url === `http://127.0.0.1:${port}/status`) {
+        return Response.json({ error: "wrong token" }, { status: 401 });
+      }
+      throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`);
+    }) as typeof fetch;
+
+    await expect(
+      registerSelf({
+        serverUrl: "http://deskrelay.test:18193/",
+        siteToken: "site-token",
+        port,
+        advertiseHost: "100.64.1.2",
+        fetchImpl,
+        installTask: async () => {
+          installAttempted = true;
+          return {
+            supported: true,
+            installed: true,
+            started: true,
+            taskName: "DeskRelay Connector",
+          };
+        },
+        loadAuthToken: async () => ({ token: "daemon-token", path: "auth.json", created: false }),
+        stopRecordedDaemon: async () => undefined,
+        removeTask: async () => {
+          staleTaskRemoved = true;
+          return { supported: true, removed: true, taskName: "DeskRelay Connector" };
+        },
+        stopPortOwner: async () => false,
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrow("stale DeskRelay connector is already listening");
+
+    expect(staleTaskRemoved).toBe(true);
+    expect(installAttempted).toBe(false);
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://127.0.0.1:${port}/status`,
     ]);
   });
 
