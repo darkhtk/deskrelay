@@ -22,7 +22,7 @@ bun install
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```
 
-실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 터미널에는 접속 URL, Site token, command 파일 위치가 출력된다. 같은 정보는 저장소 최상위의 `DESKRELAY-SERVER-CODE.txt`와 `REGISTER-OTHER-PC.txt`에도 생성된다.
+실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, 저장소 최상위의 `DESKRELAY-SERVER-CODE.txt`와 `REGISTER-OTHER-PC.txt`에도 생성된다.
 
 서버를 중지하려면:
 
@@ -44,7 +44,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 
 ## 다른 PC 등록과 해제
 
-서버가 켜지면 저장소 최상위에 아래 파일이 생성된다.
+다른 PC 등록은 메인 화면이 담당한다. 서버를 열면 메인 화면의 등록 wizard에 서버 URL과 Site token이 포함된 PowerShell 명령이 표시된다. 그 명령을 드래그해서 통째로 복사한 뒤 제어하려는 Windows PC의 PowerShell에 붙여넣으면 된다. 설정 다이얼로그는 중복된 등록 UI를 갖지 않고, 이미 등록된 디바이스의 선택, 이름/기본 작업 디렉토리 관리, 제거만 담당한다.
+
+서버가 켜지면 저장소 최상위에도 아래 파일이 생성된다.
 
 - `REGISTER-OTHER-PC.txt`: 제어할 다른 Windows PC에 그대로 붙여넣는 등록 명령
 - `REMOVE-OTHER-PC.txt`: 등록을 해제할 Windows PC에 그대로 붙여넣는 해제 명령
@@ -54,6 +56,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 등록 명령은 GitHub에서 `scripts/install-connector.ps1`을 내려받아 실행한다. 이 스크립트가 `$HOME\deskrelay` 설치 상태를 판별하고, 필요하면 새로 clone/update한 뒤 connector를 `0.0.0.0:18091`에 띄우고, Tailscale/LAN 주소를 감지하고, 서버가 `/status`에 접근 가능한지 확인한 다음 device row를 등록한다.
 
 해제 명령은 GitHub에서 `scripts/remove-connector.ps1`을 내려받아 실행한다. 이 스크립트가 해당 PC의 Tailscale/LAN daemon URL 후보를 계산하고, 서버의 matching device row를 삭제하고, Windows login task와 local connector state를 제거하고, 남아 있는 connector listener를 종료한다. repo 폴더는 기본적으로 남긴다.
+
+브라우저 설정 다이얼로그의 `디바이스 제거`는 서버의 device row만 지우지 않는다. 선택한 디바이스의 daemon에 접근할 수 있으면 `/system/uninstall`을 호출해 Windows login task, connector auth/state/identity, behavior cache, login-task script, logs 폴더를 함께 제거한다. 등록 명령으로 `$HOME\deskrelay`에 설치된 source clone이면 프로세스 종료 뒤 repo 폴더 제거도 예약한다. 디바이스가 오프라인이거나 오래된 connector라 cleanup 요청이 실패해도, 브라우저 목록에서는 device row를 제거해 stale 디바이스가 남지 않게 한다.
 
 ## 구조 노드
 
@@ -87,6 +91,7 @@ flowchart LR
   Server --> Registry
   Server -->|"HTTP + daemon token"| ServerConnector
   Server -->|"HTTP + daemon token"| Network
+  Server -->|"/system/uninstall on device removal"| Network
   Network --> OtherConnector
 
   ServerConnector --> ServerTask
@@ -133,13 +138,13 @@ sequenceDiagram
 flowchart TD
   A["1. 서버 PC에서 self-host site server 실행"]
   B["2. 서버 PC connector daemon 자동 등록"]
-  C["3. Settings -> Devices에서 다른 PC 등록 명령 복사"]
+  C["3. 메인 화면 등록 wizard에서 다른 PC 등록 명령 복사"]
   D["4. 다른 PC PowerShell에 등록 명령 붙여넣기"]
   E["5. repository 설치 / connector 시작"]
   F["6. 다른 PC의 Tailscale/LAN daemonUrl 감지"]
   G{"7. 서버가 /status 접근 가능?"}
   H["8. server registry에 device row 등록"]
-  I["9. 디바이스 목록에 표시"]
+  I["9. 브라우저 디바이스 목록에 표시"]
   X["실패: firewall / Tailscale / local-only bind / token 문제를 분리해서 표시"]
 
   A --> B --> C --> D --> E --> F --> G
@@ -173,3 +178,5 @@ flowchart TD
 - 서버와 connector가 서로 접근 가능한지 등록 전에 검증해야 한다.
 - token mismatch, local-only bind, firewall, Tailscale 미연결을 하나의 오프라인으로 뭉개면 안 된다.
 - UI는 예쁜 온보딩보다 현재 노드 상태와 복구 액션을 보여줘야 한다.
+- 설치/등록 안내는 메인 화면으로 모으고, 설정 다이얼로그는 등록된 디바이스 관리만 맡아 중복 동선을 만들지 않는다.
+- 디바이스 제거는 목록에서 숨기는 동작이 아니라, 가능하면 해당 PC의 connector 설치 흔적까지 함께 정리하는 동작이어야 한다.
