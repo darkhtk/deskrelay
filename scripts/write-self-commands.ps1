@@ -133,22 +133,35 @@ try {
 }
 "@
 
+$removeOtherPc = @"
+# DeskRelay - remove this PC from this self-host server
+# Paste this whole block into PowerShell on the PC you want to remove.
+# It unregisters matching device rows from this server, removes the connector
+# login task, clears local connector state, and stops the connector port.
+
+`$ErrorActionPreference = 'Stop'
+`$remover = Join-Path `$env:TEMP 'deskrelay-remove-connector.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/remove-connector.ps1' -OutFile `$remover
+
+powershell -ExecutionPolicy Bypass -File `$remover -Server $preferredUrlQ -SiteToken $siteTokenQ -Port 18091
+"@
+
 $startServer = @"
 # DeskRelay - start this PC
 Set-Location -LiteralPath $repoQ
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1 -Root $rootQ -RepoRoot $repoQ
 "@
 
 $statusServer = @"
 # DeskRelay - show status, URLs, and Site token
 Set-Location -LiteralPath $repoQ
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1 -Root $rootQ -RepoRoot $repoQ
 "@
 
 $stopServer = @"
 # DeskRelay - stop this PC server and connector
 Set-Location -LiteralPath $repoQ
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1 -Root $rootQ -RepoRoot $repoQ
 "@
 
 $resetServer = @"
@@ -158,7 +171,7 @@ $resetServer = @"
 # It does not delete the cloned git repository.
 
 Set-Location -LiteralPath $repoQ
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1 -Root $rootQ -RepoRoot $repoQ
 `$root = $rootQ
 if (Test-Path -LiteralPath `$root) {
   Remove-Item -Recurse -Force -LiteralPath `$root
@@ -166,6 +179,15 @@ if (Test-Path -LiteralPath `$root) {
 } else {
   Write-Host "Already absent: `$root"
 }
+"@
+
+$uninstallServer = @"
+# DeskRelay - uninstall this PC's self-host server
+# This stops DeskRelay, removes .self-server runtime state, and removes
+# generated command files. It does not delete the cloned git repository.
+
+Set-Location -LiteralPath $repoQ
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1 -Root $rootQ -RepoRoot $repoQ
 "@
 
 $openSite = @"
@@ -212,6 +234,12 @@ $commandsDir
 To register another PC, open this file in the DeskRelay folder root and
 copy the whole PowerShell block into the PC you want to control:
 REGISTER-OTHER-PC.txt
+
+To remove a registered PC, copy the whole PowerShell block from:
+REMOVE-OTHER-PC.txt
+
+To uninstall this self-host server state from this PC:
+REMOVE-DESKRELAY-SERVER.txt
 
 The registration command handles Tailscale/LAN address detection, connector
 startup, access verification, and server registration. If the server URL is a
@@ -292,7 +320,9 @@ $all = @"
 #   status-server.txt
 #   stop-server.txt
 #   reset-server.txt
+#   uninstall-server.txt
 #   register-other-pc.txt
+#   remove-other-pc.txt
 #   manual-register-other-pc.txt
 #   list-devices.txt
 #   unregister-device-by-id.txt
@@ -307,6 +337,10 @@ $openSite
 
 $registerOtherPc
 
+## Remove this PC from server
+
+$removeOtherPc
+
 ## Stop server
 
 $stopServer
@@ -314,6 +348,10 @@ $stopServer
 ## Reset server
 
 $resetServer
+
+## Uninstall server
+
+$uninstallServer
 
 ## List devices
 
@@ -329,7 +367,9 @@ Write-TextFile -Path (Join-Path $commandsDir "start-server.txt") -Content $start
 Write-TextFile -Path (Join-Path $commandsDir "status-server.txt") -Content $statusServer
 Write-TextFile -Path (Join-Path $commandsDir "stop-server.txt") -Content $stopServer
 Write-TextFile -Path (Join-Path $commandsDir "reset-server.txt") -Content $resetServer
+Write-TextFile -Path (Join-Path $commandsDir "uninstall-server.txt") -Content $uninstallServer
 Write-TextFile -Path (Join-Path $commandsDir "register-other-pc.txt") -Content $registerOtherPc
+Write-TextFile -Path (Join-Path $commandsDir "remove-other-pc.txt") -Content $removeOtherPc
 Write-TextFile -Path (Join-Path $commandsDir "manual-register-other-pc.txt") -Content $manualOtherPc
 Write-TextFile -Path (Join-Path $commandsDir "list-devices.txt") -Content $listDevices
 Write-TextFile -Path (Join-Path $commandsDir "unregister-device-by-id.txt") -Content $unregisterDevice
@@ -339,8 +379,12 @@ Write-TextFile -Path (Join-Path $commandsDir "deskrelay-commands.txt") -Content 
 
 Write-TextFile -Path (Join-Path $repo "DESKRELAY-SERVER-CODE.txt") -Content $topLevelCode
 Write-TextFile -Path (Join-Path $repo "REGISTER-OTHER-PC.txt") -Content $registerOtherPc
+Write-TextFile -Path (Join-Path $repo "REMOVE-OTHER-PC.txt") -Content $removeOtherPc
+Write-TextFile -Path (Join-Path $repo "REMOVE-DESKRELAY-SERVER.txt") -Content $uninstallServer
 
 Write-Host "Command files: $commandsDir"
 Write-Host "Top-level quick files:"
 Write-Host "  $(Join-Path $repo 'DESKRELAY-SERVER-CODE.txt')"
 Write-Host "  $(Join-Path $repo 'REGISTER-OTHER-PC.txt')"
+Write-Host "  $(Join-Path $repo 'REMOVE-OTHER-PC.txt')"
+Write-Host "  $(Join-Path $repo 'REMOVE-DESKRELAY-SERVER.txt')"

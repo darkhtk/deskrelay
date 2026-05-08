@@ -31,7 +31,29 @@ Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
 ```
 
+서버 설치 상태를 제거하려면:
+
+```powershell
+Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
+```
+
+이 명령은 실행 중인 self 서버와 서버 PC connector를 끄고, `.self-server` 런타임 상태와 생성된 command txt 파일을 지운다. git clone 폴더 자체는 남긴다. 폴더까지 지우고 싶을 때만 `-RemoveRepo`를 붙인다.
+
 다른 PC에서 접속하려면 서버 PC와 대상 PC가 같은 LAN 또는 Tailscale tailnet에 있어야 한다. connector 포트를 공용 인터넷에 직접 노출하지 않는다.
+
+## 다른 PC 등록과 해제
+
+서버가 켜지면 저장소 최상위에 아래 파일이 생성된다.
+
+- `REGISTER-OTHER-PC.txt`: 제어할 다른 Windows PC에 그대로 붙여넣는 등록 명령
+- `REMOVE-OTHER-PC.txt`: 등록을 해제할 Windows PC에 그대로 붙여넣는 해제 명령
+- `DESKRELAY-SERVER-CODE.txt`: 서버 URL, Site token, command 파일 위치
+- `REMOVE-DESKRELAY-SERVER.txt`: 서버 PC의 self-host 상태 제거 명령
+
+등록 명령은 GitHub에서 `scripts/install-connector.ps1`을 내려받아 실행한다. 이 스크립트가 `$HOME\deskrelay` 설치 상태를 판별하고, 필요하면 새로 clone/update한 뒤 connector를 `0.0.0.0:18091`에 띄우고, Tailscale/LAN 주소를 감지하고, 서버가 `/status`에 접근 가능한지 확인한 다음 device row를 등록한다.
+
+해제 명령은 GitHub에서 `scripts/remove-connector.ps1`을 내려받아 실행한다. 이 스크립트가 해당 PC의 Tailscale/LAN daemon URL 후보를 계산하고, 서버의 matching device row를 삭제하고, Windows login task와 local connector state를 제거하고, 남아 있는 connector listener를 종료한다. repo 폴더는 기본적으로 남긴다.
 
 ## 구조 노드
 

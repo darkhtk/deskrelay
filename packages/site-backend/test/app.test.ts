@@ -160,10 +160,13 @@ describe("self-host command helper", () => {
       urls: Array<{ kind: string; url: string }>;
       command: string;
     };
-    expect(body.command).toContain("Invoke-RestMethod -Method Delete");
-    expect(body.command).toContain("login-task remove");
-    expect(body.command).toContain("uninstall");
-    expect(body.command).toContain(`Authorization = 'Bearer ${TOKEN}'`);
+    expect(body.command).toContain(
+      "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/remove-connector.ps1",
+    );
+    expect(body.command).toContain("deskrelay-remove-connector.ps1");
+    expect(body.command).toContain(`-Server '${body.preferredUrl}'`);
+    expect(body.command).toContain(`-SiteToken '${TOKEN}'`);
+    expect(body.command).toContain("-Port 18091");
     expect(body.preferredUrl).toMatch(/^http:\/\//);
     expect(body.urls.length).toBeGreaterThan(0);
   });
