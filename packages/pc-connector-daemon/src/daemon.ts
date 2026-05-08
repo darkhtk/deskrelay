@@ -9,6 +9,7 @@
 //   POST   /behaviors/{instanceId}/request      { method, params?, timeoutMs? }
 //   GET    /events/spaces/{spaceId}/stream      SSE; supports Last-Event-ID
 //   GET    /files/preview                       guarded image blob preview
+//   POST   /system/uninstall                    remove local connector install
 //
 // Auth: every route except /pairing/status requires
 // `Authorization: Bearer <token>` where the token is the value loaded
@@ -90,6 +91,9 @@ export interface DaemonOptions {
    *  legacy relay reload.
    *  Returning { reloaded: false } is the no-op default for tests. */
   reloadSiteWsClient?: () => Promise<DaemonReloadResult>;
+  /** Remove local connector state/login task after a site-side device removal.
+   *  Wired by bin.ts for the real daemon; tests may provide a stub. */
+  requestSelfUninstall?: (options: { removeRepo?: boolean }) => Promise<unknown>;
 }
 
 interface ResolvedListen {
@@ -237,6 +241,9 @@ export class Daemon {
       }
       if (req.method === "POST" && path === "/pairing/reload") {
         return await this.#handlePairingReload();
+      }
+      if (req.method === "POST" && path === "/system/uninstall") {
+        return await this.#handleSystemUninstall(req);
       }
       if (req.method === "POST" && path === "/hooks/pretooluse") {
         return await this.#handleApprovalRequest(req);
@@ -567,6 +574,24 @@ export class Daemon {
       }),
     );
     return jsonResponse(result.reloaded ? 200 : 500, result);
+  }
+
+  async #handleSystemUninstall(req: Request): Promise<Response> {
+    const uninstall = this.#options.requestSelfUninstall;
+    if (!uninstall) {
+      return jsonResponse(501, { ok: false, error: "self uninstall is not wired" });
+    }
+    let removeRepo = false;
+    try {
+      const body = await req.json();
+      if (typeof body === "object" && body !== null) {
+        removeRepo = (body as { removeRepo?: unknown }).removeRepo === true;
+      }
+    } catch {
+      // Body is optional.
+    }
+    const result = await uninstall({ removeRepo });
+    return jsonResponse(200, result ?? { ok: true });
   }
 
   async #handleApprovalRequest(req: Request): Promise<Response> {

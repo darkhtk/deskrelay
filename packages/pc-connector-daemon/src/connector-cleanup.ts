@@ -8,6 +8,7 @@ import { rm, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultAuthFilePath } from "./auth-token.ts";
 import { defaultIdentityDir } from "./device-identity.ts";
+import { WINDOWS_LOGIN_TASK_SCRIPT_NAME } from "./login-task.ts";
 import { defaultStateDir, defaultStateFilePath } from "./state-file.ts";
 
 export interface RemoveConnectorLocalStateOptions {
@@ -16,6 +17,8 @@ export interface RemoveConnectorLocalStateOptions {
   stateFilePath?: string;
   identityDir?: string;
   behaviorsDir?: string;
+  loginTaskScriptPath?: string;
+  logsDir?: string;
 }
 
 export interface RemoveConnectorLocalStateResult {
@@ -24,6 +27,8 @@ export interface RemoveConnectorLocalStateResult {
   daemonStateRemoved: boolean;
   identityDirRemoved: boolean;
   behaviorsDirRemoved: boolean;
+  loginTaskScriptRemoved: boolean;
+  logsDirRemoved: boolean;
   stateDirRemoved: boolean;
   removedAny: boolean;
 }
@@ -36,11 +41,16 @@ export async function removeConnectorLocalState(
   const stateFilePath = opts.stateFilePath ?? defaultStateFilePath();
   const identityDir = opts.identityDir ?? defaultIdentityDir();
   const behaviorsDir = opts.behaviorsDir ?? join(stateDir, "behaviors");
+  const loginTaskScriptPath =
+    opts.loginTaskScriptPath ?? join(stateDir, WINDOWS_LOGIN_TASK_SCRIPT_NAME);
+  const logsDir = opts.logsDir ?? join(stateDir, "logs");
 
   const daemonStateRemoved = await removeIfPresent(stateFilePath);
   const authRemoved = await removeIfPresent(authFilePath);
   const identityDirRemoved = await removeIfPresent(identityDir);
   const behaviorsDirRemoved = await removeIfPresent(behaviorsDir);
+  const loginTaskScriptRemoved = await removeIfPresent(loginTaskScriptPath);
+  const logsDirRemoved = await removeIfPresent(logsDir);
   const stateDirRemoved = await removeEmptyDir(stateDir);
 
   return {
@@ -49,12 +59,16 @@ export async function removeConnectorLocalState(
     daemonStateRemoved,
     identityDirRemoved,
     behaviorsDirRemoved,
+    loginTaskScriptRemoved,
+    logsDirRemoved,
     stateDirRemoved,
     removedAny:
       authRemoved ||
       daemonStateRemoved ||
       identityDirRemoved ||
       behaviorsDirRemoved ||
+      loginTaskScriptRemoved ||
+      logsDirRemoved ||
       stateDirRemoved,
   };
 }

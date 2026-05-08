@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, stat, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeConnectorLocalState } from "../src/connector-cleanup.ts";
@@ -20,13 +20,18 @@ describe("removeConnectorLocalState", () => {
     const stateFilePath = join(tmp, "daemon.json");
     const identityDir = join(tmp, "identity");
     const behaviorsDir = join(tmp, "behaviors");
+    const loginTaskScriptPath = join(tmp, "cr-connector-login-task.ps1");
+    const logsDir = join(tmp, "logs");
     await mkdir(join(identityDir, "keys"), { recursive: true });
     await mkdir(join(behaviorsDir, "echo"), { recursive: true });
+    await mkdir(logsDir, { recursive: true });
     await writeFile(authFilePath, "{}");
     await writeFile(stateFilePath, "{}");
     await writeFile(join(identityDir, "identity.json"), "{}");
     await writeFile(join(identityDir, "keys", "key.bin"), "secret");
     await writeFile(join(behaviorsDir, "echo", "manifest.json"), "{}");
+    await writeFile(loginTaskScriptPath, "# supervisor");
+    await writeFile(join(logsDir, "connector.log"), "log");
 
     const r = await removeConnectorLocalState({
       stateDir: tmp,
@@ -34,6 +39,8 @@ describe("removeConnectorLocalState", () => {
       stateFilePath,
       identityDir,
       behaviorsDir,
+      loginTaskScriptPath,
+      logsDir,
     });
 
     expect(r).toEqual({
@@ -42,6 +49,8 @@ describe("removeConnectorLocalState", () => {
       daemonStateRemoved: true,
       identityDirRemoved: true,
       behaviorsDirRemoved: true,
+      loginTaskScriptRemoved: true,
+      logsDirRemoved: true,
       stateDirRemoved: true,
       removedAny: true,
     });
@@ -49,6 +58,8 @@ describe("removeConnectorLocalState", () => {
     await expectMissing(stateFilePath);
     await expectMissing(identityDir);
     await expectMissing(behaviorsDir);
+    await expectMissing(loginTaskScriptPath);
+    await expectMissing(logsDir);
     await expectMissing(tmp);
   });
 

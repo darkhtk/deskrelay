@@ -173,6 +173,31 @@ describe("Daemon HTTP API — basics", () => {
     const r = await http("POST", "/pairing/reload", undefined, { token: null });
     expect(r.status).toBe(401);
   });
+
+  test("POST /system/uninstall invokes the wired cleanup callback", async () => {
+    let payload: { removeRepo?: boolean } | undefined;
+    await daemon.stop();
+    daemon = new Daemon({
+      port: 0,
+      bunPath: process.execPath,
+      authToken: TEST_AUTH_TOKEN,
+      requestSelfUninstall: async (options) => {
+        payload = options;
+        return { ok: true, cleaned: true };
+      },
+    });
+    const listening = daemon.start();
+    baseUrl = `http://${listening.host}:${listening.port}`;
+    const r = await http("POST", "/system/uninstall", { removeRepo: true });
+    expect(r.status).toBe(200);
+    expect(payload).toEqual({ removeRepo: true });
+    expect(r.data).toEqual({ ok: true, cleaned: true });
+  });
+
+  test("POST /system/uninstall requires Bearer auth", async () => {
+    const r = await http("POST", "/system/uninstall", undefined, { token: null });
+    expect(r.status).toBe(401);
+  });
 });
 
 describe("Daemon HTTP API — auth", () => {

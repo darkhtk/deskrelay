@@ -151,10 +151,17 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
   });
 
-  app.delete("/api/devices/:id", (c) => {
+  app.delete("/api/devices/:id", async (c) => {
     const id = c.req.param("id");
-    if (!registry.unregister(id)) return c.json({ error: `unknown device: ${id}` }, 404);
-    return c.json({ ok: true });
+    const device = registry.get(id);
+    if (!device) return c.json({ error: `unknown device: ${id}` }, 404);
+    const cleanup = await requestDaemonUninstall(
+      fetchImpl,
+      device,
+      daemonToken(device, localToken),
+    );
+    registry.unregister(id);
+    return c.json({ ok: true, cleanup });
   });
 
   app.get("/api/devices/:id/behaviors", async (c) => {
@@ -443,6 +450,39 @@ function resolveDevice(id: string, registry: DeviceRegistry): Device | undefined
 
 function daemonToken(device: Device, fallback?: string): string | undefined {
   return device.authToken ?? fallback;
+}
+
+interface DeviceCleanupResult {
+  attempted: boolean;
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
+async function requestDaemonUninstall(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  token?: string,
+): Promise<DeviceCleanupResult> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token) headers.authorization = `Bearer ${token}`;
+  try {
+    const res = await fetchImpl(`${device.daemonUrl}/system/uninstall`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ removeRepo: true }),
+    });
+    if (res.ok) return { attempted: true, ok: true, status: res.status };
+    const text = await res.text().catch(() => "");
+    return {
+      attempted: true,
+      ok: false,
+      status: res.status,
+      ...(text ? { error: text.slice(0, 500) } : {}),
+    };
+  } catch (err) {
+    return { attempted: true, ok: false, error: (err as Error).message };
+  }
 }
 
 function toPublicDevice(device: Device): Omit<Device, "authToken"> & { connectionState: "online" } {

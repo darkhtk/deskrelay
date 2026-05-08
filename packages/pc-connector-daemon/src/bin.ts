@@ -26,7 +26,7 @@
 //                                 Same file the CLI reads to authenticate.
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { hostname as osHostname } from "node:os";
+import { homedir, hostname as osHostname } from "node:os";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { behaviorDef as remoteClaudeBehavior } from "@deskrelay/behavior-remote-claude";
 import { loadOrCreateAuthToken, readAuthFile } from "./auth-token.ts";
@@ -193,28 +193,8 @@ if (command === "unpair") {
 }
 if (command === "uninstall" || command === "remove") {
   try {
-    const task = await removeLoginTaskForUninstall().catch((err) => {
-      process.stderr.write(`warning: failed to remove login task: ${(err as Error).message}\n`);
-      return undefined;
-    });
-    if (task?.supported) {
-      process.stdout.write(
-        task.removed
-          ? `login task removed: ${task.taskName}\n`
-          : `(login task already absent: ${task.taskName})\n`,
-      );
-    }
-    const r = await removeConnectorLocalState();
-    if (r.removedAny) {
-      process.stdout.write(
-        `✓ connector local state removed from ${r.stateDir}.\n  auth.json removed: ${r.authRemoved ? "yes" : "no"}\n  daemon.json removed: ${r.daemonStateRemoved ? "yes" : "no"}\n  identity/ removed: ${r.identityDirRemoved ? "yes" : "no"}\n  behaviors/ removed: ${r.behaviorsDirRemoved ? "yes" : "no"}\n`,
-      );
-    } else {
-      process.stdout.write(`(connector local state already absent at ${r.stateDir})\n`);
-    }
-    process.stdout.write(
-      "Note: site-side device row is NOT removed — delete it from the\nbrowser's Settings → Devices list if you want a clean slate.\n",
-    );
+    const result = await uninstallLocalConnector({ removeRepo: takeFlag(argv, "--remove-repo") });
+    writeUninstallSummary(result);
     process.exit(0);
   } catch (err) {
     process.stderr.write(`✗ uninstall failed: ${(err as Error).message}\n`);
@@ -461,6 +441,12 @@ const daemon = new Daemon({
 
   getPairingStatus,
   reloadSiteWsClient,
+  requestSelfUninstall: async ({ removeRepo }) => {
+    const result = await uninstallLocalConnector({ removeRepo: removeRepo === true });
+    const exitTimer = setTimeout(() => process.exit(0), 250);
+    (exitTimer as { unref?: () => void }).unref?.();
+    return result;
+  },
   onLog: (record) => {
     process.stderr.write(`${JSON.stringify(record)}\n`);
   },
@@ -915,6 +901,153 @@ async function maybeMigrateSourceRunLoginTaskForPackagedConnector(): Promise<voi
       })}\n`,
     );
   }
+}
+
+interface LocalConnectorUninstallResult {
+  ok: true;
+  loginTask?: Awaited<ReturnType<typeof removeLoginTaskForUninstall>>;
+  loginTaskError?: string;
+  localState: Awaited<ReturnType<typeof removeConnectorLocalState>>;
+  repoRemoval: RepoRemovalResult;
+}
+
+interface RepoRemovalResult {
+  requested: boolean;
+  scheduled: boolean;
+  path?: string;
+  reason?: string;
+}
+
+async function uninstallLocalConnector(
+  options: {
+    removeRepo?: boolean;
+  } = {},
+): Promise<LocalConnectorUninstallResult> {
+  let loginTask: Awaited<ReturnType<typeof removeLoginTaskForUninstall>> | undefined;
+  let loginTaskError: string | undefined;
+  try {
+    loginTask = await removeLoginTaskForUninstall();
+  } catch (err) {
+    loginTaskError = (err as Error).message;
+  }
+  const localState = await removeConnectorLocalState();
+  const repoRemoval = scheduleRepoRemoval(options.removeRepo === true);
+  return {
+    ok: true,
+    ...(loginTask ? { loginTask } : {}),
+    ...(loginTaskError ? { loginTaskError } : {}),
+    localState,
+    repoRemoval,
+  };
+}
+
+function writeUninstallSummary(result: LocalConnectorUninstallResult): void {
+  if (result.loginTaskError) {
+    process.stderr.write(`warning: failed to remove login task: ${result.loginTaskError}\n`);
+  }
+  if (result.loginTask?.supported) {
+    process.stdout.write(
+      result.loginTask.removed
+        ? `login task removed: ${result.loginTask.taskName}\n`
+        : `(login task already absent: ${result.loginTask.taskName})\n`,
+    );
+  }
+  const r = result.localState;
+  if (r.removedAny) {
+    process.stdout.write(
+      `✓ connector local state removed from ${r.stateDir}.\n  auth.json removed: ${r.authRemoved ? "yes" : "no"}\n  daemon.json removed: ${r.daemonStateRemoved ? "yes" : "no"}\n  identity/ removed: ${r.identityDirRemoved ? "yes" : "no"}\n  behaviors/ removed: ${r.behaviorsDirRemoved ? "yes" : "no"}\n  login task script removed: ${r.loginTaskScriptRemoved ? "yes" : "no"}\n  logs/ removed: ${r.logsDirRemoved ? "yes" : "no"}\n`,
+    );
+  } else {
+    process.stdout.write(`(connector local state already absent at ${r.stateDir})\n`);
+  }
+  if (result.repoRemoval.requested) {
+    process.stdout.write(
+      result.repoRemoval.scheduled
+        ? `source clone removal scheduled: ${result.repoRemoval.path}\n`
+        : `(source clone removal skipped: ${result.repoRemoval.reason ?? "unknown reason"})\n`,
+    );
+  }
+  process.stdout.write(
+    "Note: site-side device row is NOT removed — delete it from the\nbrowser's Settings → Devices list if you want a clean slate.\n",
+  );
+}
+
+function scheduleRepoRemoval(requested: boolean): RepoRemovalResult {
+  if (!requested) return { requested: false, scheduled: false, reason: "not requested" };
+  const repo = resolvePath(process.cwd());
+  if (process.platform !== "win32") {
+    return {
+      requested: true,
+      scheduled: false,
+      path: repo,
+      reason: "automatic source clone removal is Windows-only",
+    };
+  }
+  if (basename(repo).toLowerCase() !== "deskrelay") {
+    return {
+      requested: true,
+      scheduled: false,
+      path: repo,
+      reason: "current folder is not a DeskRelay installer clone",
+    };
+  }
+  const home = resolvePath(homedir());
+  if (!isInsideOrEqual(repo, home)) {
+    return {
+      requested: true,
+      scheduled: false,
+      path: repo,
+      reason: "current folder is outside the user home directory",
+    };
+  }
+
+  try {
+    const psScript = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      `$pidToWait = ${process.pid}`,
+      `$repo = ${quotePowerShellString(repo)}`,
+      "Wait-Process -Id $pidToWait -Timeout 30",
+      "Start-Sleep -Milliseconds 500",
+      "if (Test-Path -LiteralPath $repo) { Remove-Item -LiteralPath $repo -Recurse -Force }",
+    ].join("; ");
+    const encoded = Buffer.from(psScript, "utf16le").toString("base64");
+    const child = Bun.spawn(
+      [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-EncodedCommand",
+        encoded,
+      ],
+      {
+        cwd: home,
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
+    (child as { unref?: () => void }).unref?.();
+    return { requested: true, scheduled: true, path: repo };
+  } catch (err) {
+    return {
+      requested: true,
+      scheduled: false,
+      path: repo,
+      reason: (err as Error).message,
+    };
+  }
+}
+
+function isInsideOrEqual(path: string, parent: string): boolean {
+  const normalizedPath = path.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  const normalizedParent = parent.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}\\`);
+}
+
+function quotePowerShellString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 async function removeLoginTaskForUninstall() {

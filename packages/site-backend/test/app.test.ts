@@ -265,14 +265,47 @@ describe("device CRUD", () => {
 
   test("DELETE /api/devices/:id unregisters", async () => {
     const regRes = await setup.app.fetch(
-      authedRequest("POST", "/api/devices", { daemonUrl: DAEMON_URL }),
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        authToken: "daemon-token",
+      }),
     );
     const reg = await regRes.json();
     const del = await setup.app.fetch(authedRequest("DELETE", `/api/devices/${reg.id}`));
     expect(del.status).toBe(200);
+    const deleted = (await del.json()) as {
+      ok: boolean;
+      cleanup: { attempted: boolean; ok: boolean; status: number };
+    };
+    expect(deleted.cleanup).toEqual({ attempted: true, ok: true, status: 200 });
+    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/system/uninstall`);
+    expect(setup.calls.at(-1)?.method).toBe("POST");
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+    expect(setup.calls.at(-1)?.body).toBe(JSON.stringify({ removeRepo: true }));
     const listRes = await setup.app.fetch(authedRequest("GET", "/api/devices"));
     const list = await listRes.json();
     expect(list).toEqual([]);
+  });
+
+  test("DELETE /api/devices/:id still unregisters when daemon cleanup fails", async () => {
+    const regRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", { daemonUrl: DAEMON_URL }),
+    );
+    const reg = await regRes.json();
+    setup.setMockResponse((req) => {
+      if (req.url.endsWith("/system/uninstall")) {
+        throw new Error("offline");
+      }
+      return Response.json({ ok: true });
+    });
+    const del = await setup.app.fetch(authedRequest("DELETE", `/api/devices/${reg.id}`));
+    expect(del.status).toBe(200);
+    const deleted = (await del.json()) as {
+      ok: boolean;
+      cleanup: { attempted: boolean; ok: boolean; error?: string };
+    };
+    expect(deleted.cleanup).toEqual({ attempted: true, ok: false, error: "offline" });
+    expect(setup.registry.list()).toHaveLength(0);
   });
 
   test("DELETE unknown id returns 404", async () => {

@@ -160,6 +160,16 @@ export interface RegisterOtherPcCommandResponse {
   command: string;
 }
 
+export interface UnregisterDeviceResponse {
+  ok: true;
+  cleanup?: {
+    attempted: boolean;
+    ok: boolean;
+    status?: number;
+    error?: string;
+  };
+}
+
 export interface RemoveOtherPcCommandResponse {
   preferredUrl: string;
   serverPort: number;
@@ -285,7 +295,8 @@ export const api = {
       ...(label ? { label } : {}),
       ...(authToken ? { authToken } : {}),
     }),
-  unregisterDevice: (id: string) => request<{ ok: true }>("DELETE", `/api/devices/${id}`),
+  unregisterDevice: (id: string) =>
+    request<UnregisterDeviceResponse>("DELETE", `/api/devices/${id}`),
   renameDevice: (id: string, label: string) =>
     request<Device>("PATCH", `/api/devices/${id}`, { label }),
 
