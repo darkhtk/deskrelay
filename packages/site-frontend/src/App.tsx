@@ -1,5 +1,5 @@
 import { type Component, For, Show, createSignal } from "solid-js";
-import { ApiError, api, clearToken, getToken, setToken } from "./api.ts";
+import { ApiError, api, clearBaseUrl, clearToken, getToken, setToken } from "./api.ts";
 import { AnnouncementBanner } from "./components/AnnouncementBanner.tsx";
 import {
   ChatView,
@@ -43,6 +43,7 @@ function consumeSiteTokenFromUrl(): string | null {
   const params = new URLSearchParams(hash);
   const token = params.get("site-token")?.trim();
   if (!token) return null;
+  clearBaseUrl();
   setToken(token);
   try {
     const clean = new URL(window.location.href);
