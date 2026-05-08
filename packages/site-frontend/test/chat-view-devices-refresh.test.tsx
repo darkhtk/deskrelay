@@ -57,6 +57,146 @@ afterEach(() => {
 });
 
 describe("ChatView device refresh bridge", () => {
+  test("keeps the selected chat device across reloads and updates it when changed", async () => {
+    localStorage.setItem("cr.chat-selected-device-id", OTHER_DEV.id);
+    const requestedUrls: string[] = [];
+    let sessionsListDeviceId: string | null = null;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV, OTHER_DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      for (const device of [DEV, OTHER_DEV]) {
+        if (url.endsWith(`/api/devices/${device.id}/behaviors`) && method === "GET") {
+          return new Response(
+            JSON.stringify([
+              {
+                instanceId: "remote-claude",
+                name: "remote-claude",
+                version: "0.0.0-test",
+                loadedAt: "2026-04-30T00:00:00.000Z",
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (
+          url.endsWith(`/api/devices/${device.id}/behaviors/remote-claude/request`) &&
+          method === "POST"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+          if (body.method === "sessions.list") {
+            sessionsListDeviceId = device.id;
+            return new Response(JSON.stringify({ result: [] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (body.method === "context.usage") {
+            return new Response(JSON.stringify({ result: { usage: null } }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (body.method === "usage.limits") {
+            return new Response(
+              JSON.stringify({ result: { session: null, week: null } }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    const select = await waitFor(() => {
+      const found = container.querySelector(
+        ".sidebar-section-devices select",
+      ) as HTMLSelectElement | null;
+      if (!found) throw new Error("device select missing");
+      expect(found.value).toBe(OTHER_DEV.id);
+      return found;
+    });
+    await waitFor(() => {
+      expect(sessionsListDeviceId).toBe(OTHER_DEV.id);
+    });
+    expect(
+      requestedUrls.some((url) => url.endsWith(`/api/devices/${OTHER_DEV.id}/behaviors`)),
+    ).toBe(true);
+
+    fireEvent.change(select, { target: { value: DEV.id } });
+    expect(localStorage.getItem("cr.chat-selected-device-id")).toBe(DEV.id);
+    await waitFor(() => {
+      expect(select.value).toBe(DEV.id);
+    });
+  });
+
+  test("clears a saved chat device when it no longer exists", async () => {
+    localStorage.setItem("cr.chat-selected-device-id", "dev_missing");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${DEV.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.0-test",
+              loadedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        return new Response(JSON.stringify({ result: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    await waitFor(() => {
+      const select = container.querySelector(
+        ".sidebar-section-devices select",
+      ) as HTMLSelectElement | null;
+      expect(select?.value).toBe(DEV.id);
+      expect(localStorage.getItem("cr.chat-selected-device-id")).toBeNull();
+    });
+  });
+
   test("loads sessions for the default selected device on first site load", async () => {
     const requestedUrls: string[] = [];
     let sessionsRequests = 0;

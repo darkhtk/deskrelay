@@ -75,6 +75,7 @@ const CONTEXT_USAGE_POLL_MS = 5 * 60 * 1000;
 const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
 const SIDEBAR_WIDTH_STORAGE_KEY = "cr.sidebar-width";
+const CHAT_SELECTED_DEVICE_STORAGE_KEY = "cr.chat-selected-device-id";
 const SIDEBAR_MIN_WIDTH = 260;
 const SIDEBAR_MAX_WIDTH = SIDEBAR_MIN_WIDTH * 2;
 const SIDEBAR_RESIZE_KEYBOARD_STEP = 20;
@@ -106,6 +107,29 @@ function writeSidebarWidth(value: number) {
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(value)));
   } catch {
     // Ignore private-mode/localStorage failures; the in-memory width still works.
+  }
+}
+
+function readStoredChatSelectedDeviceId(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const value = localStorage.getItem(CHAT_SELECTED_DEVICE_STORAGE_KEY)?.trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredChatSelectedDeviceId(deviceId: string | null) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    if (deviceId) {
+      localStorage.setItem(CHAT_SELECTED_DEVICE_STORAGE_KEY, deviceId);
+    } else {
+      localStorage.removeItem(CHAT_SELECTED_DEVICE_STORAGE_KEY);
+    }
+  } catch {
+    // Keep the in-memory selection even when browser storage is unavailable.
   }
 }
 
@@ -682,24 +706,31 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (revision > 0) void refetchDevices();
   });
 
-  const [selectedDeviceId, setSelectedDeviceId] = createSignal<string | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = createSignal<string | null>(
+    readStoredChatSelectedDeviceId(),
+  );
   const [appliedDeviceSelectionSeq, setAppliedDeviceSelectionSeq] = createSignal<number | null>(
     null,
   );
   const effectiveDeviceId = () => selectedDeviceId() ?? defaultDeviceId(devices());
   const [selectedClaudeModel, setSelectedClaudeModel] = createSignal<string | null>(null);
 
+  function selectDeviceId(deviceId: string | null) {
+    setSelectedDeviceId(deviceId);
+    writeStoredChatSelectedDeviceId(deviceId);
+  }
+
   createEffect(() => {
     const request = props.requestedDeviceSelection;
     if (!request || appliedDeviceSelectionSeq() === request.seq) return;
     if (!request.id) {
-      setSelectedDeviceId(null);
+      selectDeviceId(null);
       setAppliedDeviceSelectionSeq(request.seq);
       return;
     }
     const list = devices();
     if (!list?.some((device) => device.id === request.id)) return;
-    setSelectedDeviceId(request.id);
+    selectDeviceId(request.id);
     setAppliedDeviceSelectionSeq(request.seq);
   });
 
@@ -708,7 +739,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     const list = devices();
     if (!selected || !list) return;
     if (list.some((d) => d.id === selected)) return;
-    setSelectedDeviceId(null);
+    selectDeviceId(null);
     setSelectedSession(null);
     setTranscript([]);
     clearContextUsage();
@@ -1364,6 +1395,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [sidebarResizeWillCollapse, setSidebarResizeWillCollapse] = createSignal(false);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   let transcriptScroller!: HTMLDivElement;
+  let deviceSelect: HTMLSelectElement | undefined;
   let sidebarResizeCleanup: (() => void) | undefined;
 
   function isTranscriptAtBottomNow(): boolean {
@@ -2322,6 +2354,20 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     attachmentsApi?.openPicker();
   }
 
+  function syncDeviceSelectValue() {
+    if (!deviceSelect) return;
+    const id = effectiveDeviceId() ?? "";
+    queueMicrotask(() => {
+      if (deviceSelect && deviceSelect.value !== id) deviceSelect.value = id;
+    });
+  }
+
+  createEffect(() => {
+    effectiveDeviceId();
+    devices();
+    syncDeviceSelectValue();
+  });
+
   return (
     <section
       class="signed-in"
@@ -2368,6 +2414,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           </button>
           <div class="row" style={{ gap: "6px" }}>
             <select
+              ref={(el) => {
+                deviceSelect = el;
+                syncDeviceSelectValue();
+              }}
               class="text-input"
               style={{ flex: "1" }}
               value={effectiveDeviceId() ?? ""}
@@ -2377,7 +2427,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   openSettingsOverlay({ tab: "devices", deviceId: effectiveDeviceId() });
                   e.currentTarget.value = effectiveDeviceId() ?? "";
                 } else {
-                  setSelectedDeviceId(v || null);
+                  selectDeviceId(v || null);
                   setSelectedSession(null);
                   setTranscript([]);
                   clearContextUsage();
