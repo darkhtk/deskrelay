@@ -10,12 +10,14 @@
 // timestamp; the daemon URL goes away because the site never connects to
 // the daemon directly anymore.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface Device {
   id: string;
+  /** Stable internal identity for de-duplicating the same connector across URL/port changes. */
+  deviceKey?: string;
   /** Human label, defaults to the host portion of the URL. */
   label: string;
   /** Daemon URL, e.g. "http://127.0.0.1:18091". No trailing slash. */
@@ -29,6 +31,7 @@ export interface RegisterDeviceInput {
   daemonUrl: string;
   label?: string;
   authToken?: string;
+  deviceKey?: string;
 }
 
 export class DeviceRegistryError extends Error {
@@ -55,7 +58,7 @@ export class InMemoryDeviceRegistry implements DeviceRegistry {
   readonly #devices = new Map<string, Device>();
 
   constructor(initialDevices: Device[] = []) {
-    for (const device of initialDevices) {
+    for (const device of normalizeDeviceList(initialDevices)) {
       this.#devices.set(device.id, device);
     }
   }
@@ -70,12 +73,16 @@ export class InMemoryDeviceRegistry implements DeviceRegistry {
 
   register(input: RegisterDeviceInput): Device {
     const url = normalizeDaemonUrl(input.daemonUrl);
+    const authToken = input.authToken?.trim();
+    const deviceKey = normalizeDeviceKey(input.deviceKey) ?? deriveDeviceKey(url, authToken);
     for (const existing of this.#devices.values()) {
-      if (existing.daemonUrl === url) {
+      if (existing.deviceKey === deviceKey || existing.daemonUrl === url) {
         const updated: Device = {
           ...existing,
+          deviceKey,
           label: input.label?.trim() || existing.label,
-          ...(input.authToken?.trim() ? { authToken: input.authToken.trim() } : {}),
+          daemonUrl: url,
+          ...(authToken ? { authToken } : {}),
           registeredAt: new Date().toISOString(),
         };
         this.#devices.set(existing.id, updated);
@@ -84,9 +91,10 @@ export class InMemoryDeviceRegistry implements DeviceRegistry {
     }
     const device: Device = {
       id: randomDeviceId(),
+      deviceKey,
       label: input.label?.trim() || hostFromUrl(url),
       daemonUrl: url,
-      ...(input.authToken?.trim() ? { authToken: input.authToken.trim() } : {}),
+      ...(authToken ? { authToken } : {}),
       registeredAt: new Date().toISOString(),
     };
     this.#devices.set(device.id, device);
@@ -175,13 +183,7 @@ function readDevicesFile(path: string): Device[] {
         Array.isArray((parsed as { devices?: unknown }).devices)
       ? (parsed as { devices: unknown[] }).devices
       : [];
-  return items.filter(isDeviceRecord).map((device) => ({
-    id: device.id,
-    label: device.label,
-    daemonUrl: normalizeDaemonUrl(device.daemonUrl),
-    ...(device.authToken ? { authToken: device.authToken } : {}),
-    registeredAt: device.registeredAt,
-  }));
+  return normalizeDeviceList(items.filter(isDeviceRecord));
 }
 
 function writeDevicesFile(path: string, devices: Device[]): void {
@@ -199,8 +201,75 @@ function isDeviceRecord(value: unknown): value is Device {
     typeof device.label === "string" &&
     typeof device.daemonUrl === "string" &&
     typeof device.registeredAt === "string" &&
+    (device.deviceKey === undefined || typeof device.deviceKey === "string") &&
     (device.authToken === undefined || typeof device.authToken === "string")
   );
+}
+
+function normalizeDeviceList(devices: Device[]): Device[] {
+  const deduped: Device[] = [];
+  for (const input of devices) {
+    const normalized = normalizeDeviceRecord(input);
+    const existingIndex = deduped.findIndex(
+      (device) =>
+        device.deviceKey === normalized.deviceKey || device.daemonUrl === normalized.daemonUrl,
+    );
+    if (existingIndex === -1) {
+      deduped.push(normalized);
+      continue;
+    }
+    deduped[existingIndex] = mergeDevices(deduped[existingIndex]!, normalized);
+  }
+  return deduped;
+}
+
+function normalizeDeviceRecord(device: Device): Device {
+  const daemonUrl = normalizeDaemonUrl(device.daemonUrl);
+  const authToken = device.authToken?.trim();
+  const deviceKey = normalizeDeviceKey(device.deviceKey) ?? deriveDeviceKey(daemonUrl, authToken);
+  return {
+    id: device.id,
+    deviceKey,
+    label: device.label,
+    daemonUrl,
+    ...(authToken ? { authToken } : {}),
+    registeredAt: device.registeredAt,
+  };
+}
+
+function mergeDevices(existing: Device, incoming: Device): Device {
+  const newer = isNewerDevice(incoming, existing) ? incoming : existing;
+  const older = newer === incoming ? existing : incoming;
+  return {
+    ...older,
+    ...newer,
+    deviceKey: newer.deviceKey ?? older.deviceKey ?? deriveDeviceKey(newer.daemonUrl, newer.authToken),
+    daemonUrl: newer.daemonUrl,
+    ...(newer.authToken ? { authToken: newer.authToken } : {}),
+  };
+}
+
+function isNewerDevice(left: Device, right: Device): boolean {
+  const leftTime = Date.parse(left.registeredAt);
+  const rightTime = Date.parse(right.registeredAt);
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) return leftTime >= rightTime;
+  if (Number.isFinite(leftTime)) return true;
+  if (Number.isFinite(rightTime)) return false;
+  return true;
+}
+
+function normalizeDeviceKey(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+function deriveDeviceKey(daemonUrl: string, authToken: string | undefined): string {
+  if (authToken) return `auth:${sha256(authToken)}`;
+  return `url:${daemonUrl}`;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function hostFromUrl(url: string): string {

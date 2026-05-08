@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -60,6 +60,23 @@ describe("InMemoryDeviceRegistry", () => {
     expect(r.list()).toHaveLength(1);
   });
 
+  test("register treats the same daemon token as the same connector across URL changes", () => {
+    const r = new InMemoryDeviceRegistry();
+    const first = r.register({
+      daemonUrl: "http://127.0.0.1:18291",
+      label: "Local dev (HOMEDEV)",
+      authToken: "same-token",
+    });
+    const second = r.register({
+      daemonUrl: "http://127.0.0.1:18191",
+      label: "Local dev (HOMEDEV)",
+      authToken: "same-token",
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.daemonUrl).toBe("http://127.0.0.1:18191");
+    expect(r.list()).toHaveLength(1);
+  });
+
   test("get returns the registered device, undefined for unknown id", () => {
     const r = new InMemoryDeviceRegistry();
     const d = r.register({ daemonUrl: "http://x:1" });
@@ -99,6 +116,54 @@ describe("JsonFileDeviceRegistry", () => {
 
       expect(second.unregister(device.id)).toBe(true);
       expect(new JsonFileDeviceRegistry(file).list()).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("collapses legacy duplicate rows with the same daemon token on load", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "deskrelay-devices-"));
+    try {
+      const file = join(dir, "devices.json");
+      await writeFile(
+        file,
+        JSON.stringify(
+          {
+            devices: [
+              {
+                id: "dev_old",
+                label: "Local dev (HOMEDEV)",
+                daemonUrl: "http://127.0.0.1:18291",
+                authToken: "same-token",
+                registeredAt: "2026-05-08T13:55:47.421Z",
+              },
+              {
+                id: "dev_new",
+                label: "Local dev (HOMEDEV)",
+                daemonUrl: "http://127.0.0.1:18191",
+                authToken: "same-token",
+                registeredAt: "2026-05-08T14:30:51.087Z",
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+
+      const registry = new JsonFileDeviceRegistry(file);
+      expect(registry.list()).toHaveLength(1);
+      expect(registry.list()[0]?.id).toBe("dev_new");
+      expect(registry.list()[0]?.daemonUrl).toBe("http://127.0.0.1:18191");
+
+      registry.register({
+        daemonUrl: "http://127.0.0.1:18191",
+        label: "Local dev (HOMEDEV)",
+        authToken: "same-token",
+      });
+      const persisted = JSON.parse(await readFile(file, "utf8")) as { devices: unknown[] };
+      expect(persisted.devices).toHaveLength(1);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

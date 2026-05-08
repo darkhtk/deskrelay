@@ -124,6 +124,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         daemonUrl,
         ...(typeof input.label === "string" ? { label: input.label } : {}),
         ...(authToken ? { authToken } : {}),
+        ...(typeof input.deviceKey === "string" ? { deviceKey: input.deviceKey } : {}),
       });
       return c.json(toPublicDevice(device), 201);
     } catch (err) {
@@ -572,7 +573,9 @@ function isServerDevice(device: Device): boolean {
   }
 }
 
-function toPublicDevice(device: Device): Omit<Device, "authToken"> & { connectionState: "online" } {
+function toPublicDevice(
+  device: Device,
+): Omit<Device, "authToken" | "deviceKey"> & { connectionState: "online" } {
   return {
     id: device.id,
     label: device.label,

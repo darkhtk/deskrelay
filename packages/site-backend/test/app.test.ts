@@ -279,6 +279,32 @@ describe("device CRUD", () => {
     expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer new-token");
   });
 
+  test("POST duplicate daemon token refreshes a changed connector URL in place", async () => {
+    const firstRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: "http://127.0.0.1:18291",
+        label: "Local dev (HOMEDEV)",
+        authToken: "same-token",
+      }),
+    );
+    const first = await firstRes.json();
+    const secondRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: "http://127.0.0.1:18191",
+        label: "Local dev (HOMEDEV)",
+        authToken: "same-token",
+      }),
+    );
+    expect(secondRes.status).toBe(201);
+    const second = await secondRes.json();
+    expect(second.id).toBe(first.id);
+    expect(second.daemonUrl).toBe("http://127.0.0.1:18191");
+
+    const listRes = await setup.app.fetch(authedRequest("GET", "/api/devices"));
+    const list = await listRes.json();
+    expect(list).toHaveLength(1);
+  });
+
   test("GET /api/devices lists registered", async () => {
     await setup.app.fetch(authedRequest("POST", "/api/devices", { daemonUrl: DAEMON_URL }));
     const listRes = await setup.app.fetch(authedRequest("GET", "/api/devices"));
