@@ -3,6 +3,7 @@ import {
   For,
   Show,
   createEffect,
+  createMemo,
   createResource,
   createSignal,
   onCleanup,
@@ -13,14 +14,13 @@ import { clearDevicePrefs } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
 
-type DeviceCommandKind = "register" | "remove";
 type DeviceCommandMeta = {
   preferredUrl: string;
   serverPort: number;
   connectorPort: number;
   siteToken: string;
 };
-const REGISTER_COMMAND_WATCH_MS = 60_000;
+const REGISTER_COMMAND_WATCH_MS = 5 * 60_000;
 const REGISTER_COMMAND_POLL_MS = 1_500;
 
 export interface DeviceShellProps {
@@ -182,16 +182,43 @@ const AddDeviceCard: Component<{
   const [error, setError] = createSignal<string | null>(null);
   const [success, setSuccess] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
-  const [commandBusy, setCommandBusy] = createSignal<DeviceCommandKind | null>(null);
-  const [commandError, setCommandError] = createSignal<string | null>(null);
-  const [commandText, setCommandText] = createSignal("");
-  const [commandMeta, setCommandMeta] = createSignal<DeviceCommandMeta | null>(null);
-  const [commandTextKind, setCommandTextKind] = createSignal<DeviceCommandKind>("register");
-  const [commandCopied, setCommandCopied] = createSignal<DeviceCommandKind | null>(null);
+  const [showRemoveCommand, setShowRemoveCommand] = createSignal(false);
   const [registrationWatchActive, setRegistrationWatchActive] = createSignal(false);
+  const [registerCommand, { refetch: refetchRegisterCommand }] = createResource(
+    async () => await api.registerOtherPcCommand(),
+  );
+  const [removeCommand, { refetch: refetchRemoveCommand }] = createResource(
+    () => (showRemoveCommand() ? "ready" : null),
+    async () => await api.removeOtherPcCommand(),
+  );
   let registrationWatchTimer: ReturnType<typeof setTimeout> | null = null;
 
   onCleanup(() => stopRegistrationWatch());
+
+  const registerMeta = createMemo<DeviceCommandMeta | null>(() => {
+    const result = registerCommand();
+    if (!result) return null;
+    return {
+      preferredUrl: result.preferredUrl,
+      serverPort: result.serverPort,
+      connectorPort: result.connectorPort,
+      siteToken: result.siteToken,
+    };
+  });
+
+  const commandError = () => {
+    const registerError = registerCommand.error;
+    if (registerError) {
+      return registerError instanceof ApiError
+        ? registerError.message
+        : (registerError as Error).message;
+    }
+    const removeError = removeCommand.error;
+    if (removeError) {
+      return removeError instanceof ApiError ? removeError.message : (removeError as Error).message;
+    }
+    return null;
+  };
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -215,50 +242,15 @@ const AddDeviceCard: Component<{
     }
   };
 
-  const copyDeviceCommand = async (kind: DeviceCommandKind) => {
-    setCommandBusy(kind);
-    setCommandError(null);
-    setCommandCopied(null);
-    setCommandText("");
-    setCommandMeta(null);
-    setCommandTextKind(kind);
-    try {
-      const result =
-        kind === "register" ? await api.registerOtherPcCommand() : await api.removeOtherPcCommand();
-      setCommandMeta({
-        preferredUrl: result.preferredUrl,
-        serverPort: result.serverPort,
-        connectorPort: result.connectorPort,
-        siteToken: result.siteToken,
-      });
-      if (kind === "register") {
-        void startRegistrationWatch();
-      }
-      if (!navigator.clipboard?.writeText) {
-        setCommandText(result.command);
-        setCommandError(t("ds.add.command.copy-unavailable"));
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(result.command);
-      } catch {
-        setCommandText(result.command);
-        setCommandError(t("ds.add.command.copy-unavailable"));
-        return;
-      }
-      setCommandCopied(kind);
-      setTimeout(() => setCommandCopied((current) => (current === kind ? null : current)), 1800);
-    } catch (err) {
-      setCommandError(err instanceof ApiError ? err.message : (err as Error).message);
-    } finally {
-      setCommandBusy(null);
-    }
-  };
-
   function stopRegistrationWatch() {
     if (registrationWatchTimer) clearTimeout(registrationWatchTimer);
     registrationWatchTimer = null;
     setRegistrationWatchActive(false);
+  }
+
+  function watchRegistrationFromVisibleCommand() {
+    if (!registerCommand()?.command || registrationWatchActive()) return;
+    void startRegistrationWatch();
   }
 
   async function startRegistrationWatch() {
@@ -339,25 +331,30 @@ const AddDeviceCard: Component<{
           <button
             type="button"
             class="secondary-button"
-            onClick={() => void copyDeviceCommand("register")}
-            disabled={Boolean(commandBusy()) || registrationWatchActive()}
+            onClick={() => {
+              void refetchRegisterCommand();
+              if (showRemoveCommand()) void refetchRemoveCommand();
+            }}
+            disabled={registerCommand.loading || removeCommand.loading}
           >
-            {commandBusy() === "register" || registrationWatchActive()
+            {registerCommand.loading || removeCommand.loading
               ? t("ds.add.command.busy")
-              : t("ds.add.command.copy")}
+              : t("ds.add.command.refresh")}
           </button>
           <button
             type="button"
             class="secondary-button"
-            onClick={() => void copyDeviceCommand("remove")}
-            disabled={Boolean(commandBusy())}
+            onClick={() => setShowRemoveCommand((value) => !value)}
+            disabled={removeCommand.loading}
           >
-            {commandBusy() === "remove"
+            {removeCommand.loading
               ? t("ds.add.command.busy")
-              : t("ds.add.command.remove-copy")}
+              : showRemoveCommand()
+                ? t("ds.add.command.remove-hide")
+                : t("ds.add.command.remove-show")}
           </button>
         </div>
-        <Show when={commandMeta()}>
+        <Show when={registerMeta()}>
           {(meta) => (
             <div class="settings-command-meta" aria-label={t("ds.add.command.meta")}>
               <span>
@@ -375,29 +372,50 @@ const AddDeviceCard: Component<{
             </div>
           )}
         </Show>
-        <Show when={commandCopied()}>
-          {(kind) => (
-            <span class="settings-success">
-              {kind() === "remove" ? t("ds.add.command.remove-copied") : t("ds.add.command.copied")}
-            </span>
-          )}
-        </Show>
         <Show when={commandError()}>
           {(message) => <span class="settings-error">{message()}</span>}
         </Show>
-        <Show when={commandText()}>
+        <Show
+          when={registerCommand()}
+          fallback={
+            <textarea
+              class="settings-command-textarea"
+              readOnly
+              value={
+                registerCommand.loading
+                  ? t("ds.add.command.loading")
+                  : commandError()
+                    ? `${t("ds.add.command.fallback-label")} ${commandError()}`
+                    : ""
+              }
+              aria-label={t("ds.add.command.fallback-label")}
+            />
+          }
+        >
           {(value) => (
             <textarea
               class="settings-command-textarea"
               readOnly
-              value={value()}
-              aria-label={
-                commandTextKind() === "remove"
-                  ? t("ds.add.command.remove-fallback-label")
-                  : t("ds.add.command.fallback-label")
-              }
+              value={value().command}
+              aria-label={t("ds.add.command.fallback-label")}
+              onFocus={watchRegistrationFromVisibleCommand}
+              onMouseDown={watchRegistrationFromVisibleCommand}
             />
           )}
+        </Show>
+        <Show when={showRemoveCommand()}>
+          <textarea
+            class="settings-command-textarea"
+            readOnly
+            value={
+              removeCommand.loading
+                ? t("ds.add.command.loading")
+                : removeCommand.error
+                  ? `${t("ds.add.command.remove-fallback-label")} ${commandError() ?? ""}`
+                  : (removeCommand()?.command ?? "")
+            }
+            aria-label={t("ds.add.command.remove-fallback-label")}
+          />
         </Show>
         <div class="settings-row">
           <input

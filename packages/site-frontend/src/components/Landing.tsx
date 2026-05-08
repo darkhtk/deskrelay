@@ -20,8 +20,6 @@ export interface LandingProps {
 export const Landing: Component<LandingProps> = (props) => {
   const [accessOpen, setAccessOpen] = createSignal(false);
   const [opening, setOpening] = createSignal(false);
-  const [copied, setCopied] = createSignal(false);
-  const [copyError, setCopyError] = createSignal<string | null>(null);
   const [health, { refetch: refetchHealth }] = createResource(async () => await api.health());
   const [localToken, { refetch: refetchLocalToken }] = createResource(
     async () => await api.localSiteToken(),
@@ -38,25 +36,7 @@ export const Landing: Component<LandingProps> = (props) => {
     async () => await api.registerOtherPcCommand(),
   );
 
-  const copyRegisterCommand = async () => {
-    setCopyError(null);
-    setCopied(false);
-    const command = registerCommand()?.command;
-    if (!command) {
-      setCopyError("먼저 시작하기로 Site token을 확인하세요.");
-      return;
-    }
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-    } catch {
-      setCopyError("클립보드에 쓸 수 없습니다. 아래 명령을 직접 선택해서 복사하세요.");
-    }
-  };
-
   const refreshAll = async () => {
-    setCopyError(null);
     await Promise.all([
       refetchHealth(),
       refetchLocalToken(),
@@ -343,14 +323,6 @@ export const Landing: Component<LandingProps> = (props) => {
                 >
                   다시 진단
                 </button>
-                <button
-                  type="button"
-                  class="primary-button landing-command-copy"
-                  onClick={() => void copyRegisterCommand()}
-                  disabled={!props.authed || registerCommand.loading}
-                >
-                  {copied() ? "복사됨" : "등록 명령 복사"}
-                </button>
               </div>
             </AutoStep>
           </div>
@@ -393,9 +365,6 @@ export const Landing: Component<LandingProps> = (props) => {
                   : "시작하기를 누르면 이 서버의 Site token으로 등록 명령을 자동 생성합니다."}
               </code>
             </pre>
-            <Show when={copyError()}>
-              {(message) => <p class="landing-command-error">{message()}</p>}
-            </Show>
           </div>
         </div>
       </section>
