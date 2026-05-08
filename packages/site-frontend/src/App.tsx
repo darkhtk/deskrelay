@@ -12,7 +12,6 @@ import {
   api,
   clearBaseUrl,
   clearToken,
-  type ClaudeInstructionScope,
   type ClaudeInstructionSource,
   type Device,
   type DeviceCleanupEntry,
@@ -523,8 +522,6 @@ const InstructionSettings: Component<{
 }> = (props) => {
   const [selectedDeviceId, setSelectedDeviceId] = createSignal(props.initialDeviceId);
   const [cwdDraft, setCwdDraft] = createSignal(props.activeCwd);
-  const [sourceDrafts, setSourceDrafts] = createSignal<Record<string, string>>({});
-  const [saveStatus, setSaveStatus] = createSignal<Record<string, string>>({});
   const [tempDraft, setTempDraft] = createSignal(getTemporaryInstructionPrefs());
   const [tempSaved, setTempSaved] = createSignal(false);
 
@@ -568,67 +565,10 @@ const InstructionSettings: Component<{
     },
   );
 
-  createEffect(() => {
-    const next: Record<string, string> = {};
-    for (const source of snapshot()?.sources ?? []) {
-      next[source.scope] = source.content;
-    }
-    setSourceDrafts(next);
-    setSaveStatus({});
-  });
-
   const selectedDevice = createMemo(() => {
     const id = effectiveDeviceId();
     return (devices() ?? []).find((device) => device.id === id) ?? null;
   });
-
-  async function saveSource(source: ClaudeInstructionSource): Promise<void> {
-    const input = instructionInput();
-    if (!input) return;
-    setSaveStatus((current) => ({ ...current, [source.scope]: t("instructions.status.saving") }));
-    try {
-      const updated = await api.writeInstruction(input.deviceId, source.scope, {
-        cwd: input.cwd,
-        content: sourceDrafts()[source.scope] ?? "",
-        ...instructionHashGuard(source),
-      });
-      setSourceDrafts((current) => ({ ...current, [updated.scope]: updated.content }));
-      setSaveStatus((current) => ({
-        ...current,
-        [source.scope]: t("instructions.status.saved"),
-      }));
-      void refetchInstructions();
-    } catch (err) {
-      setSaveStatus((current) => ({ ...current, [source.scope]: (err as Error).message }));
-    }
-  }
-
-  async function deleteSource(source: ClaudeInstructionSource): Promise<void> {
-    const input = instructionInput();
-    if (!input || source.readonly) return;
-    if (source.exists && !confirm(t("instructions.delete.confirm", { label: source.label })))
-      return;
-    setSaveStatus((current) => ({ ...current, [source.scope]: t("instructions.status.saving") }));
-    try {
-      const updated = await api.deleteInstruction(input.deviceId, source.scope, {
-        cwd: input.cwd,
-        ...instructionHashGuard(source),
-      });
-      setSourceDrafts((current) => ({ ...current, [updated.scope]: updated.content }));
-      setSaveStatus((current) => ({
-        ...current,
-        [source.scope]: t("instructions.status.deleted"),
-      }));
-      void refetchInstructions();
-    } catch (err) {
-      setSaveStatus((current) => ({ ...current, [source.scope]: (err as Error).message }));
-    }
-  }
-
-  function updateSource(scope: ClaudeInstructionScope, value: string): void {
-    setSaveStatus((current) => ({ ...current, [scope]: "" }));
-    setSourceDrafts((current) => ({ ...current, [scope]: value }));
-  }
 
   function saveTemporary(): void {
     setTemporaryInstructionPrefs(tempDraft());
@@ -706,16 +646,7 @@ const InstructionSettings: Component<{
           fallback={<p class="settings-card-help">{t("instructions.loading")}</p>}
         >
           <For each={snapshot()?.sources ?? []}>
-            {(source) => (
-              <InstructionSourceEditor
-                source={source}
-                value={sourceDrafts()[source.scope] ?? ""}
-                status={saveStatus()[source.scope] ?? ""}
-                onInput={(value) => updateSource(source.scope, value)}
-                onSave={() => void saveSource(source)}
-                onDelete={() => void deleteSource(source)}
-              />
-            )}
+            {(source) => <InstructionSourceViewer source={source} />}
           </For>
         </Show>
       </Show>
@@ -753,15 +684,9 @@ const InstructionSettings: Component<{
   );
 };
 
-const InstructionSourceEditor: Component<{
+const InstructionSourceViewer: Component<{
   source: ClaudeInstructionSource;
-  value: string;
-  status: string;
-  onInput: (value: string) => void;
-  onSave: () => void;
-  onDelete: () => void;
 }> = (props) => {
-  const dirty = () => props.value !== props.source.content;
   const sourceState = () => {
     if (props.source.error) return props.source.error;
     if (props.source.readonly) return t("instructions.source.readonly");
@@ -781,50 +706,13 @@ const InstructionSourceEditor: Component<{
       </div>
       <textarea
         class="instruction-textarea"
-        value={props.value}
-        disabled={props.source.readonly}
+        value={props.source.content}
+        readonly
         placeholder={t("instructions.placeholder")}
-        onInput={(event) => props.onInput(event.currentTarget.value)}
       />
-      <div class="settings-row instruction-actions">
-        <button
-          type="button"
-          class="secondary-button"
-          disabled={!dirty()}
-          onClick={() => props.onInput(props.source.content)}
-        >
-          {t("instructions.revert")}
-        </button>
-        <button
-          type="button"
-          class="danger-button"
-          disabled={props.source.readonly || !props.source.exists}
-          onClick={props.onDelete}
-        >
-          {t("instructions.delete")}
-        </button>
-        <button
-          type="button"
-          class="primary-button"
-          disabled={props.source.readonly || !dirty()}
-          onClick={props.onSave}
-        >
-          {t("instructions.save")}
-        </button>
-      </div>
-      <Show when={props.status}>
-        <span class={props.status.includes("changed") ? "settings-error" : "settings-saved"}>
-          {props.status}
-        </span>
-      </Show>
     </div>
   );
 };
-
-function instructionHashGuard(source: ClaudeInstructionSource): { expectedHash?: string } {
-  if (!source.exists) return { expectedHash: "missing" };
-  return source.hash ? { expectedHash: source.hash } : {};
-}
 
 const InstructionTextarea: Component<{
   label: string;
