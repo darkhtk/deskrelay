@@ -25,6 +25,11 @@ interface StatusRow {
   onAction?: (() => void) | undefined;
 }
 
+interface DeviceDiagnosticSource {
+  id: string;
+  revision: number;
+}
+
 export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (props) => {
   const [devices, { refetch: refetchDevices }] = createResource(
     () => props.devicesRevision ?? 0,
@@ -36,7 +41,10 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
   const [diagnosticsError, setDiagnosticsError] = createSignal<Error | null>(null);
   const [doctorError, setDoctorError] = createSignal<Error | null>(null);
-  const [health, { refetch: refetchHealth }] = createResource(() => api.health().catch(() => null));
+  const [health, { refetch: refetchHealth }] = createResource(
+    () => props.devicesRevision ?? 0,
+    () => api.health().catch(() => null),
+  );
 
   createEffect(() => {
     const list = devices();
@@ -58,12 +66,18 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     return (devices() ?? []).find((d) => d.id === id) ?? null;
   };
 
+  const selectedDeviceDiagnosticSource = (): DeviceDiagnosticSource | null => {
+    const id = selectedDevice()?.id;
+    if (!id) return null;
+    return { id, revision: props.devicesRevision ?? 0 };
+  };
+
   const [diagnostics, { refetch: refetchDiagnostics }] = createResource(
-    () => selectedDevice()?.id ?? null,
-    async (id) => {
-      if (!id) return null;
+    selectedDeviceDiagnosticSource,
+    async (source) => {
+      if (!source) return null;
       try {
-        const snapshot = await api.diagnostics(id);
+        const snapshot = await api.diagnostics(source.id);
         setDiagnosticsError(null);
         setUpdatedAt(new Date());
         return snapshot;
@@ -75,11 +89,11 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     },
   );
   const [doctor, { refetch: refetchDoctor }] = createResource(
-    () => selectedDevice()?.id ?? null,
-    async (id) => {
-      if (!id) return null;
+    selectedDeviceDiagnosticSource,
+    async (source) => {
+      if (!source) return null;
       try {
-        const report = await api.deviceDoctor(id);
+        const report = await api.deviceDoctor(source.id);
         setDoctorError(null);
         return report;
       } catch (err) {

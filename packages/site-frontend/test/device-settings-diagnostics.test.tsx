@@ -2,6 +2,7 @@
 // ConnectionDiagnostics, not in each DeviceSettingsDialog.
 
 import { fireEvent, render, waitFor } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ConnectionDiagnostics } from "../src/components/ConnectionDiagnostics.tsx";
 import { t } from "../src/i18n.ts";
@@ -166,6 +167,63 @@ describe("ConnectionDiagnostics", () => {
 
     await waitFor(() => {
       expect(diagnosticsCalls).toBeGreaterThan(1);
+    });
+  });
+
+  test("refreshes version diagnostics when the devices revision changes in place", async () => {
+    let diagnosticsCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify([SAMPLE_DEVICE]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${SAMPLE_DEVICE.id}/diagnostics`)) {
+        diagnosticsCalls += 1;
+        return diagnosticsResponse({
+          build:
+            diagnosticsCalls === 1
+              ? { ...SERVER_BUILD, commit: "oldoldoldoldold", shortCommit: "oldoldoldold" }
+              : SERVER_BUILD,
+        });
+      }
+      if (url.endsWith("/healthz")) {
+        return new Response(
+          JSON.stringify({ ok: true, version: "0.0.0", devices: 1, build: SERVER_BUILD }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const Harness = () => {
+      const [revision, setRevision] = createSignal(0);
+      return (
+        <>
+          <button type="button" onClick={() => setRevision((value) => value + 1)}>
+            bump revision
+          </button>
+          <ConnectionDiagnostics
+            initialSelectedDeviceId={SAMPLE_DEVICE.id}
+            devicesRevision={revision()}
+          />
+        </>
+      );
+    };
+
+    const { container, getByText } = render(() => <Harness />);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("불일치");
+    });
+
+    fireEvent.click(getByText("bump revision"));
+
+    await waitFor(() => {
+      expect(diagnosticsCalls).toBeGreaterThan(1);
+      expect(container.textContent).toContain("일치");
     });
   });
 });
