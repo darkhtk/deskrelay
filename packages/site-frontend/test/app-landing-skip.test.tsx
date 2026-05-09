@@ -201,12 +201,12 @@ describe("App landing flow", () => {
     fireEvent.click(instructionsTab);
 
     await waitFor(() => {
-      expect(container.textContent).toContain(t("instructions.device.sources.title"));
       expect(container.textContent).toContain("사용자 전역");
       expect(container.textContent).toContain("관리 정책");
       expect(container.textContent).toContain("C:\\Users\\darkh\\.claude\\CLAUDE.md");
       expect(container.textContent).toContain("C:\\Program Files\\ClaudeCode\\CLAUDE.md");
     });
+    expect(container.textContent).not.toContain(t("instructions.device.sources.title"));
     expect(container.textContent).toContain(t("instructions.source.missing"));
     const missingStates = [...container.querySelectorAll(".instruction-source-state")].filter(
       (state) => state.textContent === t("instructions.source.missing"),

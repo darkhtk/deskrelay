@@ -792,7 +792,6 @@ const InstructionSettings: Component<{
             )}
           </Show>
           <InstructionSourceGroup
-            title={t("instructions.device.sources.title")}
             sources={deviceInstructionSources()}
             editable
             draft={deviceInstructionDraft}
@@ -811,7 +810,7 @@ const InstructionSettings: Component<{
 };
 
 const InstructionSourceGroup: Component<{
-  title: string;
+  title?: string;
   help?: string;
   sources: ClaudeInstructionSource[];
   editable?: boolean;
