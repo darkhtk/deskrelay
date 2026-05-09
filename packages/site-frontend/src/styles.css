@@ -4162,12 +4162,14 @@ dialog.approval-modal-root,
   gap: 16px;
   justify-content: space-between;
   padding-top: 4px;
+  min-width: 0;
 }
 .settings-toggle-copy {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .settings-toggle-title {
   color: var(--text);
@@ -4191,6 +4193,7 @@ dialog.approval-modal-root,
   gap: 8px;
   color: var(--text);
   font-size: 13px;
+  min-height: 24px;
 }
 .settings-check-row input[type="checkbox"] {
   width: 16px;
@@ -4200,13 +4203,19 @@ dialog.approval-modal-root,
 .settings-segmented {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
   background: var(--bg-soft);
+  white-space: nowrap;
 }
 .settings-segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -4214,7 +4223,12 @@ dialog.approval-modal-root,
   cursor: pointer;
   font-family: inherit;
   font-size: 12px;
+  line-height: 1;
+  min-width: 54px;
   padding: 5px 12px;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
 }
 .settings-segment:hover {
   color: var(--text);
@@ -4362,6 +4376,11 @@ dialog.approval-modal-root,
   }
   .settings-tab {
     padding: 4px 0;
+  }
+  .settings-toggle-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
   }
   .settings-dialog-body {
     max-height: calc(90vh - 140px);
