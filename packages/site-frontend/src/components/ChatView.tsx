@@ -641,7 +641,6 @@ const AVAILABLE_PERMISSION_TOOLS = [
   "Task",
 ];
 const WORKSPACE_INSTRUCTION_SCOPES: ClaudeInstructionScope[] = [
-  "user",
   "project",
   "projectClaude",
   "local",
@@ -2934,32 +2933,39 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                         {selectedSessionCwd() || t("instructions.workspace.no-cwd")}
                       </div>
                     </div>
-                    <For each={workspaceInstructionSources()}>
-                      {(source) => (
-                        <div class="sidebar-info-block">
-                          <div class="sidebar-info-title">
-                            <span>{source.label}</span>
-                            <span class="sidebar-info-count">
-                              {source.exists
-                                ? t("chat.sidebar.instructions.exists")
-                                : source.error === "cwd is not selected"
-                                  ? t("instructions.source.cwd-required")
-                                  : t("chat.sidebar.instructions.missing")}
-                            </span>
-                          </div>
-                          <div class="sidebar-info-path" title={source.path}>
-                            {source.path || t("instructions.path.none")}
-                          </div>
-                        </div>
-                      )}
-                    </For>
-                    <button
-                      type="button"
-                      class="sidebar-inline-button primary"
-                      onClick={() => setMainPanelMode("instructions")}
+                    <Show
+                      when={selectedSessionCwd()}
+                      fallback={
+                        <p class="sidebar-empty">{t("chat.sidebar.instructions.select-session")}</p>
+                      }
                     >
-                      {t("instructions.workspace.open")}
-                    </button>
+                      <For each={workspaceInstructionSources()}>
+                        {(source) => (
+                          <div class="sidebar-info-block">
+                            <div class="sidebar-info-title">
+                              <span>{source.label}</span>
+                              <span class="sidebar-info-count">
+                                {source.exists
+                                  ? t("chat.sidebar.instructions.exists")
+                                  : source.error === "cwd is not selected"
+                                    ? t("instructions.source.cwd-required")
+                                    : t("chat.sidebar.instructions.missing")}
+                              </span>
+                            </div>
+                            <div class="sidebar-info-path" title={source.path}>
+                              {source.path || t("instructions.path.none")}
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                      <button
+                        type="button"
+                        class="sidebar-inline-button primary"
+                        onClick={() => setMainPanelMode("instructions")}
+                      >
+                        {t("instructions.workspace.open")}
+                      </button>
+                    </Show>
                   </div>
                 </Show>
               </Show>

@@ -18,6 +18,14 @@ const SOURCES: ClaudeInstructionSource[] = [
     label: "프로젝트",
     path: "C:\\Users\\darkh\\Projects\\deskrelay\\CLAUDE.md",
     readonly: false,
+    exists: true,
+    content: "project line 1\nproject line 2",
+  },
+  {
+    scope: "local",
+    label: "개인 로컬",
+    path: "C:\\Users\\darkh\\Projects\\deskrelay\\CLAUDE.local.md",
+    readonly: false,
     exists: false,
     content: "",
   },
@@ -54,16 +62,18 @@ describe("InstructionsWorkspace", () => {
   test("renders source cards as visibility-first raw text", () => {
     const { container } = setup();
 
-    expect(container.textContent).toContain("사용자 전역");
-    expect(container.textContent).toContain("global line 1");
-    expect(container.textContent).toContain("global line 2");
+    expect(container.textContent).not.toContain("사용자 전역");
+    expect(container.textContent).not.toContain("global line 1");
+    expect(container.textContent).toContain("프로젝트");
+    expect(container.textContent).toContain("project line 1");
+    expect(container.textContent).toContain("project line 2");
     expect(container.textContent).toContain(t("instructions.workspace.line-count", { count: "2" }));
   });
 
   test("opens the source editor drawer from a clicked line", () => {
     const { container } = setup();
     const line = [...container.querySelectorAll(".instruction-source-line")].find((item) =>
-      item.textContent?.includes("global line 2"),
+      item.textContent?.includes("project line 2"),
     ) as HTMLButtonElement | undefined;
     if (!line) throw new Error("instruction line missing");
 
@@ -71,14 +81,14 @@ describe("InstructionsWorkspace", () => {
 
     expect(container.querySelector(".instruction-editor-drawer")).toBeInTheDocument();
     expect(container.querySelector(".instruction-source-line.is-active")?.textContent).toContain(
-      "global line 2",
+      "project line 2",
     );
   });
 
   test("missing scopes keep a create affordance", () => {
     const { container } = setup();
     expect(container.textContent).toContain(
-      t("instructions.workspace.create", { label: "프로젝트" }),
+      t("instructions.workspace.create", { label: "개인 로컬" }),
     );
   });
 });

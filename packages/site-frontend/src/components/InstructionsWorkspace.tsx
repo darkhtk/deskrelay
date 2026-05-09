@@ -57,7 +57,7 @@ export const InstructionsWorkspace: Component<InstructionsWorkspaceProps> = (pro
   let editorEl: HTMLTextAreaElement | undefined;
 
   const sources = createMemo(() =>
-    props.sources.filter((source) => source.scope !== "managed"),
+    props.sources.filter((source) => source.scope !== "managed" && source.scope !== "user"),
   );
   const activeSource = createMemo(() => {
     const active = activeEdit();
