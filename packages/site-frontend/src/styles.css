@@ -4928,10 +4928,10 @@ dialog.approval-modal-root,
     padding: 8px 16px;
   }
   .composer-shell {
-    padding: 12px 16px 16px;
+    padding: 10px 16px 8px;
   }
   .chat {
-    margin: 8px;
+    margin: 8px 8px 4px;
     border-radius: 16px;
   }
   .chat-header {
@@ -4999,7 +4999,7 @@ dialog.approval-modal-root,
   /* Honor iOS / Android safe-area on the bottom edge so the composer isn't
      covered by the home indicator. */
   .composer-shell {
-    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   }
 
   /* iOS Safari auto-zooms whenever a focused input has font-size < 16px,
