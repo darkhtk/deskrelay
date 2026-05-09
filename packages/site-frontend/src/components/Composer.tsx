@@ -9,6 +9,7 @@
 //     the user types a space (moved past command name into args).
 //   - Picker keyboard: ArrowDown / ArrowUp move highlight, Tab or Enter
 //     completes, Escape closes.
+//   - Escape stops the in-flight turn when the slash picker is not open.
 //   - IME-safe: ignores Enter while isComposing or keyCode 229 (Korean /
 //     Japanese / Chinese commit-Enter must not double-submit).
 //   - Enter sends, Shift+Enter inserts newline.
@@ -203,6 +204,12 @@ export const Composer: Component<ComposerProps> = (props) => {
         applyChosen(highlight());
         return;
       }
+    }
+
+    if (event.key === "Escape" && props.inFlight && props.onInterrupt) {
+      event.preventDefault();
+      props.onInterrupt();
+      return;
     }
 
     const isEnter = event.key === "Enter" || event.code === "Enter";

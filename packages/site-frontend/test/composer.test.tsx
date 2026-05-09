@@ -216,6 +216,24 @@ describe("Composer — Stop / inFlight mode", () => {
     expect(onInterrupt).toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  test("Escape calls onInterrupt while in flight", () => {
+    const onSend = vi.fn();
+    const onInterrupt = vi.fn();
+    const { textarea } = setup({ onSend, onInterrupt, inFlight: true });
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    expect(onInterrupt).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test("Escape closes the slash picker before interrupting", () => {
+    const onInterrupt = vi.fn();
+    const { textarea, container } = setup({ onSend: vi.fn(), onInterrupt, inFlight: true });
+    fireEvent.input(textarea, { target: { value: "/he" } });
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    expect(container.querySelector(".slash-picker")).toBeFalsy();
+    expect(onInterrupt).not.toHaveBeenCalled();
+  });
 });
 
 describe("Composer — attach button", () => {
