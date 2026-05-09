@@ -84,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 
 ## 다른 PC 등록과 해제
 
-다른 PC 등록은 메인 화면이 담당한다. 서버를 열면 메인 화면의 등록 wizard에 서버 URL과 Site token이 포함된 PowerShell 명령이 표시된다. 그 명령을 드래그해서 통째로 복사한 뒤 제어하려는 Windows PC의 PowerShell에 붙여넣으면 된다. 설정 다이얼로그는 중복된 등록 UI를 갖지 않고, 이미 등록된 디바이스의 선택, 이름/기본 작업 디렉토리 관리, 제거만 담당한다.
+다른 PC 등록은 메인 화면이 담당한다. 서버를 열면 메인 화면의 등록 wizard에 서버 URL과 Site token이 포함된 PowerShell 명령이 표시된다. 그 명령을 드래그해서 통째로 복사한 뒤 제어하려는 Windows PC의 PowerShell에 붙여넣으면 된다. 설정 다이얼로그의 디바이스 탭은 중복된 등록 UI를 갖지 않고, 이미 등록된 디바이스의 선택, 이름/기본 작업 디렉토리 관리, 제거만 담당한다.
 
 서버가 켜지면 `.self-server\commands` 아래에 세부 command 파일이 생성되고, 저장소 최상위에도 자주 쓰는 quick 파일이 생성된다.
 
@@ -156,7 +156,7 @@ flowchart LR
   OtherDaemon --> OtherBehavior
   OtherBehavior --> OtherClaude
 
-  Registry -. "같은 daemonUrl 재등록 시 기존 row 삭제 후 새 row 생성" .-> SiteBackend
+  Registry -. "같은 daemonUrl 또는 daemon token 재등록 시 기존 row 갱신" .-> SiteBackend
 ```
 
 ## 연결 그래프
