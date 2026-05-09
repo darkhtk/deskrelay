@@ -1684,17 +1684,33 @@ body.sidebar-resizing * {
   width: min(480px, 46vw);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  border-left: 1px solid var(--border-subtle);
-  background: var(--bg);
-  box-shadow: var(--shadow-md);
+  border-left: 1px solid var(--border-strong);
+  background: var(--surface-card);
+  box-shadow: -18px 0 42px color-mix(in srgb, var(--shadow-color) 22%, transparent);
 }
 .instruction-editor-header {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 16px 18px 14px;
   border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-soft);
+}
+.instruction-editor-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.instruction-editor-title-row strong {
+  font-size: 14px;
+}
+.instruction-editor-header .instruction-editor-title-row span {
+  flex-shrink: 0;
+  color: var(--accent-coral);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
 }
 .instruction-editor-header span {
   overflow: hidden;
@@ -1708,20 +1724,34 @@ body.sidebar-resizing * {
   width: 100%;
   min-height: 0;
   border: 0;
-  background: transparent;
+  background-color: var(--surface-card);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 30px,
+    color-mix(in srgb, var(--border-subtle) 54%, transparent) 31px
+  );
   color: var(--text);
-  font: 12px / 1.55 ui-monospace, monospace;
+  font: 12px / 1.7 ui-monospace, monospace;
   outline: none;
-  padding: 16px;
+  padding: 18px;
   resize: none;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.instruction-editor-textarea:focus {
+  box-shadow: inset 3px 0 0 var(--accent-coral);
+}
+.instruction-editor-textarea::placeholder {
+  color: var(--text-faint);
 }
 .instruction-editor-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  padding: 12px 16px;
+  padding: 12px 18px;
   border-top: 1px solid var(--border-subtle);
+  background: var(--bg-soft);
 }
 @media (max-width: 720px) {
   .instructions-workspace-header {

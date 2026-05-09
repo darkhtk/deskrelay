@@ -225,7 +225,10 @@ export const InstructionsWorkspace: Component<InstructionsWorkspaceProps> = (pro
         {(source) => (
           <aside class="instruction-editor-drawer" aria-label={t("instructions.workspace.editor")}>
             <div class="instruction-editor-header">
-              <strong>{source().label}</strong>
+              <div class="instruction-editor-title-row">
+                <strong>{source().label}</strong>
+                <span>{t("instructions.workspace.line", { line: String(activeEdit()?.line ?? 1) })}</span>
+              </div>
               <span title={source().path}>{source().path}</span>
             </div>
             <textarea

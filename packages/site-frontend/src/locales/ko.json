@@ -120,6 +120,7 @@
   "instructions.workspace.editor": "지침 편집기",
   "instructions.workspace.no-cwd": "작업 폴더 없음",
   "instructions.workspace.line-count": "{count}줄",
+  "instructions.workspace.line": "{line}행",
   "instructions.workspace.create": "+ {label} 만들기",
   "chat.sidebar.skills.title": "이용 가능한 스킬",
   "chat.sidebar.skills.claude": "Claude 스킬",
