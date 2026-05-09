@@ -861,7 +861,16 @@ describe("ChatView device refresh bridge", () => {
       new MouseEvent("pointerdown", { clientX: 420, bubbles: true, cancelable: true }),
     );
     window.dispatchEvent(
-      new MouseEvent("pointermove", { clientX: 240, bubbles: true, cancelable: true }),
+      new MouseEvent("pointermove", { clientX: 390, bubbles: true, cancelable: true }),
+    );
+    await waitFor(() => {
+      expect(localStorage.getItem("cr.sidebar-width")).toBe("420");
+      expect(signedInPane.style.getPropertyValue("--sidebar-width")).toBe("390px");
+      expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
+      expect(document.body.classList.contains("sidebar-resizing")).toBe(true);
+    });
+    window.dispatchEvent(
+      new MouseEvent("pointermove", { clientX: 220, bubbles: true, cancelable: true }),
     );
     await waitFor(() => {
       expect(localStorage.getItem("cr.sidebar-width")).toBe("260");
@@ -870,7 +879,7 @@ describe("ChatView device refresh bridge", () => {
       expect(document.body.classList.contains("sidebar-resizing")).toBe(false);
     });
     window.dispatchEvent(
-      new MouseEvent("pointerup", { clientX: 240, bubbles: true, cancelable: true }),
+      new MouseEvent("pointerup", { clientX: 220, bubbles: true, cancelable: true }),
     );
     fireEvent.click(sidebarToggle);
     await waitFor(() => {

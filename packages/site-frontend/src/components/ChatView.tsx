@@ -78,6 +78,7 @@ const SIDEBAR_WIDTH_STORAGE_KEY = "cr.sidebar-width";
 const CHAT_SELECTED_DEVICE_STORAGE_KEY = "cr.chat-selected-device-id";
 const SIDEBAR_MIN_WIDTH = 260;
 const SIDEBAR_MAX_WIDTH = SIDEBAR_MIN_WIDTH * 2;
+const SIDEBAR_COLLAPSE_DRAG_THRESHOLD = 32;
 const SIDEBAR_RESIZE_KEYBOARD_STEP = 20;
 
 interface StoredChatDeviceSelection {
@@ -1691,7 +1692,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     const handleMove = (moveEvent: PointerEvent) => {
       moveEvent.preventDefault();
       rawWidth = startWidth + moveEvent.clientX - startX;
-      if (rawWidth < SIDEBAR_MIN_WIDTH) {
+      if (rawWidth < SIDEBAR_MIN_WIDTH - SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
         collapsedDuringDrag = true;
         commitSidebarWidth(SIDEBAR_MIN_WIDTH);
         setDesktopSidebarCollapsed(true);
@@ -1710,7 +1711,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setSidebarResizing(false);
       setSidebarResizeWillCollapse(false);
       if (collapsedDuringDrag) return;
-      if (rawWidth < SIDEBAR_MIN_WIDTH) {
+      if (rawWidth < SIDEBAR_MIN_WIDTH - SIDEBAR_COLLAPSE_DRAG_THRESHOLD) {
         commitSidebarWidth(SIDEBAR_MIN_WIDTH);
         setDesktopSidebarCollapsed(true);
         return;
