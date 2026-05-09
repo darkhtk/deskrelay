@@ -28,6 +28,12 @@
   --success: #16833a;
   --warning: #a16207;
   --warning-soft: rgba(161, 98, 7, 0.12);
+  --usage-track: #dddddd;
+  --usage-track-border: rgba(13, 13, 13, 0.18);
+  --usage-good: #16833a;
+  --usage-warn: #a16207;
+  --usage-danger: #d92d20;
+  --usage-unknown: rgba(13, 13, 13, 0.32);
   --overlay-scrim: rgba(13, 13, 13, 0.08);
   --mobile-sidebar-scrim: rgba(255, 255, 255, 0.82);
   --shadow-sm: 0 1px 2px rgba(13, 13, 13, 0.04), 0 1px 3px rgba(13, 13, 13, 0.06);
@@ -67,6 +73,12 @@
   --success: #57c783;
   --warning: #d9a94a;
   --warning-soft: rgba(217, 169, 74, 0.14);
+  --usage-track: rgba(255, 255, 255, 0.22);
+  --usage-track-border: rgba(255, 255, 255, 0.26);
+  --usage-good: #57c783;
+  --usage-warn: #e3b458;
+  --usage-danger: #ff7a70;
+  --usage-unknown: rgba(255, 255, 255, 0.34);
   --overlay-scrim: rgba(0, 0, 0, 0.54);
   --mobile-sidebar-scrim: rgba(0, 0, 0, 0.72);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.36), 0 8px 24px rgba(0, 0, 0, 0.24);
@@ -2725,10 +2737,11 @@ pre .copy-button:hover {
   right: 8px;
   bottom: 14px;
   display: inline-block;
-  width: 4px;
+  width: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--bg-soft);
+  background: var(--usage-track);
+  box-shadow: inset 0 0 0 1px var(--usage-track-border);
 }
 .composer-ctx-meter-fill {
   position: absolute;
@@ -2738,20 +2751,20 @@ pre .copy-button:hover {
   display: block;
   max-height: 100%;
   border-radius: inherit;
-  background: #2f9e44;
+  background: var(--usage-good);
   transition: height 160ms ease, background-color 160ms ease;
 }
 .composer-ctx-meter-good .composer-ctx-meter-fill {
-  background: #2f9e44;
+  background: var(--usage-good);
 }
 .composer-ctx-meter-warn .composer-ctx-meter-fill {
-  background: #d99a26;
+  background: var(--usage-warn);
 }
 .composer-ctx-meter-danger .composer-ctx-meter-fill {
-  background: #d24e3a;
+  background: var(--usage-danger);
 }
 .composer-ctx-meter-unknown {
-  opacity: 0.48;
+  background: var(--usage-unknown);
 }
 .composer-ctx-meter-unknown .composer-ctx-meter-fill {
   background: transparent;
@@ -3570,7 +3583,7 @@ pre .copy-button:hover {
   border: 1px solid currentColor;
   border-radius: 3px;
   padding: 2px;
-  color: var(--text-faint);
+  color: var(--usage-track-border);
 }
 .context-battery-shell::after {
   content: "";
@@ -3587,20 +3600,20 @@ pre .copy-button:hover {
   height: 100%;
   max-width: 100%;
   border-radius: 1px;
-  background: #2f9e44;
+  background: var(--usage-good);
   transition: width 160ms ease, background-color 160ms ease;
 }
 .context-battery-good .context-battery-fill {
-  background: #2f9e44;
+  background: var(--usage-good);
 }
 .context-battery-warn .context-battery-fill {
-  background: #d99a26;
+  background: var(--usage-warn);
 }
 .context-battery-danger .context-battery-fill {
-  background: #d24e3a;
+  background: var(--usage-danger);
 }
 .context-battery-unknown {
-  opacity: 0.58;
+  color: var(--usage-unknown);
 }
 .context-battery-unknown .context-battery-fill {
   background: transparent;
