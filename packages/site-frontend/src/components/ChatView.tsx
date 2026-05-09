@@ -51,12 +51,12 @@ import {
   setDeviceClaudeModel,
 } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
-import { instructionScopePlaceholder } from "../instruction-copy.ts";
 import { applyTemporaryInstructionsToMessage, scrollToBottomOnSend } from "../ui-prefs.ts";
 import { ApprovalModal } from "./ApprovalModal.tsx";
 import { Attachments, type AttachmentsAPI, imagesFromClipboard } from "./Attachments.tsx";
 import { CapabilitiesBadge } from "./CapabilitiesBadge.tsx";
 import { Composer } from "./Composer.tsx";
+import { InstructionsWorkspace } from "./InstructionsWorkspace.tsx";
 import { NewChatCard } from "./NewChatCard.tsx";
 import { OfflineHint, daemonOfflineBannerMessage, isDaemonOfflineMessage } from "./OfflineHint.tsx";
 import { PermissionModePicker } from "./PermissionModePicker.tsx";
@@ -641,6 +641,7 @@ const AVAILABLE_PERMISSION_TOOLS = [
   "Task",
 ];
 const WORKSPACE_INSTRUCTION_SCOPES: ClaudeInstructionScope[] = [
+  "user",
   "project",
   "projectClaude",
   "local",
@@ -807,6 +808,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     return resolveStoredDeviceSelection(storedDeviceSelection(), list)?.id ?? defaultDeviceId(list);
   };
   const [selectedClaudeModel, setSelectedClaudeModel] = createSignal<string | null>(null);
+  const [mainPanelMode, setMainPanelMode] = createSignal<"chat" | "instructions">("chat");
 
   function selectDeviceId(deviceId: string | null) {
     const device = deviceId ? (devices() ?? []).find((d) => d.id === deviceId) : null;
@@ -1261,10 +1263,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     { refetch: refetchWorkspaceInstructions, mutate: mutateWorkspaceInstructions },
   ] = createResource(
     () => {
-      if (selectedSidebarTab() !== "instructions") return null;
+      if (selectedSidebarTab() !== "instructions" && mainPanelMode() !== "instructions") {
+        return null;
+      }
       const deviceId = effectiveDeviceId();
       const currentCwd = selectedSessionCwd();
-      if (!deviceId || !currentCwd) return null;
+      if (!deviceId) return null;
       return { deviceId, cwd: currentCwd };
     },
     async (input) => {
@@ -1320,12 +1324,13 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const saveWorkspaceInstructionSource = async (source: ClaudeInstructionSource) => {
     const deviceId = effectiveDeviceId();
     const currentCwd = selectedSessionCwd();
-    if (!deviceId || !currentCwd || source.readonly) return;
+    if (!deviceId || source.readonly) return;
+    if (source.scope !== "user" && !currentCwd) return;
     setSavingInstructionScope(source.scope);
     setInstructionEditStatus(null);
     try {
       const updated = await api.writeInstruction(deviceId, source.scope, {
-        cwd: currentCwd,
+        ...(currentCwd ? { cwd: currentCwd } : {}),
         content: instructionDraft(source),
         ...instructionExpectedHash(source),
       });
@@ -1351,7 +1356,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const deleteWorkspaceInstructionSource = async (source: ClaudeInstructionSource) => {
     const deviceId = effectiveDeviceId();
     const currentCwd = selectedSessionCwd();
-    if (!deviceId || !currentCwd || source.readonly || !source.exists) return;
+    if (!deviceId || source.readonly || !source.exists) return;
+    if (source.scope !== "user" && !currentCwd) return;
     if (
       typeof window !== "undefined" &&
       !window.confirm(t("chat.sidebar.instructions.delete.confirm", { label: source.label }))
@@ -1362,7 +1368,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setInstructionEditStatus(null);
     try {
       const updated = await api.deleteInstruction(deviceId, source.scope, {
-        cwd: currentCwd,
+        ...(currentCwd ? { cwd: currentCwd } : {}),
         ...instructionExpectedHash(source),
       });
       mutateWorkspaceInstructions((current) =>
@@ -2908,14 +2914,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
             <span class="sidebar-label">{t("chat.sidebar.instructions.title")}</span>
             <Show
-              when={effectiveDeviceId() && selectedSessionCwd()}
-              fallback={
-                <p class="sidebar-empty">
-                  {effectiveDeviceId()
-                    ? t("chat.sidebar.instructions.select-session")
-                    : t("chat.sidebar.panel.not-ready")}
-                </p>
-              }
+              when={effectiveDeviceId()}
+              fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.not-ready")}</p>}
             >
               <Show
                 when={!workspaceInstructions.loading}
@@ -2926,6 +2926,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   fallback={<p class="sidebar-empty">{workspaceInstructionsError()}</p>}
                 >
                   <div class="sidebar-flat-list">
+                    <div class="sidebar-info-block">
+                      <div class="sidebar-info-title">
+                        <span>{t("instructions.workspace.current")}</span>
+                      </div>
+                      <div class="sidebar-info-path" title={selectedSessionCwd()}>
+                        {selectedSessionCwd() || t("instructions.workspace.no-cwd")}
+                      </div>
+                    </div>
                     <For each={workspaceInstructionSources()}>
                       {(source) => (
                         <div class="sidebar-info-block">
@@ -2934,72 +2942,24 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                             <span class="sidebar-info-count">
                               {source.exists
                                 ? t("chat.sidebar.instructions.exists")
-                                : t("chat.sidebar.instructions.missing")}
+                                : source.error === "cwd is not selected"
+                                  ? t("instructions.source.cwd-required")
+                                  : t("chat.sidebar.instructions.missing")}
                             </span>
                           </div>
                           <div class="sidebar-info-path" title={source.path}>
                             {source.path || t("instructions.path.none")}
                           </div>
-                          <Show when={source.error}>
-                            <p class="sidebar-empty">{source.error}</p>
-                          </Show>
-                          <textarea
-                            class="sidebar-instruction-textarea"
-                            value={instructionDraft(source)}
-                            placeholder={instructionScopePlaceholder(source.scope)}
-                            disabled={savingInstructionScope() === source.scope || source.readonly}
-                            onInput={(event) =>
-                              setInstructionDraft(source, event.currentTarget.value)
-                            }
-                          />
-                          <Show when={instructionEditStatus()?.scope === source.scope}>
-                            <p
-                              classList={{
-                                "sidebar-empty": instructionEditStatus()?.kind !== "error",
-                                "settings-error": instructionEditStatus()?.kind === "error",
-                                "settings-success": instructionEditStatus()?.kind === "success",
-                              }}
-                            >
-                              {instructionEditStatus()?.message}
-                            </p>
-                          </Show>
-                          <div class="sidebar-permission-actions">
-                            <Show when={source.exists}>
-                              <button
-                                type="button"
-                                class="sidebar-inline-button danger"
-                                onClick={() => void deleteWorkspaceInstructionSource(source)}
-                                disabled={savingInstructionScope() === source.scope}
-                              >
-                                {savingInstructionScope() === source.scope
-                                  ? t("chat.sidebar.instructions.saving")
-                                  : t("chat.sidebar.instructions.delete")}
-                              </button>
-                            </Show>
-                            <Show when={instructionDraftDirty(source)}>
-                              <button
-                                type="button"
-                                class="sidebar-inline-button"
-                                onClick={() => resetInstructionDraft(source)}
-                                disabled={savingInstructionScope() === source.scope}
-                              >
-                                {t("chat.sidebar.instructions.revert")}
-                              </button>
-                              <button
-                                type="button"
-                                class="sidebar-inline-button primary"
-                                onClick={() => void saveWorkspaceInstructionSource(source)}
-                                disabled={savingInstructionScope() === source.scope}
-                              >
-                                {savingInstructionScope() === source.scope
-                                  ? t("chat.sidebar.instructions.saving")
-                                  : t("chat.sidebar.instructions.save")}
-                              </button>
-                            </Show>
-                          </div>
                         </div>
                       )}
                     </For>
+                    <button
+                      type="button"
+                      class="sidebar-inline-button primary"
+                      onClick={() => setMainPanelMode("instructions")}
+                    >
+                      {t("instructions.workspace.open")}
+                    </button>
                   </div>
                 </Show>
               </Show>
@@ -3170,126 +3130,154 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           </button>
         </div>
 
-        <div ref={transcriptScroller} class="transcript" onScroll={updateTranscriptBottomState}>
-          <div class="transcript-inner">
-            <Show
-              when={transcript().length > 0 || selectedSession()}
-              fallback={
-                <Show
-                  when={(devices() ?? []).length === 0}
-                  fallback={
-                    <div class="empty-chat">
-                      <p>
-                        {showNewChat() || cwd()
-                          ? t("chat.empty.new-session")
-                          : t("chat.empty.select-session")}
-                      </p>
-                    </div>
-                  }
-                >
-                  {/* First-run state: signed in but no PC paired yet.
-                      Push the pair flow front-and-center so the user
-                      doesn't have to discover it through the sidebar. */}
-                  <div class="empty-chat empty-chat-no-device">
-                    <h2>{t("chat.empty.no-device.title")}</h2>
-                    <p>{t("chat.empty.no-device.body")}</p>
-                    <button
-                      type="button"
-                      class="primary-button"
-                      onClick={() => openSettingsOverlay({ tab: "devices" })}
-                    >
-                      {t("chat.empty.no-device.cta")}
-                    </button>
-                  </div>
-                </Show>
-              }
-            >
-              <Transcript events={transcript()} deviceId={effectiveDeviceId()} cwd={cwd()} />
-            </Show>
-          </div>
-        </div>
-
-        <Show when={error()}>
-          {(msg) => (
-            // role="alert" announces the error to assistive tech without
-            // relying on <output>, which is phrasing content and can't
-            // legally contain the OfflineHint's block-level <div>.
-            <div class="upstream-banner" role="alert">
-              <span class="upstream-banner-message">
-                {isDaemonOfflineMessage(msg())
-                  ? daemonOfflineBannerMessage(activeDevice()?.label)
-                  : msg()}
-              </span>
-              <OfflineHint
-                message={msg()}
-                deviceLabel={activeDevice()?.label}
-                onPickDevice={openSidebarForDevicePick}
-              />
-            </div>
-          )}
-        </Show>
-        <div class="composer-shell">
-          <Show when={!transcriptAtBottom() && transcript().length > 0}>
-            <button
-              type="button"
-              class="scroll-to-bottom-button"
-              aria-label={t("chat.scroll-to-bottom.aria")}
-              title={t("chat.scroll-to-bottom.title")}
-              onClick={handleScrollToBottomClick}
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+        <Show
+          when={mainPanelMode() === "instructions"}
+          fallback={
+            <>
+              <div
+                ref={transcriptScroller}
+                class="transcript"
+                onScroll={updateTranscriptBottomState}
               >
-                <path d="M12 5v14" />
-                <path d="m6 13 6 6 6-6" />
-              </svg>
-            </button>
-          </Show>
-          <output
-            class={`composer-status composer-status-${connectionStatus().tone}`}
-            aria-live="polite"
-          >
-            <span class="composer-status-main">{t(connectionStatus().mainKey)}</span>
-            <span class="composer-status-detail">
-              {connectionStatusDetail()} · {permissionModeStatusText()}
-            </span>
-            <Show when={connectionStatus().action}>
-              {(action) => (
-                <button
-                  type="button"
-                  class="composer-status-action"
-                  onClick={() => openConnectionStatusAction(action())}
+                <div class="transcript-inner">
+                  <Show
+                    when={transcript().length > 0 || selectedSession()}
+                    fallback={
+                      <Show
+                        when={(devices() ?? []).length === 0}
+                        fallback={
+                          <div class="empty-chat">
+                            <p>
+                              {showNewChat() || cwd()
+                                ? t("chat.empty.new-session")
+                                : t("chat.empty.select-session")}
+                            </p>
+                          </div>
+                        }
+                      >
+                        {/* First-run state: signed in but no PC paired yet.
+                            Push the pair flow front-and-center so the user
+                            doesn't have to discover it through the sidebar. */}
+                        <div class="empty-chat empty-chat-no-device">
+                          <h2>{t("chat.empty.no-device.title")}</h2>
+                          <p>{t("chat.empty.no-device.body")}</p>
+                          <button
+                            type="button"
+                            class="primary-button"
+                            onClick={() => openSettingsOverlay({ tab: "devices" })}
+                          >
+                            {t("chat.empty.no-device.cta")}
+                          </button>
+                        </div>
+                      </Show>
+                    }
+                  >
+                    <Transcript events={transcript()} deviceId={effectiveDeviceId()} cwd={cwd()} />
+                  </Show>
+                </div>
+              </div>
+
+              <Show when={error()}>
+                {(msg) => (
+                  // role="alert" announces the error to assistive tech without
+                  // relying on <output>, which is phrasing content and can't
+                  // legally contain the OfflineHint's block-level <div>.
+                  <div class="upstream-banner" role="alert">
+                    <span class="upstream-banner-message">
+                      {isDaemonOfflineMessage(msg())
+                        ? daemonOfflineBannerMessage(activeDevice()?.label)
+                        : msg()}
+                    </span>
+                    <OfflineHint
+                      message={msg()}
+                      deviceLabel={activeDevice()?.label}
+                      onPickDevice={openSidebarForDevicePick}
+                    />
+                  </div>
+                )}
+              </Show>
+              <div class="composer-shell">
+                <Show when={!transcriptAtBottom() && transcript().length > 0}>
+                  <button
+                    type="button"
+                    class="scroll-to-bottom-button"
+                    aria-label={t("chat.scroll-to-bottom.aria")}
+                    title={t("chat.scroll-to-bottom.title")}
+                    onClick={handleScrollToBottomClick}
+                  >
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M12 5v14" />
+                      <path d="m6 13 6 6 6-6" />
+                    </svg>
+                  </button>
+                </Show>
+                <output
+                  class={`composer-status composer-status-${connectionStatus().tone}`}
+                  aria-live="polite"
                 >
-                  {t(`connection.action.${action()}`)}
-                </button>
-              )}
-            </Show>
-          </output>
-          <Attachments
-            ref={(api) => {
-              attachmentsApi = api;
-            }}
-            onChange={(items) => setAttachmentCount(items.length)}
+                  <span class="composer-status-main">{t(connectionStatus().mainKey)}</span>
+                  <span class="composer-status-detail">
+                    {connectionStatusDetail()} · {permissionModeStatusText()}
+                  </span>
+                  <Show when={connectionStatus().action}>
+                    {(action) => (
+                      <button
+                        type="button"
+                        class="composer-status-action"
+                        onClick={() => openConnectionStatusAction(action())}
+                      >
+                        {t(`connection.action.${action()}`)}
+                      </button>
+                    )}
+                  </Show>
+                </output>
+                <Attachments
+                  ref={(api) => {
+                    attachmentsApi = api;
+                  }}
+                  onChange={(items) => setAttachmentCount(items.length)}
+                />
+                <Composer
+                  onSend={sendMessage}
+                  onInterrupt={() => void interrupt()}
+                  inFlight={running()}
+                  hasExtraContent={() => attachmentCount() > 0}
+                  onAttachClick={handleAttachClick}
+                  slashCommands={composerSlashCommands()}
+                  contextRemainingPercent={
+                    props.showContextUsageMeter === false
+                      ? undefined
+                      : (contextUsage().ctx?.remainingPercent ?? null)
+                  }
+                />
+              </div>
+            </>
+          }
+        >
+          <InstructionsWorkspace
+            cwd={workspaceInstructionsResult()?.cwd ?? selectedSessionCwd()}
+            sources={workspaceInstructionSources()}
+            loading={workspaceInstructions.loading}
+            error={workspaceInstructionsError()}
+            draft={instructionDraft}
+            dirty={instructionDraftDirty}
+            savingScope={savingInstructionScope()}
+            status={instructionEditStatus()}
+            onInput={setInstructionDraft}
+            onReset={resetInstructionDraft}
+            onSave={(source) => void saveWorkspaceInstructionSource(source)}
+            onDelete={(source) => void deleteWorkspaceInstructionSource(source)}
+            onReload={() => void refetchWorkspaceInstructions()}
+            onBack={() => setMainPanelMode("chat")}
           />
-          <Composer
-            onSend={sendMessage}
-            onInterrupt={() => void interrupt()}
-            inFlight={running()}
-            hasExtraContent={() => attachmentCount() > 0}
-            onAttachClick={handleAttachClick}
-            slashCommands={composerSlashCommands()}
-            contextRemainingPercent={
-              props.showContextUsageMeter === false
-                ? undefined
-                : (contextUsage().ctx?.remainingPercent ?? null)
-            }
-          />
-        </div>
+        </Show>
       </section>
 
       {/* Refresh devices when nothing has loaded yet ??runs once on mount. */}
