@@ -649,12 +649,6 @@ const InstructionSettings: Component<{
   const deviceInstructionSources = createMemo(() =>
     instructionSources().filter((source) => source.scope === "user" || source.scope === "managed"),
   );
-  const visibleDeviceInstructionSources = createMemo(() =>
-    deviceInstructionSources().filter((source) => source.exists || Boolean(source.error)),
-  );
-  const missingDeviceInstructionSources = createMemo(() =>
-    deviceInstructionSources().filter((source) => !source.exists && !source.error),
-  );
   const [deviceInstructionDrafts, setDeviceInstructionDrafts] = createSignal<
     Record<string, string>
   >({});
@@ -799,7 +793,7 @@ const InstructionSettings: Component<{
           </Show>
           <InstructionSourceGroup
             title={t("instructions.device.sources.title")}
-            sources={visibleDeviceInstructionSources()}
+            sources={deviceInstructionSources()}
             editable
             draft={deviceInstructionDraft}
             dirty={deviceInstructionDirty}
@@ -810,9 +804,6 @@ const InstructionSettings: Component<{
             onSave={(source) => void saveDeviceInstructionSource(source)}
             onDelete={(source) => void deleteDeviceInstructionSource(source)}
           />
-          <For each={missingDeviceInstructionSources()}>
-            {(source) => <InstructionSourceEmptyNotice source={source} />}
-          </For>
         </Show>
       </Show>
     </section>
@@ -864,18 +855,6 @@ const InstructionSourceGroup: Component<{
         </Show>
       )}
     </For>
-  </div>
-);
-
-const InstructionSourceEmptyNotice: Component<{
-  source: ClaudeInstructionSource;
-}> = (props) => (
-  <div class="instruction-source instruction-source-empty-notice">
-    <div class="instruction-source-header">
-      <div class="instruction-field-label">{props.source.label}</div>
-      <span class="instruction-source-state">{t("instructions.source.missing")}</span>
-    </div>
-    <p class="settings-card-help">{instructionDeviceEmptyMessage(props.source.scope)}</p>
   </div>
 );
 
@@ -956,8 +935,9 @@ const InstructionSourceViewer: Component<{
       return t("instructions.source.cwd-required");
     }
     if (props.source.error) return props.source.error;
+    if (!props.source.exists) return t("instructions.source.missing");
     if (props.source.readonly) return t("instructions.source.readonly");
-    return props.source.exists ? t("instructions.source.exists") : t("instructions.source.missing");
+    return t("instructions.source.exists");
   };
   const sourceBody = () => {
     if (props.source.content.trim()) return props.source.content;
@@ -1054,12 +1034,6 @@ function fallbackInstructionSource(
     source.error = "cwd is not selected";
   }
   return source;
-}
-
-function instructionDeviceEmptyMessage(scope: ClaudeInstructionSource["scope"]): string {
-  if (scope === "managed") return t("instructions.device.empty.managed");
-  if (scope === "user") return t("instructions.device.empty.user");
-  return t("instructions.content.missing");
 }
 
 function fallbackInstructionPath(scope: ClaudeInstructionSource["scope"], cwd: string): string {

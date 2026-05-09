@@ -129,6 +129,93 @@ describe("App landing flow", () => {
     });
   });
 
+  test("settings instructions show missing device instruction files inline", async () => {
+    window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/devices")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "dev_home",
+              label: "HOMEDEV",
+              daemonUrl: "http://127.0.0.1:18091",
+              registeredAt: "2026-01-01T00:00:00.000Z",
+              connectionState: "online",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/api/devices/dev_home/behaviors")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/api/devices/dev_home/instructions")) {
+        return new Response(
+          JSON.stringify({
+            cwd: null,
+            sources: [
+              {
+                scope: "user",
+                label: "사용자 전역",
+                path: "C:\\Users\\darkh\\.claude\\CLAUDE.md",
+                readonly: false,
+                exists: false,
+                content: "",
+              },
+              {
+                scope: "managed",
+                label: "관리 정책",
+                path: "C:\\Program Files\\ClaudeCode\\CLAUDE.md",
+                readonly: true,
+                exists: false,
+                content: "",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/healthz")) {
+        return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 1 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const { container } = render(() => <App />);
+    const settings = await screen.findByRole("button", { name: t("app.settings.aria") });
+    fireEvent.click(settings);
+    const instructionsTab = [...container.querySelectorAll(".settings-tab")].find(
+      (button) => button.textContent === t("app.settings.tab.instructions"),
+    ) as HTMLButtonElement | undefined;
+    if (!instructionsTab) throw new Error("settings instructions tab missing");
+    fireEvent.click(instructionsTab);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(t("instructions.device.sources.title"));
+      expect(container.textContent).toContain("사용자 전역");
+      expect(container.textContent).toContain("관리 정책");
+      expect(container.textContent).toContain("C:\\Users\\darkh\\.claude\\CLAUDE.md");
+      expect(container.textContent).toContain("C:\\Program Files\\ClaudeCode\\CLAUDE.md");
+    });
+    expect(container.textContent).toContain(t("instructions.source.missing"));
+    const missingStates = [...container.querySelectorAll(".instruction-source-state")].filter(
+      (state) => state.textContent === t("instructions.source.missing"),
+    );
+    expect(missingStates.length).toBeGreaterThanOrEqual(2);
+    expect(container.textContent).not.toContain(t("instructions.device.empty.user"));
+    expect(container.textContent).not.toContain(t("instructions.device.empty.managed"));
+  });
+
   test("a site-token URL fragment is stored and opens the chat directly", async () => {
     Object.defineProperty(window, "location", {
       configurable: true,
