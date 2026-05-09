@@ -89,16 +89,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 
 ## 구조 노드
 
+DeskRelay self 서버를 켜면 서버 PC 안에서 세 개의 로컬 프로세스가 함께 뜬다.
+
+- `daemon`: 서버 PC 자체를 제어 가능한 디바이스로 노출한다. 기본 포트는 `18191`이다.
+- `site-backend`: Site token 인증, 디바이스 레지스트리, 디바이스 proxy, 등록/삭제 명령 생성을 맡는다. 기본 포트는 `18192`이다.
+- `site-frontend`: 브라우저가 여는 DeskRelay UI다. 기본 포트는 `18193`이고, `/api`와 `/healthz` 요청을 `site-backend`로 proxy한다.
+
 ```mermaid
 flowchart LR
   Browser["사용자 브라우저<br/>DeskRelay UI<br/>Site token 로그인"]
-  Frontend["Site frontend<br/>packages/site-frontend<br/>세션/권한/스킬/디바이스 UI"]
-  Server["Self-host site server<br/>packages/site-backend<br/>:18193<br/>브라우저 API / proxy / self 명령 생성"]
-  Registry[("Device registry<br/>server local state<br/>device id / label / daemonUrl / daemon token")]
-  Commands["Generated command files<br/>.self-server/commands<br/>top-level quick txt"]
 
   subgraph ServerPC["서버 PC"]
-    ServerConnector["Connector daemon<br/>packages/pc-connector-daemon<br/>:18091<br/>daemon token"]
+    SiteFrontend["site-frontend<br/>packages/site-frontend<br/>:18193<br/>브라우저 UI<br/>/api -> site-backend proxy"]
+    SiteBackend["site-backend<br/>packages/site-backend<br/>:18192<br/>Site token 인증<br/>device registry / proxy / command 생성"]
+    Registry[("Device registry<br/>.self-server/state<br/>device id / label / daemonUrl / daemon token")]
+    Commands["Command files<br/>.self-server/commands<br/>top-level quick txt"]
+    ServerDaemon["daemon<br/>packages/pc-connector-daemon<br/>:18191<br/>서버 PC connector<br/>daemon token"]
     ServerTask["Windows login task<br/>login 시 connector 자동 시작"]
     ServerWorkspace["Workspace roots<br/>CR_CONNECTOR_WORKSPACE_ROOTS"]
     ServerBehavior["Claude behavior host<br/>remote-claude"]
@@ -106,35 +112,35 @@ flowchart LR
   end
 
   subgraph OtherPC["다른 제어 대상 PC"]
-    OtherConnector["Connector daemon<br/>:18091<br/>Tailscale/LAN 주소"]
+    OtherDaemon["daemon<br/>packages/pc-connector-daemon<br/>:18091<br/>Tailscale/LAN 주소<br/>daemon token"]
     OtherTask["Windows login task"]
     OtherWorkspace["Workspace roots"]
     OtherBehavior["Claude behavior host"]
     OtherClaude["Claude Code CLI"]
   end
 
-  Network["Tailscale / LAN<br/>server PC -> other PC connector 접근"]
+  Network["Tailscale / LAN<br/>서버 PC -> 다른 PC daemon 접근"]
 
-  Browser -->|"HTTP/SSE"| Frontend
-  Frontend -->|"API"| Server
-  Server --> Registry
-  Server --> Commands
-  Server -->|"HTTP + daemon token"| ServerConnector
-  Server -->|"HTTP + daemon token"| Network
-  Server -->|"/system/uninstall on device removal"| Network
-  Network --> OtherConnector
+  Browser -->|"HTTP / SSE"| SiteFrontend
+  SiteFrontend -->|"same-origin /api proxy"| SiteBackend
+  SiteBackend --> Registry
+  SiteBackend --> Commands
+  SiteBackend -->|"HTTP + daemon token"| ServerDaemon
+  SiteBackend -->|"HTTP + daemon token"| Network
+  SiteBackend -->|"/system/uninstall on device removal"| Network
+  Network --> OtherDaemon
 
-  ServerConnector --> ServerTask
-  ServerConnector --> ServerWorkspace
-  ServerConnector --> ServerBehavior
+  ServerDaemon --> ServerTask
+  ServerDaemon --> ServerWorkspace
+  ServerDaemon --> ServerBehavior
   ServerBehavior --> ServerClaude
 
-  OtherConnector --> OtherTask
-  OtherConnector --> OtherWorkspace
-  OtherConnector --> OtherBehavior
+  OtherDaemon --> OtherTask
+  OtherDaemon --> OtherWorkspace
+  OtherDaemon --> OtherBehavior
   OtherBehavior --> OtherClaude
 
-  Registry -. "같은 daemonUrl 재등록 시 기존 row 삭제 후 새 row 생성" .-> Server
+  Registry -. "같은 daemonUrl 재등록 시 기존 row 삭제 후 새 row 생성" .-> SiteBackend
 ```
 
 ## 연결 그래프
