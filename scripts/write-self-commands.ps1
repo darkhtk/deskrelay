@@ -65,6 +65,11 @@ function Get-PreferredUrl {
   return [string]$Urls[0].Url
 }
 
+function Get-LoginUrl {
+  param([string]$Url, [string]$Token)
+  return "$($Url.TrimEnd('/'))/#site-token=$([System.Uri]::EscapeDataString($Token))"
+}
+
 function Write-TextFile {
   param([string]$Path, [string]$Content)
   $parent = Split-Path -Parent $Path
@@ -95,6 +100,7 @@ $frontendPort = if ($env:CR_DEV_FRONTEND_URL) {
 }
 $urls = @(Get-AccessUrls -Port $frontendPort)
 $preferredUrl = Get-PreferredUrl -Urls $urls
+$preferredLoginUrl = Get-LoginUrl -Url $preferredUrl -Token $env:CR_SITE_TOKEN
 $commandsDir = Join-Path $root "commands"
 New-Item -ItemType Directory -Force -Path $commandsDir | Out-Null
 
@@ -185,6 +191,9 @@ $openSite = @"
 Recommended URL:
 $preferredUrl
 
+Recommended login URL for another device:
+$preferredLoginUrl
+
 All URLs:
 $urlsText
 
@@ -210,6 +219,9 @@ http://127.0.0.1:$frontendPort
 
 Recommended URL for another device:
 $preferredUrl
+
+Recommended login URL for another device:
+$preferredLoginUrl
 
 All URLs:
 $urlsText
