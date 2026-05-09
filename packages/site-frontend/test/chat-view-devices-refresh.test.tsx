@@ -769,6 +769,24 @@ describe("ChatView device refresh bridge", () => {
                     ask: [],
                     defaultMode: "default",
                   },
+                  {
+                    label: "Project settings",
+                    path: "C:\\Users\\darkh\\Projects\\deskrelay\\.claude\\settings.json",
+                    exists: true,
+                    allow: [],
+                    deny: [],
+                    ask: [],
+                    defaultMode: null,
+                  },
+                  {
+                    label: "Project local settings",
+                    path: "C:\\Users\\darkh\\Projects\\deskrelay\\.claude\\settings.local.json",
+                    exists: false,
+                    allow: [],
+                    deny: [],
+                    ask: [],
+                    defaultMode: null,
+                  },
                 ],
               },
             }),
@@ -947,9 +965,12 @@ describe("ChatView device refresh bridge", () => {
     fireEvent.click(permissionsTab);
     await waitFor(() => {
       expect(container.textContent).toContain("User settings");
+      expect(container.textContent).toContain("Project settings");
+      expect(container.textContent).toContain("Project local settings");
       expect(container.textContent).toContain("Bash(git status:*)");
       expect(container.textContent).toContain("default");
     });
+    expect(container.querySelectorAll(".sidebar-permission-source")).toHaveLength(3);
     const removePermission = container.querySelector(
       `button[aria-label="${t("chat.sidebar.permissions.remove", {
         item: "Bash(git status:*)",

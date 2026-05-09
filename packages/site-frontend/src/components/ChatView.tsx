@@ -2741,7 +2741,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   <div class="sidebar-flat-list">
                     <For each={cliPermissionSources()}>
                       {(source) => (
-                        <div class="sidebar-info-block">
+                        <div class="sidebar-info-block sidebar-permission-source">
                           <div class="sidebar-info-title">
                             <span>{source.label}</span>
                             <span class="sidebar-info-count">
