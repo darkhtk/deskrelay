@@ -1,4 +1,9 @@
 import { networkInterfaces } from "node:os";
+import type {
+  DiagnosticCheck,
+  DiagnosticReport,
+  DiagnosticSeverity,
+} from "@deskrelay/shared";
 import { type DeskRelayBuildInfo, getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
@@ -94,6 +99,20 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         siteToken: options.token,
       }),
     });
+  });
+
+  app.get("/api/self/doctor", async (c) => {
+    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
+    return c.json(
+      await buildServerDiagnosticReport({
+        fetchImpl,
+        registry,
+        token: options.token,
+        localToken,
+        build,
+        urls,
+      }),
+    );
   });
 
   app.post("/api/devices", async (c) => {
@@ -369,6 +388,20 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       `${device.daemonUrl}/status`,
       undefined,
       daemonToken(device, localToken),
+    );
+  });
+
+  app.get("/api/devices/:id/doctor", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return c.json(
+      await buildDeviceDiagnosticReport({
+        fetchImpl,
+        registry,
+        device,
+        localToken,
+        serverBuild: build,
+      }),
     );
   });
 
@@ -710,6 +743,438 @@ function getUrlPort(value: string): number {
     // The downstream install/remove scripts still validate the URL before use.
   }
   return 0;
+}
+
+interface ServerDiagnosticInput {
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  token: string | undefined;
+  localToken: string | undefined;
+  build: DeskRelayBuildInfo;
+  urls: AccessUrl[];
+}
+
+interface DeviceDiagnosticInput {
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  device: Device;
+  localToken: string | undefined;
+  serverBuild: DeskRelayBuildInfo;
+}
+
+interface DaemonStatusPayload {
+  ok?: boolean;
+  startedAt?: string;
+  build?: DeskRelayBuildInfo;
+  listening?: { host?: string; port?: number };
+  behaviors?: Array<{ name?: string; instanceId?: string; version?: string }>;
+  workspaceRoots?: { mode?: string; roots?: string[] };
+  diagnostics?: {
+    remoteClaudeLoaded?: boolean;
+    approvalsHookEnabled?: boolean;
+    pendingApprovals?: number;
+  };
+}
+
+async function buildServerDiagnosticReport(input: ServerDiagnosticInput): Promise<DiagnosticReport> {
+  const generatedAt = new Date().toISOString();
+  const checks: DiagnosticCheck[] = [];
+  const preferredUrl = pickRemoteAccessUrl(input.urls);
+  const remoteUrls = input.urls.filter((row) => row.kind !== "This PC");
+
+  checks.push(
+    diagnosticCheck({
+      id: "server.api",
+      label: "Server API",
+      severity: "ok",
+      summary: "site backend is responding",
+      detail: `version ${input.build.version}`,
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "server.token",
+      label: "Site token",
+      severity: input.token ? "ok" : "error",
+      summary: input.token ? "site token is configured" : "site token is missing",
+      detail: input.token
+        ? "Browsers and connector registration commands can authenticate."
+        : "Restart the server with a CR_SITE_TOKEN value.",
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "server.remote-url",
+      label: "Remote URL",
+      severity: remoteUrls.length > 0 && !isLocalHost(new URL(preferredUrl).hostname) ? "ok" : "warn",
+      summary:
+        remoteUrls.length > 0
+          ? `preferred access URL: ${preferredUrl}`
+          : "only a local URL is available",
+      detail:
+        remoteUrls.length > 0
+          ? "Use this URL from another PC on the same LAN/VPN."
+          : "Install Tailscale or use a LAN address before registering another PC.",
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "server.devices",
+      label: "Device registry",
+      severity: input.registry.list().length > 0 ? "ok" : "warn",
+      summary: `${input.registry.list().length} device(s) registered`,
+      detail:
+        input.registry.list().length > 0
+          ? "Registered devices are available to the browser."
+          : "Run the generated registration command on at least one PC.",
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "server.build",
+      label: "Git/build",
+      severity: input.build.dirty ? "warn" : "ok",
+      summary: buildSummary(input.build),
+      detail: input.build.dirty
+        ? "The server was started from a dirty working tree. Restart after committing or pulling."
+        : "The server build metadata is stable.",
+      generatedAt,
+    }),
+  );
+
+  if (!input.localToken) {
+    checks.push(
+      diagnosticCheck({
+        id: "server.local-connector",
+        label: "Server PC connector",
+        severity: "unknown",
+        summary: "local daemon token is not available to the site backend",
+        detail: "This is acceptable if this PC is only acting as a server.",
+        generatedAt,
+      }),
+    );
+  } else {
+    const localUrl = localServerDaemonUrl();
+    const status = await fetchDaemonStatus(input.fetchImpl, localUrl, input.localToken);
+    checks.push(
+      diagnosticCheck({
+        id: "server.local-connector",
+        label: "Server PC connector",
+        severity: status.ok ? "ok" : status.severity,
+        summary: status.ok ? `local connector responding at ${localUrl}` : status.summary,
+        detail: status.ok
+          ? "This server PC can also be used as a controlled device."
+          : status.detail,
+        generatedAt,
+      }),
+    );
+  }
+
+  return {
+    scope: "server",
+    generatedAt,
+    checks,
+  };
+}
+
+async function buildDeviceDiagnosticReport(input: DeviceDiagnosticInput): Promise<DiagnosticReport> {
+  const generatedAt = new Date().toISOString();
+  const checks: DiagnosticCheck[] = [];
+  const devices = input.registry.list();
+  const token = daemonToken(input.device, input.localToken);
+  const duplicateUrls = devices.filter(
+    (candidate) => candidate.id !== input.device.id && candidate.daemonUrl === input.device.daemonUrl,
+  );
+  const duplicateLabels = devices.filter(
+    (candidate) =>
+      candidate.id !== input.device.id &&
+      candidate.label.trim().toLowerCase() === input.device.label.trim().toLowerCase(),
+  );
+
+  checks.push(
+    diagnosticCheck({
+      id: "device.registry",
+      label: "Registry row",
+      severity: "ok",
+      summary: `${input.device.label} is registered`,
+      detail: input.device.daemonUrl,
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "device.duplicates",
+      label: "Duplicate detection",
+      severity: duplicateUrls.length > 0 || duplicateLabels.length > 0 ? "warn" : "ok",
+      summary:
+        duplicateUrls.length > 0 || duplicateLabels.length > 0
+          ? "similar device rows exist"
+          : "no duplicate URL or label detected",
+      detail:
+        duplicateUrls.length > 0
+          ? `Same daemon URL appears ${duplicateUrls.length + 1} times.`
+          : duplicateLabels.length > 0
+            ? `Same label appears ${duplicateLabels.length + 1} times.`
+            : "Registration dedupe is currently clean.",
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "device.token",
+      label: "Daemon token",
+      severity: token ? "ok" : "error",
+      summary: token ? "daemon token is available" : "daemon token is missing",
+      detail: token
+        ? "The site backend can authenticate to this connector."
+        : "Re-register this device so its connector token is saved.",
+      generatedAt,
+    }),
+  );
+
+  const status = await fetchDaemonStatus(input.fetchImpl, input.device.daemonUrl, token);
+  checks.push(
+    diagnosticCheck({
+      id: "device.daemon",
+      label: "Local daemon",
+      severity: status.ok ? "ok" : status.severity,
+      summary: status.ok ? `responding at ${input.device.daemonUrl}` : status.summary,
+      detail: status.ok
+        ? status.payload.startedAt
+          ? `started ${status.payload.startedAt}`
+          : "status endpoint is reachable"
+        : status.detail,
+      generatedAt,
+    }),
+  );
+
+  if (!status.ok) {
+    checks.push(
+      diagnosticCheck({
+        id: "device.claude",
+        label: "Claude module",
+        severity: "unknown",
+        summary: "not checked because daemon status failed",
+        generatedAt,
+      }),
+      diagnosticCheck({
+        id: "device.workspace",
+        label: "Workspace roots",
+        severity: "unknown",
+        summary: "not checked because daemon status failed",
+        generatedAt,
+      }),
+      diagnosticCheck({
+        id: "device.version",
+        label: "Server/connector version",
+        severity: "unknown",
+        summary: "not checked because daemon status failed",
+        generatedAt,
+      }),
+    );
+    return {
+      scope: "device",
+      targetId: input.device.id,
+      targetLabel: input.device.label,
+      generatedAt,
+      checks,
+    };
+  }
+
+  const payload = status.payload;
+  const remoteClaudeLoaded = payload.diagnostics?.remoteClaudeLoaded;
+  checks.push(
+    diagnosticCheck({
+      id: "device.claude",
+      label: "Claude module",
+      severity: remoteClaudeLoaded === true ? "ok" : remoteClaudeLoaded === false ? "error" : "unknown",
+      summary:
+        remoteClaudeLoaded === true
+          ? "remote-claude behavior is loaded"
+          : remoteClaudeLoaded === false
+            ? "remote-claude behavior is not loaded"
+            : "remote-claude load state is unknown",
+      detail:
+        remoteClaudeLoaded === false
+          ? "Restart or update the connector; chat cannot run until this module loads."
+          : behaviorSummary(payload),
+      generatedAt,
+    }),
+  );
+
+  const roots = payload.workspaceRoots?.roots ?? [];
+  const workspaceMode = payload.workspaceRoots?.mode ?? "unknown";
+  checks.push(
+    diagnosticCheck({
+      id: "device.workspace",
+      label: "Workspace roots",
+      severity: workspaceMode === "restricted" && roots.length === 0 ? "warn" : "ok",
+      summary: `${workspaceMode} workspace mode, ${roots.length} root(s)`,
+      detail:
+        roots.length > 0
+          ? roots.join("; ")
+          : workspaceMode === "restricted"
+            ? "No allowed workspace roots are configured."
+            : "Unrestricted workspace access is enabled.",
+      generatedAt,
+    }),
+  );
+
+  const same = sameBuild(input.serverBuild, payload.build);
+  checks.push(
+    diagnosticCheck({
+      id: "device.version",
+      label: "Server/connector version",
+      severity: same === true ? "ok" : same === false ? "warn" : "unknown",
+      summary:
+        same === true
+          ? "server and connector builds match"
+          : same === false
+            ? "server and connector builds differ"
+            : "build comparison unavailable",
+      detail: `server ${buildSummary(input.serverBuild)}; connector ${buildSummary(payload.build)}`,
+      generatedAt,
+    }),
+  );
+
+  checks.push(
+    diagnosticCheck({
+      id: "device.approvals",
+      label: "Approval hook",
+      severity: payload.diagnostics?.approvalsHookEnabled ? "ok" : "warn",
+      summary: payload.diagnostics?.approvalsHookEnabled
+        ? `${payload.diagnostics?.pendingApprovals ?? 0} approval(s) pending`
+        : "approval hook is not reported as enabled",
+      detail:
+        payload.diagnostics?.approvalsHookEnabled === false
+          ? "Tool approval UX may not work until the connector is restarted with approvals enabled."
+          : undefined,
+      generatedAt,
+    }),
+  );
+
+  return {
+    scope: "device",
+    targetId: input.device.id,
+    targetLabel: input.device.label,
+    generatedAt,
+    checks,
+  };
+}
+
+function diagnosticCheck(input: {
+  id: string;
+  label: string;
+  severity: DiagnosticSeverity;
+  summary: string;
+  generatedAt: string;
+  detail?: string | undefined;
+  fixCommand?: string | undefined;
+  copyCommand?: string | undefined;
+}): DiagnosticCheck {
+  return {
+    id: input.id,
+    label: input.label,
+    severity: input.severity,
+    summary: input.summary,
+    ...(input.detail ? { detail: input.detail } : {}),
+    ...(input.fixCommand ? { fixCommand: input.fixCommand } : {}),
+    ...(input.copyCommand ? { copyCommand: input.copyCommand } : {}),
+    lastCheckedAt: input.generatedAt,
+  };
+}
+
+function localServerDaemonUrl(): string {
+  const port = Number(process.env.CR_CONNECTOR_PORT ?? "18191");
+  return `http://127.0.0.1:${Number.isFinite(port) ? port : 18191}`;
+}
+
+async function fetchDaemonStatus(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  daemonUrl: string,
+  authToken?: string,
+): Promise<
+  | { ok: true; payload: DaemonStatusPayload }
+  | { ok: false; severity: DiagnosticSeverity; summary: string; detail?: string }
+> {
+  const headers: Record<string, string> = {};
+  if (authToken) headers.authorization = `Bearer ${authToken}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(`${daemonUrl}/status`, {
+      method: "GET",
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      severity: "error",
+      summary: `cannot reach daemon at ${daemonUrl}`,
+      detail: (err as Error).message,
+    };
+  }
+  if (res.status === 401) {
+    return {
+      ok: false,
+      severity: "error",
+      summary: "daemon rejected the saved token",
+      detail: "Re-register this PC so the server stores the current connector token.",
+    };
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      severity: "error",
+      summary: `daemon status returned HTTP ${res.status}`,
+      ...(text ? { detail: text.slice(0, 500) } : {}),
+    };
+  }
+  try {
+    return { ok: true, payload: (await res.json()) as DaemonStatusPayload };
+  } catch (err) {
+    return {
+      ok: false,
+      severity: "error",
+      summary: "daemon status returned non-JSON",
+      detail: (err as Error).message,
+    };
+  }
+}
+
+function sameBuild(
+  server: DeskRelayBuildInfo | undefined,
+  connector: DeskRelayBuildInfo | undefined,
+): boolean | null {
+  if (!server || !connector) return null;
+  if (
+    !server.commit ||
+    !connector.commit ||
+    server.commit === "unknown" ||
+    connector.commit === "unknown"
+  ) {
+    return null;
+  }
+  return server.commit === connector.commit && server.dirty === connector.dirty;
+}
+
+function buildSummary(build: DeskRelayBuildInfo | undefined): string {
+  if (!build) return "unknown";
+  const dirty = build.dirty ? "+dirty" : "";
+  return `${build.shortCommit || build.version || "unknown"}${dirty}`;
+}
+
+function behaviorSummary(payload: DaemonStatusPayload): string {
+  const behavior = (payload.behaviors ?? []).find(
+    (candidate) => candidate.instanceId === "remote-claude" || candidate.name === "remote-claude",
+  );
+  if (!behavior) return "behavior list is empty or remote-claude is absent.";
+  return `${behavior.name ?? "remote-claude"}@${behavior.version ?? "unknown"}`;
 }
 
 async function probeDaemonStatus(

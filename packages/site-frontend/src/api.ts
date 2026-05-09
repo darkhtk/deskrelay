@@ -1,3 +1,5 @@
+import type { DiagnosticReport } from "@deskrelay/shared";
+
 const LEGACY_TOKEN_KEY = "cr.site-token";
 const TOKEN_KEY_PREFIX = "cr.site-token:";
 const BASE_URL_KEY = "cr.site-base-url";
@@ -218,6 +220,8 @@ export interface BrowserClientContext {
   isLocal: boolean;
 }
 
+export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
+
 export interface DeskRelayBuildInfo {
   version: string;
   commit: string;
@@ -330,6 +334,9 @@ export const api = {
   localSiteToken: () => readLocalSiteToken(),
   browserClientContext: () => readBrowserClientContext(),
 
+  selfDoctor: () => request<DiagnosticReport>("GET", "/api/self/doctor"),
+  deviceDoctor: (deviceId: string) =>
+    request<DiagnosticReport>("GET", `/api/devices/${deviceId}/doctor`),
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerOtherPcCommand: () =>
     request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),

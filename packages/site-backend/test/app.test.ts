@@ -69,6 +69,10 @@ function authedRequest(method: string, path: string, body?: unknown): Request {
   return new Request(`http://site.local${path}`, init);
 }
 
+function findCheck<T extends { id: string }>(checks: T[], id: string): T | undefined {
+  return checks.find((check) => check.id === id);
+}
+
 let setup: MockSetup;
 
 beforeEach(() => {
@@ -195,6 +199,84 @@ describe("self-host command helper", () => {
     expect(body.command).toContain("-Port 18091");
     expect(body.preferredUrl).toMatch(/^http:\/\//);
     expect(body.urls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("doctor endpoints", () => {
+  test("GET /api/self/doctor reports missing registered devices as a warning", async () => {
+    const res = await setup.app.fetch(authedRequest("GET", "/api/self/doctor"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scope: string;
+      checks: Array<{ id: string; severity: string; summary: string }>;
+    };
+    expect(body.scope).toBe("server");
+    expect(findCheck(body.checks, "server.token")?.severity).toBe("ok");
+    expect(findCheck(body.checks, "server.devices")?.severity).toBe("warn");
+  });
+
+  test("GET /api/devices/:id/doctor distinguishes saved daemon token mismatch", async () => {
+    const regRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        label: "Office",
+        authToken: "saved-token",
+      }),
+    );
+    const device = (await regRes.json()) as { id: string };
+
+    setup.setMockResponse(
+      () =>
+        new Response(JSON.stringify({ error: "bad token" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const res = await setup.app.fetch(authedRequest("GET", `/api/devices/${device.id}/doctor`));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scope: string;
+      checks: Array<{ id: string; severity: string; summary: string }>;
+    };
+    expect(body.scope).toBe("device");
+    expect(findCheck(body.checks, "device.daemon")?.severity).toBe("error");
+    expect(findCheck(body.checks, "device.daemon")?.summary).toContain("rejected");
+    expect(findCheck(body.checks, "device.claude")?.severity).toBe("unknown");
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer saved-token");
+  });
+
+  test("GET /api/devices/:id/doctor surfaces an unloaded Claude behavior", async () => {
+    const regRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        label: "Office",
+        authToken: "saved-token",
+      }),
+    );
+    const device = (await regRes.json()) as { id: string };
+    setup.setMockResponse(() =>
+      Response.json({
+        ok: true,
+        startedAt: "2026-04-30T00:00:00.000Z",
+        behaviors: [],
+        workspaceRoots: { mode: "restricted", roots: ["C:\\Users\\me\\Projects"] },
+        diagnostics: {
+          remoteClaudeLoaded: false,
+          approvalsHookEnabled: true,
+          pendingApprovals: 0,
+        },
+      }),
+    );
+
+    const res = await setup.app.fetch(authedRequest("GET", `/api/devices/${device.id}/doctor`));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      checks: Array<{ id: string; severity: string; summary: string }>;
+    };
+    expect(findCheck(body.checks, "device.daemon")?.severity).toBe("ok");
+    expect(findCheck(body.checks, "device.claude")?.severity).toBe("error");
+    expect(findCheck(body.checks, "device.workspace")?.severity).toBe("ok");
   });
 });
 

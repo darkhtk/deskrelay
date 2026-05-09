@@ -1,5 +1,11 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
-import { type DeskRelayBuildInfo, type Device, api } from "../api.ts";
+import {
+  type DeskRelayBuildInfo,
+  type Device,
+  type DiagnosticCheck,
+  type DiagnosticSeverity,
+  api,
+} from "../api.ts";
 import { deviceDisplayName } from "../device-display.ts";
 import { t } from "../i18n.ts";
 
@@ -29,6 +35,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   );
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
   const [diagnosticsError, setDiagnosticsError] = createSignal<Error | null>(null);
+  const [doctorError, setDoctorError] = createSignal<Error | null>(null);
   const [health, { refetch: refetchHealth }] = createResource(() => api.health().catch(() => null));
 
   createEffect(() => {
@@ -67,11 +74,26 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       }
     },
   );
+  const [doctor, { refetch: refetchDoctor }] = createResource(
+    () => selectedDevice()?.id ?? null,
+    async (id) => {
+      if (!id) return null;
+      try {
+        const report = await api.deviceDoctor(id);
+        setDoctorError(null);
+        return report;
+      } catch (err) {
+        setDoctorError(err as Error);
+        return null;
+      }
+    },
+  );
 
   function refresh(): void {
     void refetchHealth();
     void refetchDevices();
     if (selectedDevice()) void refetchDiagnostics();
+    if (selectedDevice()) void refetchDoctor();
   }
 
   function openDevices(): void {
@@ -210,6 +232,31 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     ];
   };
 
+  const doctorChecks = (): DiagnosticCheck[] => {
+    const report = doctor();
+    return Array.isArray(report?.checks) ? report.checks : [];
+  };
+
+  const doctorRows = (): StatusRow[] => {
+    if (doctor.loading) {
+      return [{ tone: "pending", label: "상세 진단", detail: "디바이스 상태 확인 중..." }];
+    }
+    if (doctorError()) {
+      return [
+        {
+          tone: "bad",
+          label: "상세 진단",
+          detail: `상세 진단 실패: ${doctorError()?.message ?? ""}`,
+        },
+      ];
+    }
+    return doctorChecks().map((check) => ({
+      tone: diagnosticTone(check.severity),
+      label: check.label,
+      detail: check.detail ? `${check.summary} · ${check.detail}` : check.summary,
+    }));
+  };
+
   return (
     <div class="connection-diagnostics">
       <div class="connection-diagnostics-header">
@@ -305,6 +352,27 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         </For>
       </div>
 
+      <Show when={doctorRows().length > 0}>
+        <div class="connection-diagnostics-list">
+          <div class="connection-diagnostics-list-title">상세 진단</div>
+          <div class="connection-diagnostics-rows">
+            <For each={doctorRows()}>
+              {(row) => (
+                <div class="connection-diagnostics-row">
+                  <div class="connection-diagnostics-row-main">
+                    <div class="connection-diagnostics-row-title">
+                      <span class={`connection-diagnostics-dot tone-${row.tone}`} />
+                      {row.label}
+                    </div>
+                    <div class="connection-diagnostics-row-detail">{row.detail}</div>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+
       <Show when={(diagnostics()?.workspaceRoots?.roots ?? []).length > 0}>
         <div class="connection-diagnostics-list">
           <div class="connection-diagnostics-list-title">
@@ -387,4 +455,11 @@ function buildLabel(build: DeskRelayBuildInfo | undefined): string {
   if (!build) return "unknown";
   const dirty = build.dirty ? "+dirty" : "";
   return `${build.shortCommit || build.version || "unknown"}${dirty}`;
+}
+
+function diagnosticTone(severity: DiagnosticSeverity): Tone {
+  if (severity === "ok") return "ok";
+  if (severity === "warn") return "warning";
+  if (severity === "error") return "bad";
+  return "pending";
 }

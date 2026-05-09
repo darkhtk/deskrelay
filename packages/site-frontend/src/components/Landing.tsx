@@ -1,5 +1,5 @@
 import { type Component, For, type JSX, Show, createResource, createSignal } from "solid-js";
-import { api } from "../api.ts";
+import { api, type DiagnosticCheck, type DiagnosticSeverity } from "../api.ts";
 import { t } from "../i18n.ts";
 import { LoginCard } from "./LoginCard.tsx";
 
@@ -32,6 +32,10 @@ export const Landing: Component<LandingProps> = (props) => {
     () => (props.authed ? "ready" : null),
     async () => await api.listDevices(),
   );
+  const [serverDoctor, { refetch: refetchServerDoctor }] = createResource(
+    () => (props.authed ? "ready" : null),
+    async () => await api.selfDoctor(),
+  );
   const [registerCommand, { refetch: refetchRegisterCommand }] = createResource(
     () => (props.authed ? "ready" : null),
     async () => await api.registerOtherPcCommand(),
@@ -47,6 +51,7 @@ export const Landing: Component<LandingProps> = (props) => {
       refetchLocalToken(),
       refetchClientContext(),
       props.authed ? refetchDevices() : Promise.resolve(),
+      props.authed ? refetchServerDoctor() : Promise.resolve(),
       props.authed ? refetchRegisterCommand() : Promise.resolve(),
       props.authed ? refetchRemoveCommand() : Promise.resolve(),
     ]);
@@ -72,7 +77,14 @@ export const Landing: Component<LandingProps> = (props) => {
     setAccessOpen(true);
   };
 
-  const serverTone = (): StepTone => (health.loading ? "wait" : health.error ? "bad" : "good");
+  const serverTone = (): StepTone => {
+    if (health.loading) return "wait";
+    if (health.error) return "bad";
+    if (props.authed && serverDoctor.loading) return "wait";
+    if (props.authed && serverDoctor.error) return "bad";
+    const severity = worstSeverity(serverChecks());
+    return severity ? severityToStepTone(severity) : "good";
+  };
   const accessTone = (): StepTone =>
     props.authed ? "good" : localToken.loading ? "wait" : localToken() ? "warn" : "bad";
   const devicesTone = (): StepTone => {
@@ -92,6 +104,10 @@ export const Landing: Component<LandingProps> = (props) => {
   const serverPort = () => registerCommand()?.serverPort ?? null;
   const connectorPort = () => registerCommand()?.connectorPort ?? null;
   const siteToken = () => registerCommand()?.siteToken ?? "";
+  const serverChecks = (): DiagnosticCheck[] => {
+    const report = serverDoctor();
+    return Array.isArray(report?.checks) ? report.checks : [];
+  };
   const manualCleanupCommand = () => {
     if (!props.authed) return "Site token 인증 후 제거 명령을 생성합니다.";
     if (removeCommand.loading) return "제거 명령 생성 중...";
@@ -191,6 +207,24 @@ export const Landing: Component<LandingProps> = (props) => {
       rows.push({ tone: "warn", text: "다른 PC 등록용 외부 URL이 127.0.0.1로 잡힘" });
     else if (props.authed && remoteUrl())
       rows.push({ tone: "good", text: `다른 PC 등록 URL 준비됨 · ${remoteUrl()}` });
+
+    if (props.authed) {
+      if (serverDoctor.loading) {
+        rows.push({ tone: "wait", text: "서버 진단 중..." });
+      } else if (serverDoctor.error) {
+        rows.push({
+          tone: "bad",
+          text: `서버 진단 실패: ${(serverDoctor.error as Error).message}`,
+        });
+      } else {
+        for (const check of prioritizedDoctorChecks(serverChecks())) {
+          rows.push({
+            tone: severityToStepTone(check.severity),
+            text: `${check.label}: ${check.summary}`,
+          });
+        }
+      }
+    }
     return rows;
   };
 
@@ -484,6 +518,28 @@ function deviceHosts(device: { daemonUrl: string; hostname?: string }): Set<stri
   if (urlHost) hosts.add(urlHost);
   if (device.hostname) hosts.add(normalizeHost(device.hostname));
   return hosts;
+}
+
+function severityToStepTone(severity: DiagnosticSeverity): StepTone {
+  if (severity === "ok") return "good";
+  if (severity === "warn") return "warn";
+  if (severity === "error") return "bad";
+  return "wait";
+}
+
+function worstSeverity(checks: DiagnosticCheck[]): DiagnosticSeverity | null {
+  if (checks.length === 0) return null;
+  if (checks.some((check) => check.severity === "error")) return "error";
+  if (checks.some((check) => check.severity === "warn")) return "warn";
+  if (checks.some((check) => check.severity === "unknown")) return "unknown";
+  return "ok";
+}
+
+function prioritizedDoctorChecks(checks: DiagnosticCheck[]): DiagnosticCheck[] {
+  if (checks.length === 0) return [];
+  const actionable = checks.filter((check) => check.severity !== "ok");
+  if (actionable.length > 0) return actionable;
+  return checks.slice(0, 4);
 }
 
 const CurrentDeviceLabel: Component<{ state: DeviceLabelState }> = (props) => (
