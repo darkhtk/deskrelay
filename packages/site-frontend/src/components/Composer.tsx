@@ -24,6 +24,8 @@ import {
 } from "../claude/slash-commands.ts";
 import { t } from "../i18n.ts";
 
+const COMPOSER_INPUT_MAX_HEIGHT = 240;
+
 export interface ComposerProps {
   /** Called with the trimmed text when the user submits. */
   onSend: (value: string) => Promise<void> | void;
@@ -79,6 +81,27 @@ export const Composer: Component<ComposerProps> = (props) => {
   let inputEl!: HTMLTextAreaElement;
   let slashPickerEl: HTMLDivElement | undefined;
 
+  function resizeInput() {
+    if (!inputEl) return;
+    inputEl.style.height = "auto";
+    const scrollHeight = inputEl.scrollHeight;
+    inputEl.style.overflowY = scrollHeight > COMPOSER_INPUT_MAX_HEIGHT ? "auto" : "hidden";
+    if (scrollHeight > 0) {
+      inputEl.style.height = `${Math.min(scrollHeight, COMPOSER_INPUT_MAX_HEIGHT)}px`;
+    } else {
+      inputEl.style.removeProperty("height");
+    }
+  }
+
+  function scheduleInputResize() {
+    queueMicrotask(resizeInput);
+  }
+
+  createEffect(() => {
+    value();
+    scheduleInputResize();
+  });
+
   createEffect(() => {
     const idx = highlight();
     if (idx < 0 || suggestions().length === 0) return;
@@ -109,6 +132,7 @@ export const Composer: Component<ComposerProps> = (props) => {
     const next = applySlashCompletion(value(), chosen.name);
     setValue(next);
     inputEl.value = next;
+    scheduleInputResize();
     setSuggestions([]);
     setHighlight(-1);
     inputEl.focus?.();
@@ -121,6 +145,7 @@ export const Composer: Component<ComposerProps> = (props) => {
     const previous = value();
     setValue("");
     inputEl.value = "";
+    scheduleInputResize();
     setSuggestions([]);
     setHighlight(-1);
     try {
@@ -132,6 +157,7 @@ export const Composer: Component<ComposerProps> = (props) => {
       // we just keep the input recoverable.
       setValue(previous);
       inputEl.value = previous;
+      scheduleInputResize();
     }
   }
 
@@ -190,6 +216,7 @@ export const Composer: Component<ComposerProps> = (props) => {
     const target = event.target as HTMLTextAreaElement;
     const next = target.value;
     setValue(next);
+    scheduleInputResize();
     refreshSlash(next);
   }
 

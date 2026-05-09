@@ -27,6 +27,33 @@ describe("Composer — basic typing + send", () => {
     expect(sendBtn).not.toBeDisabled();
   });
 
+  test("textarea grows to fit multiline input", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "scrollHeight",
+    );
+    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.value.includes("\n") ? 96 : 48;
+      },
+    });
+
+    try {
+      const { textarea } = setup();
+      fireEvent.input(textarea, { target: { value: "line one\nline two\nline three" } });
+      await Promise.resolve();
+      expect(textarea.style.height).toBe("96px");
+      expect(textarea.style.overflowY).toBe("hidden");
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", descriptor);
+      } else {
+        delete (HTMLTextAreaElement.prototype as { scrollHeight?: number }).scrollHeight;
+      }
+    }
+  });
+
   test("Enter submits and clears the input", async () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     const { textarea } = setup({ onSend });
