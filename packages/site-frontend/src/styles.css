@@ -88,7 +88,7 @@
 
 @media (min-width: 1024px) {
   :root {
-    --chat-transcript-max: min(1120px, 100%);
+    --chat-transcript-max: min(1480px, 100%);
   }
 }
 
@@ -1947,7 +1947,7 @@ body.sidebar-collapsed .chat {
      line, asterisk pseudo-element, etc.) cannot turn the whole transcript
      into a horizontally pannable surface on mobile. */
   overflow-x: hidden;
-  padding: 8px 32px 12px;
+  padding: 8px 24px 12px;
 }
 
 .transcript-inner {
