@@ -45,8 +45,6 @@ export interface ComposerProps {
   /** Click handler for the "+" attach button on the composer footer.
    *  Hosts wire this to open a file picker (Attachments component). */
   onAttachClick?: () => void;
-  /** Remaining context percentage. `null` shows a pending text state. */
-  contextRemainingPercent?: number | null | undefined;
 }
 
 export const Composer: Component<ComposerProps> = (props) => {
@@ -62,27 +60,6 @@ export const Composer: Component<ComposerProps> = (props) => {
     }
   };
   const canSend = () => value().trim().length > 0 || hasExtra();
-  const contextRemaining = () => {
-    const value = props.contextRemainingPercent;
-    if (typeof value !== "number" || !Number.isFinite(value)) return null;
-    return Math.max(0, Math.min(100, value));
-  };
-  const contextRemainingRounded = () => {
-    const value = contextRemaining();
-    return value === null ? null : Math.round(value);
-  };
-  const contextTone = () => {
-    const value = contextRemaining();
-    if (value === null) return "unknown";
-    if (value >= 70) return "good";
-    if (value >= 40) return "warn";
-    return "danger";
-  };
-  const contextLabel = () => {
-    const value = contextRemainingRounded();
-    return value === null ? "컨텍스트 압축 정보 확인 중" : `컨텍스트 압축까지 ${value}% 남았습니다`;
-  };
-
   let inputEl!: HTMLTextAreaElement;
   let slashPickerEl: HTMLDivElement | undefined;
 
@@ -295,14 +272,6 @@ export const Composer: Component<ComposerProps> = (props) => {
             >
               +
             </button>
-          </Show>
-          <Show when={props.contextRemainingPercent !== undefined}>
-            <output
-              class={`composer-context-status composer-context-status-${contextTone()}`}
-              aria-live="polite"
-            >
-              {contextLabel()}
-            </output>
           </Show>
           <div class="composer-actions">
             <button

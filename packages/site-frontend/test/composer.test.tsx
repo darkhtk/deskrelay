@@ -163,30 +163,6 @@ describe("Composer — slash picker", () => {
   });
 });
 
-describe("Composer — context text", () => {
-  test("does not reserve a context text slot when the host hides usage", () => {
-    const { container } = setup({ onSend: vi.fn() });
-    expect(container.querySelector(".composer-context-status")).toBeNull();
-  });
-
-  test("renders context compression remaining text", () => {
-    const { container } = setup({ onSend: vi.fn(), contextRemainingPercent: 38 });
-    const status = container.querySelector(".composer-context-status") as HTMLElement;
-
-    expect(status).toBeTruthy();
-    expect(status.textContent).toBe("컨텍스트 압축까지 38% 남았습니다");
-    expect(status).toHaveClass("composer-context-status-danger");
-  });
-
-  test("shows a pending context text when usage is unknown", () => {
-    const { container } = setup({ onSend: vi.fn(), contextRemainingPercent: null });
-    const status = container.querySelector(".composer-context-status") as HTMLElement;
-
-    expect(status).toHaveClass("composer-context-status-unknown");
-    expect(status.textContent).toBe("컨텍스트 압축 정보 확인 중");
-  });
-});
-
 describe("Composer — Stop / inFlight mode", () => {
   test("inFlight=true reveals the stop button (separate from send)", () => {
     const { sendBtn, stopBtn } = setup({ onSend: vi.fn(), inFlight: true });

@@ -552,6 +552,13 @@ body.sidebar-resizing * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.composer-status-ctx {
+  min-width: 0;
+  color: var(--success);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .composer-status-action {
   flex: 0 0 auto;
   margin-left: auto;
@@ -580,9 +587,11 @@ body.sidebar-resizing * {
 .composer-status-danger::before {
   background: var(--danger);
 }
-.composer-status-offline::before,
-.composer-status-context::before {
+.composer-status-offline::before {
   background: var(--text-muted);
+}
+.composer-status-context::before {
+  background: var(--success);
 }
 @keyframes composer-status-pulse {
   0%,
@@ -3067,31 +3076,6 @@ pre .copy-button:hover {
   align-items: center;
   gap: 8px;
   margin-left: auto;
-}
-
-.composer-context-status {
-  flex: 1;
-  min-width: 0;
-  padding: 0 12px;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.3;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.composer-context-status-good {
-  color: var(--success);
-}
-.composer-context-status-warn {
-  color: var(--warning);
-}
-.composer-context-status-danger {
-  color: var(--danger);
-}
-.composer-context-status-unknown {
-  color: var(--text-faint);
 }
 
 .composer-stop {

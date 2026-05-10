@@ -904,7 +904,7 @@ export interface ChatViewProps {
 interface ComposerGuidance {
   tone: ConnectionStatusTone | "context";
   main: string;
-  detail: string;
+  detail?: string | undefined;
   action?: ConnectionStatusAction;
 }
 
@@ -1314,7 +1314,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setPermissionModeStatus("confirmed");
   }
 
-  function permissionModeStatusText(): string {
+  function permissionModeAlertText(): string | null {
     const requested = requestedPermissionMode();
     const confirmed = confirmedPermissionMode();
     const lastRequested = lastPermissionModeRequest();
@@ -1328,13 +1328,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (state === "mismatch" && confirmed && lastRequested) {
       return t("pm.status.mismatch", { requested: lastRequested, actual: confirmed });
     }
-    if (confirmed) {
-      if (requested !== confirmed) {
-        return t("pm.status.confirmed-next", { actual: confirmed, next: requested });
-      }
-      return t("pm.status.confirmed", { mode: confirmed });
-    }
-    return t("pm.status.pending-next", { mode: requested });
+    return null;
   }
 
   const [cliPermissions, { refetch: refetchCliPermissions, mutate: mutateCliPermissions }] =
@@ -2118,21 +2112,29 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     return `${deviceDisplayName(device)}: ${t(infrastructureStatus().mainKey)} - ${infrastructureStatusDetail()}`;
   };
 
-  const composerGuidance = createMemo<ComposerGuidance>(() => {
+  const composerContextText = () => {
+    if (props.showContextUsageMeter === false) return null;
+    const value = contextUsage().ctx?.remainingPercent;
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    const rounded = Math.max(0, Math.min(100, Math.round(value)));
+    return `컨텍스트 압축까지 ${rounded}% 남음`;
+  };
+
+  const composerGuidance = createMemo<ComposerGuidance | null>(() => {
     const status = connectionStatus();
     if (status.kind === "approval_waiting") {
       return {
         tone: status.tone,
-        main: "승인 대기",
-        detail: status.detailOverride ?? "대상: 현재 실행 · 조치: 권한 승인 창 확인",
+        main: "권한 승인 대기",
+        detail: status.detailOverride ?? "승인 창 확인",
         ...(status.action ? { action: status.action } : {}),
       };
     }
     if (status.kind === "tool_running" || status.kind === "streaming") {
       return {
         tone: status.tone,
-        main: "실행 중",
-        detail: `동작: ${status.detailOverride ?? t(status.mainKey)} · 중지: Esc`,
+        main: status.detailOverride ?? t(status.mainKey),
+        detail: "Esc 중지",
       };
     }
     if (
@@ -2145,48 +2147,49 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         tone: status.tone,
         main:
           status.kind === "selected_device_offline" || status.kind === "not_installed"
-            ? "전송 불가"
-            : "전송 대기",
+            ? status.kind === "not_installed"
+              ? "디바이스 등록 필요"
+              : "디바이스 오프라인"
+            : status.kind === "behavior_not_ready"
+              ? "Claude 모듈 준비 중"
+              : "연결 확인 중",
         detail:
-          status.detailOverride ??
-          (status.kind === "not_installed"
-            ? "대상: 디바이스 없음 · 조치: 디바이스 등록"
+          status.kind === "not_installed"
+            ? "디바이스 등록"
             : status.kind === "selected_device_offline"
-              ? "대상: 선택 디바이스 · 상태: 오프라인"
-              : status.kind === "behavior_not_ready"
-                ? "대상: 선택 디바이스 · 상태: Claude 모듈 준비 중"
-                : "대상: 선택 디바이스 · 상태: 사이트 연결 확인 중"),
+              ? "Connector 실행 필요"
+              : undefined,
         ...(status.action ? { action: status.action } : {}),
       };
     }
     if (error()) {
       return {
         tone: "warning",
-        main: "전송 불가",
-        detail: "상태: 실행 오류 · 조치: 오류 확인 후 재시도",
+        main: "오류 발생",
+        detail: "오류 확인 후 재시도",
         ...(status.action ? { action: status.action } : {}),
       };
     }
-    if (showNewChat() || (cwd().trim() && !selectedSession())) {
+    const permissionAlert = permissionModeAlertText();
+    if (permissionAlert) {
       return {
-        tone: "ok",
-        main: "입력 가능",
-        detail: `대상: 새 세션 · 전송 시 Claude CLI 세션 생성 · ${permissionModeStatusText()}`,
+        tone: "warning",
+        main: permissionAlert,
       };
     }
+    if (showNewChat() || (cwd().trim() && !selectedSession())) {
+      return null;
+    }
     if (selectedSession()) {
-      return {
-        tone: "ok",
-        main: "입력 가능",
-        detail: `대상: 선택된 세션 · ${permissionModeStatusText()}`,
-      };
+      return null;
     }
     return {
       tone: "context",
-      main: "전송 대기",
-      detail: "대상: 없음 · 조치: 사이드바 세션 선택",
+      main: "세션 선택 필요",
     };
   });
+
+  const showComposerStatus = () => Boolean(composerGuidance() || composerContextText());
 
   const newChatCwd = () => {
     const id = effectiveDeviceId();
@@ -3684,24 +3687,37 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                     </svg>
                   </button>
                 </Show>
-                <output
-                  class={`composer-status composer-status-${composerGuidance().tone}`}
-                  aria-live="polite"
-                >
-                  <span class="composer-status-main">{composerGuidance().main}</span>
-                  <span class="composer-status-detail">{composerGuidance().detail}</span>
-                  <Show when={composerGuidance().action}>
-                    {(action) => (
-                      <button
-                        type="button"
-                        class="composer-status-action"
-                        onClick={() => openConnectionStatusAction(action())}
-                      >
-                        {t(`connection.action.${action()}`)}
-                      </button>
-                    )}
-                  </Show>
-                </output>
+                <Show when={showComposerStatus()}>
+                  <output
+                    class={`composer-status composer-status-${composerGuidance()?.tone ?? "context"}`}
+                    aria-live="polite"
+                  >
+                    <Show when={composerGuidance()}>
+                      {(guidance) => (
+                        <>
+                          <span class="composer-status-main">{guidance().main}</span>
+                          <Show when={guidance().detail}>
+                            {(detail) => <span class="composer-status-detail">{detail()}</span>}
+                          </Show>
+                        </>
+                      )}
+                    </Show>
+                    <Show when={composerContextText()}>
+                      {(contextText) => <span class="composer-status-ctx">{contextText()}</span>}
+                    </Show>
+                    <Show when={composerGuidance()?.action}>
+                      {(action) => (
+                        <button
+                          type="button"
+                          class="composer-status-action"
+                          onClick={() => openConnectionStatusAction(action())}
+                        >
+                          {t(`connection.action.${action()}`)}
+                        </button>
+                      )}
+                    </Show>
+                  </output>
+                </Show>
                 <Attachments
                   ref={(api) => {
                     attachmentsApi = api;
@@ -3715,11 +3731,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   hasExtraContent={() => attachmentCount() > 0}
                   onAttachClick={handleAttachClick}
                   slashCommands={composerSlashCommands()}
-                  contextRemainingPercent={
-                    props.showContextUsageMeter === false
-                      ? undefined
-                      : (contextUsage().ctx?.remainingPercent ?? null)
-                  }
                 />
               </div>
             </>

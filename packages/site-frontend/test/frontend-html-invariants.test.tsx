@@ -74,15 +74,17 @@ describe("LoginCard", () => {
 });
 
 describe("settings and chrome invariants", () => {
-  test("composer context text sits in the composer footer without a progress bar", () => {
+  test("composer context text sits in the status line without a progress bar", () => {
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
     const composerSource = readFileSync(resolve(pkgRoot, "src/components/Composer.tsx"), "utf8");
+    const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
 
     expect(styles).toMatch(/\.composer-card\s*{[^}]*position:\s*relative;/s);
     expect(styles).toMatch(/\.composer-card\s*{[^}]*padding:\s*12px 22px 8px 12px;/s);
-    expect(styles).toContain(".composer-context-status");
+    expect(styles).toContain(".composer-status-ctx");
     expect(styles).not.toContain(".composer-ctx-meter");
-    expect(composerSource).toContain("컨텍스트 압축까지");
+    expect(composerSource).not.toContain("contextRemainingPercent");
+    expect(chatViewSource).toContain("컨텍스트 압축까지");
   });
 
   test("session and week usage meters stack with reset labels on the right", () => {
@@ -92,7 +94,7 @@ describe("settings and chrome invariants", () => {
     expect(appSource).toContain('class="context-meter-main"');
     expect(styles).toMatch(/\.context-meter-group\s*{[^}]*flex-direction:\s*column;/s);
     expect(styles).toMatch(/\.context-meter\s*{[^}]*justify-content:\s*space-between;/s);
-    expect(styles).toMatch(/\.context-battery-label\s*{[^}]*min-width:\s*46px;/s);
+    expect(styles).toMatch(/\.context-battery-label\s*{[^}]*width:\s*48px;/s);
     expect(styles).toMatch(/\.context-meter-reset\s*{[^}]*margin-left:\s*auto;/s);
   });
 

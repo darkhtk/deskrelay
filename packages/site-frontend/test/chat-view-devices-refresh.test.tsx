@@ -2058,8 +2058,10 @@ describe("ChatView device refresh bridge", () => {
       expect(container.querySelector(".chat-header-current-status")?.textContent).toContain(
         t("connection.status.online.main"),
       );
-      expect(container.querySelector(".composer-status-main")?.textContent).toContain("입력 가능");
-      expect(container.querySelector(".composer-status-detail")?.textContent).toContain(
+      expect(container.querySelector(".composer-status-main")?.textContent ?? "").not.toContain(
+        "입력 가능",
+      );
+      expect(container.querySelector(".composer-status-detail")?.textContent ?? "").not.toContain(
         "대상: 선택된 세션",
       );
       expect(container.querySelector(".composer-status-main")?.textContent ?? "").not.toContain(
