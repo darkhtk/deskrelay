@@ -1,9 +1,5 @@
 import { networkInterfaces } from "node:os";
-import type {
-  DiagnosticCheck,
-  DiagnosticReport,
-  DiagnosticSeverity,
-} from "@deskrelay/shared";
+import type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
 import { type DeskRelayBuildInfo, getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
@@ -18,6 +14,7 @@ import type {
   SelfServerAutostartController,
   SelfServerAutostartStatus,
 } from "./self-server-autostart.ts";
+import type { SelfServerUpdater } from "./self-server-update.ts";
 import type { UpdateNoticeSource } from "./update-notice.ts";
 
 export interface SiteAppOptions {
@@ -33,6 +30,7 @@ export interface SiteAppOptions {
   localDaemonToken?: string;
   selfHostUrl?: string;
   selfServerAutostart?: SelfServerAutostartController;
+  selfServerUpdater?: SelfServerUpdater;
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -146,7 +144,8 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     } catch {
       return c.json({ error: "invalid JSON body" }, 400);
     }
-    const enabled = typeof body === "object" && body ? (body as { enabled?: unknown }).enabled : null;
+    const enabled =
+      typeof body === "object" && body ? (body as { enabled?: unknown }).enabled : null;
     if (typeof enabled !== "boolean") {
       return c.json({ error: "enabled boolean is required" }, 400);
     }
@@ -154,6 +153,25 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return c.json(await options.selfServerAutostart.setEnabled(enabled));
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  app.post("/api/self/update", async (c) => {
+    if (!options.selfServerUpdater) {
+      return c.json(
+        {
+          supported: false,
+          started: false,
+          error: "self server updater is not configured",
+        },
+        501,
+      );
+    }
+    try {
+      const result = await options.selfServerUpdater.update();
+      return c.json(result, result.started ? 202 : 501);
+    } catch (err) {
+      return c.json({ supported: true, started: false, error: (err as Error).message }, 500);
     }
   });
 
@@ -438,6 +456,22 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     );
   });
 
+  app.post("/api/devices/:id/system/update", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
+    const preferredUrl = pickRemoteAccessUrl(urls);
+    const fallbackCommand = options.token
+      ? buildRegisterOtherPcCommand({ siteUrl: preferredUrl, siteToken: options.token })
+      : "";
+    return await requestDaemonSystemUpdate(
+      fetchImpl,
+      device,
+      daemonToken(device, localToken),
+      fallbackCommand,
+    );
+  });
+
   app.get("/api/devices/:id/doctor", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
@@ -696,6 +730,65 @@ async function requestDaemonUninstall(
   }
 }
 
+async function requestDaemonSystemUpdate(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  token: string | undefined,
+  fallbackCommand: string,
+): Promise<Response> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token) headers.authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(`${device.daemonUrl}/system/update`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+  } catch (err) {
+    return Response.json(
+      {
+        ok: false,
+        error: `cannot reach daemon: ${(err as Error).message}`,
+        fallbackCommand,
+      },
+      { status: 502 },
+    );
+  }
+
+  const text = await res.text();
+  const payload = parseJsonPayload(text);
+  if (!res.ok) {
+    const unavailable = res.status === 404 || res.status === 405 || res.status === 501;
+    const error =
+      payload && typeof payload === "object" && "error" in payload
+        ? String((payload as { error: unknown }).error)
+        : `daemon update failed with HTTP ${res.status}`;
+    return Response.json(
+      {
+        ok: false,
+        error: unavailable
+          ? "connector update API is unavailable on this device. Re-run the registration command."
+          : error,
+        daemonStatus: res.status,
+        fallbackCommand,
+      },
+      { status: unavailable ? 424 : res.status },
+    );
+  }
+
+  return Response.json(payload ?? { ok: true });
+}
+
+function parseJsonPayload(text: string): unknown {
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
 function orderDevicesForRemoval(devices: Device[]): Device[] {
   return [...devices].sort((left, right) => {
     return Number(isServerDevice(left)) - Number(isServerDevice(right));
@@ -884,7 +977,9 @@ interface DaemonStatusPayload {
   };
 }
 
-async function buildServerDiagnosticReport(input: ServerDiagnosticInput): Promise<DiagnosticReport> {
+async function buildServerDiagnosticReport(
+  input: ServerDiagnosticInput,
+): Promise<DiagnosticReport> {
   const generatedAt = new Date().toISOString();
   const checks: DiagnosticCheck[] = [];
   const preferredUrl = pickRemoteAccessUrl(input.urls);
@@ -916,7 +1011,8 @@ async function buildServerDiagnosticReport(input: ServerDiagnosticInput): Promis
     diagnosticCheck({
       id: "server.remote-url",
       label: "Remote URL",
-      severity: remoteUrls.length > 0 && !isLocalHost(new URL(preferredUrl).hostname) ? "ok" : "warn",
+      severity:
+        remoteUrls.length > 0 && !isLocalHost(new URL(preferredUrl).hostname) ? "ok" : "warn",
       summary:
         remoteUrls.length > 0
           ? `preferred access URL: ${preferredUrl}`
@@ -989,13 +1085,16 @@ async function buildServerDiagnosticReport(input: ServerDiagnosticInput): Promis
   };
 }
 
-async function buildDeviceDiagnosticReport(input: DeviceDiagnosticInput): Promise<DiagnosticReport> {
+async function buildDeviceDiagnosticReport(
+  input: DeviceDiagnosticInput,
+): Promise<DiagnosticReport> {
   const generatedAt = new Date().toISOString();
   const checks: DiagnosticCheck[] = [];
   const devices = input.registry.list();
   const token = daemonToken(input.device, input.localToken);
   const duplicateUrls = devices.filter(
-    (candidate) => candidate.id !== input.device.id && candidate.daemonUrl === input.device.daemonUrl,
+    (candidate) =>
+      candidate.id !== input.device.id && candidate.daemonUrl === input.device.daemonUrl,
   );
   const duplicateLabels = devices.filter(
     (candidate) =>
@@ -1099,7 +1198,8 @@ async function buildDeviceDiagnosticReport(input: DeviceDiagnosticInput): Promis
     diagnosticCheck({
       id: "device.claude",
       label: "Claude module",
-      severity: remoteClaudeLoaded === true ? "ok" : remoteClaudeLoaded === false ? "error" : "unknown",
+      severity:
+        remoteClaudeLoaded === true ? "ok" : remoteClaudeLoaded === false ? "error" : "unknown",
       summary:
         remoteClaudeLoaded === true
           ? "remote-claude behavior is loaded"

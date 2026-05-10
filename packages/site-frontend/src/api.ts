@@ -228,6 +228,26 @@ export interface SelfServerAutostartStatus {
   error?: string;
 }
 
+export interface SelfServerUpdateResponse {
+  supported: boolean;
+  started: boolean;
+  logPath?: string;
+  pid?: number;
+  error?: string;
+}
+
+export interface DeviceUpdateResponse {
+  ok?: boolean;
+  changed?: boolean;
+  restartScheduled?: boolean;
+  warning?: string;
+  error?: string;
+  fallbackCommand?: string;
+  daemonStatus?: number;
+  before?: { shortCommit?: string };
+  after?: { shortCommit?: string };
+}
+
 export interface BrowserClientContext {
   address: string;
   isLocal: boolean;
@@ -358,6 +378,9 @@ export const api = {
   selfServerAutostart: () => request<SelfServerAutostartStatus>("GET", "/api/self/autostart"),
   setSelfServerAutostart: (enabled: boolean) =>
     request<SelfServerAutostartStatus>("PUT", "/api/self/autostart", { enabled }),
+  selfUpdate: () => request<SelfServerUpdateResponse>("POST", "/api/self/update"),
+  updateDevice: (id: string) =>
+    request<DeviceUpdateResponse>("POST", `/api/devices/${id}/system/update`),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>
     request<Device>("POST", "/api/devices", {
       daemonUrl,

@@ -151,6 +151,12 @@ Set-Location -LiteralPath $repoQ
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1 -Root $rootQ -RepoRoot $repoQ
 "@
 
+$updateServer = @"
+# DeskRelay - update this self-host server from git
+Set-Location -LiteralPath $repoQ
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-update.ps1 -Root $rootQ -RepoRoot $repoQ
+"@
+
 $installServerAutostart = @"
 # DeskRelay - enable server autostart on Windows login
 Set-Location -LiteralPath $repoQ
@@ -335,6 +341,7 @@ $all = @"
 #   open-site.txt
 #   start-server.txt
 #   status-server.txt
+#   update-server.txt
 #   install-server-autostart.txt
 #   remove-server-autostart.txt
 #   stop-server.txt
@@ -356,7 +363,9 @@ $openSite
 
 $registerOtherPc
 
-## Server autostart
+## Server update and autostart
+
+$updateServer
 
 $installServerAutostart
 
@@ -390,6 +399,7 @@ $unregisterDevice
 Write-TextFile -Path (Join-Path $commandsDir "open-site.txt") -Content $openSite
 Write-TextFile -Path (Join-Path $commandsDir "start-server.txt") -Content $startServer
 Write-TextFile -Path (Join-Path $commandsDir "status-server.txt") -Content $statusServer
+Write-TextFile -Path (Join-Path $commandsDir "update-server.txt") -Content $updateServer
 Write-TextFile -Path (Join-Path $commandsDir "install-server-autostart.txt") -Content $installServerAutostart
 Write-TextFile -Path (Join-Path $commandsDir "remove-server-autostart.txt") -Content $removeServerAutostart
 Write-TextFile -Path (Join-Path $commandsDir "stop-server.txt") -Content $stopServer
@@ -407,6 +417,7 @@ Write-TextFile -Path (Join-Path $commandsDir "deskrelay-commands.txt") -Content 
 Write-TextFile -Path (Join-Path $repo "DESKRELAY-SERVER-CODE.txt") -Content $topLevelCode
 Write-TextFile -Path (Join-Path $repo "REGISTER-OTHER-PC.txt") -Content $registerOtherPc
 Write-TextFile -Path (Join-Path $repo "REMOVE-OTHER-PC.txt") -Content $removeOtherPc
+Write-TextFile -Path (Join-Path $repo "UPDATE-DESKRELAY-SERVER.txt") -Content $updateServer
 Write-TextFile -Path (Join-Path $repo "REMOVE-DESKRELAY-SERVER.txt") -Content $uninstallServer
 
 Write-Host "Command files: $commandsDir"
@@ -414,4 +425,5 @@ Write-Host "Top-level quick files:"
 Write-Host "  $(Join-Path $repo 'DESKRELAY-SERVER-CODE.txt')"
 Write-Host "  $(Join-Path $repo 'REGISTER-OTHER-PC.txt')"
 Write-Host "  $(Join-Path $repo 'REMOVE-OTHER-PC.txt')"
+Write-Host "  $(Join-Path $repo 'UPDATE-DESKRELAY-SERVER.txt')"
 Write-Host "  $(Join-Path $repo 'REMOVE-DESKRELAY-SERVER.txt')"

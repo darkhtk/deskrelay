@@ -10,6 +10,7 @@
 //   GET    /events/spaces/{spaceId}/stream      SSE; supports Last-Event-ID
 //   GET    /files/preview                       guarded image blob preview
 //   POST   /system/uninstall                    remove local connector install
+//   POST   /system/update                       update local source checkout
 //
 // Auth: every route except /pairing/status requires
 // `Authorization: Bearer <token>` where the token is the value loaded
@@ -111,6 +112,9 @@ export interface DaemonOptions {
   /** Remove local connector state/login task after a site-side device removal.
    *  Wired by bin.ts for the real daemon; tests may provide a stub. */
   requestSelfUninstall?: (options: { removeRepo?: boolean }) => Promise<unknown>;
+  /** Pull the local source checkout and restart through the login task when
+   *  available. Wired by bin.ts for the real daemon; tests may provide a stub. */
+  requestSelfUpdate?: () => Promise<unknown>;
 }
 
 interface ResolvedListen {
@@ -271,6 +275,9 @@ export class Daemon {
       }
       if (req.method === "POST" && path === "/system/uninstall") {
         return await this.#handleSystemUninstall(req);
+      }
+      if (req.method === "POST" && path === "/system/update") {
+        return await this.#handleSystemUpdate();
       }
       if (req.method === "POST" && path === "/hooks/pretooluse") {
         return await this.#handleApprovalRequest(req);
@@ -692,6 +699,19 @@ export class Daemon {
     }
     const result = await uninstall({ removeRepo });
     return jsonResponse(200, result ?? { ok: true });
+  }
+
+  async #handleSystemUpdate(): Promise<Response> {
+    const update = this.#options.requestSelfUpdate;
+    if (!update) {
+      return jsonResponse(501, { ok: false, error: "self update is not wired" });
+    }
+    try {
+      const result = await update();
+      return jsonResponse(200, result ?? { ok: true });
+    } catch (err) {
+      return jsonResponse(500, { ok: false, error: (err as Error).message });
+    }
   }
 
   async #handleApprovalRequest(req: Request): Promise<Response> {

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
 import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
+import { createPowerShellSelfServerUpdater } from "./self-server-update.ts";
 import { createGitUpdateNoticeSource } from "./update-notice.ts";
 
 const port = process.env.CR_SITE_PORT ? Number(process.env.CR_SITE_PORT) : 18092;
@@ -50,6 +51,11 @@ const app = createSiteApp({
   selfServerAutostart: createPowerShellSelfServerAutostartController({
     repoRoot: process.cwd(),
     root: process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self-server"),
+  }),
+  selfServerUpdater: createPowerShellSelfServerUpdater({
+    repoRoot: process.cwd(),
+    root: process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self-server"),
+    branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
   }),
 });
 

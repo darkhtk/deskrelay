@@ -259,6 +259,37 @@ describe("self-host command helper", () => {
     expect(enabled.status).toBe(200);
     expect((await enabled.json()).installed).toBe(true);
   });
+
+  test("server update starts through an authenticated endpoint", async () => {
+    let calls = 0;
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      selfServerUpdater: {
+        async update() {
+          calls += 1;
+          return { supported: true, started: true, logPath: "update.log" };
+        },
+      },
+    });
+
+    const unauth = await app.fetch(new Request("http://site.local/api/self/update"));
+    expect(unauth.status).toBe(401);
+
+    const res = await app.fetch(
+      new Request("http://site.local/api/self/update", {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(calls).toBe(1);
+    expect(await res.json()).toEqual({
+      supported: true,
+      started: true,
+      logPath: "update.log",
+    });
+  });
 });
 
 describe("doctor endpoints", () => {
@@ -547,6 +578,51 @@ describe("device CRUD", () => {
   test("DELETE unknown id returns 404", async () => {
     const res = await setup.app.fetch(authedRequest("DELETE", "/api/devices/nope"));
     expect(res.status).toBe(404);
+  });
+});
+
+describe("device update proxy", () => {
+  test("POST /api/devices/:id/system/update forwards to daemon with saved token", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "Office",
+    });
+    setup.setMockResponse(() => Response.json({ ok: true, restartScheduled: true, changed: true }));
+
+    const res = await setup.app.fetch(
+      authedRequest("POST", `/api/devices/${device.id}/system/update`),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, restartScheduled: true, changed: true });
+    expect(setup.calls.at(-1)?.method).toBe("POST");
+    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/system/update`);
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+  });
+
+  test("old daemon update route returns a registration fallback command", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "Office",
+    });
+    setup.setMockResponse(() => Response.json({ error: "not found" }, { status: 404 }));
+
+    const res = await setup.app.fetch(
+      authedRequest("POST", `/api/devices/${device.id}/system/update`),
+    );
+    expect(res.status).toBe(424);
+    const body = (await res.json()) as {
+      ok: boolean;
+      error: string;
+      daemonStatus: number;
+      fallbackCommand: string;
+    };
+    expect(body.ok).toBe(false);
+    expect(body.daemonStatus).toBe(404);
+    expect(body.error).toContain("registration command");
+    expect(body.fallbackCommand).toContain("deskrelay-install-connector.ps1");
+    expect(body.fallbackCommand).toContain(`-SiteToken '${TOKEN}'`);
   });
 });
 

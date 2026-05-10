@@ -49,6 +49,7 @@ import {
   removeSourceRunLoginTask,
 } from "./login-task.ts";
 import { registerSelf } from "./self-register.ts";
+import { updateLocalSourceConnector } from "./self-update.ts";
 import { SiteWsClient } from "./site-ws-client.ts";
 import { clearStateFile, readStateFile, writeStateFile } from "./state-file.ts";
 import { parseWorkspaceRoots } from "./workspaces.ts";
@@ -445,6 +446,16 @@ const daemon = new Daemon({
     const result = await uninstallLocalConnector({ removeRepo: removeRepo === true });
     const exitTimer = setTimeout(() => process.exit(0), 250);
     (exitTimer as { unref?: () => void }).unref?.();
+    return result;
+  },
+  requestSelfUpdate: async () => {
+    const result = await updateLocalSourceConnector({
+      branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
+    });
+    if (result.restartScheduled) {
+      const exitTimer = setTimeout(() => process.exit(0), 500);
+      (exitTimer as { unref?: () => void }).unref?.();
+    }
     return result;
   },
   onLog: (record) => {

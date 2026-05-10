@@ -3,6 +3,7 @@ import { type Device, type DeviceCleanupEntry, api } from "../api.ts";
 import { deviceDisplayRole } from "../device-display.ts";
 import { clearDevicePrefs, getDeviceDefaultCwd, setDeviceDefaultCwd } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
+import { newChatCwdBrowseMode } from "../ui-prefs.ts";
 import { CwdPicker } from "./CwdPicker.tsx";
 
 export interface DeviceSettingsPanelProps {
@@ -104,7 +105,8 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
     try {
       const result = await api.unregisterAllDevices();
       const entries = result.cleanup ?? [];
-      const removedIds = entries.length > 0 ? entries.map((entry) => entry.id) : list.map((d) => d.id);
+      const removedIds =
+        entries.length > 0 ? entries.map((entry) => entry.id) : list.map((d) => d.id);
       for (const id of removedIds) clearDevicePrefs(id);
       if (removedIds.length > 0) {
         props.onDevicesRemoved?.(removedIds);
@@ -170,6 +172,7 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
               value={cwd()}
               onChange={setCwd}
               onSubmit={saveCwd}
+              browseMode={newChatCwdBrowseMode()}
             />
           </div>
           <button type="button" class="primary-button" onClick={saveCwd}>

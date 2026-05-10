@@ -209,6 +209,48 @@ describe("Daemon HTTP API — basics", () => {
     const r = await http("POST", "/system/uninstall", undefined, { token: null });
     expect(r.status).toBe(401);
   });
+
+  test("POST /system/update invokes the wired update callback", async () => {
+    let calls = 0;
+    await daemon.stop();
+    daemon = new Daemon({
+      port: 0,
+      bunPath: process.execPath,
+      authToken: TEST_AUTH_TOKEN,
+      requestSelfUpdate: async () => {
+        calls += 1;
+        return { ok: true, restartScheduled: true };
+      },
+    });
+    const listening = daemon.start();
+    baseUrl = `http://${listening.host}:${listening.port}`;
+    const r = await http("POST", "/system/update");
+    expect(r.status).toBe(200);
+    expect(calls).toBe(1);
+    expect(r.data).toEqual({ ok: true, restartScheduled: true });
+  });
+
+  test("POST /system/update requires Bearer auth", async () => {
+    const r = await http("POST", "/system/update", undefined, { token: null });
+    expect(r.status).toBe(401);
+  });
+
+  test("POST /system/update surfaces update failures", async () => {
+    await daemon.stop();
+    daemon = new Daemon({
+      port: 0,
+      bunPath: process.execPath,
+      authToken: TEST_AUTH_TOKEN,
+      requestSelfUpdate: async () => {
+        throw new Error("dirty checkout");
+      },
+    });
+    const listening = daemon.start();
+    baseUrl = `http://${listening.host}:${listening.port}`;
+    const r = await http("POST", "/system/update");
+    expect(r.status).toBe(500);
+    expect(r.data).toEqual({ ok: false, error: "dirty checkout" });
+  });
 });
 
 describe("Daemon HTTP API — auth", () => {
