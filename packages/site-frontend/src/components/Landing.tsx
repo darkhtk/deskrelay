@@ -317,6 +317,11 @@ export const Landing: Component<LandingProps> = (props) => {
                     : "시작하기를 누르면 이 서버의 Site token으로 등록 명령을 자동 생성합니다."}
                 </code>
               </pre>
+              <p class="landing-command-note">
+                실행 끝에는 등록 리포트와 connector 검증 리포트가 출력됩니다. 실패 시 ERROR 항목과{" "}
+                <code>%LOCALAPPDATA%\DeskRelay\reports\connector-verify-*.json</code> 경로를
+                확인하세요.
+              </p>
             </div>
           </div>
 

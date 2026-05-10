@@ -283,6 +283,33 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       detail: check.detail ? `${check.summary} · ${check.detail}` : check.summary,
     }));
   };
+  const registrationVerificationRows = (): StatusRow[] => [
+    {
+      tone: "pending",
+      label: "Git / Bun",
+      detail: "설치 스크립트가 repo 갱신과 의존성 설치 가능 여부를 확인합니다.",
+    },
+    {
+      tone: "pending",
+      label: "Workspace roots",
+      detail: "등록 명령에 지정된 작업 루트가 실제로 존재하는지 확인합니다.",
+    },
+    {
+      tone: "pending",
+      label: "Windows login task",
+      detail: "부팅 후 connector가 자동 실행되도록 로그인 작업이 등록됐는지 확인합니다.",
+    },
+    {
+      tone: "pending",
+      label: "local / advertised daemon",
+      detail: "이 PC 내부와 서버가 접근하는 Tailscale/LAN 주소 양쪽에서 daemon 응답을 확인합니다.",
+    },
+    {
+      tone: "pending",
+      label: "server registry",
+      detail: "서버가 site token으로 디바이스 목록을 읽고 등록 결과를 확인합니다.",
+    },
+  ];
 
   return (
     <div class="connection-diagnostics">
@@ -409,6 +436,30 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           </div>
         </div>
       </Show>
+
+      <div class="connection-diagnostics-list">
+        <div class="connection-diagnostics-list-title">등록 검증 리포트 기준</div>
+        <div class="connection-diagnostics-rows">
+          <For each={registrationVerificationRows()}>
+            {(row) => (
+              <div class="connection-diagnostics-row">
+                <div class="connection-diagnostics-row-main">
+                  <div class="connection-diagnostics-row-title">
+                    <span class={`connection-diagnostics-dot tone-${row.tone}`} />
+                    {row.label}
+                  </div>
+                  <div class="connection-diagnostics-row-detail">{row.detail}</div>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+        <p class="settings-card-help">
+          다른 PC 등록 명령이 실패하면 대상 PC의{" "}
+          <code>%LOCALAPPDATA%\DeskRelay\reports\connector-verify-*.json</code> 파일에서 같은
+          단계명을 확인하세요.
+        </p>
+      </div>
 
       <Show when={(diagnostics()?.workspaceRoots?.roots ?? []).length > 0}>
         <div class="connection-diagnostics-list">

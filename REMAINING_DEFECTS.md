@@ -13,6 +13,7 @@
 - `self-verify-connector.ps1` 추가: 실제 PC 등록 후 Git/Bun/repo/workspace/login task/local daemon/advertised daemon/server registry를 JSON report로 남김
 - `install-connector.ps1`가 등록 완료 후 connector 검증 리포트를 자동 실행
 - 가상 self-host e2e에서 connector 검증 리포트 성공 여부 확인
+- 메인 화면, 설정 도움말, 연결 진단 탭, README/Manual에 connector 검증 리포트 위치와 단계명을 반영
 
 ## P0. 다른 Windows PC 등록 실증
 

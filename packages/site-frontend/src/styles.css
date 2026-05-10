@@ -3649,13 +3649,20 @@ pre .copy-button:hover {
   word-break: break-word;
 }
 .landing-command-error,
-.landing-command-url {
+.landing-command-url,
+.landing-command-note {
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
+  line-height: 1.45;
 }
 .landing-command-error {
   color: #b4423a;
+}
+.landing-command-note code {
+  background: var(--code-chip);
+  border-radius: 5px;
+  padding: 1px 5px;
 }
 .landing-release-notes {
   padding: 0 24px 56px;

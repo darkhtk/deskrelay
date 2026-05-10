@@ -138,7 +138,21 @@ const HELP_SECTIONS: Array<{
       "등록 명령에는 서버 URL과 site token이 포함되어야 합니다.",
       "명령은 git에서 설치 스크립트를 내려받고, connector 설치/갱신, 로그인 작업 등록, 서버 등록까지 처리합니다.",
       "등록 후 디바이스 목록에 보이지 않으면 서버 URL, site token, Tailscale/LAN IP, 방화벽, 18091 포트를 확인합니다.",
+      "등록 명령 출력의 registration report는 설치/등록 단계별 결과를 요약합니다.",
+      "connector verification report는 대상 PC의 %LOCALAPPDATA%\\DeskRelay\\reports\\connector-verify-*.json에 저장됩니다.",
       "이미 설치된 connector가 포트를 점유하면 기존 bun/PowerShell/login task를 종료한 뒤 다시 실행해야 합니다.",
+    ],
+  },
+  {
+    title: "설치 검증 리포트",
+    scopes: ["current device"],
+    open: true,
+    items: [
+      "Git, Bun, DeskRelay repo, workspace roots, Windows login task, local daemon, advertised daemon, server registry 순서로 확인합니다.",
+      "ERROR 행은 실제로 막힌 단계입니다. 같은 행의 action 또는 hint를 먼저 처리합니다.",
+      "local daemon은 해당 PC 안에서 127.0.0.1:18091이 응답하는지 확인합니다.",
+      "advertised daemon은 서버가 Tailscale/LAN 주소의 18091 포트로 접근 가능한지 확인합니다.",
+      "server registry 실패는 서버 URL, site token, 서버 실행 상태를 먼저 확인합니다.",
     ],
   },
   {

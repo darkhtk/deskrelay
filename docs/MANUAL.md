@@ -10,7 +10,8 @@
 - 서버 PC에서는 `시작하기`로 채팅 화면에 들어갑니다.
 - 다른 PC를 추가하려면 메인 화면의 `다른 PC 등록 명령`을 통째로 복사해 제어하려는 PC의 PowerShell에서 실행합니다.
 - 등록 명령에는 서버 URL과 Site token이 포함되어 있어야 하며, 실행이 끝나면 대상 PC가 디바이스 목록에 나타납니다.
-- 등록 명령은 마지막에 connector 검증 리포트를 출력합니다. 실패하면 어느 단계가 막혔는지 `ERROR` 항목과 report 경로를 확인합니다.
+- 등록 명령은 마지막에 registration report를 출력하고, connector 검증 리포트를 파일로 남깁니다. 실패하면 어느 단계가 막혔는지 `ERROR` 항목과 report 경로를 확인합니다.
+- connector 검증 리포트는 대상 PC의 `%LOCALAPPDATA%\DeskRelay\reports\connector-verify-*.json`에 저장됩니다.
 - 서버 URL, Site token, 제거 명령, 상태 진단 안내는 메인 화면에서 확인하는 것이 기준입니다.
 - 서버가 삭제되었거나 현재 PC가 더 이상 등록 대상이 아니면, 메인 화면의 안내에 따라 제거 명령을 실행합니다.
 
@@ -85,4 +86,5 @@
 - 선택한 디바이스가 실제로 사용 가능한지 점검합니다.
 - 서버, connector daemon, Claude 모듈, workspace 상태를 나누어 보여줍니다.
 - 단순히 “오프라인”으로 뭉개지 않고 어느 단계가 막혔는지 확인하는 화면입니다.
+- 다른 PC 등록 실패 시에도 `Git`, `Bun`, `DeskRelay repo`, `workspace roots`, `Windows login task`, `local daemon`, `advertised daemon`, `server registry` 단계명을 기준으로 원인을 맞춰 봅니다.
 - 문제가 있으면 여기서 먼저 현재 상태와 마지막 오류를 확인하세요.
