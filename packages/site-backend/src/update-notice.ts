@@ -16,6 +16,7 @@ export interface UpdateNoticeSource {
 export interface GitUpdateNoticeOptions {
   repoRoot: string;
   branch?: string;
+  nextVersion?: string;
   pollMs?: number;
   timeoutMs?: number;
   build?: DeskRelayBuildInfo;
@@ -42,39 +43,35 @@ export function createGitUpdateNoticeSource(options: GitUpdateNoticeOptions): Up
 
   async function refresh(): Promise<UpdateNoticePayload> {
     const build = options.build ?? getDeskRelayBuildInfo(options.repoRoot);
+    const currentVersion = normalizeVersion(build.version) || "0.0.0";
+    const explicitNextVersion = normalizeVersion(options.nextVersion);
+    const prefix = `현재 버젼 ${formatVersion(currentVersion)}`;
     const currentCommit = normalizeCommit(build.commit);
-    const currentShort = shortCommit(currentCommit) || build.shortCommit || "unknown";
-    const versionText = build.version ? ` ${build.version}` : "";
-    const prefix = `현재 설치 버전${versionText} (${currentShort})`;
-    if (!currentCommit) {
+    if (explicitNextVersion && explicitNextVersion !== currentVersion) {
       return {
-        message: `${prefix} · 업데이트 확인 불가`,
+        message: `${prefix}, 다음 버젼 ${formatVersion(explicitNextVersion)}`,
         level: "warning",
       };
     }
+    if (!currentCommit) return { message: prefix, level: "info" };
 
     const remoteCommit = await readRemoteCommit(options.repoRoot, branch, timeoutMs, runner);
-    if (!remoteCommit) {
-      return {
-        message: `${prefix} · 업데이트 확인 불가`,
-        level: "warning",
-      };
-    }
+    if (!remoteCommit) return { message: prefix, level: "info" };
 
     if (remoteCommit === currentCommit) {
-      if (build.dirty) {
-        return {
-          message: `${prefix} · 최신 상태 · 로컬 변경 있음`,
-          level: "warning",
-        };
-      }
-      return { message: `${prefix} · 최신 상태`, level: "info" };
+      return { message: prefix, level: "info" };
     }
 
-    const remoteShort = shortCommit(remoteCommit) || "unknown";
-    const dirtySuffix = build.dirty ? " · 로컬 변경 있음" : "";
+    const remoteVersion = await readRemotePackageVersion(
+      options.repoRoot,
+      branch,
+      timeoutMs,
+      runner,
+    );
+    if (!remoteVersion || remoteVersion === currentVersion)
+      return { message: prefix, level: "info" };
     return {
-      message: `${prefix} · 업데이트 있음 (${remoteShort})${dirtySuffix}`,
+      message: `${prefix}, 다음 버젼 ${formatVersion(remoteVersion)}`,
       level: "warning",
     };
   }
@@ -116,13 +113,40 @@ async function readRemoteCommit(
   }
 }
 
+async function readRemotePackageVersion(
+  repoRoot: string,
+  branch: string,
+  timeoutMs: number,
+  runner: GitCommandRunner,
+): Promise<string | null> {
+  const refs = [`origin/${branch}:package.json`, `refs/remotes/origin/${branch}:package.json`];
+  for (const ref of refs) {
+    try {
+      const { stdout } = await runner(["show", ref], { cwd: repoRoot, timeoutMs });
+      const parsed = JSON.parse(stdout) as { version?: unknown };
+      const version = normalizeVersion(
+        typeof parsed.version === "string" ? parsed.version : undefined,
+      );
+      if (version) return version;
+    } catch {
+      // Try the next local remote ref shape before giving up.
+    }
+  }
+  return null;
+}
+
 function normalizeCommit(value: string | undefined): string | null {
   const commit = value?.trim().toLowerCase() ?? "";
   return /^[0-9a-f]{40}$/.test(commit) ? commit : null;
 }
 
-function shortCommit(value: string | null): string | null {
-  return value ? value.slice(0, 7) : null;
+function normalizeVersion(value: string | undefined): string | null {
+  const version = value?.trim().replace(/^v/i, "") ?? "";
+  return version ? version : null;
+}
+
+function formatVersion(version: string): string {
+  return `v${version.replace(/^v/i, "")}`;
 }
 
 async function runGitCommand(

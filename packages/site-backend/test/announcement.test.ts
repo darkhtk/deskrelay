@@ -43,23 +43,18 @@ describe("GET /api/announcement", () => {
   });
 
   test("update notice can become the whole announcement", async () => {
-    const r = await getAnnouncement(
-      undefined,
-      updateNotice("현재 설치 버전 0.0.0 (abc1234) · 최신 상태"),
-    );
+    const r = await getAnnouncement(undefined, updateNotice("현재 버젼 v0.0.0"));
     expect(r.status).toBe(200);
-    expect(r.body.message).toBe("현재 설치 버전 0.0.0 (abc1234) · 최신 상태");
+    expect(r.body.message).toBe("현재 버젼 v0.0.0");
     expect(r.body.level).toBe("info");
   });
 
   test("update notice is prepended to operator announcement", async () => {
     const r = await getAnnouncement(
       "원격 공지",
-      updateNotice("현재 설치 버전 0.0.0 (abc1234) · 업데이트 있음 (def5678)", "warning"),
+      updateNotice("현재 버젼 v0.0.0, 다음 버젼 v0.0.1", "warning"),
     );
-    expect(r.body.message).toBe(
-      "현재 설치 버전 0.0.0 (abc1234) · 업데이트 있음 (def5678) · 원격 공지",
-    );
+    expect(r.body.message).toBe("현재 버젼 v0.0.0, 다음 버젼 v0.0.1 · 원격 공지");
     expect(r.body.level).toBe("warning");
   });
 
@@ -69,7 +64,7 @@ describe("GET /api/announcement", () => {
         throw new Error("git unavailable");
       },
     });
-    expect(r.body.message).toBe("현재 설치 버전 확인 실패");
+    expect(r.body.message).toBe("현재 버젼 확인 실패");
     expect(r.body.level).toBe("warning");
   });
 

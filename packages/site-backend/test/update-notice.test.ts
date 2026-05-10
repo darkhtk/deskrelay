@@ -26,40 +26,63 @@ describe("git update notice", () => {
 
     const payload = await source.read();
     expect(payload).toEqual({
-      message: "현재 설치 버전 1.2.3 (aaaaaaa) · 최신 상태",
+      message: "현재 버젼 v1.2.3",
       level: "info",
     });
   });
 
-  test("reports update available when remote commit differs", async () => {
+  test("reports next version when remote commit has a different package version", async () => {
     const source = createGitUpdateNoticeSource({
       repoRoot: "C:\\repo",
       build: build(),
-      runner: async () => ({ stdout: `${REMOTE}\trefs/heads/main\n` }),
+      runner: async (args) => ({
+        stdout:
+          args[0] === "show"
+            ? JSON.stringify({ version: "1.2.4" })
+            : `${REMOTE}\trefs/heads/main\n`,
+      }),
     });
 
     const payload = await source.read();
     expect(payload).toEqual({
-      message: "현재 설치 버전 1.2.3 (aaaaaaa) · 업데이트 있음 (bbbbbbb)",
+      message: "현재 버젼 v1.2.3, 다음 버젼 v1.2.4",
       level: "warning",
     });
   });
 
-  test("reports local changes as warning even when remote matches", async () => {
+  test("omits next version when remote package version is unavailable", async () => {
     const source = createGitUpdateNoticeSource({
       repoRoot: "C:\\repo",
-      build: build({ dirty: true }),
+      build: build(),
+      runner: async (args) => {
+        if (args[0] === "show") throw new Error("not fetched");
+        return { stdout: `${REMOTE}\trefs/heads/main\n` };
+      },
+    });
+
+    const payload = await source.read();
+    expect(payload).toEqual({
+      message: "현재 버젼 v1.2.3",
+      level: "info",
+    });
+  });
+
+  test("explicit next version overrides git package lookup", async () => {
+    const source = createGitUpdateNoticeSource({
+      repoRoot: "C:\\repo",
+      build: build(),
+      nextVersion: "v2.0.0",
       runner: async () => ({ stdout: `${CURRENT}\trefs/heads/main\n` }),
     });
 
     const payload = await source.read();
     expect(payload).toEqual({
-      message: "현재 설치 버전 1.2.3 (aaaaaaa) · 최신 상태 · 로컬 변경 있음",
+      message: "현재 버젼 v1.2.3, 다음 버젼 v2.0.0",
       level: "warning",
     });
   });
 
-  test("reports check failure when remote lookup fails", async () => {
+  test("keeps current version only when remote lookup fails", async () => {
     const source = createGitUpdateNoticeSource({
       repoRoot: "C:\\repo",
       build: build(),
@@ -70,8 +93,8 @@ describe("git update notice", () => {
 
     const payload = await source.read();
     expect(payload).toEqual({
-      message: "현재 설치 버전 1.2.3 (aaaaaaa) · 업데이트 확인 불가",
-      level: "warning",
+      message: "현재 버젼 v1.2.3",
+      level: "info",
     });
   });
 });

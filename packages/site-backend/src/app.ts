@@ -628,7 +628,7 @@ async function readUpdateNotice(
     };
   } catch {
     return {
-      message: "현재 설치 버전 확인 실패",
+      message: "현재 버젼 확인 실패",
       level: "warning",
     };
   }

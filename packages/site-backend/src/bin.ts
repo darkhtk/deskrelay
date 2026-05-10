@@ -28,6 +28,9 @@ const updateNotice =
     : createGitUpdateNoticeSource({
         repoRoot: process.cwd(),
         branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
+        ...(process.env.DESKRELAY_NEXT_VERSION
+          ? { nextVersion: process.env.DESKRELAY_NEXT_VERSION }
+          : {}),
         ...(process.env.SITE_ANNOUNCEMENT_POLL_MS
           ? { pollMs: Number(process.env.SITE_ANNOUNCEMENT_POLL_MS) }
           : {}),
