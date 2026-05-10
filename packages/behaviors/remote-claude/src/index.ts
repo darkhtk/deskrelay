@@ -185,6 +185,17 @@ interface UsageLimitsResult {
   checkedAt: string;
 }
 
+interface ClaudeAccountInfo {
+  status: "logged_in" | "not_logged_in";
+  source: "oauth" | "env" | "none";
+  checkedAt: string;
+  displayName?: string;
+  email?: string;
+  subscriptionType?: string;
+  rateLimitTier?: string;
+  error?: string;
+}
+
 interface PermissionsInspectParams {
   cwd?: string;
 }
@@ -429,6 +440,10 @@ export const behaviorDef: RunBehaviorOptions = {
         ctx.logger.warn("Claude usage limits unavailable", { error: (err as Error).message });
         return emptyUsageLimitsResult();
       }
+    });
+
+    ctx.onRequest<Record<string, never>, ClaudeAccountInfo>("account.info", async () => {
+      return await readClaudeAccountInfo();
     });
 
     ctx.onRequest<PermissionsInspectParams, PermissionsInspectResult>(
@@ -924,16 +939,81 @@ async function readClaudeOAuthAccessToken(): Promise<string | null> {
   const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (envToken) return envToken;
 
+  const oauth = await readClaudeOAuthCredentials();
+  const accessToken = typeof oauth?.accessToken === "string" ? oauth.accessToken.trim() : "";
+  return accessToken || null;
+}
+
+async function readClaudeAccountInfo(): Promise<ClaudeAccountInfo> {
+  const checkedAt = new Date().toISOString();
+  const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+  if (envToken) {
+    return {
+      status: "logged_in",
+      source: "env",
+      checkedAt,
+    };
+  }
+
+  try {
+    const oauth = await readClaudeOAuthCredentials();
+    const accessToken = typeof oauth?.accessToken === "string" ? oauth.accessToken.trim() : "";
+    if (!accessToken) {
+      return { status: "not_logged_in", source: "none", checkedAt };
+    }
+    const displayName = firstTrimmedString(oauth, [
+      "displayName",
+      "display_name",
+      "name",
+      "username",
+      "accountName",
+      "account_name",
+    ]);
+    const email = firstTrimmedString(oauth, ["email", "accountEmail", "account_email"]);
+    const subscriptionType = firstTrimmedString(oauth, ["subscriptionType", "subscription_type"]);
+    const rateLimitTier = firstTrimmedString(oauth, ["rateLimitTier", "rate_limit_tier"]);
+    return {
+      status: "logged_in",
+      source: "oauth",
+      checkedAt,
+      ...(displayName ? { displayName } : {}),
+      ...(email ? { email } : {}),
+      ...(subscriptionType ? { subscriptionType } : {}),
+      ...(rateLimitTier ? { rateLimitTier } : {}),
+    };
+  } catch (err) {
+    return {
+      status: "not_logged_in",
+      source: "none",
+      checkedAt,
+      error: (err as Error).message,
+    };
+  }
+}
+
+async function readClaudeOAuthCredentials(): Promise<Record<string, unknown> | null> {
   const configDir = process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
   try {
     const raw = await readFile(join(configDir, ".credentials.json"), "utf8");
     const credentials = asRecord(JSON.parse(raw));
-    const oauth = asRecord(credentials?.claudeAiOauth);
-    const accessToken = typeof oauth?.accessToken === "string" ? oauth.accessToken.trim() : "";
-    return accessToken || null;
+    return asRecord(credentials?.claudeAiOauth);
   } catch {
     return null;
   }
+}
+
+function firstTrimmedString(
+  record: Record<string, unknown> | null,
+  keys: string[],
+): string | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
 }
 
 function usageLimitSnapshot(value: unknown, rateLimitType: string): ContextUsageSnapshot | null {

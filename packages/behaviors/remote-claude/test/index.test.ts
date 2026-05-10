@@ -317,4 +317,63 @@ describe("remote-claude behavior chat request", () => {
       }
     }
   });
+
+  test("account.info summarizes the local Claude OAuth login without exposing tokens", async () => {
+    const { ctx, handlers } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const accountInfo = handlers.get("account.info");
+    if (!accountInfo) throw new Error("account.info handler missing");
+
+    const configDir = await mkdtemp(join(tmpdir(), "remote-claude-account-"));
+    tempDirs.push(configDir);
+    await writeFile(
+      join(configDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "secret-access-token",
+          refreshToken: "secret-refresh-token",
+          email: "dev@example.test",
+          subscriptionType: "max",
+          rateLimitTier: "tier_2",
+        },
+      }),
+      "utf8",
+    );
+
+    const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const originalToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    try {
+      const result = (await accountInfo({})) as {
+        status: string;
+        source: string;
+        email?: string;
+        subscriptionType?: string;
+        rateLimitTier?: string;
+        accessToken?: string;
+        refreshToken?: string;
+      };
+
+      expect(result.status).toBe("logged_in");
+      expect(result.source).toBe("oauth");
+      expect(result.email).toBe("dev@example.test");
+      expect(result.subscriptionType).toBe("max");
+      expect(result.rateLimitTier).toBe("tier_2");
+      expect(result.accessToken).toBeUndefined();
+      expect(result.refreshToken).toBeUndefined();
+    } finally {
+      if (originalConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
+      }
+      if (originalToken === undefined) {
+        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      } else {
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = originalToken;
+      }
+    }
+  });
 });

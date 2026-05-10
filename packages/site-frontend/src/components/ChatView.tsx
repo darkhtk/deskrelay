@@ -373,6 +373,17 @@ interface UsageLimitsResult {
   checkedAt: string;
 }
 
+interface ClaudeAccountInfo {
+  status: "logged_in" | "not_logged_in";
+  source: "oauth" | "env" | "none";
+  checkedAt: string;
+  displayName?: string;
+  email?: string;
+  subscriptionType?: string;
+  rateLimitTier?: string;
+  error?: string;
+}
+
 export function latestContextUsageSnapshot(
   events: ClaudeStreamEvent[],
 ): ContextUsageSnapshot | null {
@@ -1009,6 +1020,58 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   );
   const remoteClaudeInstance = () =>
     (behaviors() ?? []).find((b) => b.name === "remote-claude")?.instanceId ?? null;
+
+  const [cliAccount] = createResource(
+    () => {
+      const deviceId = effectiveDeviceId();
+      const instanceId = remoteClaudeInstance();
+      if (!deviceId || !instanceId) return null;
+      return { deviceId, instanceId };
+    },
+    async (input) => {
+      if (!input) return null;
+      try {
+        const res = await api.callBehavior<ClaudeAccountInfo>(
+          input.deviceId,
+          input.instanceId,
+          "account.info",
+          {},
+        );
+        if (res.error) {
+          return {
+            status: "not_logged_in",
+            source: "none",
+            checkedAt: new Date().toISOString(),
+            error: res.error.message,
+          } satisfies ClaudeAccountInfo;
+        }
+        return res.result ?? null;
+      } catch (err) {
+        return {
+          status: "not_logged_in",
+          source: "none",
+          checkedAt: new Date().toISOString(),
+          error: (err as Error).message,
+        } satisfies ClaudeAccountInfo;
+      }
+    },
+  );
+
+  const cliAccountText = () => {
+    if (!effectiveDeviceId()) return t("chat.sidebar.cli-account.no-device");
+    if (!remoteClaudeInstance()) return t("chat.sidebar.cli-account.not-ready");
+    if (cliAccount.loading) return t("chat.sidebar.cli-account.loading");
+    const account = cliAccount();
+    if (!account || account.status !== "logged_in") {
+      return t("chat.sidebar.cli-account.signed-out");
+    }
+    const identity =
+      account.email || account.displayName || t("chat.sidebar.cli-account.signed-in");
+    const detail = [account.subscriptionType, account.rateLimitTier].filter(Boolean).join(" · ");
+    return detail
+      ? t("chat.sidebar.cli-account.with-detail", { identity, detail })
+      : t("chat.sidebar.cli-account.value", { identity });
+  };
 
   createEffect(() => {
     const dev = effectiveDeviceId();
@@ -2868,6 +2931,15 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               <option value="__settings__">{t("chat.sidebar.device.manage")}</option>
             </select>
           </div>
+          <Show when={effectiveDeviceId()}>
+            <p
+              class="sidebar-cli-account"
+              title={cliAccount()?.error ?? cliAccountText()}
+              aria-live="polite"
+            >
+              {cliAccountText()}
+            </p>
+          </Show>
           <Show
             when={(() => {
               const id = effectiveDeviceId();
