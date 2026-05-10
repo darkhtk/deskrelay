@@ -189,6 +189,7 @@ interface ClaudeAccountInfo {
   status: "logged_in" | "not_logged_in";
   source: "oauth" | "env" | "none";
   checkedAt: string;
+  accountId?: string;
   displayName?: string;
   email?: string;
   subscriptionType?: string;
@@ -961,6 +962,15 @@ async function readClaudeAccountInfo(): Promise<ClaudeAccountInfo> {
     if (!accessToken) {
       return { status: "not_logged_in", source: "none", checkedAt };
     }
+    const accountId = firstTrimmedString(oauth, [
+      "accountId",
+      "account_id",
+      "userId",
+      "user_id",
+      "id",
+      "subject",
+      "sub",
+    ]);
     const displayName = firstTrimmedString(oauth, [
       "displayName",
       "display_name",
@@ -976,6 +986,7 @@ async function readClaudeAccountInfo(): Promise<ClaudeAccountInfo> {
       status: "logged_in",
       source: "oauth",
       checkedAt,
+      ...(accountId ? { accountId } : {}),
       ...(displayName ? { displayName } : {}),
       ...(email ? { email } : {}),
       ...(subscriptionType ? { subscriptionType } : {}),

@@ -71,8 +71,8 @@ import {
 import { NewChatCard } from "./NewChatCard.tsx";
 import { OfflineHint, daemonOfflineBannerMessage, isDaemonOfflineMessage } from "./OfflineHint.tsx";
 import { PermissionModePicker } from "./PermissionModePicker.tsx";
-import { SettingsScopeLabel, SettingsScopeLabels } from "./SettingsScopeLabel.tsx";
 import { type SessionEntry, type SessionGroupDeleteProgress, SessionList } from "./SessionList.tsx";
+import { SettingsScopeLabel, SettingsScopeLabels } from "./SettingsScopeLabel.tsx";
 import { Transcript } from "./Transcript.tsx";
 
 const SESSION_LIMIT = 200;
@@ -377,6 +377,7 @@ interface ClaudeAccountInfo {
   status: "logged_in" | "not_logged_in";
   source: "oauth" | "env" | "none";
   checkedAt: string;
+  accountId?: string;
   displayName?: string;
   email?: string;
   subscriptionType?: string;
@@ -1065,12 +1066,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (!account || account.status !== "logged_in") {
       return t("chat.sidebar.cli-account.signed-out");
     }
-    const identity =
-      account.email || account.displayName || t("chat.sidebar.cli-account.signed-in");
-    const detail = [account.subscriptionType, account.rateLimitTier].filter(Boolean).join(" · ");
-    return detail
-      ? t("chat.sidebar.cli-account.with-detail", { identity, detail })
-      : t("chat.sidebar.cli-account.value", { identity });
+    const identity = account.email || account.accountId || account.displayName;
+    const plan = account.subscriptionType;
+    if (identity && plan) return `${identity} · ${plan}`;
+    if (identity) return identity;
+    if (plan) return `계정 ID 확인 불가 · ${plan}`;
+    return "계정 ID 확인 불가";
   };
 
   createEffect(() => {

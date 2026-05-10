@@ -10,6 +10,7 @@ export interface SelfServerUpdateStatus {
   startedAt?: string;
   completedAt?: string;
   logPath?: string;
+  pid?: number;
   before?: string;
   after?: string;
   changed?: boolean;
@@ -36,10 +37,12 @@ export interface PowerShellSelfServerUpdaterOptions {
   branch?: string;
   now?: () => Date;
   bootstrapLogGraceMs?: number;
+  logIdleStaleMs?: number;
   runningStaleMs?: number;
 }
 
 const DEFAULT_BOOTSTRAP_LOG_GRACE_MS = 10_000;
+const DEFAULT_LOG_IDLE_STALE_MS = 2 * 60_000;
 const DEFAULT_RUNNING_STALE_MS = 20 * 60_000;
 
 export function createPowerShellSelfServerUpdater(
@@ -48,6 +51,7 @@ export function createPowerShellSelfServerUpdater(
   const statusPath = join(options.root, "state", "self-server-update-status.json");
   const now = options.now ?? (() => new Date());
   const bootstrapLogGraceMs = options.bootstrapLogGraceMs ?? DEFAULT_BOOTSTRAP_LOG_GRACE_MS;
+  const logIdleStaleMs = options.logIdleStaleMs ?? DEFAULT_LOG_IDLE_STALE_MS;
   const runningStaleMs = options.runningStaleMs ?? DEFAULT_RUNNING_STALE_MS;
 
   return {
@@ -55,6 +59,7 @@ export function createPowerShellSelfServerUpdater(
       return await readStatusWithRecovery(statusPath, {
         now,
         bootstrapLogGraceMs,
+        logIdleStaleMs,
         runningStaleMs,
       });
     },
@@ -71,6 +76,7 @@ export function createPowerShellSelfServerUpdater(
       const current = await readStatusWithRecovery(statusPath, {
         now,
         bootstrapLogGraceMs,
+        logIdleStaleMs,
         runningStaleMs,
       });
       if (current.state === "running") {
@@ -97,34 +103,32 @@ export function createPowerShellSelfServerUpdater(
       await mkdir(stateDir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const logPath = join(logDir, `self-server-update-${stamp}.log`);
+      const pidPath = join(stateDir, `self-server-update-${stamp}.pid`);
+      const bootstrapPath = join(logDir, `self-server-update-${stamp}.bootstrap.ps1`);
       const status: SelfServerUpdateStatus = {
         state: "running",
         startedAt: now().toISOString(),
         logPath,
       };
       await writeStatus(statusPath, status);
+      await writeFile(
+        bootstrapPath,
+        buildUpdaterBootstrapScript({
+          scriptPath,
+          root: options.root,
+          repoRoot: options.repoRoot,
+          branch: options.branch?.trim() || "main",
+          logPath,
+          statusPath,
+          pidPath,
+        }),
+        "utf8",
+      );
       let child: ChildProcess;
       try {
         child = spawn(
           "powershell.exe",
-          [
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            scriptPath,
-            "-Root",
-            options.root,
-            "-RepoRoot",
-            options.repoRoot,
-            "-Branch",
-            options.branch?.trim() || "main",
-            "-LogPath",
-            logPath,
-            "-StatusPath",
-            statusPath,
-            "-NoOpenBrowser",
-          ],
+          ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", bootstrapPath],
           {
             cwd: options.repoRoot,
             stdio: "ignore",
@@ -145,13 +149,32 @@ export function createPowerShellSelfServerUpdater(
           status: failed,
         };
       }
-      child.unref();
+      const exitCode = await waitForExit(child);
+      if (exitCode !== 0) {
+        const failed = markFailed(
+          status,
+          now(),
+          `failed to bootstrap updater: exit code ${exitCode}`,
+        );
+        await writeStatus(statusPath, failed);
+        return {
+          supported: true,
+          started: false,
+          error: failed.error ?? "failed to bootstrap updater",
+          status: failed,
+        };
+      }
+      const updaterPid = await readPidFile(pidPath);
+      const runningStatus: SelfServerUpdateStatus = updaterPid
+        ? { ...status, pid: updaterPid }
+        : status;
+      await writeStatus(statusPath, runningStatus);
       return {
         supported: true,
         started: true,
         logPath,
-        status,
-        ...(child.pid ? { pid: child.pid } : {}),
+        status: runningStatus,
+        ...(updaterPid ? { pid: updaterPid } : {}),
       };
     },
   };
@@ -160,7 +183,72 @@ export function createPowerShellSelfServerUpdater(
 interface StatusRecoveryOptions {
   now: () => Date;
   bootstrapLogGraceMs: number;
+  logIdleStaleMs: number;
   runningStaleMs: number;
+}
+
+interface BootstrapScriptOptions {
+  scriptPath: string;
+  root: string;
+  repoRoot: string;
+  branch: string;
+  logPath: string;
+  statusPath: string;
+  pidPath: string;
+}
+
+function buildUpdaterBootstrapScript(options: BootstrapScriptOptions): string {
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    options.scriptPath,
+    "-Root",
+    options.root,
+    "-RepoRoot",
+    options.repoRoot,
+    "-Branch",
+    options.branch,
+    "-LogPath",
+    options.logPath,
+    "-StatusPath",
+    options.statusPath,
+    "-NoOpenBrowser",
+  ];
+  const psArgs = args.map((arg) => quotePowerShellString(arg)).join(", ");
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$process = Start-Process -FilePath 'powershell.exe' -ArgumentList @(${psArgs}) -WindowStyle Hidden -PassThru`,
+    `$process.Id | Set-Content -Encoding utf8 -Path ${quotePowerShellString(options.pidPath)}`,
+    "",
+  ].join("\n");
+}
+
+function quotePowerShellString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+async function waitForExit(child: ChildProcess): Promise<number | null> {
+  return await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+}
+
+async function readPidFile(path: string): Promise<number | null> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    try {
+      const raw = (await readFile(path, "utf8")).replace(/^\uFEFF/, "").trim();
+      const pid = Number(raw);
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch {
+      // The bootstrap process may not have written the pid file yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
 }
 
 async function readStatusWithRecovery(
@@ -190,9 +278,29 @@ async function recoverRunningStatus(
   }
 
   const ageMs = Math.max(0, options.now().getTime() - startedAt);
+  if (typeof status.pid === "number" && !isProcessRunning(status.pid)) {
+    return markFailed(
+      status,
+      options.now(),
+      "self server update process is no longer running. Check the log and retry.",
+    );
+  }
+
   if (status.logPath) {
     try {
-      await stat(status.logPath);
+      const logStat = await stat(status.logPath);
+      const logIdleMs = Math.max(0, options.now().getTime() - logStat.mtimeMs);
+      if (
+        typeof status.pid !== "number" &&
+        ageMs > options.logIdleStaleMs &&
+        logIdleMs > options.logIdleStaleMs
+      ) {
+        return markFailed(
+          status,
+          options.now(),
+          "self server update stopped writing logs before it completed. Retry the update.",
+        );
+      }
     } catch {
       if (ageMs > options.bootstrapLogGraceMs) {
         return markFailed(
@@ -213,6 +321,15 @@ async function recoverRunningStatus(
   }
 
   return status;
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === "EPERM";
+  }
 }
 
 function markFailed(
@@ -238,6 +355,7 @@ async function readStatus(path: string): Promise<SelfServerUpdateStatus> {
         ...(typeof parsed.startedAt === "string" ? { startedAt: parsed.startedAt } : {}),
         ...(typeof parsed.completedAt === "string" ? { completedAt: parsed.completedAt } : {}),
         ...(typeof parsed.logPath === "string" ? { logPath: parsed.logPath } : {}),
+        ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
         ...(typeof parsed.before === "string" ? { before: parsed.before } : {}),
         ...(typeof parsed.after === "string" ? { after: parsed.after } : {}),
         ...(typeof parsed.changed === "boolean" ? { changed: parsed.changed } : {}),

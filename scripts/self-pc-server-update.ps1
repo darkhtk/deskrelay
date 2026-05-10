@@ -58,6 +58,7 @@ function Write-UpdateStatus {
   if ($StartedAt) { $payload.startedAt = $StartedAt }
   if ($CompletedAt) { $payload.completedAt = $CompletedAt }
   if ($LogPath) { $payload.logPath = $LogPath }
+  if ($State -eq "running") { $payload.pid = $PID }
   if ($Before) { $payload.before = $Before }
   if ($After) { $payload.after = $After }
   if ($State -ne "running") { $payload.changed = $Changed }

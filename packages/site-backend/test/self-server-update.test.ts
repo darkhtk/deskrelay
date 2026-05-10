@@ -69,6 +69,58 @@ describe("self server updater status recovery", () => {
     });
   });
 
+  test("marks a running update as failed when its process is gone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "deskrelay-self-update-"));
+    const statusPath = join(root, "state", "self-server-update-status.json");
+    await mkdir(join(root, "state"), { recursive: true });
+    await writeFile(
+      statusPath,
+      JSON.stringify({
+        state: "running",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        pid: 999_999_999,
+      }),
+    );
+
+    const updater = createPowerShellSelfServerUpdater({
+      root,
+      repoRoot: root,
+      now: () => new Date("2026-01-01T00:00:01.000Z"),
+    });
+
+    const status = await updater.status();
+    expect(status.state).toBe("failed");
+    expect(status.error).toContain("no longer running");
+  });
+
+  test("marks old running updates without a pid as failed when the log is idle", async () => {
+    const root = await mkdtemp(join(tmpdir(), "deskrelay-self-update-"));
+    const statusPath = join(root, "state", "self-server-update-status.json");
+    const logPath = join(root, "logs", "idle.log");
+    await mkdir(join(root, "state"), { recursive: true });
+    await mkdir(join(root, "logs"), { recursive: true });
+    await writeFile(logPath, "stopped after backend shutdown");
+    await writeFile(
+      statusPath,
+      JSON.stringify({
+        state: "running",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        logPath,
+      }),
+    );
+
+    const updater = createPowerShellSelfServerUpdater({
+      root,
+      repoRoot: root,
+      now: () => new Date(Date.now() + 60_000),
+      logIdleStaleMs: 1,
+    });
+
+    const status = await updater.status();
+    expect(status.state).toBe("failed");
+    expect(status.error).toContain("stopped writing logs");
+  });
+
   test("reads PowerShell UTF-8 BOM status files", async () => {
     const root = await mkdtemp(join(tmpdir(), "deskrelay-self-update-"));
     const statusPath = join(root, "state", "self-server-update-status.json");
