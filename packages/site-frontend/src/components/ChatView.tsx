@@ -60,7 +60,10 @@ import { ApprovalModal } from "./ApprovalModal.tsx";
 import { Attachments, type AttachmentsAPI, imagesFromClipboard } from "./Attachments.tsx";
 import { CapabilitiesBadge } from "./CapabilitiesBadge.tsx";
 import { Composer } from "./Composer.tsx";
-import { InstructionsWorkspace } from "./InstructionsWorkspace.tsx";
+import {
+  type InstructionEditorHeaderState,
+  InstructionsWorkspace,
+} from "./InstructionsWorkspace.tsx";
 import { NewChatCard } from "./NewChatCard.tsx";
 import { OfflineHint, daemonOfflineBannerMessage, isDaemonOfflineMessage } from "./OfflineHint.tsx";
 import { PermissionModePicker } from "./PermissionModePicker.tsx";
@@ -819,6 +822,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   };
   const [selectedClaudeModel, setSelectedClaudeModel] = createSignal<string | null>(null);
   const [mainPanelMode, setMainPanelMode] = createSignal<"chat" | "instructions">("chat");
+  const [instructionEditorHeaderState, setInstructionEditorHeaderState] =
+    createSignal<InstructionEditorHeaderState | null>(null);
 
   function selectDeviceId(deviceId: string | null) {
     const device = deviceId ? (devices() ?? []).find((d) => d.id === deviceId) : null;
@@ -1793,6 +1798,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setMainPanelMode("instructions");
     if (isMobileSidebarViewport()) setSidebarOpen(false);
   }
+
+  createEffect(() => {
+    if (mainPanelMode() !== "instructions") setInstructionEditorHeaderState(null);
+  });
+
   const activeDevice = () => {
     const id = effectiveDeviceId();
     if (!id) return null;
@@ -3217,36 +3227,88 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
       <section class="chat" onPaste={handlePaste}>
         <div class="chat-header">
-          <button
-            type="button"
-            class="hamburger"
-            aria-label={t("chat.toggle-sidebar")}
-            aria-expanded={isMobileSidebarViewport() ? sidebarOpen() : !desktopSidebarCollapsed()}
-            onClick={toggleSidebar}
+          <Show
+            when={instructionEditorHeaderState()}
+            fallback={
+              <>
+                <button
+                  type="button"
+                  class="hamburger"
+                  aria-label={t("chat.toggle-sidebar")}
+                  aria-expanded={
+                    isMobileSidebarViewport() ? sidebarOpen() : !desktopSidebarCollapsed()
+                  }
+                  onClick={toggleSidebar}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <line x1="9" y1="4" x2="9" y2="20" />
+                  </svg>
+                </button>
+                <output
+                  class={`chat-header-status chat-header-status-${infrastructureStatus().tone}`}
+                  aria-live="polite"
+                  title={headerStatusTitle()}
+                >
+                  <Show when={sessionNotice()}>
+                    {(message) => <span class="chat-header-notice">{message()}</span>}
+                  </Show>
+                  <span class="chat-header-current-status">{headerStatusText()}</span>
+                </output>
+              </>
+            }
           >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <line x1="9" y1="4" x2="9" y2="20" />
-            </svg>
-          </button>
-          <output
-            class={`chat-header-status chat-header-status-${infrastructureStatus().tone}`}
-            aria-live="polite"
-            title={headerStatusTitle()}
-          >
-            <Show when={sessionNotice()}>
-              {(message) => <span class="chat-header-notice">{message()}</span>}
-            </Show>
-            <span class="chat-header-current-status">{headerStatusText()}</span>
-          </output>
+            {(editor) => (
+              <div
+                class="chat-header-instruction-actions"
+                aria-label={t("instructions.workspace.editor")}
+              >
+                <Show when={editor().source.exists}>
+                  <button
+                    type="button"
+                    class="sidebar-inline-button danger"
+                    onClick={editor().onDelete}
+                    disabled={!editor().canDelete}
+                  >
+                    {t("chat.sidebar.instructions.delete")}
+                  </button>
+                </Show>
+                <button
+                  type="button"
+                  class="sidebar-inline-button"
+                  onClick={editor().onReset}
+                  disabled={!editor().canReset}
+                >
+                  {t("chat.sidebar.instructions.revert")}
+                </button>
+                <button
+                  type="button"
+                  class="sidebar-inline-button primary"
+                  onClick={editor().onSave}
+                  disabled={!editor().canSave}
+                >
+                  {editor().saving
+                    ? t("chat.sidebar.instructions.saving")
+                    : t("chat.sidebar.instructions.save")}
+                </button>
+                <button
+                  type="button"
+                  class="sidebar-inline-button"
+                  onClick={editor().onClose}
+                >
+                  {t("instructions.workspace.close")}
+                </button>
+              </div>
+            )}
+          </Show>
         </div>
 
         <Show
@@ -3393,6 +3455,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             onDelete={(source) => void deleteWorkspaceInstructionSource(source)}
             onReload={() => void refetchWorkspaceInstructions()}
             onBack={() => setMainPanelMode("chat")}
+            onEditorHeaderStateChange={setInstructionEditorHeaderState}
           />
         </Show>
       </section>

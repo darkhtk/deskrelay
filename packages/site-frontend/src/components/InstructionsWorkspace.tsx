@@ -1,4 +1,4 @@
-import { type Component, For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { type Component, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { ClaudeInstructionScope, ClaudeInstructionSource } from "../api.ts";
 import { t } from "../i18n.ts";
 import { instructionScopePlaceholder } from "../instruction-copy.ts";
@@ -12,6 +12,20 @@ interface InstructionStatus {
 interface ActiveEdit {
   scope: ClaudeInstructionScope;
   line: number;
+}
+
+export interface InstructionEditorHeaderState {
+  source: ClaudeInstructionSource;
+  line: number;
+  dirty: boolean;
+  saving: boolean;
+  canDelete: boolean;
+  canReset: boolean;
+  canSave: boolean;
+  onDelete: () => void;
+  onReset: () => void;
+  onSave: () => void;
+  onClose: () => void;
 }
 
 export interface InstructionsWorkspaceProps {
@@ -29,6 +43,7 @@ export interface InstructionsWorkspaceProps {
   onDelete: (source: ClaudeInstructionSource) => void;
   onReload: () => void;
   onBack: () => void;
+  onEditorHeaderStateChange?: (state: InstructionEditorHeaderState | null) => void;
 }
 
 function lineCount(content: string): number {
@@ -84,6 +99,33 @@ export const InstructionsWorkspace: Component<InstructionsWorkspaceProps> = (pro
   function closeEditor() {
     setActiveEdit(null);
   }
+
+  createEffect(() => {
+    const source = activeSource();
+    const active = activeEdit();
+    if (!source || !active) {
+      props.onEditorHeaderStateChange?.(null);
+      return;
+    }
+    const saving = props.savingScope === source.scope;
+    const dirty = props.dirty(source);
+    const readonly = source.readonly;
+    props.onEditorHeaderStateChange?.({
+      source,
+      line: active.line,
+      dirty,
+      saving,
+      canDelete: source.exists && !readonly && !saving,
+      canReset: dirty && !saving,
+      canSave: dirty && !saving,
+      onDelete: () => props.onDelete(source),
+      onReset: () => props.onReset(source),
+      onSave: () => props.onSave(source),
+      onClose: closeEditor,
+    });
+  });
+
+  onCleanup(() => props.onEditorHeaderStateChange?.(null));
 
   return (
     <div class="instructions-workspace">
@@ -226,39 +268,41 @@ export const InstructionsWorkspace: Component<InstructionsWorkspaceProps> = (pro
               disabled={props.savingScope === source().scope || source().readonly}
               onInput={(event) => props.onInput(source(), event.currentTarget.value)}
             />
-            <div class="instruction-editor-actions">
-              <Show when={source().exists}>
+            <Show when={!props.onEditorHeaderStateChange}>
+              <div class="instruction-editor-actions">
+                <Show when={source().exists}>
+                  <button
+                    type="button"
+                    class="sidebar-inline-button danger"
+                    onClick={() => props.onDelete(source())}
+                    disabled={props.savingScope === source().scope || source().readonly}
+                  >
+                    {t("chat.sidebar.instructions.delete")}
+                  </button>
+                </Show>
                 <button
                   type="button"
-                  class="sidebar-inline-button danger"
-                  onClick={() => props.onDelete(source())}
-                  disabled={props.savingScope === source().scope || source().readonly}
+                  class="sidebar-inline-button"
+                  onClick={() => props.onReset(source())}
+                  disabled={!props.dirty(source()) || props.savingScope === source().scope}
                 >
-                  {t("chat.sidebar.instructions.delete")}
+                  {t("chat.sidebar.instructions.revert")}
                 </button>
-              </Show>
-              <button
-                type="button"
-                class="sidebar-inline-button"
-                onClick={() => props.onReset(source())}
-                disabled={!props.dirty(source()) || props.savingScope === source().scope}
-              >
-                {t("chat.sidebar.instructions.revert")}
-              </button>
-              <button
-                type="button"
-                class="sidebar-inline-button primary"
-                onClick={() => props.onSave(source())}
-                disabled={!props.dirty(source()) || props.savingScope === source().scope}
-              >
-                {props.savingScope === source().scope
-                  ? t("chat.sidebar.instructions.saving")
-                  : t("chat.sidebar.instructions.save")}
-              </button>
-              <button type="button" class="sidebar-inline-button" onClick={closeEditor}>
-                {t("instructions.workspace.close")}
-              </button>
-            </div>
+                <button
+                  type="button"
+                  class="sidebar-inline-button primary"
+                  onClick={() => props.onSave(source())}
+                  disabled={!props.dirty(source()) || props.savingScope === source().scope}
+                >
+                  {props.savingScope === source().scope
+                    ? t("chat.sidebar.instructions.saving")
+                    : t("chat.sidebar.instructions.save")}
+                </button>
+                <button type="button" class="sidebar-inline-button" onClick={closeEditor}>
+                  {t("instructions.workspace.close")}
+                </button>
+              </div>
+            </Show>
           </aside>
         )}
       </Show>
