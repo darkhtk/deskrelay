@@ -115,7 +115,7 @@
   "instructions.workspace.current": "현재 기준",
   "instructions.workspace.open": "전체 보기 / 편집",
   "instructions.workspace.back": "채팅으로 돌아가기",
-  "instructions.workspace.reload": "Reload",
+  "instructions.workspace.reload": "새로고침",
   "instructions.workspace.close": "닫기",
   "instructions.workspace.editor": "지침 편집기",
   "instructions.workspace.no-cwd": "작업 폴더 없음",

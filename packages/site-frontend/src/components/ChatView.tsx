@@ -1788,6 +1788,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
     setDesktopSidebarCollapsed(false);
   }
+
+  function openInstructionsWorkspace() {
+    setMainPanelMode("instructions");
+    if (isMobileSidebarViewport()) setSidebarOpen(false);
+  }
   const activeDevice = () => {
     const id = effectiveDeviceId();
     if (!id) return null;
@@ -3059,7 +3064,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                       <button
                         type="button"
                         class="sidebar-inline-button primary"
-                        onClick={() => setMainPanelMode("instructions")}
+                        onClick={openInstructionsWorkspace}
                       >
                         {t("instructions.workspace.open")}
                       </button>
