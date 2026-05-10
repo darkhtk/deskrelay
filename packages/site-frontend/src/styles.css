@@ -552,13 +552,6 @@ body.sidebar-resizing * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer-status-ctx {
-  min-width: 0;
-  color: var(--success);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .composer-status-action {
   flex: 0 0 auto;
   margin-left: auto;
@@ -587,11 +580,9 @@ body.sidebar-resizing * {
 .composer-status-danger::before {
   background: var(--danger);
 }
-.composer-status-offline::before {
-  background: var(--text-muted);
-}
+.composer-status-offline::before,
 .composer-status-context::before {
-  background: var(--success);
+  background: var(--text-muted);
 }
 @keyframes composer-status-pulse {
   0%,

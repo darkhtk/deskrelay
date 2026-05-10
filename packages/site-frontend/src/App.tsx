@@ -61,10 +61,8 @@ import {
   setChatTranscriptEventLimit,
   setNewChatCwdBrowseMode,
   setScrollToBottomOnSend,
-  setShowCtxUsageMeter,
   setShowSessionUsageMeter,
   setShowWeekUsageMeter,
-  showCtxUsageMeter,
   showSessionUsageMeter,
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
@@ -554,7 +552,6 @@ export const App: Component = () => {
             requestedDeviceSelection={deviceSelectionRequest()}
             onContextUsageChange={setContextUsage}
             onActiveWorkspaceChange={setActiveWorkspace}
-            showContextUsageMeter={showCtxUsageMeter()}
           />
         </Show>
       </Show>
@@ -1172,14 +1169,6 @@ const LanguageSettings: Component<{
             onChange={(event) => setScrollToBottomOnSend(event.currentTarget.checked)}
           />
           {t("lang.settings.scroll-on-send")}
-        </label>
-        <label class="settings-check-row">
-          <input
-            type="checkbox"
-            checked={showCtxUsageMeter()}
-            onChange={(event) => setShowCtxUsageMeter(event.currentTarget.checked)}
-          />
-          {t("settings.usage.show-ctx")}
         </label>
         <label class="settings-check-row">
           <input

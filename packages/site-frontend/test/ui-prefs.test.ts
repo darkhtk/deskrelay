@@ -18,11 +18,9 @@ import {
   setChatTranscriptEventLimit,
   setNewChatCwdBrowseMode,
   setTemporaryInstructionPrefs,
-  setShowCtxUsageMeter,
   setShowSessionUsageMeter,
   setShowWeekUsageMeter,
   hasTemporaryInstructions,
-  showCtxUsageMeter,
   showSessionUsageMeter,
   showWeekUsageMeter,
 } from "../src/ui-prefs.ts";
@@ -32,7 +30,6 @@ afterEach(() => {
   setAppTheme("light");
   setChatFontSize(CHAT_FONT_SIZE_DEFAULT);
   setChatTranscriptEventLimit(CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT);
-  setShowCtxUsageMeter(true);
   setShowSessionUsageMeter(true);
   setShowWeekUsageMeter(true);
   setNewChatCwdBrowseMode("allowed-roots");
@@ -94,25 +91,20 @@ describe("transcript display limit preferences", () => {
 
 describe("usage display preferences", () => {
   test("default to visible", () => {
-    expect(showCtxUsageMeter()).toBe(true);
     expect(showSessionUsageMeter()).toBe(true);
     expect(showWeekUsageMeter()).toBe(true);
   });
 
   test("can hide and restore individual usage meters", () => {
-    setShowCtxUsageMeter(false);
     setShowSessionUsageMeter(false);
     setShowWeekUsageMeter(false);
 
-    expect(showCtxUsageMeter()).toBe(false);
     expect(showSessionUsageMeter()).toBe(false);
     expect(showWeekUsageMeter()).toBe(false);
 
-    setShowCtxUsageMeter(true);
     setShowSessionUsageMeter(true);
     setShowWeekUsageMeter(true);
 
-    expect(showCtxUsageMeter()).toBe(true);
     expect(showSessionUsageMeter()).toBe(true);
     expect(showWeekUsageMeter()).toBe(true);
   });

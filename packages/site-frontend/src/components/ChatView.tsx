@@ -898,7 +898,6 @@ export interface ChatViewProps {
   requestedDeviceSelection?: DeviceSelectionRequest;
   onContextUsageChange?: (usage: ContextUsageOverview) => void;
   onActiveWorkspaceChange?: (workspace: { deviceId: string | null; cwd: string }) => void;
-  showContextUsageMeter?: boolean;
 }
 
 interface ComposerGuidance {
@@ -2112,14 +2111,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     return `${deviceDisplayName(device)}: ${t(infrastructureStatus().mainKey)} - ${infrastructureStatusDetail()}`;
   };
 
-  const composerContextText = () => {
-    if (props.showContextUsageMeter === false) return null;
-    const value = contextUsage().ctx?.remainingPercent;
-    if (typeof value !== "number" || !Number.isFinite(value)) return null;
-    const rounded = Math.max(0, Math.min(100, Math.round(value)));
-    return `컨텍스트 압축까지 ${rounded}% 남음`;
-  };
-
   const composerGuidance = createMemo<ComposerGuidance | null>(() => {
     const status = connectionStatus();
     if (status.kind === "approval_waiting") {
@@ -2189,7 +2180,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     };
   });
 
-  const showComposerStatus = () => Boolean(composerGuidance() || composerContextText());
+  const showComposerStatus = () => Boolean(composerGuidance());
 
   const newChatCwd = () => {
     const id = effectiveDeviceId();
@@ -3701,9 +3692,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                           </Show>
                         </>
                       )}
-                    </Show>
-                    <Show when={composerContextText()}>
-                      {(contextText) => <span class="composer-status-ctx">{contextText()}</span>}
                     </Show>
                     <Show when={composerGuidance()?.action}>
                       {(action) => (
