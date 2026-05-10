@@ -6,6 +6,7 @@ import {
   type DeviceUpdateResponse,
   type DiagnosticCheck,
   type DiagnosticSeverity,
+  type SelfServerUpdateStatus,
   api,
 } from "../api.ts";
 import { deviceDisplayName } from "../device-display.ts";
@@ -50,6 +51,10 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   const [health, { refetch: refetchHealth }] = createResource(
     () => props.devicesRevision ?? 0,
     () => api.health().catch(() => null),
+  );
+  const [serverUpdateStatus, { refetch: refetchServerUpdateStatus }] = createResource(
+    () => props.devicesRevision ?? 0,
+    () => api.selfUpdateStatus().catch(() => null),
   );
 
   createEffect(() => {
@@ -111,6 +116,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
 
   function refresh(): void {
     void refetchHealth();
+    void refetchServerUpdateStatus();
     void refetchDevices();
     if (selectedDevice()) void refetchDiagnostics();
     if (selectedDevice()) void refetchDoctor();
@@ -123,14 +129,15 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   async function updateServer(): Promise<void> {
     setUpdating("server");
     setFallbackCommand("");
-    setUpdateMessage("서버 업데이트 시작 중");
+    setUpdateMessage("서버 업데이트 시작 요청 중");
     try {
       const result = await api.selfUpdate();
       setUpdateMessage(
         result.started
-          ? `서버 업데이트 시작됨${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
+          ? `서버 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
           : `서버 업데이트 시작 실패: ${result.error ?? "알 수 없는 오류"}`,
       );
+      void refetchServerUpdateStatus();
       setTimeout(refresh, 6000);
     } catch (err) {
       setUpdateMessage(`서버 업데이트 실패: ${(err as Error).message}`);
@@ -342,10 +349,12 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           <button
             type="button"
             class="text-button"
-            disabled={updating() !== null}
+            disabled={updating() !== null || serverUpdateStatus()?.state === "running"}
             onClick={() => void updateServer()}
           >
-            {updating() === "server" ? "서버 업데이트 중" : "서버 업데이트"}
+            {updating() === "server" || serverUpdateStatus()?.state === "running"
+              ? "서버 업데이트 중"
+              : "서버 업데이트"}
           </button>
           <button type="button" class="text-button" onClick={refresh}>
             {diagnostics.loading || devices.loading
@@ -437,9 +446,18 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         </For>
       </div>
 
-      <Show when={updateMessage()}>
-        <div class="connection-diagnostics-update">
-          <div>{updateMessage()}</div>
+      <Show
+        when={updateMessage() || (serverUpdateStatus() && serverUpdateStatus()?.state !== "idle")}
+      >
+        <div
+          class={`connection-diagnostics-update update-${updateStatusTone(serverUpdateStatus())}`}
+        >
+          <div>{updateMessage() || updateStatusText(serverUpdateStatus())}</div>
+          <Show when={serverUpdateStatus()?.state && serverUpdateStatus()?.state !== "idle"}>
+            <div class="connection-diagnostics-update-meta">
+              {updateStatusText(serverUpdateStatus())}
+            </div>
+          </Show>
           <Show when={fallbackCommand()}>
             {(command) => (
               <textarea
@@ -576,4 +594,23 @@ function diagnosticTone(severity: DiagnosticSeverity): Tone {
   if (severity === "warn") return "warning";
   if (severity === "error") return "bad";
   return "pending";
+}
+
+function updateStatusTone(status: SelfServerUpdateStatus | null | undefined): Tone {
+  if (!status || status.state === "idle") return "pending";
+  if (status.state === "running") return "pending";
+  if (status.state === "succeeded") return "ok";
+  return "bad";
+}
+
+function updateStatusText(status: SelfServerUpdateStatus | null | undefined): string {
+  if (!status || status.state === "idle") return "서버 업데이트 기록 없음";
+  const range = status.before && status.after ? ` · ${status.before} → ${status.after}` : "";
+  if (status.state === "running") return `서버 업데이트 진행 중${range}`;
+  if (status.state === "succeeded") {
+    const changed =
+      status.changed === true ? "변경 적용됨" : status.changed === false ? "이미 최신" : "완료";
+    return `서버 업데이트 완료 · ${changed}${range}`;
+  }
+  return `서버 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
 }

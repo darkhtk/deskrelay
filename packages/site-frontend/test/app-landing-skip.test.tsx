@@ -39,9 +39,10 @@ describe("App landing flow", () => {
         screen.getAllByRole("button", { name: t("landing.cta.start") }).length,
       ).toBeGreaterThan(0);
     });
-    expect(screen.getByRole("heading", { name: "자동 설치와 진단" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "상태와 등록" })).toBeTruthy();
     expect(document.body.textContent).toContain("현재 디바이스");
-    expect(document.body.textContent).toContain("서버 자동 확인");
+    expect(document.body.textContent).toContain("서버");
+    expect(document.body.textContent).toContain("업데이트");
     expect(document.body.textContent).toContain("다른 PC 등록 명령");
   });
 
@@ -58,6 +59,12 @@ describe("App landing flow", () => {
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
+      }
+      if (url.includes("/api/self/update/status")) {
+        return new Response(JSON.stringify({ state: "idle" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       if (url.includes("/__deskrelay/local-site-token")) {
         return new Response(JSON.stringify({ error: "local only" }), {

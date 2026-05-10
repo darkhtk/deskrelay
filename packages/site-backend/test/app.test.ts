@@ -266,9 +266,17 @@ describe("self-host command helper", () => {
       registry: new InMemoryDeviceRegistry(),
       token: TOKEN,
       selfServerUpdater: {
+        async status() {
+          return { state: "running", logPath: "update.log" } as const;
+        },
         async update() {
           calls += 1;
-          return { supported: true, started: true, logPath: "update.log" };
+          return {
+            supported: true,
+            started: true,
+            logPath: "update.log",
+            status: { state: "running", logPath: "update.log" } as const,
+          };
         },
       },
     });
@@ -288,7 +296,16 @@ describe("self-host command helper", () => {
       supported: true,
       started: true,
       logPath: "update.log",
+      status: { state: "running", logPath: "update.log" },
     });
+
+    const status = await app.fetch(
+      new Request("http://site.local/api/self/update/status", {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({ state: "running", logPath: "update.log" });
   });
 });
 

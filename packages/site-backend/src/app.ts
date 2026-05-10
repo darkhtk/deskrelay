@@ -175,6 +175,17 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
   });
 
+  app.get("/api/self/update/status", async (c) => {
+    if (!options.selfServerUpdater) {
+      return c.json({ state: "idle" });
+    }
+    try {
+      return c.json(await options.selfServerUpdater.status());
+    } catch (err) {
+      return c.json({ state: "failed", error: (err as Error).message }, 500);
+    }
+  });
+
   app.post("/api/devices", async (c) => {
     let body: unknown;
     try {

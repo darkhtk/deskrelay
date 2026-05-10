@@ -76,7 +76,9 @@ tmp-*
 DESKRELAY-SERVER-CODE.txt
 REGISTER-OTHER-PC.txt
 REMOVE-OTHER-PC.txt
+UPDATE-DESKRELAY-SERVER.txt
 REMOVE-DESKRELAY-SERVER.txt
+.local-test-logs/
 
 # Local backend/dev runtime
 .dev.vars

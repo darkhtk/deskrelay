@@ -4,6 +4,7 @@ param(
   [string]$RepoRoot = "",
   [string]$Branch = "main",
   [string]$LogPath = "",
+  [string]$StatusPath = "",
   [switch]$NoOpenBrowser
 )
 
@@ -32,8 +33,43 @@ function Get-FullPathNoResolve {
   return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
 }
 
+function Write-UpdateStatus {
+  param(
+    [string]$State,
+    [string]$StatusPath,
+    [string]$StartedAt,
+    [string]$CompletedAt = "",
+    [string]$LogPath = "",
+    [string]$Before = "",
+    [string]$After = "",
+    [bool]$Changed = $false,
+    [string]$ErrorMessage = ""
+  )
+  if (-not $StatusPath) {
+    return
+  }
+  $parent = Split-Path -Parent $StatusPath
+  if ($parent) {
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+  }
+  $payload = [ordered]@{
+    state = $State
+  }
+  if ($StartedAt) { $payload.startedAt = $StartedAt }
+  if ($CompletedAt) { $payload.completedAt = $CompletedAt }
+  if ($LogPath) { $payload.logPath = $LogPath }
+  if ($Before) { $payload.before = $Before }
+  if ($After) { $payload.after = $After }
+  if ($State -ne "running") { $payload.changed = $Changed }
+  if ($ErrorMessage) { $payload.error = $ErrorMessage }
+  $payload | ConvertTo-Json -Depth 4 | Set-Content -Path $StatusPath -Encoding utf8
+}
+
 $repo = Get-RepoRoot -Explicit $RepoRoot
 $root = Get-FullPathNoResolve -Path $Root -Repo $repo
+$startedAt = (Get-Date).ToUniversalTime().ToString("o")
+$before = ""
+$after = ""
 
 if ($LogPath) {
   $logParent = Split-Path -Parent $LogPath
@@ -44,11 +80,16 @@ if ($LogPath) {
 }
 
 try {
+  Write-UpdateStatus -State "running" -StatusPath $StatusPath -StartedAt $startedAt -LogPath $LogPath
+
   Set-Location -LiteralPath $repo
   Write-Host "DeskRelay self server update"
   Write-Host "Repo: $repo"
   Write-Host "State root: $root"
   Write-Host "Branch: $Branch"
+
+  $before = (& git rev-parse --short HEAD 2>$null)
+  if ($before) { $before = $before.Trim() }
 
   & git fetch origin $Branch
   if ($LASTEXITCODE -ne 0) {
@@ -64,6 +105,9 @@ try {
   if ($LASTEXITCODE -ne 0) {
     throw "git pull --ff-only failed with exit code $LASTEXITCODE"
   }
+
+  $after = (& git rev-parse --short HEAD 2>$null)
+  if ($after) { $after = $after.Trim() }
 
   & bun install
   if ($LASTEXITCODE -ne 0) {
@@ -92,6 +136,27 @@ try {
   }
 
   Write-Host "DeskRelay self server update complete."
+  Write-UpdateStatus `
+    -State "succeeded" `
+    -StatusPath $StatusPath `
+    -StartedAt $startedAt `
+    -CompletedAt (Get-Date).ToUniversalTime().ToString("o") `
+    -LogPath $LogPath `
+    -Before $before `
+    -After $after `
+    -Changed ($before -ne $after)
+} catch {
+  Write-UpdateStatus `
+    -State "failed" `
+    -StatusPath $StatusPath `
+    -StartedAt $startedAt `
+    -CompletedAt (Get-Date).ToUniversalTime().ToString("o") `
+    -LogPath $LogPath `
+    -Before $before `
+    -After $after `
+    -Changed ($before -ne $after) `
+    -ErrorMessage $_.Exception.Message
+  throw
 } finally {
   if ($LogPath) {
     Stop-Transcript | Out-Null

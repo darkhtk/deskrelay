@@ -234,6 +234,18 @@ export interface SelfServerUpdateResponse {
   logPath?: string;
   pid?: number;
   error?: string;
+  status?: SelfServerUpdateStatus;
+}
+
+export interface SelfServerUpdateStatus {
+  state: "idle" | "running" | "succeeded" | "failed";
+  startedAt?: string;
+  completedAt?: string;
+  logPath?: string;
+  before?: string;
+  after?: string;
+  changed?: boolean;
+  error?: string;
 }
 
 export interface DeviceUpdateResponse {
@@ -379,6 +391,7 @@ export const api = {
   setSelfServerAutostart: (enabled: boolean) =>
     request<SelfServerAutostartStatus>("PUT", "/api/self/autostart", { enabled }),
   selfUpdate: () => request<SelfServerUpdateResponse>("POST", "/api/self/update"),
+  selfUpdateStatus: () => request<SelfServerUpdateStatus>("GET", "/api/self/update/status"),
   updateDevice: (id: string) =>
     request<DeviceUpdateResponse>("POST", `/api/devices/${id}/system/update`),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>

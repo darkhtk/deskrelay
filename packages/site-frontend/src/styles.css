@@ -3314,6 +3314,68 @@ pre .copy-button:hover {
   color: var(--text);
   font-weight: 600;
 }
+.landing-dashboard {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(360px, 1.15fr);
+  gap: 28px;
+  align-items: start;
+}
+.landing-status-list {
+  border-bottom: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border-subtle);
+}
+.landing-status-row {
+  align-items: center;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px 0;
+}
+.landing-status-row + .landing-status-row {
+  border-top: 1px solid var(--border-subtle);
+}
+.landing-status-dot {
+  border-radius: 999px;
+  height: 7px;
+  width: 7px;
+}
+.landing-status-good .landing-status-dot {
+  background: #2f9d62;
+}
+.landing-status-warn .landing-status-dot,
+.landing-status-wait .landing-status-dot {
+  background: #c7902e;
+}
+.landing-status-bad .landing-status-dot {
+  background: #d04f45;
+}
+.landing-status-neutral .landing-status-dot {
+  background: var(--text-faint);
+}
+.landing-status-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.landing-status-main strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.landing-status-main span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.landing-status-value {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
 .landing-live-state {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3482,8 +3544,7 @@ pre .copy-button:hover {
 .landing-command-box {
   display: grid;
   gap: 10px;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 12px;
+  min-width: 0;
 }
 .landing-cleanup-alert {
   display: grid;
@@ -3545,7 +3606,7 @@ pre .copy-button:hover {
 .landing-command-box pre,
 .landing-cleanup-alert pre {
   margin: 0;
-  max-height: 180px;
+  max-height: 260px;
   overflow: auto;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -4992,11 +5053,25 @@ dialog.approval-modal-root,
   font-size: 11px;
 }
 .connection-diagnostics-update {
+  border-left: 3px solid var(--border-strong);
   color: var(--text-muted);
   display: flex;
   flex-direction: column;
   gap: 8px;
   font-size: 12px;
+  padding-left: 10px;
+}
+.connection-diagnostics-update.update-ok {
+  border-left-color: #2f9d62;
+}
+.connection-diagnostics-update.update-pending {
+  border-left-color: #c7902e;
+}
+.connection-diagnostics-update.update-bad {
+  border-left-color: #d04f45;
+}
+.connection-diagnostics-update-meta {
+  color: var(--text-faint);
 }
 .connection-diagnostics-update .settings-command-textarea {
   min-height: 160px;
@@ -5428,6 +5503,23 @@ dialog.approval-modal-root,
   }
   .landing-reliability-header {
     text-align: left;
+  }
+  .landing-dashboard {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .landing-status-row {
+    grid-template-columns: 8px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .landing-status-value {
+    grid-column: 2;
+    text-align: left;
+    white-space: normal;
+  }
+  .landing-command-box pre,
+  .landing-cleanup-alert pre {
+    max-height: 220px;
   }
   .landing-live-state {
     grid-template-columns: 1fr;

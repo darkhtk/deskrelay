@@ -1,5 +1,10 @@
-import { type Component, For, type JSX, Show, createResource, createSignal } from "solid-js";
-import { api, type DiagnosticCheck, type DiagnosticSeverity } from "../api.ts";
+import { type Component, For, Show, createResource, createSignal } from "solid-js";
+import {
+  api,
+  type DiagnosticCheck,
+  type DiagnosticSeverity,
+  type SelfServerUpdateStatus,
+} from "../api.ts";
 import { t } from "../i18n.ts";
 import { LoginCard } from "./LoginCard.tsx";
 
@@ -44,6 +49,10 @@ export const Landing: Component<LandingProps> = (props) => {
     () => (props.authed ? "ready" : null),
     async () => await api.removeOtherPcCommand(),
   );
+  const [updateStatus, { refetch: refetchUpdateStatus }] = createResource(
+    () => (props.authed ? "ready" : null),
+    async () => await api.selfUpdateStatus().catch(() => null),
+  );
 
   const refreshAll = async () => {
     await Promise.all([
@@ -54,6 +63,7 @@ export const Landing: Component<LandingProps> = (props) => {
       props.authed ? refetchServerDoctor() : Promise.resolve(),
       props.authed ? refetchRegisterCommand() : Promise.resolve(),
       props.authed ? refetchRemoveCommand() : Promise.resolve(),
+      props.authed ? refetchUpdateStatus() : Promise.resolve(),
     ]);
   };
 
@@ -93,16 +103,18 @@ export const Landing: Component<LandingProps> = (props) => {
     if (devices.error) return "bad";
     return (devices()?.length ?? health()?.devices ?? 0) > 0 ? "good" : "warn";
   };
-  const remoteTone = (): StepTone => {
-    if (!props.authed) return "wait";
-    if (registerCommand.loading) return "wait";
-    if (registerCommand.error) return "bad";
-    return registerCommand() ? "good" : "warn";
+  const updateTone = (): StepTone => {
+    if (!props.authed) return "neutral";
+    if (updateStatus.loading) return "wait";
+    const state = updateStatus()?.state ?? "idle";
+    if (!isKnownUpdateState(state)) return "neutral";
+    if (state === "running") return "wait";
+    if (state === "succeeded") return "good";
+    if (state === "failed") return "bad";
+    return "neutral";
   };
   const deviceCount = () => devices()?.length ?? health()?.devices ?? 0;
   const remoteUrl = () => registerCommand()?.preferredUrl ?? "";
-  const serverPort = () => registerCommand()?.serverPort ?? null;
-  const connectorPort = () => registerCommand()?.connectorPort ?? null;
   const siteToken = () => registerCommand()?.siteToken ?? "";
   const serverChecks = (): DiagnosticCheck[] => {
     const report = serverDoctor();
@@ -111,7 +123,8 @@ export const Landing: Component<LandingProps> = (props) => {
   const manualCleanupCommand = () => {
     if (!props.authed) return "Site token 인증 후 제거 명령을 생성합니다.";
     if (removeCommand.loading) return "제거 명령 생성 중...";
-    if (removeCommand.error) return `제거 명령 생성 실패: ${(removeCommand.error as Error).message}`;
+    if (removeCommand.error)
+      return `제거 명령 생성 실패: ${(removeCommand.error as Error).message}`;
     return removeCommand()?.command ?? "제거 명령을 생성하지 못했습니다.";
   };
   const manualCleanupLabel = () => {
@@ -184,49 +197,42 @@ export const Landing: Component<LandingProps> = (props) => {
       detail: "이 PC에서 등록 명령을 실행하면 디바이스 목록에 추가됩니다.",
     };
   };
-  const diagnostics = () => {
-    const rows: Array<{ tone: StepTone; text: string }> = [];
-    if (health.loading) rows.push({ tone: "wait", text: "서버 API 확인 중" });
-    else if (health.error) rows.push({ tone: "bad", text: "서버 API에 도달하지 못함" });
-    else
-      rows.push({ tone: "good", text: `서버 응답 정상 · 등록 디바이스 ${health()?.devices ?? 0}` });
-
-    if (props.authed) rows.push({ tone: "good", text: "브라우저 Site token 인증됨" });
-    else if (localToken())
-      rows.push({ tone: "warn", text: "이 PC의 Site token 감지됨 · 시작하기 필요" });
-    else rows.push({ tone: "bad", text: "브라우저 인증 전 · Site token 입력 필요" });
-
-    if (props.authed && devices.error) rows.push({ tone: "bad", text: "디바이스 목록 조회 실패" });
-    else if (props.authed && deviceCount() === 0)
-      rows.push({ tone: "warn", text: "등록된 디바이스 없음" });
-    else if (props.authed) rows.push({ tone: "good", text: `디바이스 ${deviceCount()}대 등록됨` });
-
-    if (props.authed && registerCommand.error)
-      rows.push({ tone: "bad", text: "다른 PC 등록 명령 생성 실패" });
-    else if (props.authed && remoteUrl().includes("127.0.0.1"))
-      rows.push({ tone: "warn", text: "다른 PC 등록용 외부 URL이 127.0.0.1로 잡힘" });
-    else if (props.authed && remoteUrl())
-      rows.push({ tone: "good", text: `다른 PC 등록 URL 준비됨 · ${remoteUrl()}` });
-
-    if (props.authed) {
-      if (serverDoctor.loading) {
-        rows.push({ tone: "wait", text: "서버 진단 중..." });
-      } else if (serverDoctor.error) {
-        rows.push({
-          tone: "bad",
-          text: `서버 진단 실패: ${(serverDoctor.error as Error).message}`,
-        });
-      } else {
-        for (const check of prioritizedDoctorChecks(serverChecks())) {
-          rows.push({
-            tone: severityToStepTone(check.severity),
-            text: `${check.label}: ${check.summary}`,
-          });
-        }
-      }
-    }
-    return rows;
-  };
+  const statusRows = () => [
+    {
+      tone: serverTone(),
+      label: "서버",
+      value: health.loading
+        ? "확인 중"
+        : health.error
+          ? "응답 실패"
+          : `정상 · v${health()?.version ?? "0.0.0"}`,
+      detail: "프론트엔드와 API 상태",
+    },
+    {
+      tone: accessTone(),
+      label: "브라우저",
+      value: props.authed ? "인증됨" : localToken() ? "Site token 감지됨" : "인증 필요",
+      detail: props.authed ? "앱 사용 가능" : "시작하기로 입장",
+    },
+    {
+      tone: devicesTone(),
+      label: "디바이스",
+      value: !props.authed
+        ? "인증 대기"
+        : devices.loading
+          ? "조회 중"
+          : devices.error
+            ? "조회 실패"
+            : `${deviceCount()}대 등록됨`,
+      detail: currentDeviceLabel().detail,
+    },
+    {
+      tone: updateTone(),
+      label: "업데이트",
+      value: updateStatusLabel(updateStatus()),
+      detail: updateStatusDetail(updateStatus()),
+    },
+  ];
 
   return (
     <>
@@ -260,116 +266,30 @@ export const Landing: Component<LandingProps> = (props) => {
       <section class="landing-reliability" aria-label="자동 설치와 진단">
         <div class="landing-reliability-inner">
           <div class="landing-reliability-header">
-            <p class="landing-kicker">Self-host control plane</p>
-            <h2>자동 설치와 진단</h2>
-            <p>DeskRelay가 현재 상태를 확인하고, 필요한 다음 작업만 바로 실행하게 합니다.</p>
+            <h2>상태와 등록</h2>
+            <p>서버, 브라우저, 디바이스, 업데이트 상태만 먼저 확인합니다.</p>
             <CurrentDeviceLabel state={currentDeviceLabel()} />
           </div>
 
-          <div class="landing-live-state" aria-label="자동 진단 요약">
-            <StatePill
-              label="server"
-              value={
-                health.loading
-                  ? "확인 중"
-                  : health.error
-                    ? "실패"
-                    : `정상 · devices ${health()?.devices ?? 0}`
-              }
-              tone={serverTone()}
-            />
-            <StatePill
-              label="browser"
-              value={props.authed ? "인증됨" : localToken() ? "자동 token 감지" : "token 필요"}
-              tone={accessTone()}
-            />
-            <StatePill
-              label="next"
-              value={props.authed ? "다른 PC 등록 가능" : "시작하기"}
-              tone={props.authed ? "good" : "neutral"}
-            />
-          </div>
+          <div class="landing-dashboard">
+            <div class="landing-status-list" aria-label="현재 상태">
+              <For each={statusRows()}>
+                {(row) => (
+                  <div class={`landing-status-row landing-status-${row.tone}`}>
+                    <span class="landing-status-dot" />
+                    <div class="landing-status-main">
+                      <strong>{row.label}</strong>
+                      <span>{row.detail}</span>
+                    </div>
+                    <span class="landing-status-value">{row.value}</span>
+                  </div>
+                )}
+              </For>
+            </div>
 
-          <div class="landing-auto-actions">
-            <AutoStep
-              index="1"
-              title="서버 자동 확인"
-              tone={serverTone()}
-              status={
-                health.loading
-                  ? "확인 중"
-                  : health.error
-                    ? "서버 응답 실패"
-                    : `정상 · v${health()?.version ?? "0.0.0"}`
-              }
-            >
-              <Show
-                when={!health.error}
-                fallback={
-                  <code class="landing-inline-code">
-                    powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
-                  </code>
-                }
-              >
-                <span>프론트엔드와 API가 응답합니다.</span>
-              </Show>
-            </AutoStep>
-
-            <AutoStep
-              index="2"
-              title="브라우저 접근 확인"
-              tone={accessTone()}
-              status={props.authed ? "인증됨" : localToken() ? "Site token 감지됨" : "입력 필요"}
-            >
-              <div class="landing-step-actions">
-                <button
-                  type="button"
-                  class="primary-button landing-command-copy"
-                  onClick={() => void open()}
-                  disabled={opening()}
-                >
-                  {props.authed ? "앱 열기" : localToken() ? "자동 입장" : "Site token 입력"}
-                </button>
-              </div>
-            </AutoStep>
-
-            <AutoStep
-              index="3"
-              title="디바이스 등록 진단"
-              tone={devicesTone()}
-              status={
-                !props.authed
-                  ? "인증 대기"
-                  : devices.loading
-                    ? "조회 중"
-                    : devices.error
-                      ? "조회 실패"
-                      : `${deviceCount()}대 등록됨`
-              }
-            >
-              <Show
-                when={props.authed}
-                fallback={<span>시작하기 후 등록 상태를 자동 조회합니다.</span>}
-              >
-                <span>등록된 PC는 사이드바의 디바이스 목록에 자동 반영됩니다.</span>
-              </Show>
-            </AutoStep>
-
-            <AutoStep
-              index="4"
-              title="다른 PC 자동 등록"
-              tone={remoteTone()}
-              status={
-                !props.authed
-                  ? "인증 대기"
-                  : registerCommand.loading
-                    ? "명령 생성 중"
-                    : registerCommand.error
-                      ? "생성 실패"
-                      : "명령 준비됨"
-              }
-            >
-              <div class="landing-step-actions">
+            <div class="landing-command-box">
+              <div class="landing-command-box-head">
+                <span>다른 PC 등록 명령</span>
                 <button
                   type="button"
                   class="landing-inline-button"
@@ -378,16 +298,26 @@ export const Landing: Component<LandingProps> = (props) => {
                   다시 진단
                 </button>
               </div>
-            </AutoStep>
-          </div>
-
-          <div class="landing-diagnostics" aria-label="자동 판별 결과">
-            <h3>자동 판별 결과</h3>
-            <ul>
-              <For each={diagnostics()}>
-                {(item) => <li class={`landing-diagnostic-${item.tone}`}>{item.text}</li>}
-              </For>
-            </ul>
+              <div class="landing-command-meta">
+                <span class="landing-command-url">
+                  {remoteUrl() ? `server URL: ${remoteUrl()}` : "Site token 확인 후 생성됩니다."}
+                </span>
+                <Show when={siteToken()}>
+                  {(token) => <span class="landing-command-url">Site token: {token()}</span>}
+                </Show>
+              </div>
+              <pre>
+                <code>
+                  {props.authed
+                    ? registerCommand.loading
+                      ? "명령 생성 중..."
+                      : registerCommand.error
+                        ? `명령 생성 실패: ${(registerCommand.error as Error).message}`
+                        : registerCommand()?.command
+                    : "시작하기를 누르면 이 서버의 Site token으로 등록 명령을 자동 생성합니다."}
+                </code>
+              </pre>
+            </div>
           </div>
 
           <Show when={props.manualCleanupNotice}>
@@ -396,14 +326,11 @@ export const Landing: Component<LandingProps> = (props) => {
                 <div class="landing-command-box-head">
                   <span>수동 제거 필요</span>
                   <div class="landing-command-meta">
-                    <span class="landing-command-url">
-                      자동 제거 미확인: {notice().count}대
-                    </span>
+                    <span class="landing-command-url">자동 제거 미확인: {notice().count}대</span>
                   </div>
                 </div>
                 <p>
-                  서버 목록에서는 제거됐지만, 다음 PC가 자동 uninstall 응답을 주지 않았습니다:
-                  {" "}
+                  서버 목록에서는 제거됐지만, 다음 PC가 자동 uninstall 응답을 주지 않았습니다:{" "}
                   {manualCleanupLabel()}
                 </p>
                 <p>해당 PC가 켜지면 PowerShell에 아래 제거 명령을 통째로 붙여넣으세요.</p>
@@ -413,37 +340,6 @@ export const Landing: Component<LandingProps> = (props) => {
               </div>
             )}
           </Show>
-
-          <div class="landing-command-box">
-            <div class="landing-command-box-head">
-              <span>다른 PC 등록 명령</span>
-              <div class="landing-command-meta">
-                <span class="landing-command-url">
-                  {remoteUrl() ? `server URL: ${remoteUrl()}` : "Site token 확인 후 생성됩니다."}
-                </span>
-                <Show when={serverPort()}>
-                  {(port) => <span class="landing-command-url">server port: {port()}</span>}
-                </Show>
-                <Show when={connectorPort()}>
-                  {(port) => <span class="landing-command-url">connector port: {port()}</span>}
-                </Show>
-                <Show when={siteToken()}>
-                  {(token) => <span class="landing-command-url">Site token: {token()}</span>}
-                </Show>
-              </div>
-            </div>
-            <pre>
-              <code>
-                {props.authed
-                  ? registerCommand.loading
-                    ? "명령 생성 중..."
-                    : registerCommand.error
-                      ? `명령 생성 실패: ${(registerCommand.error as Error).message}`
-                      : registerCommand()?.command
-                  : "시작하기를 누르면 이 서버의 Site token으로 등록 명령을 자동 생성합니다."}
-              </code>
-            </pre>
-          </div>
         </div>
       </section>
 
@@ -535,13 +431,6 @@ function worstSeverity(checks: DiagnosticCheck[]): DiagnosticSeverity | null {
   return "ok";
 }
 
-function prioritizedDoctorChecks(checks: DiagnosticCheck[]): DiagnosticCheck[] {
-  if (checks.length === 0) return [];
-  const actionable = checks.filter((check) => check.severity !== "ok");
-  if (actionable.length > 0) return actionable;
-  return checks.slice(0, 4);
-}
-
 const CurrentDeviceLabel: Component<{ state: DeviceLabelState }> = (props) => (
   <div class={`landing-current-device landing-current-device-${props.state.tone}`}>
     <span class="landing-current-device-key">현재 디바이스</span>
@@ -550,30 +439,27 @@ const CurrentDeviceLabel: Component<{ state: DeviceLabelState }> = (props) => (
   </div>
 );
 
-const StatePill: Component<{ label: string; value: string; tone: StepTone }> = (props) => {
-  return (
-    <div class={`landing-state-pill landing-state-${props.tone}`}>
-      <span>{props.label}</span>
-      <strong>{props.value}</strong>
-    </div>
-  );
-};
+function updateStatusLabel(status: SelfServerUpdateStatus | null | undefined): string {
+  if (!isKnownUpdateState(status?.state) || status?.state === "idle") return "기록 없음";
+  if (status.state === "running") return "진행 중";
+  if (status.state === "succeeded") {
+    if (status.changed === true) return "완료 · 변경 적용";
+    if (status.changed === false) return "완료 · 이미 최신";
+    return "완료";
+  }
+  return "실패";
+}
 
-const AutoStep: Component<{
-  index: string;
-  title: string;
-  status: string;
-  tone: StepTone;
-  children: JSX.Element;
-}> = (props) => (
-  <section class={`landing-auto-step landing-auto-step-${props.tone}`} aria-label={props.title}>
-    <span class="landing-auto-index">{props.index}</span>
-    <div class="landing-auto-main">
-      <div class="landing-auto-head">
-        <h3>{props.title}</h3>
-        <strong>{props.status}</strong>
-      </div>
-      <div class="landing-auto-body">{props.children}</div>
-    </div>
-  </section>
-);
+function updateStatusDetail(status: SelfServerUpdateStatus | null | undefined): string {
+  if (!isKnownUpdateState(status?.state) || status?.state === "idle") {
+    return "연결 진단에서 업데이트를 실행할 수 있습니다.";
+  }
+  const range = status.before && status.after ? ` · ${status.before} → ${status.after}` : "";
+  if (status.state === "running") return `업데이트 작업이 실행 중입니다${range}`;
+  if (status.state === "succeeded") return `마지막 업데이트가 정상 종료됐습니다${range}`;
+  return `마지막 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+}
+
+function isKnownUpdateState(value: unknown): value is SelfServerUpdateStatus["state"] {
+  return value === "idle" || value === "running" || value === "succeeded" || value === "failed";
+}
