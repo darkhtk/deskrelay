@@ -3,7 +3,7 @@
 평가일: 2026-05-11  
 대상: self-host `main` 브랜치
 
-README 정리, 서버 설치 bootstrap, macOS 서버 스크립트, 매뉴얼 분리, connector `doctor`는 이미 들어왔다. 아래에는 아직 닫혔다고 보기 어려운 것만 남긴다.
+README 정리, 서버 설치 bootstrap, macOS 서버 스크립트, 매뉴얼 분리, connector `doctor`, `register-self` 단계별 등록 리포트는 이미 들어왔다. 아래에는 아직 닫혔다고 보기 어려운 것만 남긴다.
 
 ## 1. 실제 다른 Windows PC 등록 검증
 
@@ -12,11 +12,12 @@ README 정리, 서버 설치 bootstrap, macOS 서버 스크립트, 매뉴얼 분
 - 깨끗한 Windows 사용자 프로필에서 서버가 아닌 다른 PC 등록 명령을 끝까지 실행한 기록
 - Git/Bun 없음, PATH 꼬임, 기존 `$HOME\deskrelay` dirty 상태, stale connector, 포트 점유 상태별 실제 검증
 - 등록 성공 후 서버 UI 디바이스 목록 즉시 반영, 세션 조회, 새 채팅까지 이어지는 end-to-end 확인
+- 단계별 등록 리포트는 추가됐지만, 실제 다른 PC에서 수집한 통과 로그는 아직 없다.
 
 **통과 기준**
 
 - 같은 등록 명령을 3회 반복 실행해도 device row가 하나로 수렴한다.
-- 실패 시 어느 단계에서 막혔는지 명령 출력만으로 알 수 있다.
+- 실패 시 어느 단계에서 막혔는지 명령 출력만으로 알 수 있다. 이 부분은 `register-self` 리포트가 기본 형태를 갖췄다.
 - 성공 시 device id, daemon URL, log path, 서버 등록 확인 결과가 출력된다.
 
 ## 2. Tailscale과 방화벽 실패 분류
@@ -25,6 +26,7 @@ README 정리, 서버 설치 bootstrap, macOS 서버 스크립트, 매뉴얼 분
 
 - Tailscale 미설치, 로그아웃, 다른 tailnet, LAN fallback, Windows Firewall 차단을 서로 다른 실패로 분류하는 실제 검증
 - 서버 PC에서 대상 PC의 advertised daemon URL 접근 실패 시 원인 후보를 좁혀주는 진단
+- daemon token 거부, timeout, 네트워크/방화벽 접근 실패는 `register-self`에서 우선 분리한다.
 
 **통과 기준**
 
@@ -50,6 +52,7 @@ README 정리, 서버 설치 bootstrap, macOS 서버 스크립트, 매뉴얼 분
 
 - connector CLI의 `doctor` 결과를 서버/프론트 연결 진단 탭에서 일관된 JSON 모델로 렌더링
 - 서버, registry, selected device, daemon token, behavior, Claude CLI, workspace roots, login task를 한 번에 판정하는 화면
+- 등록 중 발생하는 상태는 리포트로 보이지만, 평상시 상태 진단 모델은 아직 부족하다.
 
 **통과 기준**
 

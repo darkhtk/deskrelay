@@ -33,6 +33,7 @@ export interface RegisterSelfResult {
   taskName: string;
   scriptPath?: string;
   logPath?: string;
+  report: RegisterSelfReport;
 }
 
 interface PublicDevice {
@@ -40,10 +41,49 @@ interface PublicDevice {
   daemonUrl: string;
 }
 
+export type RegisterSelfStepStatus = "ok" | "repaired" | "failed" | "skipped";
+
+export interface RegisterSelfStep {
+  id: string;
+  label: string;
+  status: RegisterSelfStepStatus;
+  summary: string;
+  hint?: string;
+}
+
+export interface RegisterSelfReport {
+  status: "succeeded" | "failed";
+  steps: RegisterSelfStep[];
+}
+
+export class RegisterSelfError extends Error {
+  readonly report: RegisterSelfReport;
+  readonly stepId: string;
+
+  constructor(message: string, stepId: string, report: RegisterSelfReport) {
+    super(message);
+    this.name = "RegisterSelfError";
+    this.stepId = stepId;
+    this.report = report;
+  }
+}
+
+interface ServerRegistrationResult {
+  removedDeviceIds: string[];
+  registeredDeviceId?: string;
+}
+
 export async function registerSelf(options: RegisterSelfOptions): Promise<RegisterSelfResult> {
+  const report: RegisterSelfReport = { status: "failed", steps: [] };
   const serverUrl = normalizeServerUrl(options.serverUrl);
   const siteToken = options.siteToken.trim();
   if (!siteToken) throw new Error("register-self requires --site-token");
+  addStep(report, {
+    id: "input",
+    label: "입력값",
+    status: "ok",
+    summary: `server=${serverUrl}`,
+  });
 
   const port = options.port ?? DEFAULT_SELF_REGISTER_PORT;
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -54,7 +94,15 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
 
   const advertiseHost = (options.advertiseHost ?? detectAdvertiseHost())?.trim();
   if (!advertiseHost) {
-    throw new Error(
+    failStep(
+      report,
+      {
+        id: "advertise-host",
+        label: "외부 접근 주소",
+        status: "failed",
+        summary: "this PC has no usable Tailscale/LAN IPv4 address",
+        hint: "Install/log in to Tailscale, connect to the same LAN, or pass --advertise-host <ip-or-hostname>.",
+      },
       "could not detect this PC's Tailscale/LAN IP. Install Tailscale or pass --advertise-host <ip-or-hostname>.",
     );
   }
@@ -65,22 +113,57 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
   const timeoutMs = options.timeoutMs ?? 20_000;
   const loadAuth = options.loadAuthToken ?? loadOrCreateAuthToken;
   const auth = await loadAuth();
+  addStep(report, {
+    id: "daemon-token",
+    label: "daemon token",
+    status: auth.created ? "repaired" : "ok",
+    summary: auth.created ? `created ${auth.path}` : `loaded ${auth.path}`,
+  });
 
   process.env.CR_CONNECTOR_HOST = listenHost;
   process.env.CR_CONNECTOR_PORT = String(port);
   if (options.workspaceRoots !== undefined) {
     process.env.CR_CONNECTOR_WORKSPACE_ROOTS = options.workspaceRoots;
   }
+  addStep(report, {
+    id: "daemon-env",
+    label: "connector env",
+    status: "ok",
+    summary: `${listenHost}:${port}, workspaceRoots=${options.workspaceRoots ?? "(unrestricted)"}`,
+  });
 
   await (options.stopRecordedDaemon ?? stopRecordedDaemon)(port);
-  await stopLocalConnectorPortIfPresent(
-    fetchImpl,
-    `http://127.0.0.1:${port}`,
-    port,
-    auth.token,
-    options.stopPortOwner ?? stopListeningProcessOnPort,
-    options.removeTask ?? removeLoginTask,
+  addStep(report, {
+    id: "recorded-daemon",
+    label: "recorded daemon",
+    status: "ok",
+    summary: "old recorded daemon stop requested",
+  });
+  const cleanup = await withRegisterStep(
+    report,
+    "local-port-cleanup",
+    () =>
+      stopLocalConnectorPortIfPresent({
+        fetchImpl,
+        baseUrl: `http://127.0.0.1:${port}`,
+        port,
+        token: auth.token,
+        stopPortOwner: options.stopPortOwner ?? stopListeningProcessOnPort,
+        removeTask: options.removeTask ?? removeLoginTask,
+      }),
+    (err) => ({
+      label: "local connector cleanup",
+      summary: (err as Error).message,
+      hint: `Close existing DeskRelay connector/bun/PowerShell processes or rerun PowerShell as Administrator, then retry. TCP port: ${port}.`,
+    }),
   );
+  addStep(report, {
+    id: "local-port-cleanup",
+    label: "local connector cleanup",
+    status: cleanup.status,
+    summary: cleanup.summary,
+    ...(cleanup.hint ? { hint: cleanup.hint } : {}),
+  });
 
   const baseLaunch = defaultLoginTaskLaunch();
   const env: Record<string, string | undefined> = {
@@ -88,16 +171,58 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
     CR_CONNECTOR_PORT: String(port),
     CR_CONNECTOR_WORKSPACE_ROOTS: options.workspaceRoots,
   };
-  const install = await (options.installTask ?? installLoginTask)({
-    start: true,
-    launch: { ...baseLaunch, env },
-  });
+  const install = await withRegisterStep(
+    report,
+    "login-task",
+    () =>
+      (options.installTask ?? installLoginTask)({
+        start: true,
+        launch: { ...baseLaunch, env },
+      }),
+    (err) => ({
+      label: "login task",
+      summary: (err as Error).message,
+      hint: "Check Windows Task Scheduler permissions and rerun the registration command.",
+    }),
+  );
   if (!install.supported) {
-    throw new Error("register-self currently requires Windows login-task support");
+    failStep(
+      report,
+      {
+        id: "login-task",
+        label: "login task",
+        status: "failed",
+        summary: "Windows login-task support is required",
+        hint: "Run registration on Windows or use a supported connector startup path.",
+      },
+      "register-self currently requires Windows login-task support",
+    );
   }
+  addStep(report, {
+    id: "login-task",
+    label: "login task",
+    status: install.started ? "ok" : "repaired",
+    summary: `${install.taskName} installed${install.started ? " and started" : ""}`,
+  });
 
   const localUrl = `http://127.0.0.1:${port}`;
-  await waitForDaemonStatus(fetchImpl, localUrl, auth.token, timeoutMs, "local connector");
+  await withRegisterStep(
+    report,
+    "local-daemon",
+    () => waitForDaemonStatus(fetchImpl, localUrl, auth.token, timeoutMs, "local connector"),
+    (err) => ({
+      label: "local daemon",
+      summary: (err as Error).message,
+      hint: `The connector did not answer locally at ${localUrl}. Check the login task log or port ${port}.`,
+    }),
+  );
+  addStep(report, {
+    id: "local-daemon",
+    label: "local daemon",
+    status: "ok",
+    summary: `local /status verified at ${localUrl}`,
+  });
+
   const advertised = await probeDaemonStatus(fetchImpl, daemonUrl, auth.token, 5_000);
   if (!advertised.ok) {
     const state = await readStateFile().catch(() => undefined);
@@ -106,21 +231,64 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
       isLocalOnlyHost(state.host) &&
       !areEquivalentListenHosts(state.host, listenHost)
     ) {
-      throw new Error(
+      failStep(
+        report,
+        {
+          id: "advertised-daemon",
+          label: "server-to-connector probe",
+          status: "failed",
+          summary: `connector is still bound to ${state.host}:${state.port}; expected ${listenHost}:${port}`,
+          hint: "Reinstall the login task and retry.",
+        },
         `connector is still bound to ${state.host}:${state.port}; expected ${listenHost}:${port}. Reinstall the login task and retry.`,
       );
     }
-    throw new Error(
-      `cannot reach connector at ${daemonUrl}. Check Windows Firewall or Tailscale/LAN access for TCP ${port}.`,
+    const classified = classifyAdvertisedProbeFailure(advertised.error, daemonUrl, port);
+    failStep(
+      report,
+      {
+        id: "advertised-daemon",
+        label: "server-to-connector probe",
+        status: "failed",
+        summary: classified.summary,
+        hint: classified.hint,
+      },
+      classified.message,
     );
   }
-
-  await replaceServerRegistration(fetchImpl, serverUrl, siteToken, {
-    daemonUrl,
-    label,
-    authToken: auth.token,
+  addStep(report, {
+    id: "advertised-daemon",
+    label: "server-to-connector probe",
+    status: "ok",
+    summary: `advertised /status verified at ${daemonUrl}`,
   });
 
+  const registration = await withRegisterStep(
+    report,
+    "server-registration",
+    () =>
+      replaceServerRegistration(fetchImpl, serverUrl, siteToken, {
+        daemonUrl,
+        label,
+        authToken: auth.token,
+      }),
+    (err) => ({
+      label: "server registration",
+      summary: (err as Error).message,
+      hint: "Check the server URL, Site token, and that the DeskRelay server is reachable.",
+    }),
+  );
+  addStep(report, {
+    id: "server-registration",
+    label: "server registration",
+    status: registration.removedDeviceIds.length > 0 ? "repaired" : "ok",
+    summary:
+      registration.removedDeviceIds.length > 0
+        ? `replaced ${registration.removedDeviceIds.length} stale device row(s); registered ${registration.registeredDeviceId ?? daemonUrl}`
+        : `registered ${registration.registeredDeviceId ?? daemonUrl}`,
+  });
+
+  report.status = "succeeded";
   return {
     daemonUrl,
     label,
@@ -130,7 +298,58 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
     taskName: install.taskName,
     ...(install.scriptPath ? { scriptPath: install.scriptPath } : {}),
     ...(install.logPath ? { logPath: install.logPath } : {}),
+    report,
   };
+}
+
+function addStep(report: RegisterSelfReport, step: RegisterSelfStep): void {
+  report.steps.push(step);
+}
+
+function failStep(report: RegisterSelfReport, step: RegisterSelfStep, message: string): never {
+  addStep(report, step);
+  report.status = "failed";
+  throw new RegisterSelfError(message, step.id, report);
+}
+
+async function withRegisterStep<T>(
+  report: RegisterSelfReport,
+  stepId: string,
+  fn: () => Promise<T>,
+  explain: (err: unknown) => { label: string; summary: string; hint?: string },
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const failure = explain(err);
+    failStep(
+      report,
+      {
+        id: stepId,
+        label: failure.label,
+        status: "failed",
+        summary: failure.summary,
+        ...(failure.hint ? { hint: failure.hint } : {}),
+      },
+      failure.summary,
+    );
+  }
+}
+
+export function formatRegisterSelfReport(report: RegisterSelfReport): string {
+  const marker: Record<RegisterSelfStepStatus, string> = {
+    ok: "  OK  ",
+    repaired: "REPAIR",
+    failed: "ERROR ",
+    skipped: " skip ",
+  };
+  const lines = ["registration report:"];
+  for (const step of report.steps) {
+    lines.push(`${marker[step.status]} ${step.label}: ${step.summary}`);
+    if (step.hint) lines.push(`       -> ${step.hint}`);
+  }
+  lines.push(`result: ${report.status}`);
+  return lines.join("\n");
 }
 
 export function detectAdvertiseHost(): string | null {
@@ -140,6 +359,99 @@ export function detectAdvertiseHost(): string | null {
     .map((entry) => entry.address)
     .filter((address) => !address.startsWith("169.254."));
   return candidates.find((address) => address.startsWith("100.")) ?? candidates[0] ?? null;
+}
+
+interface LocalConnectorCleanupResult {
+  status: RegisterSelfStepStatus;
+  summary: string;
+  hint?: string;
+}
+
+function classifyAdvertisedProbeFailure(
+  error: string,
+  daemonUrl: string,
+  port: number,
+): { summary: string; hint: string; message: string } {
+  if (error === "HTTP 401" || error === "HTTP 403") {
+    return {
+      summary: `server reached ${daemonUrl}, but daemon token was rejected (${error})`,
+      hint: "Rerun the registration command so the server stores this PC's current daemon token.",
+      message: `daemon token rejected at ${daemonUrl}: ${error}`,
+    };
+  }
+  if (/timed|abort/i.test(error)) {
+    return {
+      summary: `local daemon is ready, but ${daemonUrl} timed out from the advertised address`,
+      hint: `Check Tailscale/LAN routing and Windows Firewall inbound TCP ${port}.`,
+      message: `cannot reach connector at ${daemonUrl}: timeout. Check Windows Firewall or Tailscale/LAN access for TCP ${port}.`,
+    };
+  }
+  return {
+    summary: `local daemon is ready, but ${daemonUrl} is not reachable (${error})`,
+    hint: `Check Windows Firewall, Tailscale/LAN access, and whether this PC is advertising the correct IP for TCP ${port}.`,
+    message: `cannot reach connector at ${daemonUrl}. Check Windows Firewall or Tailscale/LAN access for TCP ${port}.`,
+  };
+}
+
+/*
+ * Registration intentionally behaves like reconciliation:
+ * detect existing state, repair what can be repaired, then prove both
+ * local and advertised daemon URLs before touching the server registry.
+ */
+async function stopLocalConnectorPortIfPresent({
+  fetchImpl,
+  baseUrl,
+  port,
+  token,
+  stopPortOwner,
+  removeTask,
+}: {
+  fetchImpl: typeof fetch;
+  baseUrl: string;
+  port: number;
+  token: string;
+  stopPortOwner: (port: number) => Promise<boolean>;
+  removeTask: () => Promise<unknown>;
+}): Promise<LocalConnectorCleanupResult> {
+  const probe = await probeDaemonStatus(fetchImpl, baseUrl, token, 1_000);
+  const staleAuth = isStaleAuthProbe(probe);
+  if (!probe.ok && !staleAuth) {
+    return {
+      status: "skipped",
+      summary: `no matching local connector was reachable on ${baseUrl}`,
+    };
+  }
+  if (staleAuth) {
+    await removeTask().catch(() => undefined);
+  }
+  const stopped = await stopPortOwner(port);
+  if (!stopped) {
+    if (staleAuth) await failIfStaleConnectorStillOwnsPort(fetchImpl, baseUrl, port, token);
+    return {
+      status: probe.ok ? "ok" : "skipped",
+      summary: probe.ok
+        ? `existing connector already accepts the current token on ${baseUrl}`
+        : `no stale connector process could be stopped on TCP ${port}`,
+    };
+  }
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await isPortFree("127.0.0.1", port)) {
+      return {
+        status: "repaired",
+        summary: staleAuth
+          ? `stopped stale connector and removed old login task on TCP ${port}`
+          : `stopped previous connector on TCP ${port}`,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  if (staleAuth) await failIfStaleConnectorStillOwnsPort(fetchImpl, baseUrl, port, token);
+  return {
+    status: "repaired",
+    summary: `requested stop for previous connector on TCP ${port}; port state needs recheck`,
+    hint: `If registration fails later, close processes that still hold TCP ${port}.`,
+  };
 }
 
 async function waitForDaemonStatus(
@@ -158,33 +470,6 @@ async function waitForDaemonStatus(
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`${label} did not become ready at ${baseUrl}: ${lastError || "timed out"}`);
-}
-
-async function stopLocalConnectorPortIfPresent(
-  fetchImpl: typeof fetch,
-  baseUrl: string,
-  port: number,
-  token: string,
-  stopPortOwner: (port: number) => Promise<boolean>,
-  removeTask: () => Promise<unknown>,
-): Promise<void> {
-  const probe = await probeDaemonStatus(fetchImpl, baseUrl, token, 1_000);
-  const staleAuth = isStaleAuthProbe(probe);
-  if (!probe.ok && !staleAuth) return;
-  if (staleAuth) {
-    await removeTask().catch(() => undefined);
-  }
-  const stopped = await stopPortOwner(port);
-  if (!stopped) {
-    if (staleAuth) await failIfStaleConnectorStillOwnsPort(fetchImpl, baseUrl, port, token);
-    return;
-  }
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (await isPortFree("127.0.0.1", port)) return;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  if (staleAuth) await failIfStaleConnectorStillOwnsPort(fetchImpl, baseUrl, port, token);
 }
 
 function isStaleAuthProbe(probe: { ok: true } | { ok: false; error: string }): boolean {
@@ -295,7 +580,7 @@ async function replaceServerRegistration(
   serverUrl: string,
   siteToken: string,
   input: { daemonUrl: string; label: string; authToken: string },
-): Promise<void> {
+): Promise<ServerRegistrationResult> {
   const devicesUrl = `${serverUrl}/api/devices`;
   const existing = await fetchImpl(devicesUrl, {
     method: "GET",
@@ -320,6 +605,7 @@ async function replaceServerRegistration(
     throw new Error(`cannot parse registered devices response: ${(err as Error).message}`);
   }
 
+  const removedDeviceIds: string[] = [];
   for (const device of devices) {
     if (device.daemonUrl !== input.daemonUrl) continue;
     if (!device.id) {
@@ -339,6 +625,7 @@ async function replaceServerRegistration(
         `cannot remove existing device ${device.id} (${deleted.status}): ${text || deleted.statusText}`,
       );
     }
+    removedDeviceIds.push(device.id);
   }
 
   const res = await fetchImpl(devicesUrl, {
@@ -357,6 +644,42 @@ async function replaceServerRegistration(
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`server registration failed (${res.status}): ${text || res.statusText}`);
+  }
+  const created = await res.json().catch(() => undefined);
+  const registeredDeviceId =
+    created && typeof created === "object" && "id" in created && typeof created.id === "string"
+      ? created.id
+      : undefined;
+
+  const confirmed = await fetchImpl(devicesUrl, {
+    method: "GET",
+    headers: { authorization: `Bearer ${siteToken}` },
+    signal: AbortSignal.timeout(10_000),
+  }).catch((err) => {
+    throw new Error(`registered device, but cannot confirm device list: ${(err as Error).message}`);
+  });
+  if (!confirmed.ok) {
+    const text = await confirmed.text().catch(() => "");
+    throw new Error(
+      `registered device, but confirmation list failed (${confirmed.status}): ${text || confirmed.statusText}`,
+    );
+  }
+  const confirmedDevices = await readPublicDevices(confirmed, "confirmation devices response");
+  if (!confirmedDevices.some((device) => device.daemonUrl === input.daemonUrl)) {
+    throw new Error(
+      `registered device, but ${input.daemonUrl} was not visible in the server device list`,
+    );
+  }
+  return { removedDeviceIds, ...(registeredDeviceId ? { registeredDeviceId } : {}) };
+}
+
+async function readPublicDevices(response: Response, label: string): Promise<PublicDevice[]> {
+  try {
+    const parsed = await response.json();
+    if (!Array.isArray(parsed)) throw new Error("response is not an array");
+    return parsed as PublicDevice[];
+  } catch (err) {
+    throw new Error(`cannot parse ${label}: ${(err as Error).message}`);
   }
 }
 

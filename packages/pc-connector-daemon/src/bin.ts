@@ -48,7 +48,7 @@ import {
   removeLoginTask,
   removeSourceRunLoginTask,
 } from "./login-task.ts";
-import { registerSelf } from "./self-register.ts";
+import { RegisterSelfError, formatRegisterSelfReport, registerSelf } from "./self-register.ts";
 import { updateLocalSourceConnector } from "./self-update.ts";
 import { SiteWsClient } from "./site-ws-client.ts";
 import { clearStateFile, readStateFile, writeStateFile } from "./state-file.ts";
@@ -240,6 +240,7 @@ if (command === "register-self") {
       ...(workspaceRoots !== undefined ? { workspaceRoots } : {}),
       ...(label !== undefined ? { label } : {}),
     });
+    process.stdout.write(`${formatRegisterSelfReport(result.report)}\n`);
     process.stdout.write(
       [
         `connector listening: ${result.listenHost}:${result.port}`,
@@ -253,6 +254,9 @@ if (command === "register-self") {
     );
     process.exit(0);
   } catch (err) {
+    if (err instanceof RegisterSelfError) {
+      process.stderr.write(`${formatRegisterSelfReport(err.report)}\n`);
+    }
     process.stderr.write(`register-self failed: ${(err as Error).message}\n`);
     process.exit(1);
   }

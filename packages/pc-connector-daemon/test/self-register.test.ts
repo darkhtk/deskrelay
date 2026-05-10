@@ -6,6 +6,7 @@ describe("registerSelf", () => {
   test("starts a wildcard-bound login task, verifies daemon URLs, and registers with the server", async () => {
     const port = 19091;
     let installOptions: InstallLoginTaskOptions | undefined;
+    let registered = false;
     const calls: Array<{ method: string; url: string; body?: string; authorization?: string }> = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -18,8 +19,13 @@ describe("registerSelf", () => {
       if (authorization) call.authorization = authorization;
       calls.push(call);
       if (url.endsWith("/status")) return Response.json({ ok: true });
-      if (init?.method === "GET" && url.endsWith("/api/devices")) return Response.json([]);
+      if (init?.method === "GET" && url.endsWith("/api/devices")) {
+        return Response.json(
+          registered ? [{ id: "dev_1", daemonUrl: `http://100.64.1.2:${port}` }] : [],
+        );
+      }
       if (init?.method === "POST" && url.endsWith("/api/devices")) {
+        registered = true;
         return Response.json({ id: "dev_1" }, { status: 201 });
       }
       throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`);
@@ -52,6 +58,8 @@ describe("registerSelf", () => {
     });
 
     expect(result.daemonUrl).toBe(`http://100.64.1.2:${port}`);
+    expect(result.report.status).toBe("succeeded");
+    expect(result.report.steps.map((step) => step.id)).toContain("server-registration");
     expect(installOptions?.start).toBe(true);
     expect(installOptions?.launch?.env).toMatchObject({
       CR_CONNECTOR_HOST: "0.0.0.0",
@@ -64,8 +72,11 @@ describe("registerSelf", () => {
       `GET http://100.64.1.2:${port}/status`,
       "GET http://deskrelay.test:18193/api/devices",
       "POST http://deskrelay.test:18193/api/devices",
+      "GET http://deskrelay.test:18193/api/devices",
     ]);
-    const post = calls.at(-1);
+    const post = calls.find(
+      (call) => call.method === "POST" && call.url === "http://deskrelay.test:18193/api/devices",
+    );
     expect(post?.authorization).toBe("Bearer site-token");
     expect(JSON.parse(post?.body ?? "{}")).toEqual({
       daemonUrl: `http://100.64.1.2:${port}`,
@@ -79,6 +90,7 @@ describe("registerSelf", () => {
     let staleTaskRemoved = false;
     let staleConnectorStopped = false;
     let installStartedAfterStop = false;
+    let registered = false;
     const calls: Array<{ method: string; url: string; authorization?: string }> = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -92,8 +104,13 @@ describe("registerSelf", () => {
         return Response.json({ error: "wrong token" }, { status: 401 });
       }
       if (url.endsWith("/status")) return Response.json({ ok: true });
-      if (init?.method === "GET" && url.endsWith("/api/devices")) return Response.json([]);
+      if (init?.method === "GET" && url.endsWith("/api/devices")) {
+        return Response.json(
+          registered ? [{ id: "dev_1", daemonUrl: `http://100.64.1.2:${port}` }] : [],
+        );
+      }
       if (init?.method === "POST" && url.endsWith("/api/devices")) {
+        registered = true;
         return Response.json({ id: "dev_1" }, { status: 201 });
       }
       throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`);
@@ -139,6 +156,7 @@ describe("registerSelf", () => {
       `GET http://100.64.1.2:${port}/status`,
       "GET http://deskrelay.test:18193/api/devices",
       "POST http://deskrelay.test:18193/api/devices",
+      "GET http://deskrelay.test:18193/api/devices",
     ]);
   });
 
@@ -199,6 +217,20 @@ describe("registerSelf", () => {
   test("removes all existing registrations for the same daemon URL before posting a replacement", async () => {
     const port = 19093;
     const calls: Array<{ method: string; url: string; body?: string; authorization?: string }> = [];
+    const devices = [
+      {
+        id: "dev_old_1",
+        daemonUrl: `http://100.64.1.2:${port}`,
+      },
+      {
+        id: "dev_old_2",
+        daemonUrl: `http://100.64.1.2:${port}`,
+      },
+      {
+        id: "dev_other",
+        daemonUrl: "http://100.64.1.3:18091",
+      },
+    ];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const call: { method: string; url: string; body?: string; authorization?: string } = {
@@ -211,28 +243,19 @@ describe("registerSelf", () => {
       calls.push(call);
       if (url.endsWith("/status")) return Response.json({ ok: true });
       if (init?.method === "GET" && url.endsWith("/api/devices")) {
-        return Response.json([
-          {
-            id: "dev_old_1",
-            daemonUrl: `http://100.64.1.2:${port}`,
-          },
-          {
-            id: "dev_old_2",
-            daemonUrl: `http://100.64.1.2:${port}`,
-          },
-          {
-            id: "dev_other",
-            daemonUrl: "http://100.64.1.3:18091",
-          },
-        ]);
+        return Response.json(devices);
       }
       if (
         init?.method === "DELETE" &&
         (url.endsWith("/api/devices/dev_old_1") || url.endsWith("/api/devices/dev_old_2"))
       ) {
+        const id = url.endsWith("/dev_old_1") ? "dev_old_1" : "dev_old_2";
+        const index = devices.findIndex((device) => device.id === id);
+        if (index >= 0) devices.splice(index, 1);
         return Response.json({ ok: true });
       }
       if (init?.method === "POST" && url.endsWith("/api/devices")) {
+        devices.push({ id: "dev_new", daemonUrl: `http://100.64.1.2:${port}` });
         return Response.json({ id: "dev_new" }, { status: 201 });
       }
       throw new Error(`unexpected fetch: ${init?.method ?? "GET"} ${url}`);
@@ -265,8 +288,12 @@ describe("registerSelf", () => {
       "DELETE http://deskrelay.test:18193/api/devices/dev_old_1",
       "DELETE http://deskrelay.test:18193/api/devices/dev_old_2",
       "POST http://deskrelay.test:18193/api/devices",
+      "GET http://deskrelay.test:18193/api/devices",
     ]);
-    expect(calls.at(-1)?.body).toBe(
+    const post = calls.find(
+      (call) => call.method === "POST" && call.url === "http://deskrelay.test:18193/api/devices",
+    );
+    expect(post?.body).toBe(
       JSON.stringify({
         daemonUrl: `http://100.64.1.2:${port}`,
         label: "Replacement",
@@ -337,6 +364,34 @@ describe("registerSelf", () => {
       `GET http://100.64.1.2:${port}/status`,
       "GET http://deskrelay.test:18193/api/devices",
       "DELETE http://deskrelay.test:18193/api/devices/dev_old",
+    ]);
+  });
+
+  test("fails after posting when server confirmation does not show the registered daemon", async () => {
+    const port = 19098;
+    const calls: Array<{ method: string; url: string }> = [];
+    let listed = false;
+    const fetchImpl = makeRegisterFetch(calls, {
+      listDevices: () => {
+        if (!listed) {
+          listed = true;
+          return Response.json([]);
+        }
+        return Response.json([]);
+      },
+      postDevice: () => Response.json({ id: "dev_new" }, { status: 201 }),
+    });
+
+    await expect(registerSelfForTest({ port, fetchImpl })).rejects.toThrow(
+      `registered device, but http://100.64.1.2:${port} was not visible in the server device list`,
+    );
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://127.0.0.1:${port}/status`,
+      `GET http://100.64.1.2:${port}/status`,
+      "GET http://deskrelay.test:18193/api/devices",
+      "POST http://deskrelay.test:18193/api/devices",
+      "GET http://deskrelay.test:18193/api/devices",
     ]);
   });
 });
