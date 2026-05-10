@@ -1875,7 +1875,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return {
         tone: status.tone,
         main: t(status.mainKey),
-        detail: status.detailOverride ?? t(status.detailKey),
+        detail: status.detailOverride ?? "조치: 권한 승인 창 확인",
         ...(status.action ? { action: status.action } : {}),
       };
     }
@@ -1883,7 +1883,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return {
         tone: status.tone,
         main: status.detailOverride ?? t(status.mainKey),
-        detail: "Esc로 중지할 수 있습니다",
+        detail: "중지: Esc",
       };
     }
     if (
@@ -1895,36 +1895,44 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return {
         tone: status.tone,
         main: "입력 대기",
-        detail: status.detailOverride ?? t(status.detailKey),
+        detail:
+          status.detailOverride ??
+          (status.kind === "not_installed"
+            ? "상태: connector 미등록 · 조치: 디바이스 등록"
+            : status.kind === "selected_device_offline"
+              ? "상태: 디바이스 오프라인 · 조치: connector daemon 실행"
+              : status.kind === "behavior_not_ready"
+                ? "상태: Claude 모듈 미로드 · 조치: 진단 확인"
+                : "상태: 연결 확인 중"),
         ...(status.action ? { action: status.action } : {}),
       };
     }
     if (error()) {
       return {
         tone: "warning",
-        main: "조치 필요",
-        detail: "위 오류를 확인하고 다시 시도하세요",
+        main: "오류 확인 필요",
+        detail: "상태: 실행 실패 · 조치: 오류 확인 후 재시도",
         ...(status.action ? { action: status.action } : {}),
       };
     }
     if (showNewChat() || (cwd().trim() && !selectedSession())) {
       return {
         tone: "ok",
-        main: "새 세션 준비",
-        detail: `${t("chat.empty.new-session")} · ${permissionModeStatusText()}`,
+        main: "새 세션 대기",
+        detail: `전송 결과: 새 Claude CLI 세션 생성 · ${permissionModeStatusText()}`,
       };
     }
     if (selectedSession()) {
       return {
         tone: "ok",
         main: "입력 가능",
-        detail: `선택한 세션에 이어서 전송합니다 · ${permissionModeStatusText()}`,
+        detail: `대상: 선택된 세션 · ${permissionModeStatusText()}`,
       };
     }
     return {
       tone: "context",
-      main: "세션 선택 필요",
-      detail: t("chat.empty.select-session"),
+      main: "세션 미선택",
+      detail: "대상: 없음 · 조치: 사이드바 세션 선택",
     };
   });
 

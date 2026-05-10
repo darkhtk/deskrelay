@@ -1931,6 +1931,9 @@ describe("ChatView device refresh bridge", () => {
         t("connection.status.online.main"),
       );
       expect(container.querySelector(".composer-status-main")?.textContent).toContain("입력 가능");
+      expect(container.querySelector(".composer-status-detail")?.textContent).toContain(
+        "대상: 선택된 세션",
+      );
       expect(container.querySelector(".composer-status-main")?.textContent ?? "").not.toContain(
         t("connection.status.online.main"),
       );
