@@ -169,7 +169,10 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
     try {
       const result = await options.selfServerUpdater.update();
-      return c.json(result, result.started ? 202 : 501);
+      if (result.started) return c.json(result, 202);
+      if (!result.supported) return c.json(result, 501);
+      if (result.status?.state === "running") return c.json(result, 409);
+      return c.json(result, 500);
     } catch (err) {
       return c.json({ supported: true, started: false, error: (err as Error).message }, 500);
     }

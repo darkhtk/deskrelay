@@ -6,12 +6,10 @@ import {
   createMemo,
   createResource,
   createSignal,
+  onCleanup,
 } from "solid-js";
 import {
   ApiError,
-  api,
-  clearBaseUrl,
-  clearToken,
   type ClaudeInstructionScope,
   type ClaudeInstructionSource,
   type DeskRelayBuildInfo,
@@ -19,6 +17,9 @@ import {
   type DeviceCleanupEntry,
   type DeviceUpdateResponse,
   type SelfServerUpdateStatus,
+  api,
+  clearBaseUrl,
+  clearToken,
   getToken,
   setToken,
 } from "./api.ts";
@@ -33,9 +34,9 @@ import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
 import {
+  type SettingsScope,
   SettingsScopeLabel,
   SettingsScopeLabels,
-  type SettingsScope,
 } from "./components/SettingsScopeLabel.tsx";
 import { deviceDisplayName } from "./device-display.ts";
 import { t } from "./i18n.ts";
@@ -44,13 +45,13 @@ import {
   instructionScopePlaceholder,
 } from "./instruction-copy.ts";
 import {
-  appTheme,
   type AppTheme,
   CHAT_FONT_SIZE_MAX,
   CHAT_FONT_SIZE_MIN,
+  type NewChatCwdBrowseMode,
+  appTheme,
   chatFontSize,
   newChatCwdBrowseMode,
-  type NewChatCwdBrowseMode,
   scrollToBottomOnSend,
   setAppTheme,
   setChatFontSize,
@@ -939,6 +940,16 @@ const LanguageSettings: Component<{
     if (status?.state === "failed") {
       setOverallUpdate({ phase: "failed", message: updateStatusText(status) });
     }
+  });
+
+  createEffect(() => {
+    const status = serverUpdateStatus();
+    const shouldPoll =
+      overallUpdate().phase === "running" ||
+      (isTrackedServerUpdateStatus(status, serverUpdateBaseline()) && status?.state === "running");
+    if (!shouldPoll) return;
+    const timer = window.setInterval(refreshUpdateState, 2500);
+    onCleanup(() => window.clearInterval(timer));
   });
 
   const deviceBuildSnapshot = (deviceId: string): DeviceBuildSnapshot | null =>

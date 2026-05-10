@@ -52,9 +52,66 @@ function Read-JsonFile {
   return Get-Content -Raw -Path $Path | ConvertFrom-Json
 }
 
-function Test-ProcessAlive {
+function Test-StringContains {
+  param([string]$Haystack, [string]$Needle)
+  if ([string]::IsNullOrWhiteSpace($Haystack) -or [string]::IsNullOrWhiteSpace($Needle)) {
+    return $false
+  }
+  return $Haystack.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Get-ProcessCommandLine {
   param([int]$ProcessId)
-  return [bool](Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+  $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+  if (-not $process) {
+    return ""
+  }
+  return [string]$process.CommandLine
+}
+
+function Test-DeskRelayCommandLine {
+  param([string]$CommandLine)
+  if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+    return $false
+  }
+  $needles = @(
+    $script:DeskRelayRepoRoot,
+    $env:CR_DEV_LOG_DIR,
+    "packages/pc-connector-daemon/src/bin.ts",
+    "packages\pc-connector-daemon\src\bin.ts",
+    "packages/site-backend/src/bin.ts",
+    "packages\site-backend\src\bin.ts",
+    "@deskrelay/site-frontend"
+  )
+  foreach ($needle in $needles) {
+    if (Test-StringContains -Haystack $CommandLine -Needle $needle) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Test-ProcessEntryAlive {
+  param([object]$Entry)
+  if (-not $Entry -or -not $Entry.pid) {
+    return $false
+  }
+  $commandLine = Get-ProcessCommandLine -ProcessId ([int]$Entry.pid)
+  if ([string]::IsNullOrWhiteSpace($commandLine)) {
+    return $false
+  }
+  foreach ($field in @("runner", "log")) {
+    $property = $Entry.PSObject.Properties[$field]
+    if ($property -and (Test-StringContains -Haystack $commandLine -Needle ([string]$property.Value))) {
+      return $true
+    }
+  }
+  return Test-DeskRelayCommandLine -CommandLine $commandLine
+}
+
+function Test-DeskRelayProcessId {
+  param([int]$ProcessId)
+  return Test-DeskRelayCommandLine -CommandLine (Get-ProcessCommandLine -ProcessId $ProcessId)
 }
 
 function Wait-File {
@@ -147,7 +204,15 @@ try {
 
 $script:StartedProcesses = @()
 function Stop-ProcessTree {
-  param([int]$ProcessId)
+  param([int]$ProcessId, [switch]$Trusted)
+  if ($ProcessId -eq $PID) {
+    Write-Warning "Skipping current PowerShell process pid=$ProcessId."
+    return
+  }
+  if (-not $Trusted -and -not (Test-DeskRelayProcessId -ProcessId $ProcessId)) {
+    Write-Warning "Skipping pid=$ProcessId because it does not look like a DeskRelay dev process."
+    return
+  }
   $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" -ErrorAction SilentlyContinue)
   foreach ($child in $children) {
     Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
@@ -195,8 +260,11 @@ function Stop-StaleDevPortListeners {
       if (-not $owner -or $owner -eq $PID -or $knownPids -contains $owner) {
         continue
       }
+      if (-not (Test-DeskRelayProcessId -ProcessId $owner)) {
+        throw "Dev port $port is occupied by a non-DeskRelay process pid=$owner. Stop it manually or choose another port."
+      }
       Write-Host "Stopping stale DeskRelay dev listener on port $port pid=$owner"
-      Stop-ProcessTree -ProcessId $owner
+      Stop-ProcessTree -ProcessId $owner -Trusted
     }
   }
 }
@@ -204,8 +272,8 @@ function Stop-StaleDevPortListeners {
 trap {
   if (-not $PrintOnly -and $script:StartedProcesses.Count -gt 0) {
     foreach ($entry in $script:StartedProcesses) {
-      if ($entry.pid) {
-        Stop-ProcessTree -ProcessId ([int]$entry.pid)
+      if ($entry.pid -and (Test-ProcessEntryAlive -Entry $entry)) {
+        Stop-ProcessTree -ProcessId ([int]$entry.pid) -Trusted
       }
     }
   }
@@ -213,6 +281,7 @@ trap {
 }
 
 $repo = Get-RepoRoot -Explicit $RepoRoot
+$script:DeskRelayRepoRoot = $repo
 $root = Get-FullPathNoResolve -Path $NasRoot -Repo $repo
 $initScript = Join-Path $repo "scripts\nas-dev-init.ps1"
 $envFile = Join-Path $root "dev.env.ps1"
@@ -234,7 +303,7 @@ $existing = @()
 if (Test-Path $env:CR_DEV_PROCESS_FILE) {
   $raw = Read-JsonFile -Path $env:CR_DEV_PROCESS_FILE
   if ($raw) {
-    $existing = @($raw | Where-Object { $_.pid -and (Test-ProcessAlive -ProcessId ([int]$_.pid)) })
+    $existing = @($raw | Where-Object { Test-ProcessEntryAlive -Entry $_ })
   }
 }
 if ($existing.Count -gt 0 -and -not $PrintOnly) {

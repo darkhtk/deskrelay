@@ -29,8 +29,78 @@ function Get-FullPathNoResolve {
   return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
 }
 
-function Stop-ProcessTree {
+function Test-StringContains {
+  param([string]$Haystack, [string]$Needle)
+  if ([string]::IsNullOrWhiteSpace($Haystack) -or [string]::IsNullOrWhiteSpace($Needle)) {
+    return $false
+  }
+  return $Haystack.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Get-ProcessCommandLine {
   param([int]$ProcessId)
+  $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+  if (-not $process) {
+    return ""
+  }
+  return [string]$process.CommandLine
+}
+
+function Test-DeskRelayCommandLine {
+  param([string]$CommandLine)
+  if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+    return $false
+  }
+  $needles = @(
+    $script:DeskRelayRepoRoot,
+    $env:CR_DEV_LOG_DIR,
+    "packages/pc-connector-daemon/src/bin.ts",
+    "packages\pc-connector-daemon\src\bin.ts",
+    "packages/site-backend/src/bin.ts",
+    "packages\site-backend\src\bin.ts",
+    "@deskrelay/site-frontend"
+  )
+  foreach ($needle in $needles) {
+    if (Test-StringContains -Haystack $CommandLine -Needle $needle) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Test-ProcessEntryAlive {
+  param([object]$Entry)
+  if (-not $Entry -or -not $Entry.pid) {
+    return $false
+  }
+  $commandLine = Get-ProcessCommandLine -ProcessId ([int]$Entry.pid)
+  if ([string]::IsNullOrWhiteSpace($commandLine)) {
+    return $false
+  }
+  foreach ($field in @("runner", "log")) {
+    $property = $Entry.PSObject.Properties[$field]
+    if ($property -and (Test-StringContains -Haystack $commandLine -Needle ([string]$property.Value))) {
+      return $true
+    }
+  }
+  return Test-DeskRelayCommandLine -CommandLine $commandLine
+}
+
+function Test-DeskRelayProcessId {
+  param([int]$ProcessId)
+  return Test-DeskRelayCommandLine -CommandLine (Get-ProcessCommandLine -ProcessId $ProcessId)
+}
+
+function Stop-ProcessTree {
+  param([int]$ProcessId, [switch]$Trusted)
+  if ($ProcessId -eq $PID) {
+    Write-Warning "Skipping current PowerShell process pid=$ProcessId."
+    return
+  }
+  if (-not $Trusted -and -not (Test-DeskRelayProcessId -ProcessId $ProcessId)) {
+    Write-Warning "Skipping pid=$ProcessId because it does not look like a DeskRelay dev process."
+    return
+  }
   $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" -ErrorAction SilentlyContinue)
   foreach ($child in $children) {
     Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
@@ -51,6 +121,7 @@ function Stop-ProcessTree {
 }
 
 $repo = Get-RepoRoot -Explicit $RepoRoot
+$script:DeskRelayRepoRoot = $repo
 $root = Get-FullPathNoResolve -Path $NasRoot -Repo $repo
 $envFile = Join-Path $root "dev.env.ps1"
 if (Test-Path $envFile) {
@@ -73,14 +144,19 @@ if (-not (Test-Path $processFile)) {
     }
     $processId = [int]$entry.pid
     $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($proc) {
+    if ($proc -and (Test-ProcessEntryAlive -Entry $entry)) {
       Write-Host "Stopping $($entry.name) pid=$processId"
-      Stop-ProcessTree -ProcessId $processId
+      Stop-ProcessTree -ProcessId $processId -Trusted
+    } elseif ($proc) {
+      Write-Warning "Skipping stale $($entry.name) pid=$processId because the PID now belongs to another process."
     } else {
       $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$processId" -ErrorAction SilentlyContinue)
       foreach ($child in $children) {
+        if (-not (Test-DeskRelayProcessId -ProcessId ([int]$child.ProcessId))) {
+          continue
+        }
         Write-Host "Stopping orphaned child of $($entry.name) pid=$($child.ProcessId)"
-        Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+        Stop-ProcessTree -ProcessId ([int]$child.ProcessId) -Trusted
       }
     }
   }
@@ -105,8 +181,12 @@ foreach ($port in $ports) {
   $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
   foreach ($listener in $listeners) {
     if ($listener.OwningProcess -and $listener.OwningProcess -ne $PID) {
+      if (-not (Test-DeskRelayProcessId -ProcessId ([int]$listener.OwningProcess))) {
+        Write-Warning "Skipping process on dev port $port pid=$($listener.OwningProcess) because it does not look like a DeskRelay dev process."
+        continue
+      }
       Write-Host "Stopping process on dev port $port pid=$($listener.OwningProcess)"
-      Stop-ProcessTree -ProcessId ([int]$listener.OwningProcess)
+      Stop-ProcessTree -ProcessId ([int]$listener.OwningProcess) -Trusted
     }
   }
 }
