@@ -1734,9 +1734,6 @@ body.sidebar-resizing * {
   resize: none;
   scrollbar-color: var(--border-strong) transparent;
 }
-.instruction-editor-textarea:focus {
-  box-shadow: inset 3px 0 0 var(--accent-coral);
-}
 .instruction-editor-textarea::placeholder {
   color: var(--text-faint);
 }
