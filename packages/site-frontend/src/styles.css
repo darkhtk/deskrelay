@@ -4421,6 +4421,7 @@ dialog.approval-modal-root,
 .settings-dialog {
   width: min(900px, 95vw);
   max-width: 900px;
+  height: min(760px, 86vh);
   max-height: 86vh;
   overflow: hidden;
   display: flex;
@@ -4443,12 +4444,16 @@ dialog.approval-modal-root,
 .settings-dialog-shell {
   display: grid;
   grid-template-columns: 128px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 28px;
+  flex: 1 1 auto;
+  overflow: hidden;
   min-height: 0;
 }
 .settings-dialog-body {
   min-width: 0;
-  max-height: calc(86vh - 108px);
+  height: 100%;
+  max-height: none;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -4939,10 +4944,15 @@ dialog.approval-modal-root,
 }
 @media (max-width: 760px) {
   .settings-dialog {
+    height: 90vh;
     max-height: 90vh;
     gap: 14px;
   }
-  .settings-dialog-shell,
+  .settings-dialog-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 16px;
+  }
   .settings-device-layout {
     grid-template-columns: 1fr;
     gap: 16px;
@@ -4970,7 +4980,8 @@ dialog.approval-modal-root,
     grid-template-columns: minmax(0, 1fr) 42px;
   }
   .settings-dialog-body {
-    max-height: calc(90vh - 140px);
+    height: 100%;
+    max-height: none;
   }
 }
 .settings-section-heading {

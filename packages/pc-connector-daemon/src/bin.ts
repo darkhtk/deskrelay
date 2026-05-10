@@ -456,7 +456,7 @@ const daemon = new Daemon({
     const result = await updateLocalSourceConnector({
       branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
     });
-    if (result.restartScheduled) {
+    if (result.restartScheduled && result.restartRequested !== false) {
       const exitTimer = setTimeout(() => process.exit(0), 500);
       (exitTimer as { unref?: () => void }).unref?.();
     }

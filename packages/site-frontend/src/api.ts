@@ -252,6 +252,8 @@ export interface DeviceUpdateResponse {
   ok?: boolean;
   changed?: boolean;
   restartScheduled?: boolean;
+  restartRequested?: boolean;
+  restartRequestError?: string;
   warning?: string;
   error?: string;
   fallbackCommand?: string;

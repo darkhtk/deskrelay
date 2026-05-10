@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import { getDeskRelayBuildInfo } from "@deskrelay/shared/version";
@@ -26,6 +26,8 @@ export interface LocalConnectorUpdateResult {
     taskName: string;
   };
   restartScheduled: boolean;
+  restartRequested: boolean;
+  restartRequestError?: string;
   warning?: string;
 }
 
@@ -38,6 +40,7 @@ export interface LocalConnectorUpdateOptions {
     installed: boolean;
     taskName: string;
   }>;
+  restartLoginTask?: (taskName: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export type CommandRunner = (
@@ -86,6 +89,16 @@ export async function updateLocalSourceConnector(
   const afterCommit = await gitText(runner, repoRoot, ["rev-parse", "HEAD"]);
   const loginTask = await (options.loginTaskStatus ?? defaultLoginTaskStatus)();
   const restartScheduled = Boolean(loginTask.supported && loginTask.installed);
+  const restartRequest = restartScheduled
+    ? await (options.restartLoginTask ?? defaultRestartLoginTask)(loginTask.taskName).catch(
+        (err) => ({
+          ok: false,
+          error: (err as Error).message,
+        }),
+      )
+    : { ok: false };
+  const restartRequested = restartRequest.ok === true;
+  const restartRequestError = restartRequest.ok ? undefined : restartRequest.error;
 
   return {
     ok: true,
@@ -107,12 +120,19 @@ export async function updateLocalSourceConnector(
       taskName: loginTask.taskName,
     },
     restartScheduled,
-    ...(restartScheduled
-      ? {}
-      : {
+    restartRequested,
+    ...(restartRequestError ? { restartRequestError } : {}),
+    ...(!restartScheduled
+      ? {
           warning:
             "Connector updated, but no Windows login task was detected. Restart the connector manually.",
-        }),
+        }
+      : {}),
+    ...(restartScheduled && restartRequestError
+      ? {
+          warning: `Connector updated, but automatic restart request failed: ${restartRequestError}`,
+        }
+      : {}),
   };
 }
 
@@ -126,6 +146,22 @@ async function defaultLoginTaskStatus(): Promise<{
     installed: false,
     taskName: "DeskRelay Connector",
   }));
+}
+
+async function defaultRestartLoginTask(taskName: string): Promise<{ ok: boolean; error?: string }> {
+  if (process.platform !== "win32")
+    return { ok: false, error: "Windows login task is unsupported" };
+  try {
+    const helper = spawn("powershell.exe", buildDeferredLoginTaskRestartArgs(taskName), {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    helper.unref();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
 }
 
 async function gitText(runner: CommandRunner, cwd: string, args: string[]): Promise<string> {
@@ -150,4 +186,27 @@ async function runCommand(
 
 function shortCommit(commit: string): string {
   return commit && commit !== "unknown" ? commit.slice(0, 12) : "unknown";
+}
+
+function buildDeferredLoginTaskRestartArgs(taskName: string): string[] {
+  const tn = psSingleQuoted(taskName);
+  const psScript = [
+    "$ErrorActionPreference = 'Continue'",
+    "Start-Sleep -Milliseconds 750",
+    `schtasks.exe /End /TN ${tn} *> $null`,
+    "Start-Sleep -Milliseconds 500",
+    `schtasks.exe /Run /TN ${tn} *> $null`,
+  ].join("; ");
+  return [
+    "-NoProfile",
+    "-NonInteractive",
+    "-WindowStyle",
+    "Hidden",
+    "-EncodedCommand",
+    Buffer.from(psScript, "utf16le").toString("base64"),
+  ];
+}
+
+function psSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }

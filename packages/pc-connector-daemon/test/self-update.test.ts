@@ -14,6 +14,7 @@ beforeEach(() => {
 describe("updateLocalSourceConnector", () => {
   test("fast-forwards, installs dependencies, and schedules restart when login task exists", async () => {
     const calls: Array<{ command: string; args: string[] }> = [];
+    const restartRequests: string[] = [];
     let headReads = 0;
     const runner: CommandRunner = async (command, args) => {
       calls.push({ command, args });
@@ -39,10 +40,16 @@ describe("updateLocalSourceConnector", () => {
         installed: true,
         taskName: "DeskRelay Connector",
       }),
+      restartLoginTask: async (taskName) => {
+        restartRequests.push(taskName);
+        return { ok: true };
+      },
     });
 
     expect(result.changed).toBe(true);
     expect(result.restartScheduled).toBe(true);
+    expect(result.restartRequested).toBe(true);
+    expect(restartRequests).toEqual(["DeskRelay Connector"]);
     expect(result.before.shortCommit).toBe("a".repeat(12));
     expect(result.after.shortCommit).toBe("b".repeat(12));
     expect(calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
@@ -54,6 +61,40 @@ describe("updateLocalSourceConnector", () => {
       "bun install",
       "git rev-parse HEAD",
     ]);
+  });
+
+  test("does not report restart success when the login task restart request fails", async () => {
+    let headReads = 0;
+    const runner: CommandRunner = async (command, args) => {
+      if (command === "git" && args.join(" ") === "rev-parse HEAD") {
+        headReads += 1;
+        return {
+          stdout: headReads === 1 ? `${"a".repeat(40)}\n` : `${"b".repeat(40)}\n`,
+          stderr: "",
+        };
+      }
+      if (command === "git" && args.join(" ") === "rev-parse origin/main") {
+        return { stdout: `${"b".repeat(40)}\n`, stderr: "" };
+      }
+      if (command === "git" && args[0] === "status") return { stdout: "", stderr: "" };
+      return { stdout: "", stderr: "" };
+    };
+
+    const result = await updateLocalSourceConnector({
+      repoRoot: root,
+      runner,
+      loginTaskStatus: async () => ({
+        supported: true,
+        installed: true,
+        taskName: "DeskRelay Connector",
+      }),
+      restartLoginTask: async () => ({ ok: false, error: "cannot start task" }),
+    });
+
+    expect(result.restartScheduled).toBe(true);
+    expect(result.restartRequested).toBe(false);
+    expect(result.restartRequestError).toBe("cannot start task");
+    expect(result.warning).toContain("automatic restart request failed");
   });
 
   test("refuses to update a dirty tracked checkout before fetching", async () => {

@@ -165,6 +165,7 @@ const HELP_SECTIONS: Array<{
       "업데이트 실행 버튼은 설정 > 일반 탭에 모여 있습니다.",
       "전체 업데이트는 등록된 connector를 먼저 갱신한 뒤 서버 PC의 git 저장소를 갱신하고 서버를 재시작합니다.",
       "디바이스별 업데이트 상태는 일반 탭에서 확인합니다. 꺼진 디바이스는 켜진 뒤 다시 처리해야 합니다.",
+      "connector 업데이트는 대상 PC의 Windows 로그인 작업을 다시 실행하도록 요청합니다. 요청 실패는 성공으로 표시하지 않습니다.",
       "연결 진단 탭은 상태 확인과 새로고침 중심으로 사용합니다.",
     ],
   },
@@ -849,7 +850,7 @@ const LanguageSettings: Component<{
     try {
       const result = await api.updateDevice(device.id);
       const state = {
-        phase: result.error ? "failed" : "succeeded",
+        phase: result.error || result.restartRequestError ? "failed" : "succeeded",
         message: connectorUpdateMessage(result),
         ...(result.fallbackCommand ? { fallbackCommand: result.fallbackCommand } : {}),
       } satisfies UpdateRunState;
@@ -1297,10 +1298,13 @@ function connectorUpdateMessage(result: DeviceUpdateResponse): string {
   const before = result.before?.shortCommit;
   const after = result.after?.shortCommit;
   const range = before && after ? ` · ${before} → ${after}` : "";
+  if (result.restartRequestError) {
+    return `connector 업데이트 완료, 재시작 요청 실패: ${result.restartRequestError}${range}`;
+  }
   if (result.restartScheduled) {
     return result.changed
-      ? `connector 업데이트 완료, 재시작 대기${range}`
-      : `connector가 이미 최신 상태, 재시작 대기${range}`;
+      ? `connector 업데이트 완료, 재시작 요청됨${range}`
+      : `connector가 이미 최신 상태, 재시작 요청됨${range}`;
   }
   return result.warning ?? `connector 업데이트 완료${range}`;
 }
