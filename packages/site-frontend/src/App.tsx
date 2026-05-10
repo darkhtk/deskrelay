@@ -29,7 +29,11 @@ import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
-import { SettingsScopeLabel } from "./components/SettingsScopeLabel.tsx";
+import {
+  SettingsScopeLabel,
+  SettingsScopeLabels,
+  type SettingsScope,
+} from "./components/SettingsScopeLabel.tsx";
 import { t } from "./i18n.ts";
 import {
   instructionScopeEmptyDescription,
@@ -56,7 +60,9 @@ import {
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
 
-type SettingsTab = "general" | "devices" | "diagnostics" | "instructions";
+type SettingsTab = "general" | "devices" | "diagnostics" | "instructions" | "help";
+
+const SETTINGS_TABS: SettingsTab[] = ["general", "devices", "diagnostics", "instructions", "help"];
 
 type OpenSettingsOptions = {
   tab?: SettingsTab;
@@ -87,6 +93,106 @@ const INSTRUCTION_SOURCE_LABELS: Record<ClaudeInstructionSource["scope"], string
   projectClaude: ".claude 프로젝트",
   local: "개인 로컬",
 };
+
+const HELP_SECTIONS: Array<{
+  title: string;
+  scopes: SettingsScope[];
+  open?: boolean;
+  items: string[];
+}> = [
+  {
+    title: "적용 범위",
+    scopes: ["server", "current device", "current session", "browser"],
+    open: true,
+    items: [
+      "server: DeskRelay 서버 전체, site token, 등록된 디바이스 목록, 서버 업데이트와 자동 시작에 적용됩니다.",
+      "current device: 현재 선택한 PC의 connector, daemon URL, 기본 작업 폴더, CLI 전역 지침에 적용됩니다.",
+      "current session: 현재 선택한 Claude 세션과 그 작업 폴더의 권한, 지침, 스킬, transcript에 적용됩니다.",
+      "browser: 지금 이 브라우저의 테마, 글자 크기, 표시 옵션, 선택 기억에만 적용됩니다.",
+    ],
+  },
+  {
+    title: "구조",
+    scopes: ["server", "current device"],
+    items: [
+      "브라우저는 DeskRelay 서버에 접속합니다.",
+      "서버는 site token, 등록된 디바이스 목록, 서버 상태와 업데이트 상태를 관리합니다.",
+      "각 디바이스에는 connector daemon이 떠 있어야 하며, Claude Code 실행은 선택된 디바이스에서 일어납니다.",
+      "다른 PC를 쓰려면 서버가 Tailscale 또는 LAN으로 그 PC의 connector port에 접근할 수 있어야 합니다.",
+    ],
+  },
+  {
+    title: "다른 PC 등록",
+    scopes: ["server", "current device"],
+    open: true,
+    items: [
+      "등록 명령에는 서버 URL과 site token이 포함되어야 합니다.",
+      "명령은 git에서 설치 스크립트를 내려받고, connector 설치/갱신, 로그인 작업 등록, 서버 등록까지 처리합니다.",
+      "등록 후 디바이스 목록에 보이지 않으면 서버 URL, site token, Tailscale/LAN IP, 방화벽, 18091 포트를 확인합니다.",
+      "이미 설치된 connector가 포트를 점유하면 기존 bun/PowerShell/login task를 종료한 뒤 다시 실행해야 합니다.",
+    ],
+  },
+  {
+    title: "상태와 업데이트",
+    scopes: ["server", "current device"],
+    items: [
+      "연결됨은 서버가 선택한 디바이스의 daemon에 접근 가능하다는 뜻입니다.",
+      "오프라인은 서버가 해당 daemon에 접근하지 못한다는 뜻입니다.",
+      "Claude 모듈 준비 안 됨은 connector는 살아 있지만 remote-claude behavior가 준비되지 않은 상태입니다.",
+      "서버 업데이트는 서버 PC의 git 저장소를 갱신하고 서버를 재시작합니다.",
+      "connector 업데이트는 각 디바이스의 git 저장소와 daemon을 갱신합니다. 꺼진 디바이스는 켜진 뒤 다시 처리해야 합니다.",
+    ],
+  },
+  {
+    title: "작업 폴더와 세션",
+    scopes: ["current device", "current session"],
+    items: [
+      "새 채팅의 기본 작업 폴더는 current device 기준으로 저장됩니다.",
+      "작업 폴더 탐색은 기본적으로 허용된 workspace root 안에서만 동작합니다.",
+      "세션 목록은 current device 기준으로 로드됩니다.",
+      "같은 session id는 하나로 취급하며, 삭제할 때 같은 session id의 파일을 함께 정리합니다.",
+      "current session이 없으면 작업 폴더 지침과 세션 context는 조회할 수 없습니다.",
+    ],
+  },
+  {
+    title: "지침",
+    scopes: ["current device", "current session"],
+    items: [
+      "설정의 지침 탭은 current device의 사용자 전역 지침과 관리 정책 지침을 다룹니다.",
+      "사이드바의 지침 탭은 current session의 작업 폴더 지침을 다룹니다.",
+      "사용자 전역 지침은 해당 디바이스 사용자 계정의 ~/.claude/CLAUDE.md입니다.",
+      "작업 폴더 지침은 선택한 세션 cwd의 CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md입니다.",
+      "관리 정책 지침은 읽기 전용일 수 있으며, 개인 self-host 설치에서는 비어 있을 수 있습니다.",
+    ],
+  },
+  {
+    title: "권한과 스킬",
+    scopes: ["current device", "current session"],
+    items: [
+      "권한 탭은 current device의 Claude 설정 파일과 current session 작업 폴더 설정을 함께 보여줍니다.",
+      "User settings는 current device 사용자 계정 기준입니다.",
+      "Project settings와 Project local settings는 current session 작업 폴더 기준입니다.",
+      "스킬 목록은 current device의 Claude 환경과 current session 작업 폴더 기준으로 로드됩니다.",
+      "슬래시 명령은 실제 Claude CLI가 지원하는 동작 제약을 따릅니다.",
+    ],
+  },
+  {
+    title: "자주 겪는 문제",
+    scopes: ["server", "current device", "current session"],
+    open: true,
+    items: [
+      "디바이스가 안 보이면 등록 명령이 서버에 도달했는지 확인합니다.",
+      "오프라인이면 해당 PC의 connector daemon, 방화벽, Tailscale/LAN 연결을 확인합니다.",
+      "forbidden outside workspace roots가 나오면 current device의 workspace root 설정을 확인합니다.",
+      "토큰 입력을 요구하면 등록 명령에 site token이 포함되어 있는지 확인합니다.",
+      "서버와 connector 버전이 다르면 업데이트를 실행하거나 등록 명령을 다시 실행합니다.",
+    ],
+  },
+];
+
+function settingsTabLabel(value: SettingsTab): string {
+  return value === "help" ? "도움말" : t(`app.settings.tab.${value}`);
+}
 
 function consumeSiteTokenFromUrl(): string | null {
   if (typeof window === "undefined") return null;
@@ -475,14 +581,14 @@ export const App: Component = () => {
 
             <div class="settings-dialog-shell">
               <nav class="settings-tabs settings-tab-rail">
-                <For each={["general", "devices", "diagnostics", "instructions"] as const}>
+                <For each={SETTINGS_TABS}>
                   {(value) => (
                     <button
                       type="button"
                       class={`settings-tab${settingsTab() === value ? " active" : ""}`}
                       onClick={() => setSettingsTab(value)}
                     >
-                      {t(`app.settings.tab.${value}`)}
+                      {settingsTabLabel(value)}
                     </button>
                   )}
                 </For>
@@ -516,6 +622,9 @@ export const App: Component = () => {
                     devicesRevision={devicesRevision()}
                   />
                 </Show>
+                <Show when={settingsTab() === "help"}>
+                  <HelpSettings />
+                </Show>
               </div>
             </div>
           </div>
@@ -524,6 +633,36 @@ export const App: Component = () => {
     </main>
   );
 };
+
+const HelpSettings: Component = () => (
+  <section class="settings-card settings-help">
+    <div class="settings-section-heading">
+      <div>
+        <h3 class="settings-card-title">도움말</h3>
+        <p class="settings-card-help">
+          설정이 어디에 적용되는지와 설치/연결 문제를 확인하는 기준입니다.
+        </p>
+      </div>
+      <SettingsScopeLabels scopes={["server", "current device", "current session", "browser"]} />
+    </div>
+
+    <div class="settings-help-list">
+      <For each={HELP_SECTIONS}>
+        {(section) => (
+          <details class="settings-help-section" open={section.open}>
+            <summary>
+              <span>{section.title}</span>
+              <SettingsScopeLabels scopes={section.scopes} />
+            </summary>
+            <ul>
+              <For each={section.items}>{(item) => <li>{item}</li>}</For>
+            </ul>
+          </details>
+        )}
+      </For>
+    </div>
+  </section>
+);
 
 const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
   const [savingAutostart, setSavingAutostart] = createSignal(false);

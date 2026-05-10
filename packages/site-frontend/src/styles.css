@@ -4491,6 +4491,49 @@ dialog.approval-modal-root,
   border-radius: 5px;
   font-size: 0.95em;
 }
+.settings-help {
+  gap: 16px;
+}
+.settings-help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-help-section {
+  border-top: 1px solid var(--border-subtle);
+  padding: 10px 0;
+}
+.settings-help-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.settings-help-section summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  list-style-position: outside;
+}
+.settings-help-section summary::-webkit-details-marker {
+  color: var(--text-faint);
+}
+.settings-help-section ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.settings-help-section li::marker {
+  color: var(--text-faint);
+}
 .settings-row {
   display: flex;
   gap: 8px;
