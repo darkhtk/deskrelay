@@ -2,6 +2,26 @@
 
 이 문서는 self-host DeskRelay의 설치/연결 신뢰성을 파워유저 도구 수준으로 끌어올리기 위해 남은 작업만 추적한다. 검증은 성공 경로만 보지 않는다. 재실행, stale 상태, 네트워크 실패, 권한 부족, 재부팅 이후 복구까지 확인한다.
 
+## 현재 우선순위
+
+| 순위 | 항목 | 목적 | 현재 상태 |
+| --- | --- | --- | --- |
+| 1 | 다른 Windows PC 등록 실증 | 실제 사용자 설치 실패를 잡는다 | 자동 리포트는 있음, 실제 깨끗한 PC 실증 필요 |
+| 2 | 설치 스크립트 재실행성 강화 | 실패 후 같은 명령 재실행으로 정상 상태에 수렴 | 일부 stale port 감지는 있음, 전체 reconcile 부족 |
+| 3 | 통합 진단 모델 | 연결 진단 탭 하나로 원인과 다음 행동을 판정 | UI 안내는 반영, doctor/API 통합 남음 |
+| 4 | Tailscale/방화벽 실패 분류 | 네트워크 실패를 사용자가 바로 이해 | timeout/token 거부는 분리, 세부 분류 부족 |
+| 5 | 재부팅 복구 검증 | 다음 날 켜도 자동 사용 가능하게 보장 | 수동 검증 필요 |
+| 6 | 실제 Claude run 회귀 검증 | 연결됨 상태와 실제 작업 성공을 일치 | 수동 검증 의존 |
+
+## 다음 작업 권장 순서
+
+1. 깨끗한 Windows 사용자 profile 또는 VM에서 다른 PC 등록 명령을 그대로 실행한다.
+2. 실패 로그와 `%LOCALAPPDATA%\DeskRelay\reports\connector-verify-*.json`을 수집한다.
+3. 실패 단계가 installer에서 자동 보정 가능한지, 사용자 안내만 필요한지 분류한다.
+4. 자동 보정 가능한 것은 `install-connector.ps1` 또는 `register-self`에 넣는다.
+5. 보정 후 같은 명령을 3회 반복해 디바이스 row가 하나로 수렴하는지 확인한다.
+6. 마지막으로 연결 진단 탭과 도움말 문구가 실제 실패 분류와 맞는지 조정한다.
+
 ## 최근 완료
 
 - `register-self` 단계별 등록 리포트 추가
@@ -17,7 +37,7 @@
 
 ## P0. 다른 Windows PC 등록 실증
 
-**상태:** 자동 검증 리포트 추가됨, 실제 PC 실증 필요
+**상태:** 최우선. 자동 검증 리포트와 UI 안내는 추가됨. 실제 PC 실증 필요
 
 **남은 작업**
 
@@ -28,6 +48,7 @@
 - 등록 성공 뒤 서버 UI 디바이스 목록에 즉시 표시되는지 확인
 - 등록한 디바이스 선택 뒤 세션 조회와 새 채팅 시작까지 확인
 - 등록 명령 마지막의 connector verification report 저장 여부 확인
+- 실패 시 report의 `failed`, `warn`, `action`, `evidence`가 실제 사용자가 취할 행동으로 충분한지 확인
 
 **통과 기준**
 
@@ -38,7 +59,7 @@
 
 ## P0. 설치 스크립트 재실행성 강화
 
-**상태:** 등록 후 검증 리포트는 추가됨, installer 전체 reconcile은 남음
+**상태:** stale daemon token/port 감지는 추가됨. installer 전체 reconcile은 남음
 
 **남은 작업**
 
@@ -47,6 +68,8 @@
 - stale port 점유 시 관리자 권한 필요 여부와 직접 종료 명령을 출력
 - 실패 후 같은 명령을 다시 붙여넣으면 이전 실패 흔적 때문에 새 실패가 생기지 않게 보장
 - 검증 리포트 실패 항목을 installer가 더 직접적으로 repair할 수 있게 연결
+- Git/Bun 자동 설치가 실패했을 때, 다음 수동 명령과 재실행 조건을 한 화면에 남기기
+- repo가 다른 원격 저장소일 때 삭제/이동/중단 중 어떤 정책을 쓸지 고정
 
 **통과 기준**
 
@@ -55,13 +78,14 @@
 
 ## P1. 통합 진단 모델
 
-**상태:** 등록 중 리포트는 있음, 평상시 doctor 모델은 부족
+**상태:** 연결 진단 탭에 등록 검증 단계명 안내는 추가됨. 평상시 doctor/API 모델 통합은 부족
 
 **남은 작업**
 
 - `cr-connector doctor --json` 모델을 정리
 - server diagnostics API 추가 또는 기존 연결 진단 탭과 doctor 결과 연결
 - 서버 실행 여부, site token 유효성, registry 상태, local daemon, advertised daemon, daemon token 일치, behavior 준비, Claude CLI 사용 가능 여부, workspace root, login task를 하나의 구조로 판정
+- 등록 직후 report와 평상시 diagnostics의 단계명/상태명/해결 행동을 같은 vocabulary로 통일
 
 **통과 기준**
 
