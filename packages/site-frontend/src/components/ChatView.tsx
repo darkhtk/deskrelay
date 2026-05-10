@@ -1822,6 +1822,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   const connectionStatusDetail = () =>
     connectionStatus().detailOverride ?? t(connectionStatus().detailKey);
+  const headerStatusText = () =>
+    `${t(connectionStatus().mainKey)} · ${connectionStatusDetail()}`;
+  const headerStatusTitle = () =>
+    [sessionNotice(), headerStatusText()].filter((part): part is string => Boolean(part)).join(" · ");
 
   const deviceStatusTone = () => {
     const device = activeDevice();
@@ -3135,13 +3139,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               <line x1="9" y1="4" x2="9" y2="20" />
             </svg>
           </button>
-          <Show when={sessionNotice()}>
-            {(message) => (
-              <span class="chat-header-session-notice" role="status" aria-live="polite" title={message()}>
-                {message()}
-              </span>
-            )}
-          </Show>
+          <output
+            class={`chat-header-status chat-header-status-${connectionStatus().tone}`}
+            aria-live="polite"
+            title={headerStatusTitle()}
+          >
+            <Show when={sessionNotice()}>
+              {(message) => <span class="chat-header-notice">{message()}</span>}
+            </Show>
+            <span class="chat-header-current-status">{headerStatusText()}</span>
+          </output>
         </div>
 
         <Show

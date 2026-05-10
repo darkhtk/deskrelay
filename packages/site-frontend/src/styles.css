@@ -2088,15 +2088,58 @@ body.sidebar-collapsed .chat {
   flex-shrink: 0;
   padding: 8px 24px 0;
 }
-.chat-header-session-notice {
+.chat-header-status {
   min-width: 0;
   flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12px;
   line-height: 1.4;
   color: var(--text-muted);
+  background: transparent;
+  border: 0;
+}
+.chat-header-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--text-subtle);
+}
+.chat-header-status-ok::before {
+  background: var(--success);
+}
+.chat-header-status-pending::before {
+  background: var(--warning);
+}
+.chat-header-status-warning::before {
+  background: var(--warning);
+}
+.chat-header-status-danger::before,
+.chat-header-status-offline::before {
+  background: var(--danger);
+}
+.chat-header-notice,
+.chat-header-current-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-header-notice {
+  flex: 0 1 auto;
+  color: var(--text);
+}
+.chat-header-notice::after {
+  content: "·";
+  margin-left: 7px;
+  color: var(--text-subtle);
+}
+.chat-header-current-status {
+  flex: 1 1 auto;
 }
 
 /* Right-to-left marquee for operator announcements. Sits in the
