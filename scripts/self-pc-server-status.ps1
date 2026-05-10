@@ -69,3 +69,8 @@ if (Test-Path $envFile) {
   Write-Host "Site token: $env:CR_SITE_TOKEN"
   Write-Host "Command files: $(Join-Path $root 'commands')"
 }
+
+$autostartScript = Join-Path $repo "scripts\self-pc-server-autostart.ps1"
+if (Test-Path -LiteralPath $autostartScript) {
+  & $autostartScript -Action status -Root $root -RepoRoot $repo
+}

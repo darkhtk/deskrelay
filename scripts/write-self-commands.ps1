@@ -151,6 +151,18 @@ Set-Location -LiteralPath $repoQ
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1 -Root $rootQ -RepoRoot $repoQ
 "@
 
+$installServerAutostart = @"
+# DeskRelay - enable server autostart on Windows login
+Set-Location -LiteralPath $repoQ
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-autostart.ps1 -Action install -Root $rootQ -RepoRoot $repoQ
+"@
+
+$removeServerAutostart = @"
+# DeskRelay - disable server autostart on Windows login
+Set-Location -LiteralPath $repoQ
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-autostart.ps1 -Action remove -Root $rootQ -RepoRoot $repoQ
+"@
+
 $stopServer = @"
 # DeskRelay - stop this PC server and connector
 Set-Location -LiteralPath $repoQ
@@ -231,6 +243,10 @@ $($env:CR_SITE_TOKEN)
 
 Full command folder:
 $commandsDir
+
+This server installs a Windows login task named "DeskRelay Self Server".
+It restarts the self-host server on login without opening the browser.
+Use commands\remove-server-autostart.txt if you want to disable that.
 
 To register another PC, open this file in the DeskRelay folder root and
 copy the whole PowerShell block into the PC you want to control:
@@ -319,6 +335,8 @@ $all = @"
 #   open-site.txt
 #   start-server.txt
 #   status-server.txt
+#   install-server-autostart.txt
+#   remove-server-autostart.txt
 #   stop-server.txt
 #   reset-server.txt
 #   uninstall-server.txt
@@ -337,6 +355,12 @@ $openSite
 ## Register another PC
 
 $registerOtherPc
+
+## Server autostart
+
+$installServerAutostart
+
+$removeServerAutostart
 
 ## Remove this PC from server
 
@@ -366,6 +390,8 @@ $unregisterDevice
 Write-TextFile -Path (Join-Path $commandsDir "open-site.txt") -Content $openSite
 Write-TextFile -Path (Join-Path $commandsDir "start-server.txt") -Content $startServer
 Write-TextFile -Path (Join-Path $commandsDir "status-server.txt") -Content $statusServer
+Write-TextFile -Path (Join-Path $commandsDir "install-server-autostart.txt") -Content $installServerAutostart
+Write-TextFile -Path (Join-Path $commandsDir "remove-server-autostart.txt") -Content $removeServerAutostart
 Write-TextFile -Path (Join-Path $commandsDir "stop-server.txt") -Content $stopServer
 Write-TextFile -Path (Join-Path $commandsDir "reset-server.txt") -Content $resetServer
 Write-TextFile -Path (Join-Path $commandsDir "uninstall-server.txt") -Content $uninstallServer

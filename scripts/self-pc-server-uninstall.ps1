@@ -96,6 +96,15 @@ $repo = Get-RepoRoot -Explicit $RepoRoot
 $root = Get-FullPathNoResolve -Path $Root -Repo $repo
 $envFile = Join-Path $root "dev.env.ps1"
 
+$autostartScript = Join-Path $repo "scripts\self-pc-server-autostart.ps1"
+if (Test-Path -LiteralPath $autostartScript) {
+  try {
+    & $autostartScript -Action remove -Root $root -RepoRoot $repo
+  } catch {
+    Write-Warning "Could not remove self server autostart: $($_.Exception.Message)"
+  }
+}
+
 if (Test-Path -LiteralPath $envFile) {
   . $envFile
   Invoke-RegisteredDeviceCleanup -SiteUrl $env:CR_DEV_SITE_URL -Token $env:CR_SITE_TOKEN

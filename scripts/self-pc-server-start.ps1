@@ -9,7 +9,8 @@ param(
   [string]$WorkspaceRoots = "",
   [switch]$ForceInit,
   [switch]$NoRegisterDevice,
-  [switch]$NoOpenBrowser
+  [switch]$NoOpenBrowser,
+  [switch]$NoAutostart
 )
 
 $ErrorActionPreference = "Stop"
@@ -117,6 +118,17 @@ $localFrontendUrl = "http://127.0.0.1:$FrontendPort"
 $commandsScript = Join-Path $repo "scripts\write-self-commands.ps1"
 if (Test-Path -LiteralPath $commandsScript) {
   & $commandsScript -Root $root -RepoRoot $repo
+}
+
+if (-not $NoAutostart) {
+  $autostartScript = Join-Path $repo "scripts\self-pc-server-autostart.ps1"
+  if (Test-Path -LiteralPath $autostartScript) {
+    try {
+      & $autostartScript -Action install -Root $root -RepoRoot $repo
+    } catch {
+      Write-Warning "Could not install self server autostart: $($_.Exception.Message)"
+    }
+  }
 }
 
 Write-Host ""

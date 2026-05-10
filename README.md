@@ -36,7 +36,7 @@ bun install
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```
 
-실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, `.self-server\commands` 아래의 command 파일과 저장소 최상위 quick 파일에도 생성된다.
+실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, `.self-server\commands` 아래의 command 파일과 저장소 최상위 quick 파일에도 생성된다. 서버 PC에는 `DeskRelay Self Server` Windows 로그인 작업도 자동 등록된다. 다음 로그인부터는 브라우저를 열지 않고 site-backend, site-frontend, 서버 PC connector가 자동으로 올라온다.
 
 다른 기기에서 열 때는 `DESKRELAY-SERVER-CODE.txt`의 `Recommended login URL for another device`를 우선 사용한다. 이 URL은 `#site-token=...`을 포함하므로 처음 접속한 브라우저도 토큰 입력 없이 들어간다. `100.x.x.x` Tailscale 주소는 공용 인터넷 주소가 아니며, 같은 Tailscale tailnet에 로그인되어 있고 온라인인 기기에서만 열린다. 같은 집/사무실 LAN 안에서는 LAN URL을 쓸 수 있다.
 
@@ -45,6 +45,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```powershell
 Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
+```
+
+서버 자동 시작만 따로 켜거나 끄려면:
+
+```powershell
+Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-autostart.ps1 -Action install
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-autostart.ps1 -Action remove
 ```
 
 서버를 재시작하려면:
@@ -90,14 +98,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 
 - `.self-server\commands\register-other-pc.txt`: 제어할 다른 Windows PC에 그대로 붙여넣는 등록 명령
 - `.self-server\commands\remove-other-pc.txt`: 등록을 해제할 Windows PC에 그대로 붙여넣는 해제 명령
-- `.self-server\commands\status-server.txt`: 현재 서버 URL, Site token, command 파일 위치 확인
+- `.self-server\commands\status-server.txt`: 현재 서버 URL, Site token, command 파일 위치, 자동 시작 작업 상태 확인
+- `.self-server\commands\install-server-autostart.txt`: 서버 PC 로그인 시 자동 시작 작업 등록
+- `.self-server\commands\remove-server-autostart.txt`: 서버 PC 로그인 시 자동 시작 작업 제거
 - `.self-server\commands\deskrelay-commands.txt`: 생성된 모든 운영 명령 모음
 - `REGISTER-OTHER-PC.txt`: 최상위 quick 등록 명령
 - `REMOVE-OTHER-PC.txt`: 최상위 quick 해제 명령
 - `DESKRELAY-SERVER-CODE.txt`: 서버 URL, Site token, command 파일 위치
 - `REMOVE-DESKRELAY-SERVER.txt`: 서버 PC의 self-host 상태 제거 명령
 
-등록 명령은 GitHub에서 `scripts/install-connector.ps1`을 내려받아 실행한다. 이 스크립트가 `$HOME\deskrelay` 설치 상태를 판별하고, 필요하면 새로 clone/update한 뒤 connector를 `0.0.0.0:18091`에 띄우고, Tailscale/LAN 주소를 감지하고, 서버가 `/status`에 접근 가능한지 확인한 다음 device row를 등록한다. 등록이 끝나면 Site token이 포함된 DeskRelay URL을 기본 브라우저로 연다. 브라우저 자동 실행이 막히면 터미널에 `#site-token=...`이 포함된 URL을 출력하므로, 그 URL을 그대로 열면 token을 다시 입력하지 않아도 된다.
+등록 명령은 GitHub에서 `scripts/install-connector.ps1`을 내려받아 실행한다. 이 스크립트가 `$HOME\deskrelay` 설치 상태를 판별하고, 필요하면 새로 clone/update한 뒤 connector를 `0.0.0.0:18091`에 띄우고, Windows 로그인 작업을 설치하고, Tailscale/LAN 주소를 감지하고, 서버가 `/status`에 접근 가능한지 확인한 다음 device row를 등록한다. 등록이 끝나면 Site token이 포함된 DeskRelay URL을 기본 브라우저로 연다. 브라우저 자동 실행이 막히면 터미널에 `#site-token=...`이 포함된 URL을 출력하므로, 그 URL을 그대로 열면 token을 다시 입력하지 않아도 된다.
 
 해제 명령은 GitHub에서 `scripts/remove-connector.ps1`을 내려받아 실행한다. 이 스크립트가 해당 PC의 Tailscale/LAN daemon URL 후보를 계산하고, 서버의 matching device row를 삭제하고, Windows login task와 local connector state를 제거하고, 남아 있는 connector listener를 종료한다. repo 폴더는 기본적으로 남긴다.
 
@@ -121,7 +131,8 @@ flowchart LR
     Registry[("Device registry<br/>.self-server/state<br/>device id / label / daemonUrl / daemon token")]
     Commands["Command files<br/>.self-server/commands<br/>top-level quick txt"]
     ServerDaemon["daemon<br/>packages/pc-connector-daemon<br/>:18191<br/>서버 PC connector<br/>daemon token"]
-    ServerTask["Windows login task<br/>login 시 connector 자동 시작"]
+    ServerAutostart["Windows login task<br/>self server 자동 시작"]
+    ServerConnectorTask["Windows login task<br/>서버 PC connector 자동 시작"]
     ServerWorkspace["Workspace roots<br/>CR_CONNECTOR_WORKSPACE_ROOTS"]
     ServerBehavior["Claude behavior host<br/>remote-claude"]
     ServerClaude["Claude Code CLI<br/>세션/권한/usage"]
@@ -146,7 +157,10 @@ flowchart LR
   SiteBackend -->|"/system/uninstall on device removal"| Network
   Network --> OtherDaemon
 
-  ServerDaemon --> ServerTask
+  ServerAutostart --> SiteBackend
+  ServerAutostart --> SiteFrontend
+  ServerAutostart --> ServerDaemon
+  ServerDaemon --> ServerConnectorTask
   ServerDaemon --> ServerWorkspace
   ServerDaemon --> ServerBehavior
   ServerBehavior --> ServerClaude
@@ -217,7 +231,7 @@ flowchart TD
   Registered["등록됨<br/>registry device row 있음"]
   Claude["Claude 준비<br/>behavior host + Claude Code CLI 실행 가능"]
   Workspace["작업 범위 유효<br/>workspace roots가 실제 경로와 맞음"]
-  Recovery["자동 복구<br/>login task 설치됨"]
+  Recovery["자동 시작<br/>server/connector login task 설치됨"]
   Usable["사용 가능<br/>브라우저에서 세션 실행 가능"]
 
   Install --> Process --> Local --> Remote --> Registered --> Claude --> Workspace --> Recovery --> Usable
