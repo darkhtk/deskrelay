@@ -9,8 +9,6 @@ import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registr
 import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
 import { createGitUpdateNoticeSource } from "./update-notice.ts";
 
-const DEFAULT_ANNOUNCEMENT_URL =
-  "https://raw.githubusercontent.com/darkhtk/deskrelay/main/ANNOUNCEMENT.txt";
 const port = process.env.CR_SITE_PORT ? Number(process.env.CR_SITE_PORT) : 18092;
 const host = process.env.CR_SITE_HOST ?? "127.0.0.1";
 
@@ -109,7 +107,7 @@ async function readLocalDaemonToken(): Promise<string | undefined> {
 
 function resolveAnnouncementUrl(): string | undefined {
   const raw = process.env.SITE_ANNOUNCEMENT_URL;
-  if (raw === undefined) return DEFAULT_ANNOUNCEMENT_URL;
+  if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   if (!trimmed || trimmed === "0" || trimmed.toLowerCase() === "false") return undefined;
   return trimmed;
