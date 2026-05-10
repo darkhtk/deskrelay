@@ -74,17 +74,19 @@ describe("LoginCard", () => {
 });
 
 describe("settings and chrome invariants", () => {
-  test("composer does not render context usage in the status line", () => {
+  test("composer context text sits in the composer footer without a progress bar", () => {
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
     const composerSource = readFileSync(resolve(pkgRoot, "src/components/Composer.tsx"), "utf8");
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
 
     expect(styles).toMatch(/\.composer-card\s*{[^}]*position:\s*relative;/s);
     expect(styles).toMatch(/\.composer-card\s*{[^}]*padding:\s*12px 22px 8px 12px;/s);
+    expect(styles).toContain(".composer-context-status");
     expect(styles).not.toContain(".composer-status-ctx");
     expect(styles).not.toContain(".composer-ctx-meter");
-    expect(composerSource).not.toContain("contextRemainingPercent");
-    expect(chatViewSource).not.toContain("컨텍스트 압축까지");
+    expect(composerSource).toContain("contextRemainingPercent");
+    expect(composerSource).toContain("컨텍스트 압축까지");
+    expect(chatViewSource).toContain("showContextUsageMeter");
   });
 
   test("session and week usage meters stack with reset labels on the right", () => {
@@ -113,11 +115,13 @@ describe("settings and chrome invariants", () => {
     expect(chatViewSource).toContain("formatInstructionLoadError");
     expect(appSource).toContain("app.settings.tab.${value}");
     expect(appSource).toContain('t("app.hard-refresh")');
+    expect(appSource).toContain('t("settings.usage.show-ctx")');
     expect(appSource).toContain('t("settings.usage.show-session")');
     expect(appSource).toContain('t("settings.usage.show-week")');
+    expect(appSource).toContain("showCtxUsageMeter()");
     expect(appSource).toContain("showSessionUsageMeter()");
     expect(appSource).toContain("showWeekUsageMeter()");
-    expect(chatViewSource).not.toContain("showContextUsageMeter");
+    expect(chatViewSource).toContain("showContextUsageMeter");
     expect(appSource).toContain("window.caches");
     expect(appSource).toContain("navigator.serviceWorker");
     expect(appSource).toContain('url.searchParams.set("reload"');

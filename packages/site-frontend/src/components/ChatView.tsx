@@ -898,6 +898,7 @@ export interface ChatViewProps {
   requestedDeviceSelection?: DeviceSelectionRequest;
   onContextUsageChange?: (usage: ContextUsageOverview) => void;
   onActiveWorkspaceChange?: (workspace: { deviceId: string | null; cwd: string }) => void;
+  showContextUsageMeter?: boolean;
 }
 
 interface ComposerGuidance {
@@ -3719,6 +3720,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   hasExtraContent={() => attachmentCount() > 0}
                   onAttachClick={handleAttachClick}
                   slashCommands={composerSlashCommands()}
+                  contextRemainingPercent={
+                    props.showContextUsageMeter === false
+                      ? undefined
+                      : (contextUsage().ctx?.remainingPercent ?? null)
+                  }
                 />
               </div>
             </>

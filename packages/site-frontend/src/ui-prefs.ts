@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 
 const SCROLL_TO_BOTTOM_ON_SEND_KEY = "cr.scroll-to-bottom-on-send";
+const SHOW_CTX_USAGE_METER_KEY = "cr.show-ctx-usage-meter";
 const SHOW_SESSION_USAGE_METER_KEY = "cr.show-session-usage-meter";
 const SHOW_WEEK_USAGE_METER_KEY = "cr.show-week-usage-meter";
 const TEMP_INSTRUCTIONS_KEY = "cr.instructions.temp-session";
@@ -115,6 +116,9 @@ function writeString(name: string, value: string, storage: Storage | undefined |
 const [scrollToBottomOnSend, setScrollToBottomOnSendSignal] = createSignal(
   readScrollToBottomOnSend(),
 );
+const [showCtxUsageMeter, setShowCtxUsageMeterSignal] = createSignal(
+  readOnByDefault(SHOW_CTX_USAGE_METER_KEY),
+);
 const [showSessionUsageMeter, setShowSessionUsageMeterSignal] = createSignal(
   readOnByDefault(SHOW_SESSION_USAGE_METER_KEY),
 );
@@ -139,6 +143,7 @@ export {
   chatTranscriptEventLimit,
   newChatCwdBrowseMode,
   scrollToBottomOnSend,
+  showCtxUsageMeter,
   showSessionUsageMeter,
   showWeekUsageMeter,
 };
@@ -158,6 +163,11 @@ function writeOnByDefault(name: string, value: boolean): void {
   } catch {
     // Private mode etc. The in-memory signal still updates for this tab.
   }
+}
+
+export function setShowCtxUsageMeter(value: boolean): void {
+  writeOnByDefault(SHOW_CTX_USAGE_METER_KEY, value);
+  setShowCtxUsageMeterSignal(value);
 }
 
 export function setShowSessionUsageMeter(value: boolean): void {

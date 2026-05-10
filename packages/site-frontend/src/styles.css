@@ -3069,6 +3069,31 @@ pre .copy-button:hover {
   margin-left: auto;
 }
 
+.composer-context-status {
+  flex: 1;
+  min-width: 0;
+  padding: 0 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-context-status-good {
+  color: var(--success);
+}
+.composer-context-status-warn {
+  color: var(--warning);
+}
+.composer-context-status-danger {
+  color: var(--danger);
+}
+.composer-context-status-unknown {
+  color: var(--text-faint);
+}
+
 .composer-stop {
   background: transparent;
   border: 1px solid var(--border-subtle);
