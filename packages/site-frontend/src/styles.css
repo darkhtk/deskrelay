@@ -3954,18 +3954,21 @@ pre .copy-button:hover {
   min-width: 0;
 }
 .context-battery {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: 48px 32px 30px;
   align-items: center;
   gap: 6px;
 }
 .context-battery-label {
-  min-width: 46px;
+  width: 48px;
+  overflow: hidden;
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .context-battery-shell {
   position: relative;
+  justify-self: start;
   width: 28px;
   height: 13px;
   border: 1px solid currentColor;
@@ -4007,7 +4010,7 @@ pre .copy-button:hover {
   background: transparent;
 }
 .context-battery-value {
-  min-width: 28px;
+  width: 30px;
   text-align: right;
   color: var(--text-muted);
 }
@@ -5570,6 +5573,7 @@ dialog.approval-modal-root,
     gap: 8px;
   }
   .context-battery {
+    grid-template-columns: 24px 30px;
     gap: 4px;
   }
   .context-battery-label {
