@@ -14,6 +14,10 @@ import {
   normalizeDaemonUrl,
 } from "./device-registry.ts";
 import { loc } from "./i18n.ts";
+import type {
+  SelfServerAutostartController,
+  SelfServerAutostartStatus,
+} from "./self-server-autostart.ts";
 
 export interface SiteAppOptions {
   registry: DeviceRegistry;
@@ -26,6 +30,7 @@ export interface SiteAppOptions {
   announcementPollMs?: number;
   localDaemonToken?: string;
   selfHostUrl?: string;
+  selfServerAutostart?: SelfServerAutostartController;
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -113,6 +118,39 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         urls,
       }),
     );
+  });
+
+  app.get("/api/self/autostart", async (c) => {
+    return c.json(await readSelfServerAutostartStatus(options.selfServerAutostart));
+  });
+
+  app.put("/api/self/autostart", async (c) => {
+    if (!options.selfServerAutostart) {
+      return c.json(
+        {
+          supported: false,
+          installed: false,
+          taskName: "DeskRelay Self Server",
+          error: "self server autostart is not configured",
+        },
+        501,
+      );
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const enabled = typeof body === "object" && body ? (body as { enabled?: unknown }).enabled : null;
+    if (typeof enabled !== "boolean") {
+      return c.json({ error: "enabled boolean is required" }, 400);
+    }
+    try {
+      return c.json(await options.selfServerAutostart.setEnabled(enabled));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
   });
 
   app.post("/api/devices", async (c) => {
@@ -521,6 +559,29 @@ function announcementPayload(rawInput: string): AnnouncementPayload {
     return { message, level, until: parsed.until };
   }
   return { message, level };
+}
+
+async function readSelfServerAutostartStatus(
+  controller: SelfServerAutostartController | undefined,
+): Promise<SelfServerAutostartStatus> {
+  if (!controller) {
+    return {
+      supported: false,
+      installed: false,
+      taskName: "DeskRelay Self Server",
+      error: "self server autostart is not configured",
+    };
+  }
+  try {
+    return await controller.status();
+  } catch (err) {
+    return {
+      supported: false,
+      installed: false,
+      taskName: "DeskRelay Self Server",
+      error: (err as Error).message,
+    };
+  }
 }
 
 function resolveDevice(id: string, registry: DeviceRegistry): Device | undefined {

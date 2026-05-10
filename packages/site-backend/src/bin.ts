@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
+import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
 
 const DEFAULT_ANNOUNCEMENT_URL =
   "https://raw.githubusercontent.com/darkhtk/deskrelay/main/ANNOUNCEMENT.txt";
@@ -36,6 +37,10 @@ const app = createSiteApp({
     : {}),
   ...(localDaemonToken ? { localDaemonToken } : {}),
   ...(process.env.CR_DEV_FRONTEND_URL ? { selfHostUrl: process.env.CR_DEV_FRONTEND_URL } : {}),
+  selfServerAutostart: createPowerShellSelfServerAutostartController({
+    repoRoot: process.cwd(),
+    root: process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self-server"),
+  }),
 });
 
 const server = Bun.serve({

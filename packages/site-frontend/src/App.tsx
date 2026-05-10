@@ -513,81 +513,139 @@ export const App: Component = () => {
   );
 };
 
-const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => (
-  <div class="settings-stack">
-    <section class="settings-card">
-      <h3 class="settings-card-title">{t("settings.theme.title")}</h3>
-      <div class="settings-toggle-row">
-        <div class="settings-toggle-copy">
-          <span class="settings-toggle-title">{t("settings.theme.title")}</span>
-          <span class="settings-toggle-help">{t("settings.theme.help")}</span>
-        </div>
-        <div class="settings-segmented" role="radiogroup" aria-label={t("settings.theme.title")}>
-          <For each={["light", "dark"] as AppTheme[]}>
-            {(value) => (
-              <button
-                type="button"
-                class={`settings-segment${appTheme() === value ? " active" : ""}`}
-                role="radio"
-                aria-checked={appTheme() === value ? "true" : "false"}
-                onClick={() => setAppTheme(value)}
-              >
-                {t(`settings.theme.${value}`)}
-              </button>
-            )}
-          </For>
-        </div>
-      </div>
-    </section>
+const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
+  const [savingAutostart, setSavingAutostart] = createSignal(false);
+  const [autostart, { mutate: setAutostart }] = createResource(async () => {
+    try {
+      return await api.selfServerAutostart();
+    } catch (err) {
+      return {
+        supported: false,
+        installed: false,
+        taskName: "DeskRelay Self Server",
+        error: (err as Error).message,
+      };
+    }
+  });
+  const autostartStatusText = () => {
+    if (savingAutostart()) return t("settings.autostart.saving");
+    const current = autostart();
+    if (!current) return t("settings.autostart.loading");
+    return current.installed ? t("settings.autostart.enabled") : t("settings.autostart.disabled");
+  };
+  const setServerAutostart = async (enabled: boolean) => {
+    setSavingAutostart(true);
+    try {
+      setAutostart(await api.setSelfServerAutostart(enabled));
+    } catch (err) {
+      setAutostart({
+        supported: false,
+        installed: autostart()?.installed ?? false,
+        taskName: autostart()?.taskName ?? "DeskRelay Self Server",
+        error: (err as Error).message,
+      });
+    } finally {
+      setSavingAutostart(false);
+    }
+  };
 
-    <section class="settings-card">
-      <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
-      <label class="settings-check-row">
-        <input
-          type="checkbox"
-          checked={scrollToBottomOnSend()}
-          onChange={(event) => setScrollToBottomOnSend(event.currentTarget.checked)}
-        />
-        {t("lang.settings.scroll-on-send")}
-      </label>
-      <label class="settings-check-row">
-        <input
-          type="checkbox"
-          checked={showCtxUsageMeter()}
-          onChange={(event) => setShowCtxUsageMeter(event.currentTarget.checked)}
-        />
-        {t("settings.usage.show-ctx")}
-      </label>
-      <label class="settings-check-row">
-        <input
-          type="checkbox"
-          checked={showSessionUsageMeter()}
-          onChange={(event) => setShowSessionUsageMeter(event.currentTarget.checked)}
-        />
-        {t("settings.usage.show-session")}
-      </label>
-      <label class="settings-check-row">
-        <input
-          type="checkbox"
-          checked={showWeekUsageMeter()}
-          onChange={(event) => setShowWeekUsageMeter(event.currentTarget.checked)}
-        />
-        {t("settings.usage.show-week")}
-      </label>
-    </section>
+  return (
+    <div class="settings-stack">
+      <section class="settings-card">
+        <h3 class="settings-card-title">{t("settings.theme.title")}</h3>
+        <div class="settings-toggle-row">
+          <div class="settings-toggle-copy">
+            <span class="settings-toggle-title">{t("settings.theme.title")}</span>
+            <span class="settings-toggle-help">{t("settings.theme.help")}</span>
+          </div>
+          <div class="settings-segmented" role="radiogroup" aria-label={t("settings.theme.title")}>
+            <For each={["light", "dark"] as AppTheme[]}>
+              {(value) => (
+                <button
+                  type="button"
+                  class={`settings-segment${appTheme() === value ? " active" : ""}`}
+                  role="radio"
+                  aria-checked={appTheme() === value ? "true" : "false"}
+                  onClick={() => setAppTheme(value)}
+                >
+                  {t(`settings.theme.${value}`)}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </section>
 
-    <section class="settings-card settings-danger-section">
-      <div class="settings-row">
-        <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>
-          {t("app.hard-refresh")}
-        </button>
-        <button type="button" class="secondary-button danger" onClick={props.onClearAccess}>
-          {t("app.clear-access")}
-        </button>
-      </div>
-    </section>
-  </div>
-);
+      <section class="settings-card">
+        <h3 class="settings-card-title">{t("settings.autostart.title")}</h3>
+        <label class="settings-check-row">
+          <input
+            type="checkbox"
+            checked={autostart()?.installed ?? false}
+            disabled={savingAutostart() || autostart.loading || autostart()?.supported === false}
+            onChange={(event) => void setServerAutostart(event.currentTarget.checked)}
+          />
+          <span class="settings-check-copy">
+            <span>{t("settings.autostart.server")}</span>
+            <span class="settings-check-help">
+              {t("settings.autostart.help", { status: autostartStatusText() })}
+            </span>
+          </span>
+        </label>
+        <Show when={autostart()?.error}>
+          {(message) => <p class="settings-error">{message()}</p>}
+        </Show>
+      </section>
+
+      <section class="settings-card">
+        <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
+        <label class="settings-check-row">
+          <input
+            type="checkbox"
+            checked={scrollToBottomOnSend()}
+            onChange={(event) => setScrollToBottomOnSend(event.currentTarget.checked)}
+          />
+          {t("lang.settings.scroll-on-send")}
+        </label>
+        <label class="settings-check-row">
+          <input
+            type="checkbox"
+            checked={showCtxUsageMeter()}
+            onChange={(event) => setShowCtxUsageMeter(event.currentTarget.checked)}
+          />
+          {t("settings.usage.show-ctx")}
+        </label>
+        <label class="settings-check-row">
+          <input
+            type="checkbox"
+            checked={showSessionUsageMeter()}
+            onChange={(event) => setShowSessionUsageMeter(event.currentTarget.checked)}
+          />
+          {t("settings.usage.show-session")}
+        </label>
+        <label class="settings-check-row">
+          <input
+            type="checkbox"
+            checked={showWeekUsageMeter()}
+            onChange={(event) => setShowWeekUsageMeter(event.currentTarget.checked)}
+          />
+          {t("settings.usage.show-week")}
+        </label>
+      </section>
+
+      <section class="settings-card settings-danger-section">
+        <div class="settings-row">
+          <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>
+            {t("app.hard-refresh")}
+          </button>
+          <button type="button" class="secondary-button danger" onClick={props.onClearAccess}>
+            {t("app.clear-access")}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+};
 
 const InstructionSettings: Component<{
   initialDeviceId: string | null;

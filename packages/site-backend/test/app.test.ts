@@ -200,6 +200,44 @@ describe("self-host command helper", () => {
     expect(body.preferredUrl).toMatch(/^http:\/\//);
     expect(body.urls.length).toBeGreaterThan(0);
   });
+
+  test("server autostart status and updates are exposed through an authenticated endpoint", async () => {
+    let installed = false;
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      selfServerAutostart: {
+        async status() {
+          return { supported: true, installed, taskName: "DeskRelay Self Server" };
+        },
+        async setEnabled(enabled) {
+          installed = enabled;
+          return { supported: true, installed, taskName: "DeskRelay Self Server" };
+        },
+      },
+    });
+
+    const unauth = await app.fetch(new Request("http://site.local/api/self/autostart"));
+    expect(unauth.status).toBe(401);
+
+    const initial = await app.fetch(
+      new Request("http://site.local/api/self/autostart", {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(initial.status).toBe(200);
+    expect((await initial.json()).installed).toBe(false);
+
+    const enabled = await app.fetch(
+      new Request("http://site.local/api/self/autostart", {
+        method: "PUT",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      }),
+    );
+    expect(enabled.status).toBe(200);
+    expect((await enabled.json()).installed).toBe(true);
+  });
 });
 
 describe("doctor endpoints", () => {

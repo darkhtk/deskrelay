@@ -129,6 +129,60 @@ describe("App landing flow", () => {
     });
   });
 
+  test("settings general tab toggles self server autostart", async () => {
+    window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
+    const requests: Array<{ url: string; body?: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, ...(typeof init?.body === "string" ? { body: init.body } : {}) });
+      if (url.endsWith("/api/self/autostart")) {
+        if (init?.method === "PUT") {
+          return new Response(
+            JSON.stringify({
+              supported: true,
+              installed: true,
+              taskName: "DeskRelay Self Server",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            supported: true,
+            installed: false,
+            taskName: "DeskRelay Self Server",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    render(() => <App />);
+    const settings = await screen.findByRole("button", { name: t("app.settings.aria") });
+    fireEvent.click(settings);
+
+    const label = await screen.findByText(t("settings.autostart.server"));
+    const checkbox = label.closest("label")?.querySelector("input");
+    if (!checkbox) throw new Error("autostart checkbox missing");
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+
+    await waitFor(() => {
+      expect(checkbox.checked).toBe(true);
+      expect(requests.some((req) => req.body === JSON.stringify({ enabled: true }))).toBe(true);
+    });
+  });
+
   test("settings instructions show missing device instruction files inline", async () => {
     window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

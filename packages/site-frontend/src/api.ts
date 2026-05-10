@@ -215,6 +215,13 @@ export interface RemoveOtherPcCommandResponse {
   command: string;
 }
 
+export interface SelfServerAutostartStatus {
+  supported: boolean;
+  installed: boolean;
+  taskName: string;
+  error?: string;
+}
+
 export interface BrowserClientContext {
   address: string;
   isLocal: boolean;
@@ -342,6 +349,9 @@ export const api = {
     request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),
   removeOtherPcCommand: () =>
     request<RemoveOtherPcCommandResponse>("GET", "/api/self/remove-other-pc-command"),
+  selfServerAutostart: () => request<SelfServerAutostartStatus>("GET", "/api/self/autostart"),
+  setSelfServerAutostart: (enabled: boolean) =>
+    request<SelfServerAutostartStatus>("PUT", "/api/self/autostart", { enabled }),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>
     request<Device>("POST", "/api/devices", {
       daemonUrl,

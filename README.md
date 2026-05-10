@@ -36,7 +36,7 @@ bun install
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```
 
-실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, `.self-server\commands` 아래의 command 파일과 저장소 최상위 quick 파일에도 생성된다. 서버 PC에는 `DeskRelay Self Server` Windows 로그인 작업도 자동 등록된다. 다음 로그인부터는 브라우저를 열지 않고 site-backend, site-frontend, 서버 PC connector가 자동으로 올라온다.
+실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, `.self-server\commands` 아래의 command 파일과 저장소 최상위 quick 파일에도 생성된다. 서버 PC에는 `DeskRelay Self Server` Windows 로그인 작업도 자동 등록된다. 다음 로그인부터는 브라우저를 열지 않고 site-backend, site-frontend, 서버 PC connector가 자동으로 올라온다. 이 자동 시작 여부는 앱의 `설정 -> 일반 -> 자동 시작`에서도 켜고 끌 수 있다.
 
 다른 기기에서 열 때는 `DESKRELAY-SERVER-CODE.txt`의 `Recommended login URL for another device`를 우선 사용한다. 이 URL은 `#site-token=...`을 포함하므로 처음 접속한 브라우저도 토큰 입력 없이 들어간다. `100.x.x.x` Tailscale 주소는 공용 인터넷 주소가 아니며, 같은 Tailscale tailnet에 로그인되어 있고 온라인인 기기에서만 열린다. 같은 집/사무실 LAN 안에서는 LAN URL을 쓸 수 있다.
 

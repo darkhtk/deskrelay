@@ -4427,6 +4427,17 @@ dialog.approval-modal-root,
   height: 16px;
   accent-color: var(--accent-coral);
 }
+.settings-check-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-check-help {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
 .settings-segmented {
   display: inline-flex;
   align-items: center;
