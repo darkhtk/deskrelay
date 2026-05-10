@@ -2715,15 +2715,16 @@ pre .copy-button:hover {
   transform: translateX(-50%);
   margin: 0;
   padding: 0;
-  border: 0;
+  border: 1px solid var(--border-subtle);
   border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted);
+  background: var(--surface-card);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
 }
 .scroll-to-bottom-button:hover {
   color: var(--accent-coral);
-  background: transparent;
+  background: var(--bg-soft);
 }
 .scroll-to-bottom-button svg {
   width: 18px;
