@@ -14,8 +14,11 @@ import {
   clearToken,
   type ClaudeInstructionScope,
   type ClaudeInstructionSource,
+  type DeskRelayBuildInfo,
   type Device,
   type DeviceCleanupEntry,
+  type DeviceUpdateResponse,
+  type SelfServerUpdateStatus,
   getToken,
   setToken,
 } from "./api.ts";
@@ -34,6 +37,7 @@ import {
   SettingsScopeLabels,
   type SettingsScope,
 } from "./components/SettingsScopeLabel.tsx";
+import { deviceDisplayName } from "./device-display.ts";
 import { t } from "./i18n.ts";
 import {
   instructionScopeEmptyDescription,
@@ -139,8 +143,10 @@ const HELP_SECTIONS: Array<{
       "연결됨은 서버가 선택한 디바이스의 daemon에 접근 가능하다는 뜻입니다.",
       "오프라인은 서버가 해당 daemon에 접근하지 못한다는 뜻입니다.",
       "Claude 모듈 준비 안 됨은 connector는 살아 있지만 remote-claude behavior가 준비되지 않은 상태입니다.",
-      "서버 업데이트는 서버 PC의 git 저장소를 갱신하고 서버를 재시작합니다.",
-      "connector 업데이트는 각 디바이스의 git 저장소와 daemon을 갱신합니다. 꺼진 디바이스는 켜진 뒤 다시 처리해야 합니다.",
+      "업데이트 실행 버튼은 설정 > 일반 탭에 모여 있습니다.",
+      "전체 업데이트는 등록된 connector를 먼저 갱신한 뒤 서버 PC의 git 저장소를 갱신하고 서버를 재시작합니다.",
+      "디바이스별 업데이트 상태는 일반 탭에서 확인합니다. 꺼진 디바이스는 켜진 뒤 다시 처리해야 합니다.",
+      "연결 진단 탭은 상태 확인과 새로고침 중심으로 사용합니다.",
     ],
   },
   {
@@ -596,7 +602,11 @@ export const App: Component = () => {
 
               <div class="settings-dialog-body">
                 <Show when={settingsTab() === "general"}>
-                  <LanguageSettings onClearAccess={handleSettingsClearAccess} />
+                  <LanguageSettings
+                    onClearAccess={handleSettingsClearAccess}
+                    initialSelectedDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
+                    devicesRevision={devicesRevision()}
+                  />
                 </Show>
                 <Show when={settingsTab() === "devices"}>
                   <DeviceShell
@@ -664,7 +674,25 @@ const HelpSettings: Component = () => (
   </section>
 );
 
-const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
+type UpdatePhase = "idle" | "queued" | "running" | "succeeded" | "failed";
+
+interface UpdateRunState {
+  phase: UpdatePhase;
+  message: string;
+  fallbackCommand?: string;
+}
+
+interface DeviceBuildSnapshot {
+  deviceId: string;
+  build?: DeskRelayBuildInfo;
+  error?: string;
+}
+
+const LanguageSettings: Component<{
+  onClearAccess: () => void;
+  initialSelectedDeviceId?: string | null;
+  devicesRevision?: number;
+}> = (props) => {
   const [savingAutostart, setSavingAutostart] = createSignal(false);
   const [autostart, { mutate: setAutostart }] = createResource(async () => {
     try {
@@ -699,6 +727,234 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
       setSavingAutostart(false);
     }
   };
+  const [overallUpdate, setOverallUpdate] = createSignal<UpdateRunState>({
+    phase: "idle",
+    message: "업데이트 실행 전",
+  });
+  const [deviceUpdateStates, setDeviceUpdateStates] = createSignal<Record<string, UpdateRunState>>(
+    {},
+  );
+  const [updating, setUpdating] = createSignal<"all" | "server" | string | null>(null);
+  const [serverUpdateBaseline, setServerUpdateBaseline] = createSignal<string | null>(null);
+  const [lastUpdateDeviceFailures, setLastUpdateDeviceFailures] = createSignal(0);
+  const [devices, { refetch: refetchDevices }] = createResource(
+    () => props.devicesRevision ?? 0,
+    async () => {
+      try {
+        return await api.listDevices();
+      } catch {
+        return [] as Device[];
+      }
+    },
+  );
+  const [health, { refetch: refetchHealth }] = createResource(
+    () => props.devicesRevision ?? 0,
+    () => api.health().catch(() => null),
+  );
+  const [serverUpdateStatus, { refetch: refetchServerUpdateStatus }] = createResource(
+    () => props.devicesRevision ?? 0,
+    () => api.selfUpdateStatus().catch(() => null),
+  );
+  const [deviceBuildSnapshots, { refetch: refetchDeviceBuildSnapshots }] = createResource(
+    () => {
+      const list = devices();
+      if (!list) return null;
+      return {
+        revision: props.devicesRevision ?? 0,
+        devices: list.map((device) => ({
+          id: device.id,
+          connectionState: device.connectionState,
+        })),
+      };
+    },
+    async (source) => {
+      if (!source) return [] as DeviceBuildSnapshot[];
+      const rows = await Promise.all(
+        source.devices.map(async (device) => {
+          if (device.connectionState === "offline") {
+            return { deviceId: device.id, error: "offline" };
+          }
+          try {
+            const snapshot = await api.diagnostics(device.id);
+            return {
+              deviceId: device.id,
+              ...(snapshot.build ? { build: snapshot.build } : {}),
+            };
+          } catch (err) {
+            return { deviceId: device.id, error: (err as Error).message };
+          }
+        }),
+      );
+      return rows;
+    },
+  );
+
+  function refreshUpdateState(): void {
+    void refetchDevices();
+    void refetchHealth();
+    void refetchServerUpdateStatus();
+    void refetchDeviceBuildSnapshots();
+  }
+
+  async function updateServer(): Promise<void> {
+    setUpdating("server");
+    setLastUpdateDeviceFailures(0);
+    setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
+    setOverallUpdate({ phase: "running", message: "서버 업데이트 시작 요청 중" });
+    try {
+      const result = await api.selfUpdate();
+      setOverallUpdate({
+        phase: result.started ? "running" : "failed",
+        message: result.started
+          ? `서버 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
+          : `서버 업데이트 시작 실패: ${result.error ?? "알 수 없는 오류"}`,
+      });
+      void refetchServerUpdateStatus();
+      setTimeout(refreshUpdateState, 6000);
+    } catch (err) {
+      setOverallUpdate({
+        phase: "failed",
+        message: `서버 업데이트 실패: ${(err as Error).message}`,
+      });
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  async function updateConnector(device: Device): Promise<UpdateRunState> {
+    setUpdating(device.id);
+    setDeviceUpdateState(device.id, {
+      phase: "running",
+      message: `${deviceDisplayName(device)} connector 업데이트 중`,
+    });
+    try {
+      const result = await api.updateDevice(device.id);
+      const state = {
+        phase: result.error ? "failed" : "succeeded",
+        message: connectorUpdateMessage(result),
+        ...(result.fallbackCommand ? { fallbackCommand: result.fallbackCommand } : {}),
+      } satisfies UpdateRunState;
+      setDeviceUpdateState(device.id, state);
+      setTimeout(refreshUpdateState, result.restartScheduled ? 5000 : 2000);
+      return state;
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as DeviceUpdateResponse | undefined) : null;
+      const state = {
+        phase: "failed",
+        message: body?.error
+          ? `connector 업데이트 실패: ${body.error}`
+          : `connector 업데이트 실패: ${(err as Error).message}`,
+        ...(body?.fallbackCommand ? { fallbackCommand: body.fallbackCommand } : {}),
+      } satisfies UpdateRunState;
+      setDeviceUpdateState(device.id, state);
+      return state;
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  function setDeviceUpdateState(deviceId: string, state: UpdateRunState): void {
+    setDeviceUpdateStates((current) => ({ ...current, [deviceId]: state }));
+  }
+
+  async function updateAll(): Promise<void> {
+    const list = devices() ?? [];
+    setUpdating("all");
+    setLastUpdateDeviceFailures(0);
+    setOverallUpdate({ phase: "running", message: "전체 업데이트 진행 중" });
+    setDeviceUpdateStates(
+      Object.fromEntries(
+        list.map((device) => [
+          device.id,
+          {
+            phase: device.connectionState === "offline" ? "failed" : "queued",
+            message:
+              device.connectionState === "offline"
+                ? "오프라인: connector 업데이트 불가"
+                : "대기 중",
+          } satisfies UpdateRunState,
+        ]),
+      ),
+    );
+
+    let failures = 0;
+    for (const device of list) {
+      if (device.connectionState === "offline") {
+        failures += 1;
+        continue;
+      }
+      const result = await updateConnector(device);
+      if (result?.phase === "failed") failures += 1;
+    }
+    setLastUpdateDeviceFailures(failures);
+
+    setOverallUpdate({
+      phase: "running",
+      message:
+        list.length === 0
+          ? "등록된 디바이스 없음 · 서버 업데이트 요청 중"
+          : failures > 0
+            ? `디바이스 업데이트 일부 실패 ${failures}건 · 서버 업데이트 요청 중`
+            : "디바이스 업데이트 완료 · 서버 업데이트 요청 중",
+    });
+    setUpdating("all");
+    setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
+    try {
+      const result = await api.selfUpdate();
+      setOverallUpdate({
+        phase: result.started ? "running" : "failed",
+        message: result.started
+          ? failures > 0
+            ? `일부 디바이스 실패 · 서버 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
+            : `전체 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
+          : `서버 업데이트 시작 실패: ${result.error ?? "알 수 없는 오류"}`,
+      });
+      void refetchServerUpdateStatus();
+      setTimeout(refreshUpdateState, 6000);
+    } catch (err) {
+      setOverallUpdate({
+        phase: "failed",
+        message: `서버 업데이트 실패: ${(err as Error).message}`,
+      });
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  createEffect(() => {
+    const current = overallUpdate();
+    const status = serverUpdateStatus();
+    if (current.phase !== "running") return;
+    if (!isTrackedServerUpdateStatus(status, serverUpdateBaseline())) return;
+    if (status?.state === "succeeded") {
+      const failures = lastUpdateDeviceFailures();
+      setOverallUpdate({
+        phase: failures > 0 ? "failed" : "succeeded",
+        message:
+          failures > 0
+            ? `${updateStatusText(status)} · 디바이스 업데이트 실패 ${failures}건`
+            : updateStatusText(status),
+      });
+    }
+    if (status?.state === "failed") {
+      setOverallUpdate({ phase: "failed", message: updateStatusText(status) });
+    }
+  });
+
+  const deviceBuildSnapshot = (deviceId: string): DeviceBuildSnapshot | null =>
+    (deviceBuildSnapshots() ?? []).find((snapshot) => snapshot.deviceId === deviceId) ?? null;
+
+  const overallPhase = () =>
+    isTrackedServerUpdateStatus(serverUpdateStatus(), serverUpdateBaseline()) &&
+    serverUpdateStatus()?.state === "running"
+      ? "running"
+      : overallUpdate().phase;
+
+  const overallMessage = () =>
+    isTrackedServerUpdateStatus(serverUpdateStatus(), serverUpdateBaseline()) &&
+    serverUpdateStatus()?.state === "running"
+      ? updateStatusText(serverUpdateStatus())
+      : overallUpdate().message;
 
   return (
     <div class="settings-stack">
@@ -752,6 +1008,100 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
         <Show when={autostart()?.error}>
           {(message) => <p class="settings-error">{message()}</p>}
         </Show>
+      </section>
+
+      <section class="settings-card settings-update-section">
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">업데이트</h3>
+          <SettingsScopeLabels scopes={["server", "current device"]} />
+        </div>
+        <p class="settings-card-help">
+          서버와 등록된 connector를 git 기준으로 갱신합니다. 실행 상태와 디바이스별 결과를 여기에서
+          확인합니다.
+        </p>
+
+        <div class={`settings-update-overall update-phase-${overallPhase()}`}>
+          <div class="settings-update-overall-copy">
+            <strong>전체 업데이트</strong>
+            <span>{overallMessage()}</span>
+          </div>
+          <button
+            type="button"
+            class="primary-button"
+            disabled={updating() !== null || serverUpdateStatus()?.state === "running"}
+            onClick={() => void updateAll()}
+          >
+            {overallPhase() === "running" ? "진행 중" : "전체 업데이트"}
+          </button>
+        </div>
+
+        <div class="settings-update-row">
+          <div class="settings-update-row-main">
+            <span
+              class={`settings-update-dot update-phase-${updateStatusPhase(serverUpdateStatus())}`}
+            />
+            <span class="settings-update-label">서버</span>
+            <span class="settings-update-detail">{updateStatusText(serverUpdateStatus())}</span>
+          </div>
+          <button
+            type="button"
+            class="secondary-button"
+            disabled={updating() !== null || serverUpdateStatus()?.state === "running"}
+            onClick={() => void updateServer()}
+          >
+            {updating() === "server" || serverUpdateStatus()?.state === "running"
+              ? "진행 중"
+              : "서버 업데이트"}
+          </button>
+        </div>
+
+        <div class="settings-update-device-list" aria-label="디바이스별 업데이트 상태">
+          <For each={devices() ?? []}>
+            {(device) => {
+              const state = () => deviceUpdateStates()[device.id] ?? null;
+              const snapshot = () => deviceBuildSnapshot(device.id);
+              const phase = () => deviceUpdatePhase(device, health()?.build, snapshot(), state());
+              return (
+                <div class="settings-update-device">
+                  <div class="settings-update-row">
+                    <div class="settings-update-row-main">
+                      <span class={`settings-update-dot update-phase-${phase()}`} />
+                      <span class="settings-update-label">{deviceDisplayName(device)}</span>
+                      <span class="settings-update-detail">
+                        {deviceUpdateStatusText(device, health()?.build, snapshot(), state())}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      disabled={
+                        updating() !== null ||
+                        device.connectionState === "offline" ||
+                        deviceBuildSnapshots.loading
+                      }
+                      onClick={() => void updateConnector(device)}
+                    >
+                      {updating() === device.id ? "진행 중" : "connector 업데이트"}
+                    </button>
+                  </div>
+                  <Show when={state()?.fallbackCommand}>
+                    {(command) => (
+                      <textarea
+                        class="settings-command-textarea"
+                        readOnly
+                        spellcheck={false}
+                        value={command()}
+                      />
+                    )}
+                  </Show>
+                </div>
+              );
+            }}
+          </For>
+          <Show when={!devices.loading && (devices() ?? []).length === 0}>
+            <p class="settings-card-help">등록된 디바이스가 없습니다.</p>
+          </Show>
+        </div>
       </section>
 
       <section class="settings-card">
@@ -856,6 +1206,109 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
     </div>
   );
 };
+
+function sameBuild(
+  server: DeskRelayBuildInfo | undefined,
+  connector: DeskRelayBuildInfo | undefined,
+): boolean | null {
+  if (!server || !connector) return null;
+  if (
+    !server.commit ||
+    !connector.commit ||
+    server.commit === "unknown" ||
+    connector.commit === "unknown"
+  ) {
+    return null;
+  }
+  return server.commit === connector.commit && server.dirty === connector.dirty;
+}
+
+function buildDetail(
+  server: DeskRelayBuildInfo | undefined,
+  connector: DeskRelayBuildInfo | undefined,
+): string {
+  const serverLabel = buildLabel(server);
+  const connectorLabel = buildLabel(connector);
+  const same = sameBuild(server, connector);
+  if (same === true) return `server ${serverLabel} · connector ${connectorLabel} · 일치`;
+  if (same === false) {
+    return `server ${serverLabel} · connector ${connectorLabel} · 불일치`;
+  }
+  return `server ${serverLabel} · connector ${connectorLabel} · 확인 필요`;
+}
+
+function buildLabel(build: DeskRelayBuildInfo | undefined): string {
+  if (!build) return "unknown";
+  const dirty = build.dirty ? "+dirty" : "";
+  return `${build.shortCommit || build.version || "unknown"}${dirty}`;
+}
+
+function connectorUpdateMessage(result: DeviceUpdateResponse): string {
+  if (result.error) return `connector 업데이트 실패: ${result.error}`;
+  const before = result.before?.shortCommit;
+  const after = result.after?.shortCommit;
+  const range = before && after ? ` · ${before} → ${after}` : "";
+  if (result.restartScheduled) {
+    return result.changed
+      ? `connector 업데이트 완료, 재시작 대기${range}`
+      : `connector가 이미 최신 상태, 재시작 대기${range}`;
+  }
+  return result.warning ?? `connector 업데이트 완료${range}`;
+}
+
+function updateStatusPhase(status: SelfServerUpdateStatus | null | undefined): UpdatePhase {
+  if (!status || status.state === "idle") return "idle";
+  if (status.state === "running") return "running";
+  if (status.state === "succeeded") return "succeeded";
+  return "failed";
+}
+
+function updateStatusText(status: SelfServerUpdateStatus | null | undefined): string {
+  if (!status || status.state === "idle") return "서버 업데이트 기록 없음";
+  const range = status.before && status.after ? ` · ${status.before} → ${status.after}` : "";
+  if (status.state === "running") return `서버 업데이트 진행 중${range}`;
+  if (status.state === "succeeded") {
+    const changed =
+      status.changed === true ? "변경 적용" : status.changed === false ? "이미 최신" : "완료";
+    return `서버 업데이트 완료 · ${changed}${range}`;
+  }
+  return `서버 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+}
+
+function isTrackedServerUpdateStatus(
+  status: SelfServerUpdateStatus | null | undefined,
+  baseline: string | null,
+): boolean {
+  if (!status?.startedAt) return false;
+  return status.startedAt !== baseline;
+}
+
+function deviceUpdatePhase(
+  device: Device,
+  server: DeskRelayBuildInfo | undefined,
+  snapshot: DeviceBuildSnapshot | null,
+  runState: UpdateRunState | null,
+): UpdatePhase {
+  if (runState) return runState.phase;
+  if (device.connectionState === "offline") return "failed";
+  if (snapshot?.error) return "failed";
+  const same = sameBuild(server, snapshot?.build);
+  if (same === true) return "succeeded";
+  if (same === false) return "queued";
+  return "idle";
+}
+
+function deviceUpdateStatusText(
+  device: Device,
+  server: DeskRelayBuildInfo | undefined,
+  snapshot: DeviceBuildSnapshot | null,
+  runState: UpdateRunState | null,
+): string {
+  if (runState) return runState.message;
+  if (device.connectionState === "offline") return "오프라인: connector 상태 확인 불가";
+  if (snapshot?.error) return `상태 확인 실패: ${snapshot.error}`;
+  return buildDetail(server, snapshot?.build);
+}
 
 const InstructionSettings: Component<{
   initialDeviceId: string | null;

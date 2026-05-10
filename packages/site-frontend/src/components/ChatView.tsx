@@ -2050,16 +2050,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (status.kind === "approval_waiting") {
       return {
         tone: status.tone,
-        main: t(status.mainKey),
-        detail: status.detailOverride ?? "조치: 권한 승인 창 확인",
+        main: "승인 대기",
+        detail: status.detailOverride ?? "대상: 현재 실행 · 조치: 권한 승인 창 확인",
         ...(status.action ? { action: status.action } : {}),
       };
     }
     if (status.kind === "tool_running" || status.kind === "streaming") {
       return {
         tone: status.tone,
-        main: status.detailOverride ?? t(status.mainKey),
-        detail: "중지: Esc",
+        main: "실행 중",
+        detail: `동작: ${status.detailOverride ?? t(status.mainKey)} · 중지: Esc`,
       };
     }
     if (
@@ -2070,32 +2070,35 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     ) {
       return {
         tone: status.tone,
-        main: "입력 대기",
+        main:
+          status.kind === "selected_device_offline" || status.kind === "not_installed"
+            ? "전송 불가"
+            : "전송 대기",
         detail:
           status.detailOverride ??
           (status.kind === "not_installed"
-            ? "상태: connector 미등록 · 조치: 디바이스 등록"
+            ? "대상: 디바이스 없음 · 조치: 디바이스 등록"
             : status.kind === "selected_device_offline"
-              ? "상태: 디바이스 오프라인 · 조치: connector daemon 실행"
+              ? "대상: 선택 디바이스 · 상태: 오프라인"
               : status.kind === "behavior_not_ready"
-                ? "상태: Claude 모듈 미로드 · 조치: 진단 확인"
-                : "상태: 연결 확인 중"),
+                ? "대상: 선택 디바이스 · 상태: Claude 모듈 준비 중"
+                : "대상: 선택 디바이스 · 상태: 사이트 연결 확인 중"),
         ...(status.action ? { action: status.action } : {}),
       };
     }
     if (error()) {
       return {
         tone: "warning",
-        main: "오류 확인 필요",
-        detail: "상태: 실행 실패 · 조치: 오류 확인 후 재시도",
+        main: "전송 불가",
+        detail: "상태: 실행 오류 · 조치: 오류 확인 후 재시도",
         ...(status.action ? { action: status.action } : {}),
       };
     }
     if (showNewChat() || (cwd().trim() && !selectedSession())) {
       return {
         tone: "ok",
-        main: "새 세션 대기",
-        detail: `전송 결과: 새 Claude CLI 세션 생성 · ${permissionModeStatusText()}`,
+        main: "입력 가능",
+        detail: `대상: 새 세션 · 전송 시 Claude CLI 세션 생성 · ${permissionModeStatusText()}`,
       };
     }
     if (selectedSession()) {
@@ -2107,7 +2110,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
     return {
       tone: "context",
-      main: "세션 미선택",
+      main: "전송 대기",
       detail: "대상: 없음 · 조치: 사이드바 세션 선택",
     };
   });

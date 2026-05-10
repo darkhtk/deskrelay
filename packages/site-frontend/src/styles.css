@@ -4544,6 +4544,93 @@ dialog.approval-modal-root,
   flex: 1;
   min-width: 160px;
 }
+.settings-update-section {
+  gap: 12px;
+}
+.settings-update-overall,
+.settings-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.settings-update-overall {
+  padding: 8px 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.settings-update-overall-copy,
+.settings-update-row-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-update-overall-copy {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.settings-update-overall-copy strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.settings-update-overall-copy span,
+.settings-update-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.settings-update-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-update-device {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-update-device:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.settings-update-row-main {
+  flex: 1;
+  flex-wrap: wrap;
+}
+.settings-update-label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-update-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--text-faint);
+}
+.settings-update-dot.update-phase-running,
+.settings-update-overall.update-phase-running .settings-update-overall-copy strong {
+  color: var(--accent);
+}
+.settings-update-dot.update-phase-running {
+  background: var(--accent);
+}
+.settings-update-dot.update-phase-succeeded {
+  background: var(--success);
+}
+.settings-update-dot.update-phase-failed {
+  background: var(--danger);
+}
+.settings-update-dot.update-phase-queued {
+  background: var(--warning);
+}
 .settings-command-copy {
   display: flex;
   align-items: center;

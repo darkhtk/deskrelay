@@ -1,9 +1,7 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
 import {
-  ApiError,
   type DeskRelayBuildInfo,
   type Device,
-  type DeviceUpdateResponse,
   type DiagnosticCheck,
   type DiagnosticSeverity,
   type SelfServerUpdateStatus,
@@ -46,9 +44,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
   const [diagnosticsError, setDiagnosticsError] = createSignal<Error | null>(null);
   const [doctorError, setDoctorError] = createSignal<Error | null>(null);
-  const [updating, setUpdating] = createSignal<"server" | "connector" | null>(null);
-  const [updateMessage, setUpdateMessage] = createSignal("");
-  const [fallbackCommand, setFallbackCommand] = createSignal("");
   const [health, { refetch: refetchHealth }] = createResource(
     () => props.devicesRevision ?? 0,
     () => api.health().catch(() => null),
@@ -127,50 +122,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     props.onOpenDevices?.(selectedDeviceId());
   }
 
-  async function updateServer(): Promise<void> {
-    setUpdating("server");
-    setFallbackCommand("");
-    setUpdateMessage("서버 업데이트 시작 요청 중");
-    try {
-      const result = await api.selfUpdate();
-      setUpdateMessage(
-        result.started
-          ? `서버 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
-          : `서버 업데이트 시작 실패: ${result.error ?? "알 수 없는 오류"}`,
-      );
-      void refetchServerUpdateStatus();
-      setTimeout(refresh, 6000);
-    } catch (err) {
-      setUpdateMessage(`서버 업데이트 실패: ${(err as Error).message}`);
-    } finally {
-      setUpdating(null);
-    }
-  }
-
-  async function updateConnector(): Promise<void> {
-    const device = selectedDevice();
-    if (!device) return;
-    setUpdating("connector");
-    setFallbackCommand("");
-    setUpdateMessage(`${deviceDisplayName(device)} 커넥터 업데이트 중`);
-    try {
-      const result = await api.updateDevice(device.id);
-      setUpdateMessage(connectorUpdateMessage(result));
-      if (result.fallbackCommand) setFallbackCommand(result.fallbackCommand);
-      setTimeout(refresh, result.restartScheduled ? 5000 : 2000);
-    } catch (err) {
-      const body = err instanceof ApiError ? (err.body as DeviceUpdateResponse | undefined) : null;
-      setUpdateMessage(
-        body?.error
-          ? `커넥터 업데이트 실패: ${body.error}`
-          : `커넥터 업데이트 실패: ${(err as Error).message}`,
-      );
-      setFallbackCommand(body?.fallbackCommand ?? "");
-    } finally {
-      setUpdating(null);
-    }
-  }
-
   const deviceConnectionTone = (): Tone => {
     const device = selectedDevice();
     if (!device) return "offline";
@@ -243,21 +194,11 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         tone: updateStatusTone(serverUpdateStatus()),
         label: "서버 업데이트",
         detail: updateStatusText(serverUpdateStatus()),
-        action: serverUpdateStatus()?.state === "running" ? undefined : "서버 업데이트",
-        onAction: serverUpdateStatus()?.state === "running" ? undefined : () => void updateServer(),
-        disabled: updating() !== null,
       },
       {
         tone: buildTone(),
         label: "버전",
         detail: buildDetail(health()?.build, snapshot?.build),
-        action: device
-          ? updating() === "connector"
-            ? "업데이트 중"
-            : "커넥터 업데이트"
-          : undefined,
-        onAction: device ? () => void updateConnector() : undefined,
-        disabled: updating() !== null || diagnostics.loading,
       },
       {
         tone: deviceConnectionTone(),
@@ -358,16 +299,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           )}
         </Show>
         <div class="connection-diagnostics-actions">
-          <button
-            type="button"
-            class="text-button"
-            disabled={updating() !== null || serverUpdateStatus()?.state === "running"}
-            onClick={() => void updateServer()}
-          >
-            {updating() === "server" || serverUpdateStatus()?.state === "running"
-              ? "서버 업데이트 중"
-              : "서버 업데이트"}
-          </button>
           <button type="button" class="text-button" onClick={refresh}>
             {diagnostics.loading || devices.loading
               ? t("dsd.diagnostics.busy")
@@ -457,31 +388,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           )}
         </For>
       </div>
-
-      <Show
-        when={updateMessage() || (serverUpdateStatus() && serverUpdateStatus()?.state !== "idle")}
-      >
-        <div
-          class={`connection-diagnostics-update update-${updateStatusTone(serverUpdateStatus())}`}
-        >
-          <div>{updateMessage() || updateStatusText(serverUpdateStatus())}</div>
-          <Show when={serverUpdateStatus()?.state && serverUpdateStatus()?.state !== "idle"}>
-            <div class="connection-diagnostics-update-meta">
-              {updateStatusText(serverUpdateStatus())}
-            </div>
-          </Show>
-          <Show when={fallbackCommand()}>
-            {(command) => (
-              <textarea
-                class="settings-command-textarea"
-                readOnly
-                spellcheck={false}
-                value={command()}
-              />
-            )}
-          </Show>
-        </div>
-      </Show>
 
       <Show when={doctorRows().length > 0}>
         <div class="connection-diagnostics-list">
@@ -586,19 +492,6 @@ function buildLabel(build: DeskRelayBuildInfo | undefined): string {
   if (!build) return "unknown";
   const dirty = build.dirty ? "+dirty" : "";
   return `${build.shortCommit || build.version || "unknown"}${dirty}`;
-}
-
-function connectorUpdateMessage(result: DeviceUpdateResponse): string {
-  if (result.error) return `커넥터 업데이트 실패: ${result.error}`;
-  const before = result.before?.shortCommit;
-  const after = result.after?.shortCommit;
-  const range = before && after ? ` · ${before} → ${after}` : "";
-  if (result.restartScheduled) {
-    return result.changed
-      ? `커넥터 업데이트 완료, 재시작 대기${range}`
-      : `커넥터가 이미 최신 상태, 재시작 대기${range}`;
-  }
-  return result.warning ?? `커넥터 업데이트 완료${range}`;
 }
 
 function diagnosticTone(severity: DiagnosticSeverity): Tone {

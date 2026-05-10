@@ -452,7 +452,7 @@ function updateStatusLabel(status: SelfServerUpdateStatus | null | undefined): s
 
 function updateStatusDetail(status: SelfServerUpdateStatus | null | undefined): string {
   if (!isKnownUpdateState(status?.state) || status?.state === "idle") {
-    return "연결 진단에서 업데이트를 실행할 수 있습니다.";
+    return "설정 > 일반에서 업데이트를 실행할 수 있습니다.";
   }
   const range = status.before && status.after ? ` · ${status.before} → ${status.after}` : "";
   if (status.state === "running") return `업데이트 작업이 실행 중입니다${range}`;

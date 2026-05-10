@@ -103,7 +103,7 @@ describe("settings and chrome invariants", () => {
     expect(appSource).toContain("appTheme()");
     expect(appSource).toContain("setAppTheme(value)");
     expect(appSource).toContain('t("settings.theme.title")');
-    expect(appSource).toContain('["general", "devices", "diagnostics", "instructions"]');
+    expect(appSource).toContain('["general", "devices", "diagnostics", "instructions", "help"]');
     expect(appSource).toContain("saveDeviceInstructionSource");
     expect(appSource).toContain("deleteDeviceInstructionSource");
     expect(appSource).toContain("formatInstructionLoadError");
