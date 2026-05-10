@@ -1,1 +1,1 @@
-DeskRelay self-host 업데이트: 다른 PC 등록 명령은 서버 URL과 Site token만 담고, GitHub의 install-connector.ps1이 설치, Tailscale/LAN 감지, 외부 접근 검증, 서버 등록을 처리합니다.
+
