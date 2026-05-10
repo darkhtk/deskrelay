@@ -54,6 +54,15 @@ import {
   isSafeClaudeModel,
   setDeviceClaudeModel,
 } from "../device-prefs.ts";
+import {
+  confirmPermissionModeState,
+  createPermissionModeState,
+  markPermissionModePending,
+  markPermissionModeUnknown,
+  permissionModeAlert,
+  resetConfirmedPermissionModeState,
+  setNextPermissionModeState,
+} from "../domain/permission-mode-state.ts";
 import { t } from "../i18n.ts";
 import {
   applyTemporaryInstructionsToMessage,
@@ -693,7 +702,6 @@ type DeviceSelectionRequest = {
   seq: number;
 };
 
-type PermissionModeStatus = "unconfirmed" | "pending" | "confirmed" | "mismatch" | "unknown";
 type SidebarTab = "sessions" | "permissions" | "instructions" | "skills";
 
 interface PermissionSourceSummary {
@@ -1245,15 +1253,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   const [cwd, setCwd] = createSignal<string>("");
-  const [requestedPermissionMode, setRequestedPermissionMode] = createSignal<ClaudePermissionMode>(
-    CLAUDE_PERMISSION_MODES.DEFAULT,
+  const [permissionModeState, setPermissionModeState] = createSignal(
+    createPermissionModeState(CLAUDE_PERMISSION_MODES.DEFAULT),
   );
-  const [confirmedPermissionMode, setConfirmedPermissionMode] =
-    createSignal<ClaudePermissionMode | null>(null);
-  const [permissionModeStatus, setPermissionModeStatus] =
-    createSignal<PermissionModeStatus>("unconfirmed");
-  const [lastPermissionModeRequest, setLastPermissionModeRequest] =
-    createSignal<ClaudePermissionMode | null>(null);
+  const requestedPermissionMode = () => permissionModeState().requested;
+  const confirmedPermissionMode = () => permissionModeState().confirmed;
   const [running, setRunning] = createSignal(false);
   const [cliAction, setCliAction] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -1285,50 +1289,31 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   function resetConfirmedPermissionMode() {
-    setConfirmedPermissionMode(null);
-    setPermissionModeStatus("unconfirmed");
-    setLastPermissionModeRequest(null);
+    setPermissionModeState(resetConfirmedPermissionModeState);
   }
 
   function setNextPermissionMode(next: ClaudePermissionMode) {
-    setRequestedPermissionMode(next);
-    setLastPermissionModeRequest(null);
-    setPermissionModeStatus(confirmedPermissionMode() ? "confirmed" : "unconfirmed");
+    setPermissionModeState((state) => setNextPermissionModeState(state, next));
   }
 
   function confirmPermissionMode(
     actual: ClaudePermissionMode,
     requested: ClaudePermissionMode | null,
   ) {
-    setConfirmedPermissionMode(actual);
-    setLastPermissionModeRequest(requested);
-    if (requested && requested !== actual) {
-      // Keep future runs aligned with the actual mode Claude reported,
-      // unless the user has already picked a different next-run request
-      // while this run was in flight.
-      if (requestedPermissionMode() === requested) setRequestedPermissionMode(actual);
-      setPermissionModeStatus("mismatch");
-      return;
-    }
-    if (!requested || requestedPermissionMode() === requested) setRequestedPermissionMode(actual);
-    setPermissionModeStatus("confirmed");
+    setPermissionModeState((state) => confirmPermissionModeState(state, actual, requested));
+  }
+
+  function markRunPermissionModePending(requested: ClaudePermissionMode) {
+    setPermissionModeState((state) => markPermissionModePending(state, requested));
+  }
+
+  function markRunPermissionModeUnknown(requested: ClaudePermissionMode) {
+    setPermissionModeState((state) => markPermissionModeUnknown(state, requested));
   }
 
   function permissionModeAlertText(): string | null {
-    const requested = requestedPermissionMode();
-    const confirmed = confirmedPermissionMode();
-    const lastRequested = lastPermissionModeRequest();
-    const state = permissionModeStatus();
-    if (state === "pending") {
-      return t("pm.status.checking", { mode: lastRequested ?? requested });
-    }
-    if (state === "unknown") {
-      return t("pm.status.unknown", { mode: lastRequested ?? requested });
-    }
-    if (state === "mismatch" && confirmed && lastRequested) {
-      return t("pm.status.mismatch", { requested: lastRequested, actual: confirmed });
-    }
-    return null;
+    const alert = permissionModeAlert(permissionModeState());
+    return alert ? t(alert.key, alert.params) : null;
   }
 
   const [cliPermissions, { refetch: refetchCliPermissions, mutate: mutateCliPermissions }] =
@@ -2694,8 +2679,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     const space = `remote-claude.run:${runId}`;
     const abort = new AbortController();
     setActiveRunId(runId);
-    setLastPermissionModeRequest(requestedModeForRun);
-    setPermissionModeStatus("pending");
+    markRunPermissionModePending(requestedModeForRun);
 
     let markStreamReady = () => {};
     const streamReady = new Promise<void>((resolve) => {
@@ -2729,8 +2713,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               if (actualMode) {
                 confirmPermissionMode(actualMode, requestedModeForRun);
               } else {
-                setLastPermissionModeRequest(requestedModeForRun);
-                setPermissionModeStatus("unknown");
+                markRunPermissionModeUnknown(requestedModeForRun);
               }
             }
             const transcriptEvent = claudeEventForTranscript(e.content);
@@ -2798,8 +2781,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (!chatAccepted && !streamSawRun) abort.abort();
       await streamPromise;
       if (chatAccepted && !streamSawSystemInit && activeRunId() === runId) {
-        setLastPermissionModeRequest(requestedModeForRun);
-        setPermissionModeStatus("unknown");
+        markRunPermissionModeUnknown(requestedModeForRun);
       }
       if (chatAccepted) {
         void refreshContextUsage(dev, inst);
