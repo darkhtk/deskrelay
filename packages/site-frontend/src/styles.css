@@ -40,6 +40,7 @@
   --shadow-md: 0 8px 24px rgba(13, 13, 13, 0.08);
   --shadow-lg: 0 24px 60px rgba(13, 13, 13, 0.18);
   --chat-transcript-max: 760px;
+  --chat-font-size: 15px;
   font-family: "Tiempos Headline", "Charter", "Iowan Old Style", Georgia, "Pretendard",
     "Noto Sans KR", serif;
   font-size: 15px;
@@ -2170,6 +2171,7 @@ body.sidebar-collapsed .chat {
 .transcript {
   flex: 1;
   overflow-y: auto;
+  font-size: var(--chat-font-size);
   /* Hard cap horizontal overflow so a stray wide block (long URL, debug
      line, asterisk pseudo-element, etc.) cannot turn the whole transcript
      into a horizontally pannable surface on mobile. */
@@ -4438,6 +4440,32 @@ dialog.approval-modal-root,
   font-size: 12px;
   line-height: 1.35;
 }
+.settings-slider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+.settings-slider-control {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 42px;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.settings-slider-control input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent-coral);
+}
+.settings-slider-value {
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
 .settings-segmented {
   display: inline-flex;
   align-items: center;
@@ -4619,6 +4647,15 @@ dialog.approval-modal-root,
     align-items: flex-start;
     flex-direction: column;
     gap: 10px;
+  }
+  .settings-slider-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .settings-slider-control {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) 42px;
   }
   .settings-dialog-body {
     max-height: calc(90vh - 140px);

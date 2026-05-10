@@ -37,8 +37,12 @@ import {
 import {
   appTheme,
   type AppTheme,
+  CHAT_FONT_SIZE_MAX,
+  CHAT_FONT_SIZE_MIN,
+  chatFontSize,
   scrollToBottomOnSend,
   setAppTheme,
+  setChatFontSize,
   setScrollToBottomOnSend,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
@@ -286,6 +290,10 @@ export const App: Component = () => {
     const theme = appTheme();
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+  });
+
+  createEffect(() => {
+    document.documentElement.style.setProperty("--chat-font-size", `${chatFontSize()}px`);
   });
 
   const notifyDevicesChanged = () => {
@@ -599,6 +607,26 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
 
       <section class="settings-card">
         <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
+        <div class="settings-slider-row">
+          <div class="settings-toggle-copy">
+            <span class="settings-toggle-title">{t("settings.chat-font-size.title")}</span>
+            <span class="settings-toggle-help">{t("settings.chat-font-size.help")}</span>
+          </div>
+          <label class="settings-slider-control">
+            <input
+              type="range"
+              min={CHAT_FONT_SIZE_MIN}
+              max={CHAT_FONT_SIZE_MAX}
+              step="1"
+              value={chatFontSize()}
+              aria-label={t("settings.chat-font-size.title")}
+              onInput={(event) => setChatFontSize(Number(event.currentTarget.value))}
+            />
+            <span class="settings-slider-value">
+              {t("settings.chat-font-size.value", { size: chatFontSize() })}
+            </span>
+          </label>
+        </div>
         <label class="settings-check-row">
           <input
             type="checkbox"

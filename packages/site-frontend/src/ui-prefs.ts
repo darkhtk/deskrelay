@@ -6,6 +6,10 @@ const SHOW_SESSION_USAGE_METER_KEY = "cr.show-session-usage-meter";
 const SHOW_WEEK_USAGE_METER_KEY = "cr.show-week-usage-meter";
 const TEMP_INSTRUCTIONS_KEY = "cr.instructions.temp-session";
 const THEME_KEY = "cr.theme";
+const CHAT_FONT_SIZE_KEY = "cr.chat-font-size";
+export const CHAT_FONT_SIZE_DEFAULT = 15;
+export const CHAT_FONT_SIZE_MIN = 13;
+export const CHAT_FONT_SIZE_MAX = 20;
 
 export type AppTheme = "light" | "dark";
 
@@ -42,6 +46,22 @@ function readTheme(): AppTheme {
   }
 }
 
+function clampChatFontSize(value: number): number {
+  if (!Number.isFinite(value)) return CHAT_FONT_SIZE_DEFAULT;
+  return Math.min(CHAT_FONT_SIZE_MAX, Math.max(CHAT_FONT_SIZE_MIN, Math.round(value)));
+}
+
+function readChatFontSize(): number {
+  try {
+    const raw = globalThis.localStorage?.getItem(CHAT_FONT_SIZE_KEY);
+    if (!raw) return CHAT_FONT_SIZE_DEFAULT;
+    const value = Number(raw);
+    return clampChatFontSize(value);
+  } catch {
+    return CHAT_FONT_SIZE_DEFAULT;
+  }
+}
+
 function readString(name: string, storage: Storage | undefined | null): string {
   try {
     return storage?.getItem(name) ?? "";
@@ -75,9 +95,11 @@ const [temporaryInstructions, setTemporaryInstructionsSignal] = createSignal(
   readString(TEMP_INSTRUCTIONS_KEY, globalThis.sessionStorage),
 );
 const [appTheme, setAppThemeSignal] = createSignal<AppTheme>(readTheme());
+const [chatFontSize, setChatFontSizeSignal] = createSignal(readChatFontSize());
 
 export {
   appTheme,
+  chatFontSize,
   scrollToBottomOnSend,
   showCtxUsageMeter,
   showSessionUsageMeter,
@@ -123,6 +145,16 @@ export function setAppTheme(value: AppTheme): void {
     // Private mode etc. The in-memory signal still updates for this tab.
   }
   setAppThemeSignal(value);
+}
+
+export function setChatFontSize(value: number): void {
+  const next = clampChatFontSize(value);
+  try {
+    globalThis.localStorage?.setItem(CHAT_FONT_SIZE_KEY, String(next));
+  } catch {
+    // Private mode etc. The in-memory signal still updates for this tab.
+  }
+  setChatFontSizeSignal(next);
 }
 
 export function getTemporaryInstructionPrefs(): TemporaryInstructionPrefs {

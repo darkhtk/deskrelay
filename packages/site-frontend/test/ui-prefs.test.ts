@@ -2,9 +2,14 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   appTheme,
   applyTemporaryInstructionsToMessage,
+  CHAT_FONT_SIZE_DEFAULT,
+  CHAT_FONT_SIZE_MAX,
+  CHAT_FONT_SIZE_MIN,
+  chatFontSize,
   getTemporaryInstructionPrefs,
   resetTemporaryInstructionPrefs,
   setAppTheme,
+  setChatFontSize,
   setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
@@ -18,6 +23,7 @@ import {
 afterEach(() => {
   resetTemporaryInstructionPrefs();
   setAppTheme("light");
+  setChatFontSize(CHAT_FONT_SIZE_DEFAULT);
   setShowCtxUsageMeter(true);
   setShowSessionUsageMeter(true);
   setShowWeekUsageMeter(true);
@@ -38,6 +44,24 @@ describe("theme preferences", () => {
     setAppTheme("light");
     expect(appTheme()).toBe("light");
     expect(localStorage.getItem("cr.theme")).toBe("light");
+  });
+});
+
+describe("chat font size preferences", () => {
+  test("default to the current chat font size", () => {
+    expect(chatFontSize()).toBe(CHAT_FONT_SIZE_DEFAULT);
+  });
+
+  test("can persist and clamp the chat font size", () => {
+    setChatFontSize(18);
+    expect(chatFontSize()).toBe(18);
+    expect(localStorage.getItem("cr.chat-font-size")).toBe("18");
+
+    setChatFontSize(CHAT_FONT_SIZE_MAX + 10);
+    expect(chatFontSize()).toBe(CHAT_FONT_SIZE_MAX);
+
+    setChatFontSize(CHAT_FONT_SIZE_MIN - 10);
+    expect(chatFontSize()).toBe(CHAT_FONT_SIZE_MIN);
   });
 });
 

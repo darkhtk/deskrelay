@@ -183,6 +183,46 @@ describe("App landing flow", () => {
     });
   });
 
+  test("settings general tab adjusts the chat font size", async () => {
+    window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/self/autostart")) {
+        return new Response(
+          JSON.stringify({
+            supported: true,
+            installed: false,
+            taskName: "DeskRelay Self Server",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    render(() => <App />);
+    const settings = await screen.findByRole("button", { name: t("app.settings.aria") });
+    fireEvent.click(settings);
+
+    const slider = await screen.findByRole("slider", {
+      name: t("settings.chat-font-size.title"),
+    });
+    fireEvent.input(slider, { target: { value: "18" } });
+
+    expect(window.localStorage.getItem("cr.chat-font-size")).toBe("18");
+    expect(document.documentElement.style.getPropertyValue("--chat-font-size")).toBe("18px");
+    expect(document.body.textContent).toContain(t("settings.chat-font-size.value", { size: 18 }));
+  });
+
   test("settings instructions show missing device instruction files inline", async () => {
     window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
