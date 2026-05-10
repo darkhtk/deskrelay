@@ -5206,18 +5206,18 @@ dialog.approval-modal-root,
     pointer-events: auto;
   }
   .transcript {
-    padding: 8px 8px;
+    padding: 8px 4px;
   }
   .composer-shell {
-    padding: 10px 8px 8px;
+    padding: 10px 4px 8px;
   }
   .chat {
-    margin: 4px 4px 2px;
-    border-radius: 16px;
+    margin: 2px 0 0;
+    border-radius: 14px;
   }
   .chat-header {
     display: flex;
-    padding: 8px 8px 0;
+    padding: 8px 6px 0;
   }
   /* Top bar on narrow viewports — squeeze padding + font, and hide the
      feedback email tail (the mailto: still works via the legal links
@@ -5249,10 +5249,13 @@ dialog.approval-modal-root,
     font-size: 8px;
   }
   .mode-banner {
-    margin: 8px 8px 0;
+    margin: 8px 4px 0;
+  }
+  .message-assistant {
+    padding-left: 18px;
   }
   .message-user .block-text {
-    max-width: 92%;
+    max-width: 96%;
   }
 
   /* Phase 9 — narrow-width tweaks for the new sidebar widgets. */
