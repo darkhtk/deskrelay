@@ -163,32 +163,27 @@ describe("Composer — slash picker", () => {
   });
 });
 
-describe("Composer — context meter", () => {
-  test("does not reserve a CTX meter slot when the host hides usage", () => {
+describe("Composer — context text", () => {
+  test("does not reserve a context text slot when the host hides usage", () => {
     const { container } = setup({ onSend: vi.fn() });
-    expect(container.querySelector(".composer-ctx-meter")).toBeNull();
+    expect(container.querySelector(".composer-context-status")).toBeNull();
   });
 
-  test("renders a vertical CTX meter without visible label text", () => {
+  test("renders context compression remaining text", () => {
     const { container } = setup({ onSend: vi.fn(), contextRemainingPercent: 38 });
-    const meter = container.querySelector(".composer-ctx-meter") as HTMLElement;
-    const fill = container.querySelector(".composer-ctx-meter-fill") as HTMLElement;
+    const status = container.querySelector(".composer-context-status") as HTMLElement;
 
-    expect(meter).toBeTruthy();
-    expect(meter.textContent).toBe("");
-    expect(meter).toHaveAttribute("role", "meter");
-    expect(meter).toHaveAttribute("aria-valuenow", "38");
-    expect(fill.style.height).toBe("38%");
+    expect(status).toBeTruthy();
+    expect(status.textContent).toBe("컨텍스트 압축까지 38% 남았습니다");
+    expect(status).toHaveClass("composer-context-status-danger");
   });
 
-  test("keeps the CTX meter slot empty when usage is unknown", () => {
+  test("shows a pending context text when usage is unknown", () => {
     const { container } = setup({ onSend: vi.fn(), contextRemainingPercent: null });
-    const meter = container.querySelector(".composer-ctx-meter") as HTMLElement;
-    const fill = container.querySelector(".composer-ctx-meter-fill") as HTMLElement;
+    const status = container.querySelector(".composer-context-status") as HTMLElement;
 
-    expect(meter).toHaveClass("composer-ctx-meter-unknown");
-    expect(meter).not.toHaveAttribute("aria-valuenow");
-    expect(fill.style.height).toBe("0%");
+    expect(status).toHaveClass("composer-context-status-unknown");
+    expect(status.textContent).toBe("컨텍스트 압축 정보 확인 중");
   });
 });
 

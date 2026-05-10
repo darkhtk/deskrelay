@@ -74,14 +74,15 @@ describe("LoginCard", () => {
 });
 
 describe("settings and chrome invariants", () => {
-  test("composer CTX meter sits inside the right edge of the rounded composer", () => {
+  test("composer context text sits in the composer footer without a progress bar", () => {
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
+    const composerSource = readFileSync(resolve(pkgRoot, "src/components/Composer.tsx"), "utf8");
 
     expect(styles).toMatch(/\.composer-card\s*{[^}]*position:\s*relative;/s);
     expect(styles).toMatch(/\.composer-card\s*{[^}]*padding:\s*12px 22px 8px 12px;/s);
-    expect(styles).toMatch(/\.composer-ctx-meter\s*{[^}]*position:\s*absolute;/s);
-    expect(styles).toMatch(/\.composer-ctx-meter\s*{[^}]*right:\s*8px;/s);
-    expect(styles).toMatch(/\.composer-ctx-meter\s*{[^}]*bottom:\s*14px;/s);
+    expect(styles).toContain(".composer-context-status");
+    expect(styles).not.toContain(".composer-ctx-meter");
+    expect(composerSource).toContain("컨텍스트 압축까지");
   });
 
   test("session and week usage meters stack with reset labels on the right", () => {
