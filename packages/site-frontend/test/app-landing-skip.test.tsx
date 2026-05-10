@@ -221,6 +221,7 @@ describe("App landing flow", () => {
     expect(window.localStorage.getItem("cr.chat-font-size")).toBe("18");
     expect(document.documentElement.style.getPropertyValue("--chat-font-size")).toBe("18px");
     expect(document.body.textContent).toContain(t("settings.chat-font-size.value", { size: 18 }));
+    expect(document.body.textContent).toContain(t("settings.chat-font-size.preview"));
   });
 
   test("settings instructions show missing device instruction files inline", async () => {

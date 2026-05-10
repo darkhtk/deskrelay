@@ -627,6 +627,7 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
             </span>
           </label>
         </div>
+        <p class="settings-chat-font-preview">{t("settings.chat-font-size.preview")}</p>
         <label class="settings-check-row">
           <input
             type="checkbox"

@@ -504,6 +504,7 @@
   "settings.chat-font-size.title": "채팅 글자 크기",
   "settings.chat-font-size.help": "대화 본문 글자 크기를 이 브라우저에 저장합니다.",
   "settings.chat-font-size.value": "{size}px",
+  "settings.chat-font-size.preview": "이 문장이 채팅창에서 보이는 실제 크기입니다.",
   "settings.autostart.title": "자동 시작",
   "settings.autostart.server": "Windows 로그인 시 서버 자동 시작",
   "settings.autostart.help": "브라우저는 열지 않고 DeskRelay 서버와 서버 PC connector를 시작합니다. 현재 상태: {status}",
