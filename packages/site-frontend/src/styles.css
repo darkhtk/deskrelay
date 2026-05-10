@@ -2708,19 +2708,22 @@ pre .copy-button:hover {
   place-items: center;
   width: 34px;
   height: 34px;
-  margin: 0 auto 8px;
+  position: absolute;
+  top: -26px;
+  left: 50%;
+  z-index: 6;
+  transform: translateX(-50%);
+  margin: 0;
   padding: 0;
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.9);
+  background: transparent;
   color: var(--text-muted);
-  box-shadow: 0 1px 3px rgba(28, 23, 18, 0.08);
   cursor: pointer;
 }
 .scroll-to-bottom-button:hover {
   color: var(--accent-coral);
-  border-color: rgba(204, 122, 85, 0.32);
-  background: #fff;
+  background: transparent;
 }
 .scroll-to-bottom-button svg {
   width: 18px;
