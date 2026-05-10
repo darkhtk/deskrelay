@@ -41,7 +41,11 @@ import {
   CLAUDE_PERMISSION_MODE_VALUES,
   type ClaudePermissionMode,
 } from "../claude/stream-contract.ts";
-import { type ConnectionStatusAction, deriveConnectionStatus } from "../connection-status.ts";
+import {
+  type ConnectionStatusAction,
+  type ConnectionStatusTone,
+  deriveConnectionStatus,
+} from "../connection-status.ts";
 import { deviceDisplayName } from "../device-display.ts";
 import {
   getDeviceClaudeModel,
@@ -772,6 +776,13 @@ export interface ChatViewProps {
   onContextUsageChange?: (usage: ContextUsageOverview) => void;
   onActiveWorkspaceChange?: (workspace: { deviceId: string | null; cwd: string }) => void;
   showContextUsageMeter?: boolean;
+}
+
+interface ComposerGuidance {
+  tone: ConnectionStatusTone | "context";
+  main: string;
+  detail: string;
+  action?: ConnectionStatusAction;
 }
 
 export const ChatView: Component<ChatViewProps> = (props) => {
@@ -1819,18 +1830,33 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       hasError: Boolean(error()),
     }),
   );
+  const infrastructureStatus = createMemo(() =>
+    deriveConnectionStatus({
+      devices: devices(),
+      devicesLoading: devices.loading,
+      activeDevice: activeDevice(),
+      behaviorsLoading: behaviors.loading,
+      hasRemoteClaude: Boolean(remoteClaudeInstance()),
+      running: false,
+      activityLabel: null,
+      approvalWaiting: false,
+      hasError: false,
+    }),
+  );
 
   const connectionStatusDetail = () =>
     connectionStatus().detailOverride ?? t(connectionStatus().detailKey);
+  const infrastructureStatusDetail = () =>
+    infrastructureStatus().detailOverride ?? t(infrastructureStatus().detailKey);
   const headerStatusText = () =>
-    `${t(connectionStatus().mainKey)} · ${connectionStatusDetail()}`;
+    `${t(infrastructureStatus().mainKey)} · ${infrastructureStatusDetail()}`;
   const headerStatusTitle = () =>
     [sessionNotice(), headerStatusText()].filter((part): part is string => Boolean(part)).join(" · ");
 
   const deviceStatusTone = () => {
     const device = activeDevice();
     if (!device) return "none";
-    const status = connectionStatus();
+    const status = infrastructureStatus();
     if (status.tone === "ok") return "online";
     if (status.tone === "offline") return "offline";
     if (status.tone === "pending" || status.tone === "warning") return "pending";
@@ -1840,8 +1866,67 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const deviceStatusLabel = () => {
     const device = activeDevice();
     if (!device) return t("chat.sidebar.device.status.none");
-    return `${deviceDisplayName(device)}: ${t(connectionStatus().mainKey)} - ${connectionStatusDetail()}`;
+    return `${deviceDisplayName(device)}: ${t(infrastructureStatus().mainKey)} - ${infrastructureStatusDetail()}`;
   };
+
+  const composerGuidance = createMemo<ComposerGuidance>(() => {
+    const status = connectionStatus();
+    if (status.kind === "approval_waiting") {
+      return {
+        tone: status.tone,
+        main: t(status.mainKey),
+        detail: status.detailOverride ?? t(status.detailKey),
+        ...(status.action ? { action: status.action } : {}),
+      };
+    }
+    if (status.kind === "tool_running" || status.kind === "streaming") {
+      return {
+        tone: status.tone,
+        main: status.detailOverride ?? t(status.mainKey),
+        detail: "Esc로 중지할 수 있습니다",
+      };
+    }
+    if (
+      status.kind === "not_installed" ||
+      status.kind === "selected_device_offline" ||
+      status.kind === "behavior_not_ready" ||
+      status.kind === "site_connecting"
+    ) {
+      return {
+        tone: status.tone,
+        main: "입력 대기",
+        detail: status.detailOverride ?? t(status.detailKey),
+        ...(status.action ? { action: status.action } : {}),
+      };
+    }
+    if (error()) {
+      return {
+        tone: "warning",
+        main: "조치 필요",
+        detail: "위 오류를 확인하고 다시 시도하세요",
+        ...(status.action ? { action: status.action } : {}),
+      };
+    }
+    if (showNewChat() || (cwd().trim() && !selectedSession())) {
+      return {
+        tone: "ok",
+        main: "새 세션 준비",
+        detail: `${t("chat.empty.new-session")} · ${permissionModeStatusText()}`,
+      };
+    }
+    if (selectedSession()) {
+      return {
+        tone: "ok",
+        main: "입력 가능",
+        detail: `선택한 세션에 이어서 전송합니다 · ${permissionModeStatusText()}`,
+      };
+    }
+    return {
+      tone: "context",
+      main: "세션 선택 필요",
+      detail: t("chat.empty.select-session"),
+    };
+  });
 
   const newChatCwd = () => {
     const id = effectiveDeviceId();
@@ -3140,7 +3225,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             </svg>
           </button>
           <output
-            class={`chat-header-status chat-header-status-${connectionStatus().tone}`}
+            class={`chat-header-status chat-header-status-${infrastructureStatus().tone}`}
             aria-live="polite"
             title={headerStatusTitle()}
           >
@@ -3240,14 +3325,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   </button>
                 </Show>
                 <output
-                  class={`composer-status composer-status-${connectionStatus().tone}`}
+                  class={`composer-status composer-status-${composerGuidance().tone}`}
                   aria-live="polite"
                 >
-                  <span class="composer-status-main">{t(connectionStatus().mainKey)}</span>
-                  <span class="composer-status-detail">
-                    {connectionStatusDetail()} · {permissionModeStatusText()}
-                  </span>
-                  <Show when={connectionStatus().action}>
+                  <span class="composer-status-main">{composerGuidance().main}</span>
+                  <span class="composer-status-detail">{composerGuidance().detail}</span>
+                  <Show when={composerGuidance().action}>
                     {(action) => (
                       <button
                         type="button"

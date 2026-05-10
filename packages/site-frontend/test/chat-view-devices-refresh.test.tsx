@@ -1930,6 +1930,10 @@ describe("ChatView device refresh bridge", () => {
       expect(container.querySelector(".chat-header-current-status")?.textContent).toContain(
         t("connection.status.online.main"),
       );
+      expect(container.querySelector(".composer-status-main")?.textContent).toContain("입력 가능");
+      expect(container.querySelector(".composer-status-main")?.textContent ?? "").not.toContain(
+        t("connection.status.online.main"),
+      );
       expect(container.querySelector(".upstream-banner")?.textContent ?? "").not.toContain(
         t("chat.error.session-event-limited", { count: 100 }),
       );
