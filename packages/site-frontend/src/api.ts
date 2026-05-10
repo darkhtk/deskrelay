@@ -245,6 +245,9 @@ export interface SelfServerUpdateStatus {
   before?: string;
   after?: string;
   changed?: boolean;
+  updateAvailable?: boolean;
+  localCommit?: string;
+  remoteCommit?: string;
   error?: string;
 }
 

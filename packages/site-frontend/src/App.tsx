@@ -879,43 +879,53 @@ const LanguageSettings: Component<{
 
   async function updateAll(): Promise<void> {
     const list = devices() ?? [];
+    const connectorTargets = list.filter((device) =>
+      connectorNeedsUpdate(device, deviceBuildSnapshot(device.id)),
+    );
+    const shouldUpdateServer = canUpdateServer();
+    if (!shouldUpdateServer && connectorTargets.length === 0) {
+      setOverallUpdate({ phase: "idle", message: "업데이트 대상 없음" });
+      return;
+    }
     setUpdating("all");
     setLastUpdateDeviceFailures(0);
     setOverallUpdate({ phase: "running", message: "전체 업데이트 진행 중" });
     setDeviceUpdateStates(
       Object.fromEntries(
-        list.map((device) => [
+        connectorTargets.map((device) => [
           device.id,
           {
-            phase: device.connectionState === "offline" ? "failed" : "queued",
-            message:
-              device.connectionState === "offline"
-                ? "오프라인: connector 업데이트 불가"
-                : "대기 중",
+            phase: "queued",
+            message: "대기 중",
           } satisfies UpdateRunState,
         ]),
       ),
     );
 
     let failures = 0;
-    for (const device of list) {
-      if (device.connectionState === "offline") {
-        failures += 1;
-        continue;
-      }
+    for (const device of connectorTargets) {
       const result = await updateConnector(device);
       if (result?.phase === "failed") failures += 1;
     }
     setLastUpdateDeviceFailures(failures);
 
+    if (!shouldUpdateServer) {
+      setOverallUpdate({
+        phase: failures > 0 ? "failed" : "succeeded",
+        message: failures > 0 ? `connector 업데이트 실패 ${failures}건` : "connector 업데이트 완료",
+      });
+      setUpdating(null);
+      return;
+    }
+
     setOverallUpdate({
       phase: "running",
       message:
-        list.length === 0
-          ? "등록된 디바이스 없음 · 서버 업데이트 요청 중"
+        connectorTargets.length === 0
+          ? "서버 업데이트 요청 중"
           : failures > 0
-            ? `디바이스 업데이트 일부 실패 ${failures}건 · 서버 업데이트 요청 중`
-            : "디바이스 업데이트 완료 · 서버 업데이트 요청 중",
+            ? `connector 업데이트 실패 ${failures}건 · 서버 업데이트 요청 중`
+            : "connector 업데이트 완료 · 서버 업데이트 요청 중",
     });
     setUpdating("all");
     setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
@@ -973,6 +983,35 @@ const LanguageSettings: Component<{
 
   const deviceBuildSnapshot = (deviceId: string): DeviceBuildSnapshot | null =>
     (deviceBuildSnapshots() ?? []).find((snapshot) => snapshot.deviceId === deviceId) ?? null;
+
+  const serverUpdateIsRunning = () => serverUpdateStatus()?.state === "running";
+
+  const canUpdateServer = () =>
+    updating() === null &&
+    !serverUpdateStatus.loading &&
+    serverUpdateStatus()?.updateAvailable === true &&
+    !serverUpdateIsRunning();
+
+  const connectorNeedsUpdate = (device: Device, snapshot: DeviceBuildSnapshot | null): boolean =>
+    device.connectionState !== "offline" &&
+    !snapshot?.error &&
+    sameBuild(health()?.build, snapshot?.build) === false;
+
+  const canUpdateConnector = (device: Device, snapshot: DeviceBuildSnapshot | null): boolean =>
+    updating() === null && !deviceBuildSnapshots.loading && connectorNeedsUpdate(device, snapshot);
+
+  const canUpdateAnyConnector = createMemo(() =>
+    (devices() ?? []).some((device) =>
+      connectorNeedsUpdate(device, deviceBuildSnapshot(device.id)),
+    ),
+  );
+
+  const canUpdateAll = () =>
+    updating() === null &&
+    !serverUpdateStatus.loading &&
+    !deviceBuildSnapshots.loading &&
+    !serverUpdateIsRunning() &&
+    (canUpdateServer() || canUpdateAnyConnector());
 
   const overallPhase = () =>
     isTrackedServerUpdateStatus(serverUpdateStatus(), serverUpdateBaseline()) &&
@@ -1058,10 +1097,14 @@ const LanguageSettings: Component<{
           <button
             type="button"
             class="primary-button"
-            disabled={updating() !== null || serverUpdateStatus()?.state === "running"}
+            disabled={!canUpdateAll()}
             onClick={() => void updateAll()}
           >
-            {overallPhase() === "running" ? "진행 중" : "전체 업데이트"}
+            {overallPhase() === "running"
+              ? "진행 중"
+              : canUpdateAll()
+                ? "전체 업데이트"
+                : "업데이트 없음"}
           </button>
         </div>
 
@@ -1076,12 +1119,14 @@ const LanguageSettings: Component<{
           <button
             type="button"
             class="secondary-button"
-            disabled={updating() !== null || serverUpdateStatus()?.state === "running"}
+            disabled={!canUpdateServer()}
             onClick={() => void updateServer()}
           >
             {updating() === "server" || serverUpdateStatus()?.state === "running"
               ? "진행 중"
-              : "서버 업데이트"}
+              : canUpdateServer()
+                ? "서버 업데이트"
+                : "최신"}
           </button>
         </div>
 
@@ -1104,14 +1149,14 @@ const LanguageSettings: Component<{
                     <button
                       type="button"
                       class="secondary-button"
-                      disabled={
-                        updating() !== null ||
-                        device.connectionState === "offline" ||
-                        deviceBuildSnapshots.loading
-                      }
+                      disabled={!canUpdateConnector(device, snapshot())}
                       onClick={() => void updateConnector(device)}
                     >
-                      {updating() === device.id ? "진행 중" : "connector 업데이트"}
+                      {updating() === device.id
+                        ? "진행 중"
+                        : canUpdateConnector(device, snapshot())
+                          ? "connector 업데이트"
+                          : "최신"}
                     </button>
                   </div>
                   <Show when={state()?.fallbackCommand}>
@@ -1310,14 +1355,26 @@ function connectorUpdateMessage(result: DeviceUpdateResponse): string {
 }
 
 function updateStatusPhase(status: SelfServerUpdateStatus | null | undefined): UpdatePhase {
-  if (!status || status.state === "idle") return "idle";
+  if (!status) return "idle";
   if (status.state === "running") return "running";
+  if (status.updateAvailable) return "queued";
+  if (status.state === "idle") return "idle";
   if (status.state === "succeeded") return "succeeded";
   return "failed";
 }
 
 function updateStatusText(status: SelfServerUpdateStatus | null | undefined): string {
-  if (!status || status.state === "idle") return "서버 업데이트 기록 없음";
+  if (!status) return "서버 업데이트 상태 확인 중";
+  const updateRange =
+    status.localCommit && status.remoteCommit
+      ? ` · ${shortCommit(status.localCommit)} → ${shortCommit(status.remoteCommit)}`
+      : "";
+  if (status.state !== "running" && status.updateAvailable === true) {
+    return `서버 업데이트 가능${updateRange}`;
+  }
+  if (status.state === "idle") {
+    return status.updateAvailable === false ? "서버 최신 상태" : "서버 업데이트 기록 없음";
+  }
   const range = status.before && status.after ? ` · ${status.before} → ${status.after}` : "";
   if (status.state === "running") return `서버 업데이트 진행 중${range}`;
   if (status.state === "succeeded") {
@@ -1326,6 +1383,10 @@ function updateStatusText(status: SelfServerUpdateStatus | null | undefined): st
     return `서버 업데이트 완료 · ${changed}${range}`;
   }
   return `서버 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+}
+
+function shortCommit(commit: string): string {
+  return commit.slice(0, 7);
 }
 
 function isTrackedServerUpdateStatus(

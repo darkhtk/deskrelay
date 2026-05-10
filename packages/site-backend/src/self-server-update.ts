@@ -1,7 +1,10 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export type SelfServerUpdateState = "idle" | "running" | "succeeded" | "failed";
 
@@ -14,6 +17,9 @@ export interface SelfServerUpdateStatus {
   before?: string;
   after?: string;
   changed?: boolean;
+  updateAvailable?: boolean;
+  localCommit?: string;
+  remoteCommit?: string;
   error?: string;
 }
 
@@ -39,11 +45,19 @@ export interface PowerShellSelfServerUpdaterOptions {
   bootstrapLogGraceMs?: number;
   logIdleStaleMs?: number;
   runningStaleMs?: number;
+  availabilityTimeoutMs?: number;
+  gitRunner?: GitCommandRunner;
 }
 
 const DEFAULT_BOOTSTRAP_LOG_GRACE_MS = 10_000;
 const DEFAULT_LOG_IDLE_STALE_MS = 2 * 60_000;
 const DEFAULT_RUNNING_STALE_MS = 20 * 60_000;
+const DEFAULT_AVAILABILITY_TIMEOUT_MS = 2_000;
+
+type GitCommandRunner = (
+  args: string[],
+  options: { cwd: string; timeoutMs: number },
+) => Promise<{ stdout: string }>;
 
 export function createPowerShellSelfServerUpdater(
   options: PowerShellSelfServerUpdaterOptions,
@@ -53,14 +67,24 @@ export function createPowerShellSelfServerUpdater(
   const bootstrapLogGraceMs = options.bootstrapLogGraceMs ?? DEFAULT_BOOTSTRAP_LOG_GRACE_MS;
   const logIdleStaleMs = options.logIdleStaleMs ?? DEFAULT_LOG_IDLE_STALE_MS;
   const runningStaleMs = options.runningStaleMs ?? DEFAULT_RUNNING_STALE_MS;
+  const availabilityTimeoutMs = options.availabilityTimeoutMs ?? DEFAULT_AVAILABILITY_TIMEOUT_MS;
+  const gitRunner = options.gitRunner ?? runGitCommand;
+  const branch = options.branch?.trim() || "main";
 
   return {
     async status() {
-      return await readStatusWithRecovery(statusPath, {
+      const recovered = await readStatusWithRecovery(statusPath, {
         now,
         bootstrapLogGraceMs,
         logIdleStaleMs,
         runningStaleMs,
+      });
+      if (recovered.state === "running") return recovered;
+      return await attachUpdateAvailability(recovered, {
+        repoRoot: options.repoRoot,
+        branch,
+        timeoutMs: availabilityTimeoutMs,
+        runner: gitRunner,
       });
     },
 
@@ -117,7 +141,7 @@ export function createPowerShellSelfServerUpdater(
           scriptPath,
           root: options.root,
           repoRoot: options.repoRoot,
-          branch: options.branch?.trim() || "main",
+          branch,
           logPath,
           statusPath,
           pidPath,
@@ -178,6 +202,76 @@ export function createPowerShellSelfServerUpdater(
       };
     },
   };
+}
+
+async function attachUpdateAvailability(
+  status: SelfServerUpdateStatus,
+  options: {
+    repoRoot: string;
+    branch: string;
+    timeoutMs: number;
+    runner: GitCommandRunner;
+  },
+): Promise<SelfServerUpdateStatus> {
+  const [localCommit, remoteCommit] = await Promise.all([
+    readLocalCommit(options.repoRoot, options.timeoutMs, options.runner),
+    readRemoteCommit(options.repoRoot, options.branch, options.timeoutMs, options.runner),
+  ]);
+  if (!localCommit || !remoteCommit) return status;
+  return {
+    ...status,
+    localCommit,
+    remoteCommit,
+    updateAvailable: localCommit !== remoteCommit,
+  };
+}
+
+async function readLocalCommit(
+  repoRoot: string,
+  timeoutMs: number,
+  runner: GitCommandRunner,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runner(["rev-parse", "HEAD"], { cwd: repoRoot, timeoutMs });
+    return normalizeCommit(stdout.trim());
+  } catch {
+    return null;
+  }
+}
+
+async function readRemoteCommit(
+  repoRoot: string,
+  branch: string,
+  timeoutMs: number,
+  runner: GitCommandRunner,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runner(["ls-remote", "origin", `refs/heads/${branch}`], {
+      cwd: repoRoot,
+      timeoutMs,
+    });
+    return normalizeCommit(stdout.trim().split(/\s+/)[0] ?? "");
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCommit(value: string): string | null {
+  const commit = value.trim();
+  return /^[0-9a-f]{40}$/i.test(commit) ? commit.toLowerCase() : null;
+}
+
+async function runGitCommand(
+  args: string[],
+  options: { cwd: string; timeoutMs: number },
+): Promise<{ stdout: string }> {
+  const { stdout } = await execFileAsync("git", args, {
+    cwd: options.cwd,
+    encoding: "utf8",
+    timeout: options.timeoutMs,
+    windowsHide: true,
+  });
+  return { stdout };
 }
 
 interface StatusRecoveryOptions {

@@ -144,4 +144,26 @@ describe("self server updater status recovery", () => {
       error: "dirty tree",
     });
   });
+
+  test("reports when the server repo has a remote update", async () => {
+    const root = await mkdtemp(join(tmpdir(), "deskrelay-self-update-"));
+    const local = "a".repeat(40);
+    const remote = "b".repeat(40);
+    const updater = createPowerShellSelfServerUpdater({
+      root,
+      repoRoot: root,
+      gitRunner: async (args) => {
+        if (args[0] === "rev-parse") return { stdout: `${local}\n` };
+        if (args[0] === "ls-remote") return { stdout: `${remote}\trefs/heads/main\n` };
+        return { stdout: "" };
+      },
+    });
+
+    expect(await updater.status()).toEqual({
+      state: "idle",
+      localCommit: local,
+      remoteCommit: remote,
+      updateAvailable: true,
+    });
+  });
 });
