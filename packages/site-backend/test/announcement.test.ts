@@ -6,6 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { createSiteApp } from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
+import type { UpdateNoticeSource } from "../src/update-notice.ts";
 
 interface Body {
   message: string;
@@ -13,53 +14,92 @@ interface Body {
   until?: string;
 }
 
-function makeApp(announcement?: string) {
+function makeApp(announcement?: string, updateNotice?: UpdateNoticeSource) {
   return createSiteApp({
     registry: new InMemoryDeviceRegistry(),
     ...(announcement === undefined ? {} : { announcement }),
+    ...(updateNotice ? { updateNotice } : {}),
   });
 }
 
-async function getAnnouncement(announcement?: string): Promise<{ status: number; body: Body }> {
-  const app = makeApp(announcement);
+async function getAnnouncement(
+  announcement?: string,
+  updateNotice?: UpdateNoticeSource,
+): Promise<{ status: number; body: Body }> {
+  const app = makeApp(announcement, updateNotice);
   const res = await app.fetch(new Request("http://site.local/api/announcement"));
   return { status: res.status, body: (await res.json()) as Body };
 }
 
+function updateNotice(message: string, level: "info" | "warning" = "info"): UpdateNoticeSource {
+  return { read: async () => ({ message, level }) };
+}
+
 describe("GET /api/announcement", () => {
-  test("unset env → empty message, 200", async () => {
+  test("unset env -> empty message, 200", async () => {
     const r = await getAnnouncement();
     expect(r.status).toBe(200);
     expect(r.body.message).toBe("");
   });
 
-  test("empty / whitespace-only env → empty message", async () => {
+  test("update notice can become the whole announcement", async () => {
+    const r = await getAnnouncement(
+      undefined,
+      updateNotice("현재 설치 버전 0.0.0 (abc1234) · 최신 상태"),
+    );
+    expect(r.status).toBe(200);
+    expect(r.body.message).toBe("현재 설치 버전 0.0.0 (abc1234) · 최신 상태");
+    expect(r.body.level).toBe("info");
+  });
+
+  test("update notice is prepended to operator announcement", async () => {
+    const r = await getAnnouncement(
+      "원격 공지",
+      updateNotice("현재 설치 버전 0.0.0 (abc1234) · 업데이트 있음 (def5678)", "warning"),
+    );
+    expect(r.body.message).toBe(
+      "현재 설치 버전 0.0.0 (abc1234) · 업데이트 있음 (def5678) · 원격 공지",
+    );
+    expect(r.body.level).toBe("warning");
+  });
+
+  test("update notice read failure becomes a warning announcement", async () => {
+    const r = await getAnnouncement(undefined, {
+      read: async () => {
+        throw new Error("git unavailable");
+      },
+    });
+    expect(r.body.message).toBe("현재 설치 버전 확인 실패");
+    expect(r.body.level).toBe("warning");
+  });
+
+  test("empty / whitespace-only env -> empty message", async () => {
     expect((await getAnnouncement("")).body.message).toBe("");
     expect((await getAnnouncement("   ")).body.message).toBe("");
   });
 
   test("plain text passes through as message with default level=info", async () => {
-    const r = await getAnnouncement("점검 5/10 21:00 ~ 23:00");
-    expect(r.body.message).toBe("점검 5/10 21:00 ~ 23:00");
+    const r = await getAnnouncement("Maintenance 5/10 21:00 ~ 23:00");
+    expect(r.body.message).toBe("Maintenance 5/10 21:00 ~ 23:00");
     expect(r.body.level).toBe("info");
     expect(r.body.until).toBeUndefined();
   });
 
   test("JSON form: parses message + level + until", async () => {
     const raw = JSON.stringify({
-      message: "신규 기능 출시 🎉",
+      message: "New feature released",
       level: "warning",
       until: "2099-01-01T00:00:00Z",
     });
     const r = await getAnnouncement(raw);
-    expect(r.body.message).toBe("신규 기능 출시 🎉");
+    expect(r.body.message).toBe("New feature released");
     expect(r.body.level).toBe("warning");
     expect(r.body.until).toBe("2099-01-01T00:00:00Z");
   });
 
-  test("JSON with expired until → empty message (banner self-clears)", async () => {
+  test("JSON with expired until -> empty message (banner self-clears)", async () => {
     const raw = JSON.stringify({
-      message: "지난 공지",
+      message: "Old notice",
       until: "2000-01-01T00:00:00Z",
     });
     const r = await getAnnouncement(raw);
@@ -67,20 +107,20 @@ describe("GET /api/announcement", () => {
   });
 
   test("JSON with bogus level falls back to info (defensive default)", async () => {
-    const raw = JSON.stringify({ message: "공지", level: "critical" });
+    const raw = JSON.stringify({ message: "Notice", level: "critical" });
     const r = await getAnnouncement(raw);
     expect(r.body.level).toBe("info");
   });
 
   test("malformed JSON falls back to plain-text interpretation", async () => {
-    // A string that *looks* like JSON but isn't — operator probably
-    // meant to type literal text. Better to show it as-is than 500.
+    // A string that *looks* like JSON but is not valid. Better to show it
+    // as-is than fail the public announcement endpoint.
     const r = await getAnnouncement('{ message: "missing quotes" }');
     expect(r.body.message).toBe('{ message: "missing quotes" }');
     expect(r.body.level).toBe("info");
   });
 
-  test("public — does not require auth", async () => {
+  test("public -> does not require auth", async () => {
     const app = createSiteApp({
       registry: new InMemoryDeviceRegistry(),
       token: "some-token",

@@ -18,6 +18,7 @@ import type {
   SelfServerAutostartController,
   SelfServerAutostartStatus,
 } from "./self-server-autostart.ts";
+import type { UpdateNoticeSource } from "./update-notice.ts";
 
 export interface SiteAppOptions {
   registry: DeviceRegistry;
@@ -28,6 +29,7 @@ export interface SiteAppOptions {
   announcement?: string;
   announcementUrl?: string;
   announcementPollMs?: number;
+  updateNotice?: UpdateNoticeSource;
   localDaemonToken?: string;
   selfHostUrl?: string;
   selfServerAutostart?: SelfServerAutostartController;
@@ -55,7 +57,9 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   );
 
   app.get("/api/announcement", async (c) => {
-    return c.json(announcementPayload(await announcements.read()));
+    const updatePayload = await readUpdateNotice(options.updateNotice);
+    const operatorPayload = announcementPayload(await announcements.read());
+    return c.json(combineAnnouncementPayloads(updatePayload, operatorPayload));
   });
 
   if (options.token) {
@@ -559,6 +563,44 @@ function announcementPayload(rawInput: string): AnnouncementPayload {
     return { message, level, until: parsed.until };
   }
   return { message, level };
+}
+
+async function readUpdateNotice(
+  source: UpdateNoticeSource | undefined,
+): Promise<AnnouncementPayload | null> {
+  if (!source) return null;
+  try {
+    const payload = await source.read();
+    if (!payload?.message.trim()) return null;
+    return {
+      message: payload.message.trim(),
+      level: payload.level === "warning" ? "warning" : "info",
+    };
+  } catch {
+    return {
+      message: "현재 설치 버전 확인 실패",
+      level: "warning",
+    };
+  }
+}
+
+function combineAnnouncementPayloads(
+  updatePayload: AnnouncementPayload | null,
+  operatorPayload: AnnouncementPayload,
+): AnnouncementPayload {
+  if (!updatePayload?.message.trim()) return operatorPayload;
+  if (!operatorPayload.message.trim()) return updatePayload;
+  const messages = [updatePayload?.message, operatorPayload.message].filter(
+    (message): message is string => Boolean(message?.trim()),
+  );
+  if (messages.length === 0) return { message: "" };
+  return {
+    message: messages.join(" · "),
+    level:
+      updatePayload?.level === "warning" || operatorPayload.level === "warning"
+        ? "warning"
+        : "info",
+  };
 }
 
 async function readSelfServerAutostartStatus(

@@ -13,16 +13,28 @@ export const AnnouncementBanner: Component = () => {
   onMount(() => {
     const ctrl = new AbortController();
     const url = `${getBaseUrl()}/api/announcement`;
-    void fetch(url, { signal: ctrl.signal })
-      .then((response) => (response.ok ? (response.json() as Promise<AnnouncementPayload>) : null))
-      .then((data) => {
-        if (!data || !data.message) return;
-        setPayload(data);
-      })
-      .catch(() => {
-        // Banner failures should not interrupt the app.
-      });
-    return () => ctrl.abort();
+    const load = () => {
+      void fetch(url, { signal: ctrl.signal })
+        .then((response) =>
+          response.ok ? (response.json() as Promise<AnnouncementPayload>) : null,
+        )
+        .then((data) => {
+          if (!data || !data.message) {
+            setPayload(null);
+            return;
+          }
+          setPayload(data);
+        })
+        .catch(() => {
+          // Banner failures should not interrupt the app.
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 5 * 60 * 1000);
+    return () => {
+      ctrl.abort();
+      window.clearInterval(timer);
+    };
   });
 
   return (

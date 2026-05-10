@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
 import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
+import { createGitUpdateNoticeSource } from "./update-notice.ts";
 
 const DEFAULT_ANNOUNCEMENT_URL =
   "https://raw.githubusercontent.com/darkhtk/deskrelay/main/ANNOUNCEMENT.txt";
@@ -22,6 +23,16 @@ if (!token && process.env.CR_SITE_AUTH_OPTIONAL !== "1") {
 
 const localDaemonToken = process.env.CR_CONNECTOR_DAEMON_TOKEN ?? (await readLocalDaemonToken());
 const announcementUrl = resolveAnnouncementUrl();
+const updateNotice =
+  process.env.DESKRELAY_UPDATE_NOTICE === "0"
+    ? undefined
+    : createGitUpdateNoticeSource({
+        repoRoot: process.cwd(),
+        branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
+        ...(process.env.SITE_ANNOUNCEMENT_POLL_MS
+          ? { pollMs: Number(process.env.SITE_ANNOUNCEMENT_POLL_MS) }
+          : {}),
+      });
 const deviceRegistryFile = process.env.CR_SITE_DEVICE_REGISTRY_FILE ?? defaultDeviceRegistryFile();
 const registry = deviceRegistryFile
   ? new JsonFileDeviceRegistry(deviceRegistryFile)
@@ -35,6 +46,7 @@ const app = createSiteApp({
   ...(process.env.SITE_ANNOUNCEMENT_POLL_MS
     ? { announcementPollMs: Number(process.env.SITE_ANNOUNCEMENT_POLL_MS) }
     : {}),
+  ...(updateNotice ? { updateNotice } : {}),
   ...(localDaemonToken ? { localDaemonToken } : {}),
   ...(process.env.CR_DEV_FRONTEND_URL ? { selfHostUrl: process.env.CR_DEV_FRONTEND_URL } : {}),
   selfServerAutostart: createPowerShellSelfServerAutostartController({
