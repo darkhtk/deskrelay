@@ -7,6 +7,7 @@ import { type Component, Show, createEffect, createSignal, untrack } from "solid
 import { api } from "../api.ts";
 import type { ClaudePermissionMode } from "../claude/stream-contract.ts";
 import { t } from "../i18n.ts";
+import type { NewChatCwdBrowseMode } from "../ui-prefs.ts";
 import { CwdPicker } from "./CwdPicker.tsx";
 
 export interface NewChatCardProps {
@@ -20,6 +21,7 @@ export interface NewChatCardProps {
   onConfirm: (input: { cwd: string; permissionMode: ClaudePermissionMode }) => void;
   onCancel?: () => void;
   initialCwd?: string;
+  cwdBrowseMode?: NewChatCwdBrowseMode;
 }
 
 const SEP = "\\";
@@ -79,7 +81,9 @@ export const NewChatCard: Component<NewChatCardProps> = (props) => {
     }
     setMkdirBusy(true);
     try {
-      const result = await api.fsMkdir(props.deviceId, parent, name);
+      const result = await api.fsMkdir(props.deviceId, parent, name, {
+        workspaceScope: props.cwdBrowseMode === "unrestricted" ? "unrestricted" : "configured",
+      });
       const sep = trailingSepFor(result.path);
       const next = result.path.endsWith(sep) ? result.path : `${result.path}${sep}`;
       setCwd(next);
@@ -115,6 +119,7 @@ export const NewChatCard: Component<NewChatCardProps> = (props) => {
         onChange={setCwd}
         onSubmit={submit}
         onEscape={() => props.onCancel?.()}
+        browseMode={props.cwdBrowseMode}
       />
 
       <Show when={!mkdirOpen()}>

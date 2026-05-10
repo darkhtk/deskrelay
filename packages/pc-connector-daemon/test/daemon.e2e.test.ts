@@ -670,6 +670,16 @@ describe("Daemon HTTP API — fs allowlist", () => {
     expect((r.data as { error: string }).error).toMatch(/forbidden/);
   });
 
+  test("unrestricted fs browse scope can list outside the configured root", async () => {
+    const r = await call(
+      "GET",
+      `/fs/list?path=${encodeURIComponent(outside)}&workspaceScope=unrestricted`,
+    );
+    expect(r.status).toBe(200);
+    const d = r.data as { entries: Array<{ name: string }> };
+    expect(d.entries.map((e) => e.name)).toContain("secret");
+  });
+
   test("mkdir inside an allowed root succeeds", async () => {
     const r = await call("POST", "/fs/mkdir", { parent: allowed, name: "fresh" });
     expect(r.status).toBe(200);
@@ -681,6 +691,17 @@ describe("Daemon HTTP API — fs allowlist", () => {
     const r = await call("POST", "/fs/mkdir", { parent: outside, name: "nope" });
     expect(r.status).toBe(403);
     expect((r.data as { error: string }).error).toMatch(/forbidden/);
+  });
+
+  test("unrestricted fs browse scope can create folders outside the configured root", async () => {
+    const r = await call("POST", "/fs/mkdir", {
+      parent: outside,
+      name: "new-free-folder",
+      workspaceScope: "unrestricted",
+    });
+    expect(r.status).toBe(200);
+    const d = r.data as { path: string };
+    expect(d.path).toBe(join(outside, "new-free-folder"));
   });
 
   test("mkdir name with path-separator is still rejected as 400", async () => {

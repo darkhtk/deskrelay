@@ -8,8 +8,10 @@ import {
   chatFontSize,
   getTemporaryInstructionPrefs,
   resetTemporaryInstructionPrefs,
+  newChatCwdBrowseMode,
   setAppTheme,
   setChatFontSize,
+  setNewChatCwdBrowseMode,
   setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
@@ -27,6 +29,7 @@ afterEach(() => {
   setShowCtxUsageMeter(true);
   setShowSessionUsageMeter(true);
   setShowWeekUsageMeter(true);
+  setNewChatCwdBrowseMode("allowed-roots");
   localStorage.clear();
   sessionStorage.clear();
 });
@@ -88,6 +91,22 @@ describe("usage display preferences", () => {
     expect(showCtxUsageMeter()).toBe(true);
     expect(showSessionUsageMeter()).toBe(true);
     expect(showWeekUsageMeter()).toBe(true);
+  });
+});
+
+describe("new chat cwd browse preferences", () => {
+  test("default to allowed workspace roots", () => {
+    expect(newChatCwdBrowseMode()).toBe("allowed-roots");
+  });
+
+  test("can switch to unrestricted browsing", () => {
+    setNewChatCwdBrowseMode("unrestricted");
+
+    expect(newChatCwdBrowseMode()).toBe("unrestricted");
+    expect(localStorage.getItem("cr.new-chat-cwd-browse-mode")).toBe("unrestricted");
+
+    setNewChatCwdBrowseMode("allowed-roots");
+    expect(newChatCwdBrowseMode()).toBe("allowed-roots");
   });
 });
 

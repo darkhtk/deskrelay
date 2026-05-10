@@ -37,6 +37,15 @@ import {
 } from "./instructions.ts";
 import type { WorkspaceRoots } from "./workspaces.ts";
 
+const UNRESTRICTED_WORKSPACE_ROOTS: WorkspaceRoots = { mode: "unrestricted", roots: [] };
+
+function fsWorkspaceRootsForScope(
+  configured: WorkspaceRoots,
+  scope: string | null | undefined,
+): WorkspaceRoots {
+  return scope === "unrestricted" ? UNRESTRICTED_WORKSPACE_ROOTS : configured;
+}
+
 /** Top-level pairing status surfaced via /status. Mirrors the
  *  SiteWsClient diagnostics ("ok"|"revoked") plus the cases the WS
  *  client never reaches because identity is incomplete: missing the
@@ -519,8 +528,12 @@ export class Daemon {
 
   async #handleFsList(url: URL): Promise<Response> {
     const path = url.searchParams.get("path") ?? "";
+    const roots = fsWorkspaceRootsForScope(
+      this.#workspaceRoots,
+      url.searchParams.get("workspaceScope"),
+    );
     try {
-      const result = await listDir(path, this.#workspaceRoots);
+      const result = await listDir(path, roots);
       return jsonResponse(200, result);
     } catch (err) {
       return jsonResponse(fsErrorStatus(err), { error: (err as Error).message });
@@ -542,7 +555,13 @@ export class Daemon {
       return jsonResponse(400, { error: "parent and name are required strings" });
     }
     try {
-      const result = await makeDir({ parent: b.parent, name: b.name }, this.#workspaceRoots);
+      const result = await makeDir(
+        { parent: b.parent, name: b.name },
+        fsWorkspaceRootsForScope(
+          this.#workspaceRoots,
+          typeof b.workspaceScope === "string" ? b.workspaceScope : undefined,
+        ),
+      );
       return jsonResponse(200, result);
     } catch (err) {
       return jsonResponse(fsErrorStatus(err), { error: (err as Error).message });

@@ -40,9 +40,12 @@ import {
   CHAT_FONT_SIZE_MAX,
   CHAT_FONT_SIZE_MIN,
   chatFontSize,
+  newChatCwdBrowseMode,
+  type NewChatCwdBrowseMode,
   scrollToBottomOnSend,
   setAppTheme,
   setChatFontSize,
+  setNewChatCwdBrowseMode,
   setScrollToBottomOnSend,
   setShowCtxUsageMeter,
   setShowSessionUsageMeter,
@@ -660,6 +663,31 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
           />
           {t("settings.usage.show-week")}
         </label>
+        <div class="settings-toggle-row">
+          <div class="settings-toggle-copy">
+            <span class="settings-toggle-title">{t("settings.new-chat-cwd-browse.title")}</span>
+            <span class="settings-toggle-help">{t("settings.new-chat-cwd-browse.help")}</span>
+          </div>
+          <div
+            class="settings-segmented"
+            role="radiogroup"
+            aria-label={t("settings.new-chat-cwd-browse.title")}
+          >
+            <For each={["allowed-roots", "unrestricted"] as NewChatCwdBrowseMode[]}>
+              {(value) => (
+                <button
+                  type="button"
+                  class={`settings-segment${newChatCwdBrowseMode() === value ? " active" : ""}`}
+                  role="radio"
+                  aria-checked={newChatCwdBrowseMode() === value ? "true" : "false"}
+                  onClick={() => setNewChatCwdBrowseMode(value)}
+                >
+                  {t(`settings.new-chat-cwd-browse.${value}`)}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
       </section>
 
       <section class="settings-card settings-danger-section">

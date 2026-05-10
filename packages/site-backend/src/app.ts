@@ -326,10 +326,15 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.get("/api/devices/:id/fs/list", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
+    const qs = new URLSearchParams();
+    qs.set("path", c.req.query("path") ?? "");
+    if (c.req.query("workspaceScope") === "unrestricted") {
+      qs.set("workspaceScope", "unrestricted");
+    }
     return proxyJson(
       fetchImpl,
       "GET",
-      `${device.daemonUrl}/fs/list?path=${encodeURIComponent(c.req.query("path") ?? "")}`,
+      `${device.daemonUrl}/fs/list?${qs.toString()}`,
       undefined,
       daemonToken(device, localToken),
     );

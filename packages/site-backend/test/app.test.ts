@@ -110,6 +110,27 @@ describe("/api/* auth gate", () => {
   });
 });
 
+describe("device filesystem proxy", () => {
+  test("forwards unrestricted workspace browse scope to the daemon", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "test",
+    });
+    const res = await setup.app.fetch(
+      authedRequest(
+        "GET",
+        `/api/devices/${device.id}/fs/list?path=${encodeURIComponent("C:\\Users")}&workspaceScope=unrestricted`,
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(setup.calls[0]?.url).toBe(
+      `${DAEMON_URL}/fs/list?path=C%3A%5CUsers&workspaceScope=unrestricted`,
+    );
+    expect(setup.calls[0]?.headers.authorization).toBe("Bearer daemon-token");
+  });
+});
+
 describe("self-host command helper", () => {
   test("requires auth", async () => {
     const res = await setup.app.fetch(

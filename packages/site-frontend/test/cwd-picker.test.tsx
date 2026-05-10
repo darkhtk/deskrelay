@@ -80,4 +80,46 @@ describe("CwdPicker restricted workspace roots", () => {
     });
     expect(listedPaths).toEqual([]);
   });
+
+  test("unrestricted browse mode skips client root filtering and asks the daemon for full paths", async () => {
+    const rootRequests: string[] = [];
+    const listRequests: Array<{ path: string; workspaceScope: string | null }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://deskrelay.local");
+      if (url.pathname.endsWith("/fs/roots")) {
+        rootRequests.push(url.pathname);
+        return json({ mode: "restricted", roots: [ROOT] });
+      }
+      if (url.pathname.endsWith("/fs/list")) {
+        listRequests.push({
+          path: url.searchParams.get("path") ?? "",
+          workspaceScope: url.searchParams.get("workspaceScope"),
+        });
+        return json({
+          path: "C:\\Users",
+          parent: "C:\\",
+          entries: [{ name: "desktop", fullPath: "C:\\Users\\desktop", isDir: true }],
+        });
+      }
+      return json({});
+    });
+
+    const { container } = render(() => (
+      <CwdPicker
+        deviceId="dev_1"
+        value={"C:\\Users\\"}
+        onChange={vi.fn()}
+        browseMode="unrestricted"
+      />
+    ));
+    const input = container.querySelector("input") as HTMLInputElement;
+
+    fireEvent.focus(input);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("desktop");
+    });
+    expect(rootRequests).toEqual([]);
+    expect(listRequests).toEqual([{ path: "C:\\Users\\", workspaceScope: "unrestricted" }]);
+  });
 });

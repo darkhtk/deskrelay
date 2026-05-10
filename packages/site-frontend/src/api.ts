@@ -153,6 +153,12 @@ export interface FsRootsResponse {
   roots: string[];
 }
 
+export type WorkspaceBrowseScope = "configured" | "unrestricted";
+
+export interface FsBrowseOptions {
+  workspaceScope?: WorkspaceBrowseScope;
+}
+
 export type ClaudeInstructionScope = "user" | "project" | "projectClaude" | "local" | "managed";
 
 export interface ClaudeInstructionSource {
@@ -389,13 +395,20 @@ export const api = {
       params !== undefined ? { method, params } : { method },
     ),
 
-  fsList: (deviceId: string, path: string) =>
-    request<FsListResponse>(
-      "GET",
-      `/api/devices/${deviceId}/fs/list?path=${encodeURIComponent(path)}`,
-    ),
-  fsMkdir: (deviceId: string, parent: string, name: string) =>
-    request<FsMkdirResponse>("POST", `/api/devices/${deviceId}/fs/mkdir`, { parent, name }),
+  fsList: (deviceId: string, path: string, options?: FsBrowseOptions) => {
+    const qs = new URLSearchParams();
+    qs.set("path", path);
+    if (options?.workspaceScope === "unrestricted") {
+      qs.set("workspaceScope", "unrestricted");
+    }
+    return request<FsListResponse>("GET", `/api/devices/${deviceId}/fs/list?${qs.toString()}`);
+  },
+  fsMkdir: (deviceId: string, parent: string, name: string, options?: FsBrowseOptions) =>
+    request<FsMkdirResponse>("POST", `/api/devices/${deviceId}/fs/mkdir`, {
+      parent,
+      name,
+      ...(options?.workspaceScope === "unrestricted" ? { workspaceScope: "unrestricted" } : {}),
+    }),
   fsRoots: (deviceId: string) =>
     request<FsRootsResponse>("GET", `/api/devices/${deviceId}/fs/roots`),
   filePreview: (deviceId: string, path: string, cwd: string) => {

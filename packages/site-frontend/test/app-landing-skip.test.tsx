@@ -123,9 +123,9 @@ describe("App landing flow", () => {
 
     await waitFor(() => {
       expect(window.localStorage.getItem("cr.site-token:http://test.local")).toBeNull();
-      expect(screen.getAllByRole("button", { name: t("landing.cta.start") }).length).toBeGreaterThan(
-        0,
-      );
+      expect(
+        screen.getAllByRole("button", { name: t("landing.cta.start") }).length,
+      ).toBeGreaterThan(0);
     });
   });
 
@@ -222,6 +222,13 @@ describe("App landing flow", () => {
     expect(document.documentElement.style.getPropertyValue("--chat-font-size")).toBe("18px");
     expect(document.body.textContent).toContain(t("settings.chat-font-size.value", { size: 18 }));
     expect(document.body.textContent).toContain(t("settings.chat-font-size.preview"));
+
+    fireEvent.click(
+      screen.getByRole("radio", {
+        name: t("settings.new-chat-cwd-browse.unrestricted"),
+      }),
+    );
+    expect(window.localStorage.getItem("cr.new-chat-cwd-browse-mode")).toBe("unrestricted");
   });
 
   test("settings instructions show missing device instruction files inline", async () => {

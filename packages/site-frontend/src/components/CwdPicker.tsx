@@ -11,11 +11,8 @@
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { type FsEntry, type FsRootsResponse, api } from "../api.ts";
 import { t } from "../i18n.ts";
-import {
-  OfflineHint,
-  daemonOfflineBannerMessage,
-  isDaemonOfflineMessage,
-} from "./OfflineHint.tsx";
+import type { NewChatCwdBrowseMode } from "../ui-prefs.ts";
+import { OfflineHint, daemonOfflineBannerMessage, isDaemonOfflineMessage } from "./OfflineHint.tsx";
 
 export interface CwdPickerProps {
   /** Device that owns the filesystem we're navigating. */
@@ -31,6 +28,7 @@ export interface CwdPickerProps {
   placeholder?: string;
   id?: string;
   deviceLabel?: string | null | undefined;
+  browseMode?: NewChatCwdBrowseMode | undefined;
 }
 
 export const CwdPicker: Component<CwdPickerProps> = (props) => {
@@ -53,8 +51,15 @@ export const CwdPicker: Component<CwdPickerProps> = (props) => {
 
   createEffect(() => {
     const id = props.deviceId;
+    const browseMode = props.browseMode ?? "allowed-roots";
     if (!id) {
       setRoots(null);
+      rootsRequestDevice = null;
+      rootsRequest = null;
+      return;
+    }
+    if (browseMode === "unrestricted") {
+      setRoots({ mode: "unrestricted", roots: [] });
       rootsRequestDevice = null;
       rootsRequest = null;
       return;
@@ -63,6 +68,11 @@ export const CwdPicker: Component<CwdPickerProps> = (props) => {
   });
 
   function loadRoots(deviceId: string): Promise<FsRootsResponse> {
+    if ((props.browseMode ?? "allowed-roots") === "unrestricted") {
+      const unrestricted: FsRootsResponse = { mode: "unrestricted", roots: [] };
+      setRoots(unrestricted);
+      return Promise.resolve(unrestricted);
+    }
     if (rootsRequestDevice === deviceId && rootsRequest) return rootsRequest;
     rootsRequestDevice = deviceId;
     rootsRequest = api
@@ -206,7 +216,10 @@ export const CwdPicker: Component<CwdPickerProps> = (props) => {
         return;
       }
 
-      const res = await api.fsList(deviceId, plan.lookup);
+      const res = await api.fsList(deviceId, plan.lookup, {
+        workspaceScope:
+          (props.browseMode ?? "allowed-roots") === "unrestricted" ? "unrestricted" : "configured",
+      });
       if (my !== activeFetch) return;
       setLastErrorMsg(null);
       const filterPrefix = plan.filterPrefix;

@@ -55,7 +55,11 @@ import {
   setDeviceClaudeModel,
 } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
-import { applyTemporaryInstructionsToMessage, scrollToBottomOnSend } from "../ui-prefs.ts";
+import {
+  applyTemporaryInstructionsToMessage,
+  newChatCwdBrowseMode,
+  scrollToBottomOnSend,
+} from "../ui-prefs.ts";
 import { ApprovalModal } from "./ApprovalModal.tsx";
 import { Attachments, type AttachmentsAPI, imagesFromClipboard } from "./Attachments.tsx";
 import { CapabilitiesBadge } from "./CapabilitiesBadge.tsx";
@@ -2965,6 +2969,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                 onConfirm={startSession}
                 onCancel={() => setShowNewChat(false)}
                 initialCwd={newChatCwd()}
+                cwdBrowseMode={newChatCwdBrowseMode()}
               />
             </div>
           </Show>
