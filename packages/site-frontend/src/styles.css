@@ -2157,7 +2157,6 @@ body.sidebar-collapsed .chat {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  margin-right: auto;
   border-radius: 6px;
   padding: 4px 0;
 }
@@ -3829,12 +3828,15 @@ pre .copy-button:hover {
   justify-content: flex-end;
   margin-left: auto;
 }
+.announcement-marquee + .alpha-banner-right {
+  margin-left: 0;
+}
 .context-meter-group {
   display: inline-flex;
   flex-direction: column;
   align-items: stretch;
   gap: 3px;
-  min-width: 150px;
+  min-width: 0;
 }
 .context-meter {
   display: flex;
