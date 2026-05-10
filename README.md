@@ -1,24 +1,46 @@
 # DeskRelay
 
-DeskRelay는 자기 PC에서 실행 중인 Claude Code를 브라우저로 조작하기 위한 self-host 오픈소스 도구다. 출시용 SaaS가 아니라, 파워유저가 자기 장비 안에 띄워 두는 control plane에 가깝다.
+DeskRelay는 내 Windows PC에서 실행되는 Claude Code를 브라우저에서 제어하기 위한 self-host 개발 도구입니다. 외부 서비스에 맡기는 제품이 아니라, 사용자가 직접 자기 PC 한 대를 서버로 띄우고 같은 LAN 또는 Tailscale 안의 다른 PC를 등록해서 쓰는 구조입니다.
 
-## 이런 사람에게 잘 맞는다
+이 저장소는 **self-host DeskRelay**만 다룹니다. 서버, 브라우저 UI, connector daemon, 등록/삭제 스크립트가 모두 이 저장소 안에 있습니다.
 
-DeskRelay는 “설치만 하면 끝나는 앱”보다, 자기 개발 환경을 직접 이해하고 조정하는 사람에게 더 잘 맞는다. 특히 다음 상황에서 장점이 크다.
+## 누구에게 맞나
 
-- 여러 Windows PC에서 Claude Code를 쓰지만, 매번 해당 PC 앞에 앉고 싶지 않은 사람
-- 서버, connector, 토큰, 로그, workspace root가 어디 있는지 직접 확인하고 고칠 수 있어야 안심되는 사람
-- Tailscale이나 LAN 안에서만 접근하게 두고, 개발 도구의 제어면을 자기 장비 밖으로 내보내고 싶지 않은 사람
-- Claude Code 세션, 권한, 스킬, 지침, 작업 폴더를 브라우저에서 한 화면으로 보고 싶은 사람
-- 원격 PC의 파일/이미지 미리보기, 세션 목록, 폴더별 세션 삭제, 권한 상태 확인처럼 CLI 밖의 보조 UX가 필요한 사람
-- 문제가 생겼을 때 “오프라인” 한 단어가 아니라 토큰, 포트, daemon, workspace, Claude 모듈 중 어디가 막혔는지 보고 싶은 사람
-- 완성된 상용 앱보다, git으로 가져와 직접 수정하고 자기 워크플로에 맞게 바꿀 수 있는 개발 도구를 선호하는 사람
+DeskRelay는 “설치 버튼 한 번으로 끝나는 앱”보다, 자기 개발 환경을 직접 이해하고 조정하는 파워유저에게 맞습니다.
 
-핵심 장점은 투명성이다. 서버는 사용자의 PC에서 돌고, 디바이스 등록 상태와 토큰도 로컬 상태로 남는다. 브라우저 UI는 그 로컬 서버를 통해 각 PC의 connector daemon에 접근한다. 그래서 설치와 네트워크 이해가 필요하지만, 대신 구조를 읽고, 로그를 보고, 필요하면 코드를 바꿔 자기 방식대로 운영할 수 있다.
+- 여러 Windows PC에서 Claude Code를 쓰지만 매번 그 PC 앞에 앉고 싶지 않은 사람
+- 브라우저에서 Claude Code 세션, 권한, 스킬, 지침, 작업 폴더를 한 화면으로 다루고 싶은 사람
+- Tailscale 또는 LAN 안에서만 접근하도록 두고, 제어면을 공용 인터넷에 노출하고 싶지 않은 사람
+- 문제가 생겼을 때 “오프라인” 한 단어가 아니라 서버, connector, daemon, 토큰, 포트, workspace root 중 어디가 막혔는지 보고 싶은 사람
+- 완성된 상용 앱보다 git으로 가져와 수정하고 자기 워크플로에 맞게 바꿀 수 있는 도구를 선호하는 사람
 
-## 서버 PC 설치
+## 핵심 개념
 
-서버로 쓸 Windows PC의 PowerShell에 아래 명령을 통째로 붙여넣는다. 기본 설치 위치는 `$HOME\deskrelay`이고, 실행 상태와 Site token은 `.self-server` 아래에 생성된다.
+| 이름 | 의미 |
+|---|---|
+| 서버 PC | 브라우저 UI와 site backend를 띄우는 내 PC입니다. 기본 UI 포트는 `18193`입니다. |
+| connector daemon | 각 PC에서 Claude Code, 파일, 세션, 권한, 스킬, 지침 API를 처리하는 로컬 daemon입니다. |
+| Site token | 브라우저가 DeskRelay 서버에 들어갈 때 쓰는 토큰입니다. `.self-server` 아래에 저장됩니다. |
+| daemon token | 서버가 각 connector daemon에 접근할 때 쓰는 디바이스별 토큰입니다. |
+| workspace roots | 새 채팅 작업 폴더 탐색과 파일 접근을 허용할 루트 경로입니다. |
+| current device | 현재 선택한 PC입니다. 세션, 권한, 스킬, 지침 로드는 이 디바이스에 종속됩니다. |
+| current session | 현재 선택한 Claude 세션입니다. 작업 폴더 지침과 context 정보는 세션에 종속됩니다. |
+
+## 빠른 시작
+
+### 필요 조건
+
+- Windows PowerShell
+- Git
+- Bun `>= 1.1.0`
+- Claude Code CLI가 사용할 PC에 로그인되어 있어야 함
+- 다른 PC를 제어하려면 같은 LAN 또는 같은 Tailscale tailnet
+
+Tailscale은 외부 네트워크에서 내 PC에 접근하기 위한 권장 선택지입니다. connector 포트를 공용 인터넷에 직접 열지 마세요.
+
+### 서버 PC 설치
+
+서버로 쓸 Windows PC의 PowerShell에 아래 명령을 그대로 붙여넣습니다.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -36,241 +58,446 @@ bun install
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 ```
 
-실행이 끝나면 `http://127.0.0.1:18193`이 기본 브라우저로 열린다. 메인 화면에는 현재 PC 상태, 접속 URL, Site token, 다른 PC 등록 명령이 표시된다. 같은 정보는 터미널에도 출력되고, `.self-server\commands` 아래의 command 파일과 저장소 최상위 quick 파일에도 생성된다. 서버 PC에는 `DeskRelay Self Server` Windows 로그인 작업도 자동 등록된다. 다음 로그인부터는 브라우저를 열지 않고 site-backend, site-frontend, 서버 PC connector가 자동으로 올라온다. 이 자동 시작 여부는 앱의 `설정 -> 일반 -> 자동 시작`에서도 켜고 끌 수 있다.
+완료되면 기본 브라우저가 `http://127.0.0.1:18193`으로 열립니다.
 
-다른 기기에서 열 때는 `DESKRELAY-SERVER-CODE.txt`의 `Recommended login URL for another device`를 우선 사용한다. 이 URL은 `#site-token=...`을 포함하므로 처음 접속한 브라우저도 토큰 입력 없이 들어간다. `100.x.x.x` Tailscale 주소는 공용 인터넷 주소가 아니며, 같은 Tailscale tailnet에 로그인되어 있고 온라인인 기기에서만 열린다. 같은 집/사무실 LAN 안에서는 LAN URL을 쓸 수 있다.
+서버 시작 시 생성되는 주요 파일:
 
-상태를 확인하려면:
+- `.self-server\site-token.txt`
+- `.self-server\commands\register-other-pc.txt`
+- `.self-server\commands\remove-other-pc.txt`
+- `.self-server\commands\update-server.txt`
+- `DESKRELAY-SERVER-CODE.txt`
+- `REGISTER-OTHER-PC.txt`
+- `REMOVE-OTHER-PC.txt`
+- `UPDATE-DESKRELAY-SERVER.txt`
+- `REMOVE-DESKRELAY-SERVER.txt`
+
+서버 PC에는 `DeskRelay Self Server` Windows 로그인 작업이 자동 등록됩니다. 다음 로그인부터 site-backend, site-frontend, 서버 PC connector가 자동으로 올라옵니다. 이 옵션은 앱의 `설정 -> 일반`에서도 켜고 끌 수 있습니다.
+
+### 접속 URL
+
+서버 실행 후 상태 명령을 실행하면 현재 사용할 수 있는 URL이 나옵니다.
 
 ```powershell
 Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
 ```
 
-업데이트는 앱 안의 `설정 -> 연결 진단`에서 먼저 처리한다.
+URL 종류:
 
-- `서버 업데이트`: 서버 PC의 git checkout을 `origin/main`으로 fast-forward하고, `bun install` 후 self 서버를 재시작한다. 실행 로그는 `.self-server\logs` 아래에 남는다.
-- `커넥터 업데이트`: 현재 선택된 디바이스의 connector daemon에 `/system/update`를 보내 그 PC의 `$HOME\deskrelay` checkout을 갱신하고, Windows login task supervisor가 있으면 connector를 재시작하게 한다.
-- 오래된 connector라 `/system/update`가 없으면 앱이 같은 서버 URL과 Site token이 들어간 재등록 명령을 보여준다. 그 명령을 대상 PC에 다시 붙여넣으면 설치 파일을 새로 내려받아 connector를 갱신하고 재등록한다.
+- `http://127.0.0.1:18193`: 서버 PC 자신에서만 사용
+- `http://100.x.x.x:18193`: Tailscale 주소, 같은 tailnet에서 사용
+- `http://192.168.x.x:18193` 또는 `http://172.x.x.x:18193`: 같은 LAN에서 사용
 
-터미널에서 서버 업데이트를 직접 실행하려면:
+다른 기기에서 열 때는 `DESKRELAY-SERVER-CODE.txt`의 `Recommended login URL for another device`를 우선 사용하세요. 이 URL에는 `#site-token=...`이 포함되어 있어서 처음 여는 브라우저도 토큰 입력 없이 들어갑니다.
+
+## 다른 PC 등록
+
+다른 PC 등록은 메인 화면의 설치/진단 wizard가 담당합니다.
+
+1. 서버 PC에서 DeskRelay를 엽니다.
+2. 메인 화면의 “다른 PC 등록 명령”을 통째로 드래그해서 복사합니다.
+3. 제어하려는 다른 Windows PC의 PowerShell에 붙여넣습니다.
+4. 스크립트가 GitHub에서 설치 파일을 내려받고, `$HOME\deskrelay`를 clone/update하고, connector daemon을 시작합니다.
+5. 스크립트가 Tailscale/LAN IP를 감지하고 서버가 그 PC의 daemon에 접근 가능한지 검증합니다.
+6. 검증이 통과하면 서버의 디바이스 목록에 등록됩니다.
+7. 등록이 끝나면 Site token이 포함된 DeskRelay URL을 기본 브라우저로 엽니다.
+
+등록 명령은 GitHub의 `scripts/install-connector.ps1`을 내려받아 실행합니다. 이 설치 스크립트가 다음을 처리합니다.
+
+- Git/Bun 존재 확인
+- 기존 `$HOME\deskrelay` 상태 판별
+- 잘못된 repo 또는 dirty repo 백업 후 새 clone
+- 오래된 connector login task 정리
+- 점유된 `18091` 포트 정리 시도
+- connector daemon을 `0.0.0.0:18091`에 바인딩
+- Windows 방화벽 규칙 추가 시도
+- Tailscale 또는 LAN 주소 감지
+- 서버에서 대상 PC의 `/status` 접근 가능 여부 검증
+- device row 등록
+- 브라우저 열기
+
+관리자 권한이 아니면 방화벽 규칙 자동 추가는 건너뛸 수 있습니다. 그래도 서버가 connector에 접근 가능한지 검증하므로, 막혀 있으면 방화벽 또는 네트워크 문제로 실패합니다.
+
+## 디바이스 사용
+
+![새 채팅과 작업 폴더 선택](docs/assets/screenshots/new-chat-workspace.png)
+
+브라우저에 들어가면 왼쪽 사이드바에서 디바이스를 선택합니다. 디바이스 선택은 브라우저에 저장되어 새로고침 후에도 유지됩니다.
+
+주요 동작:
+
+- `+`: 새 채팅 시작
+- 검색 아이콘: 세션 검색 토글
+- 세션 탭: 현재 디바이스의 Claude 세션 목록
+- 권한 탭: 현재 디바이스와 현재 세션 작업 폴더의 권한 설정
+- 지침 탭: 현재 세션 작업 폴더의 지침 파일
+- 스킬 탭: 현재 디바이스와 현재 세션에서 사용할 수 있는 스킬과 슬래시 명령
+- 설정 아이콘: 서버, 디바이스, 업데이트, 진단, 전역 지침, 도움말
+
+새 채팅을 시작할 때는 작업 디렉토리를 고릅니다. 기본값은 현재 디바이스 기준으로 저장됩니다. 작업 폴더 탐색은 기본적으로 workspace roots 안에서만 동작하지만, 설정에서 제한 모드를 바꿀 수 있습니다.
+
+## 채팅과 큐잉
+
+![연속 지시 큐잉](docs/assets/screenshots/queued-prompts.png)
+
+컴포저에서 메시지를 연속으로 보내면 요청이 순서대로 큐잉됩니다. 앞 요청이 끝난 뒤 다음 요청이 같은 세션에 이어서 들어갑니다.
+
+이미지 첨부도 컴포저에서 처리합니다. Claude CLI 자체가 이미지를 직접 띄우지 못해도 DeskRelay UI는 첨부 이미지와 생성된 이미지 파일을 브라우저에서 렌더링할 수 있습니다.
+
+컴포저 위 상태줄은 “지금 입력 가능한가”를 중심으로 보여줍니다. 서버/connector/daemon 전체 상태 중 가장 중요한 내용은 상단 공지 영역에서, 현재 실행 중인 Claude 동작은 컴포저 근처에서 표시합니다.
+
+## 권한, 스킬, 슬래시 명령
+
+![권한 탭](docs/assets/screenshots/permissions-sidebar.png)
+
+권한 탭은 현재 선택된 디바이스와 현재 선택된 세션 작업 폴더에 종속됩니다.
+
+- User settings: 현재 디바이스 사용자 계정의 Claude 설정
+- Project settings: 현재 세션 작업 폴더의 프로젝트 설정
+- Project local settings: 현재 세션 작업 폴더의 로컬 설정
+- 허용 목록 삭제
+- `Bash(*)`, `Read(*)`, `Write(*)`, `Edit(*)`, `Grep(*)` 같은 권한 추가
+- 다음 실행 권한 모드 선택
+
+권한 모드는 사용자가 고른 값과 Claude가 실제로 보고한 값을 분리해서 다룹니다. 실행 시작 시 pending, 시스템 init 확인 후 confirmed, 불일치 시 mismatch로 표시합니다. 오래된 실행 응답이 사용자가 새로 고른 다음 권한 모드를 덮어쓰지 않도록 상태 모델을 분리했습니다.
+
+![스킬 탭](docs/assets/screenshots/skills-sidebar.png)
+
+스킬 탭은 현재 디바이스의 Claude 환경과 현재 세션 작업 폴더를 기준으로 로드됩니다. Claude 기본 스킬과 사용자가 추가한 스킬은 색으로 구분합니다. 슬래시 명령도 같은 탭에서 확인할 수 있습니다.
+
+컴포저에서 `/`를 입력하면 가능한 슬래시 명령과 스킬 목록이 뜹니다. 키보드 위/아래 이동 시 스크롤 위치도 선택 항목을 따라갑니다.
+
+## 지침 관리
+
+DeskRelay의 지침 관리는 두 위치로 나뉩니다.
+
+| 위치 | 대상 | 종속 기준 |
+|---|---|---|
+| 설정 -> 지침 | 사용자 전역 지침, 관리 정책 지침 | current device |
+| 사이드바 -> 지침 | 프로젝트 지침, `.claude` 프로젝트 지침, 개인 로컬 지침 | current session의 cwd |
+
+사용자 전역 지침은 선택한 디바이스의 `~/.claude/CLAUDE.md`입니다. 관리 정책 지침은 읽기 전용일 수 있고, 개인 self-host 설치에서는 비어 있을 수 있습니다.
+
+작업 폴더 지침은 선택한 세션의 cwd에서 읽습니다.
+
+- `cwd/CLAUDE.md`
+- `cwd/.claude/CLAUDE.md`
+- `cwd/CLAUDE.local.md`
+
+사이드바 지침 뷰는 “Claude Code가 실제로 보는 지침 출처를 확인하는 것”을 우선합니다. 파일이 없으면 오류가 아니라 “파일 없음” 상태로 표시하고, 필요한 경우 생성해서 편집할 수 있습니다.
+
+## 사용량과 context
+
+상단에는 Claude `/usage` 기반의 Session, Week 사용량이 표시됩니다. 각 항목은 남은 비율과 reset 시간을 보여줍니다.
+
+context 압축까지 남은 양은 현재 선택한 대화 세션 기준입니다. 대화를 선택하면 해당 세션 기준으로 즉시 갱신하고, 이후 주기적으로 갱신합니다.
+
+표시 옵션은 `설정 -> 일반`에서 켜고 끌 수 있습니다.
+
+- CTX 표시
+- Session 표시
+- Week 표시
+- 채팅 글자 크기
+- 세션 로드 개수
+- 메시지 전송 후 아래로 이동
+- 새 채팅 작업 폴더 탐색 제한
+
+## 설정 범위
+
+설정 화면에는 각 옵션의 적용 범위를 라벨로 표시합니다.
+
+| 라벨 | 의미 |
+|---|---|
+| server | DeskRelay 서버 전체에 적용됩니다. Site token, device registry, 서버 업데이트, 서버 자동 시작이 여기에 속합니다. |
+| current device | 현재 선택한 PC에 적용됩니다. connector, daemon URL, 기본 작업 폴더, CLI 전역 지침이 여기에 속합니다. |
+| current session | 현재 선택한 Claude 세션과 그 작업 폴더에 적용됩니다. 세션 지침, 프로젝트 권한, context 정보가 여기에 속합니다. |
+| browser | 지금 이 브라우저에만 적용됩니다. 테마, 글자 크기, 표시 옵션, 선택 기억이 여기에 속합니다. |
+
+![설정 일반](docs/assets/screenshots/settings-general.png)
+
+`설정 -> 일반`에는 업데이트와 브라우저 표시 옵션이 모여 있습니다.
+
+- 전체 업데이트
+- 서버 업데이트
+- 디바이스별 connector 업데이트
+- 현재 버전과 다음 버전 표시
+- 자동 시작
+- 테마
+- 채팅 글자 크기
+- 세션 로드 개수
+- context/session/week 표시 옵션
+
+![디바이스 설정](docs/assets/screenshots/settings-devices.png)
+
+`설정 -> 디바이스`는 이미 등록된 디바이스 관리만 담당합니다.
+
+- 디바이스 선택
+- 라벨 저장
+- 기본 작업 디렉토리 저장
+- 등록된 디바이스 제거
+- 서버와 다른 모든 디바이스 제거
+
+디바이스 제거는 가능하면 해당 PC의 `/system/uninstall`을 호출해 login task, connector state, behavior cache, logs, 설치 clone까지 함께 정리합니다. 오프라인이라 cleanup에 실패해도 서버 목록에서는 제거하고, 필요한 수동 cleanup 명령을 메인 화면에서 보여줍니다.
+
+![연결 진단](docs/assets/screenshots/settings-diagnostics.png)
+
+`설정 -> 연결 진단`은 선택한 디바이스가 실제로 사용 가능한 상태인지 확인합니다.
+
+- 설치됨
+- 로컬 실행
+- 사이트 연결
+- Claude 모듈
+- Workspace
+- 마지막 오류
+- 서버/connector 버전 일치 여부
+
+## 업데이트
+
+DeskRelay는 git 저장소를 기준으로 업데이트합니다.
+
+권장 순서:
+
+1. `설정 -> 일반 -> 전체 업데이트`
+2. 등록된 connector들을 먼저 업데이트
+3. 서버 PC git checkout 업데이트
+4. 서버 재시작
+5. 브라우저 새로고침
+
+꺼져 있는 디바이스는 즉시 업데이트할 수 없습니다. 켜진 뒤 전체 업데이트를 다시 실행하거나, 해당 PC에서 등록 명령을 다시 실행하세요.
+
+터미널에서 서버만 업데이트하려면:
 
 ```powershell
 Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-update.ps1
 ```
 
-서버 자동 시작만 따로 켜거나 끄려면:
+## 서버 중지와 제거
 
-```powershell
-Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-autostart.ps1 -Action install
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-autostart.ps1 -Action remove
-```
-
-서버를 재시작하려면:
-
-```powershell
-Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
-```
-
-이전 서버를 관리자 권한 PowerShell이나 다른 터미널에서 띄운 상태라면 일반 터미널의 stop 명령으로 프로세스를 닫지 못할 수 있다. 그때는 서버를 띄웠던 터미널을 직접 닫거나, 관리자 PowerShell에서 `18191`, `18192`, `18193` 포트를 잡고 있는 프로세스를 종료한 뒤 다시 시작한다.
-
-```powershell
-Get-NetTCPConnection -LocalPort 18191,18192,18193 -State Listen |
-  Select-Object LocalPort, OwningProcess
-
-taskkill /PID <OwningProcess> /T /F
-```
-
-서버를 중지하려면:
+서버 중지:
 
 ```powershell
 Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
 ```
 
-서버 설치 상태를 제거하려면:
+서버 상태 제거:
 
 ```powershell
 Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-uninstall.ps1
 ```
 
-이 명령은 서버가 아직 켜져 있으면 먼저 등록된 모든 디바이스에 `/system/uninstall`을 보내 각 PC의 DeskRelay connector가 스스로 login task, local state, source clone을 정리하게 한다. 그 다음 실행 중인 self 서버와 서버 PC connector를 끄고, `.self-server` 런타임 상태와 생성된 command txt 파일을 지운다. git clone 폴더 자체는 남긴다. 폴더까지 지우고 싶을 때만 `-RemoveRepo`를 붙인다.
+이 명령은 서버가 켜져 있으면 등록된 디바이스에 먼저 uninstall 요청을 보내고, 그 다음 서버 PC의 `.self-server` 런타임 상태와 생성된 quick command 파일을 제거합니다. git clone 폴더는 기본적으로 남깁니다. 폴더까지 지우려면 `-RemoveRepo`를 붙입니다.
 
-다른 PC에서 접속하려면 서버 PC와 대상 PC가 같은 LAN 또는 Tailscale tailnet에 있어야 한다. connector 포트를 공용 인터넷에 직접 노출하지 않는다.
+## 문제 해결
 
-## 다른 PC 등록과 해제
+### 스크립트를 실행할 수 없다는 메시지
 
-다른 PC 등록은 메인 화면이 담당한다. 서버를 열면 메인 화면의 등록 wizard에 서버 URL과 Site token이 포함된 PowerShell 명령이 표시된다. 그 명령을 드래그해서 통째로 복사한 뒤 제어하려는 Windows PC의 PowerShell에 붙여넣으면 된다. 설정 다이얼로그의 디바이스 탭은 중복된 등록 UI를 갖지 않고, 이미 등록된 디바이스의 선택, 이름/기본 작업 디렉토리 관리, 제거만 담당한다.
+PowerShell 실행 정책 때문에 `.ps1` 실행이 막히면 다음처럼 실행합니다.
 
-서버가 켜지면 `.self-server\commands` 아래에 세부 command 파일이 생성되고, 저장소 최상위에도 자주 쓰는 quick 파일이 생성된다.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
+```
 
-- `.self-server\commands\register-other-pc.txt`: 제어할 다른 Windows PC에 그대로 붙여넣는 등록 명령
-- `.self-server\commands\remove-other-pc.txt`: 등록을 해제할 Windows PC에 그대로 붙여넣는 해제 명령
-- `.self-server\commands\status-server.txt`: 현재 서버 URL, Site token, command 파일 위치, 자동 시작 작업 상태 확인
-- `.self-server\commands\update-server.txt`: git에서 최신 코드를 받아 self 서버 재시작
-- `.self-server\commands\install-server-autostart.txt`: 서버 PC 로그인 시 자동 시작 작업 등록
-- `.self-server\commands\remove-server-autostart.txt`: 서버 PC 로그인 시 자동 시작 작업 제거
-- `.self-server\commands\deskrelay-commands.txt`: 생성된 모든 운영 명령 모음
-- `REGISTER-OTHER-PC.txt`: 최상위 quick 등록 명령
-- `REMOVE-OTHER-PC.txt`: 최상위 quick 해제 명령
-- `UPDATE-DESKRELAY-SERVER.txt`: 최상위 quick 서버 업데이트 명령
-- `DESKRELAY-SERVER-CODE.txt`: 서버 URL, Site token, command 파일 위치
-- `REMOVE-DESKRELAY-SERVER.txt`: 서버 PC의 self-host 상태 제거 명령
+### 디바이스가 목록에 안 뜸
 
-등록 명령은 GitHub에서 `scripts/install-connector.ps1`을 내려받아 실행한다. 이 스크립트가 `$HOME\deskrelay` 설치 상태를 판별하고, 필요하면 새로 clone/update한 뒤 connector를 `0.0.0.0:18091`에 띄우고, Windows 로그인 작업을 설치하고, Tailscale/LAN 주소를 감지하고, 서버가 `/status`에 접근 가능한지 확인한 다음 device row를 등록한다. 등록이 끝나면 Site token이 포함된 DeskRelay URL을 기본 브라우저로 연다. 브라우저 자동 실행이 막히면 터미널에 `#site-token=...`이 포함된 URL을 출력하므로, 그 URL을 그대로 열면 token을 다시 입력하지 않아도 된다.
+확인할 것:
 
-해제 명령은 GitHub에서 `scripts/remove-connector.ps1`을 내려받아 실행한다. 이 스크립트가 해당 PC의 Tailscale/LAN daemon URL 후보를 계산하고, 서버의 matching device row를 삭제하고, Windows login task와 local connector state를 제거하고, 남아 있는 connector listener를 종료한다. repo 폴더는 기본적으로 남긴다.
+- 등록 명령에 서버 URL과 Site token이 포함되어 있는가
+- 서버 URL이 `127.0.0.1`이 아닌 Tailscale 또는 LAN URL인가
+- 대상 PC가 같은 Tailscale tailnet 또는 같은 LAN 안에 있는가
+- 대상 PC의 `18091` 포트가 서버 PC에서 열리는가
+- 방화벽이 inbound TCP `18091`을 막고 있지 않은가
+- 기존 connector가 포트를 점유하고 있지 않은가
 
-브라우저 설정 다이얼로그의 `디바이스 제거`는 서버의 device row만 지우지 않는다. 선택한 디바이스의 daemon에 접근할 수 있으면 `/system/uninstall`을 호출해 Windows login task, connector auth/state/identity, behavior cache, login-task script, logs 폴더를 함께 제거한다. 등록 명령으로 `$HOME\deskrelay`에 설치된 source clone이면 프로세스 종료 뒤 repo 폴더 제거도 예약한다. 디바이스가 오프라인이거나 오래된 connector라 cleanup 요청이 실패해도, 브라우저 목록에서는 device row를 제거해 stale 디바이스가 남지 않게 한다. 이 경우 앱은 메인 화면으로 돌아가 어떤 PC에 수동 cleanup이 필요한지 알리고, 그 PC에서 실행할 제거 명령을 보여준다.
+대상 PC에서 확인:
 
-## 구조 노드
+```powershell
+Get-NetTCPConnection -LocalPort 18091 -State Listen
+```
 
-DeskRelay self 서버를 켜면 서버 PC 안에서 세 개의 로컬 프로세스가 함께 뜬다.
+서버 PC에서 확인:
 
-- `daemon`: 서버 PC 자체를 제어 가능한 디바이스로 노출한다. 기본 포트는 `18191`이다.
-- `site-backend`: Site token 인증, 디바이스 레지스트리, 디바이스 proxy, 등록/삭제 명령 생성을 맡는다. 기본 포트는 `18192`이다.
-- `site-frontend`: 브라우저가 여는 DeskRelay UI다. 기본 포트는 `18193`이고, `/api`와 `/healthz` 요청을 `site-backend`로 proxy한다.
+```powershell
+Invoke-RestMethod http://<target-pc-ip>:18091/status -Headers @{ Authorization = "Bearer <daemon-token>" }
+```
+
+daemon token은 대상 PC에서 다음으로 확인합니다.
+
+```powershell
+Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
+bun run packages/pc-connector-daemon/src/bin.ts auth-token
+```
+
+### `forbidden: ... outside the configured workspace roots`
+
+현재 선택한 디바이스의 workspace roots 밖을 열려고 한 것입니다.
+
+해결:
+
+- 서버 또는 대상 PC에서 `CR_CONNECTOR_WORKSPACE_ROOTS`를 원하는 루트로 설정
+- 서버/connector 재시작
+- 또는 설정에서 새 채팅 작업 폴더 탐색 제한을 조정
+
+예:
+
+```powershell
+$env:CR_CONNECTOR_WORKSPACE_ROOTS = "C:\sourcetree"
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
+```
+
+다른 PC connector는 해당 PC에서 등록 명령을 다시 실행하는 편이 가장 확실합니다.
+
+### 서버 포트가 이미 사용 중
+
+기본 포트:
+
+- `18191`: 서버 PC connector daemon
+- `18192`: site-backend
+- `18193`: site-frontend
+
+확인:
+
+```powershell
+Get-NetTCPConnection -LocalPort 18191,18192,18193 -State Listen |
+  Select-Object LocalPort, OwningProcess
+```
+
+필요하면 해당 프로세스를 종료합니다.
+
+```powershell
+taskkill /PID <OwningProcess> /T /F
+```
+
+### 토큰 입력을 계속 요구함
+
+다른 기기에서 접속할 때는 `#site-token=...`이 포함된 URL을 사용하세요.
+
+`DESKRELAY-SERVER-CODE.txt`에서 확인:
+
+```text
+Recommended login URL for another device:
+http://...:18193/#site-token=...
+```
+
+브라우저가 이미 잘못된 토큰을 저장했다면 로그아웃 후 이 URL로 다시 들어갑니다.
+
+## 구조
+
+DeskRelay self 서버를 켜면 서버 PC 안에서 세 개의 로컬 프로세스가 함께 뜹니다.
+
+- `daemon`: 서버 PC 자체를 제어 가능한 디바이스로 노출합니다. 기본 포트는 `18191`입니다.
+- `site-backend`: Site token 인증, 디바이스 레지스트리, proxy, 등록/삭제 명령 생성을 맡습니다. 기본 포트는 `18192`입니다.
+- `site-frontend`: 브라우저가 여는 DeskRelay UI입니다. 기본 포트는 `18193`입니다.
 
 ```mermaid
 flowchart LR
-  Browser["사용자 브라우저<br/>DeskRelay UI<br/>Site token 로그인"]
-  GitHubRepo["GitHub repository<br/>origin/main<br/>install/update scripts"]
+  Browser["사용자 브라우저<br/>DeskRelay UI"]
+  GitHub["GitHub repository<br/>main branch<br/>install/update scripts"]
 
   subgraph ServerPC["서버 PC"]
-    SiteFrontend["site-frontend<br/>packages/site-frontend<br/>:18193<br/>브라우저 UI<br/>/api -> site-backend proxy"]
-    SiteBackend["site-backend<br/>packages/site-backend<br/>:18192<br/>Site token 인증<br/>device registry / proxy / command 생성"]
-    Registry[("Device registry<br/>.self-server/state<br/>device id / label / daemonUrl / daemon token")]
-    Commands["Command files<br/>.self-server/commands<br/>top-level quick txt"]
-    ServerDaemon["daemon<br/>packages/pc-connector-daemon<br/>:18191<br/>서버 PC connector<br/>daemon token"]
-    ServerAutostart["Windows login task<br/>self server 자동 시작"]
-    ServerConnectorTask["Windows login task<br/>서버 PC connector 자동 시작"]
-    ServerWorkspace["Workspace roots<br/>CR_CONNECTOR_WORKSPACE_ROOTS"]
-    ServerBehavior["Claude behavior host<br/>remote-claude"]
-    ServerClaude["Claude Code CLI<br/>세션/권한/usage"]
+    Frontend["site-frontend<br/>:18193<br/>브라우저 UI"]
+    Backend["site-backend<br/>:18192<br/>token auth / device registry / proxy"]
+    Registry[("device registry<br/>.self-server/state")]
+    Commands["command files<br/>.self-server/commands"]
+    ServerDaemon["connector daemon<br/>:18191<br/>서버 PC 제어"]
+    ServerTask["Windows login task<br/>DeskRelay Self Server"]
+    ServerClaude["Claude Code CLI"]
   end
 
-  subgraph OtherPC["다른 제어 대상 PC"]
-    OtherDaemon["daemon<br/>packages/pc-connector-daemon<br/>:18091<br/>Tailscale/LAN 주소<br/>daemon token"]
-    OtherTask["Windows login task"]
-    OtherWorkspace["Workspace roots"]
-    OtherBehavior["Claude behavior host"]
-    OtherClaude["Claude Code CLI"]
+  subgraph RemotePC["등록된 다른 PC"]
+    RemoteDaemon["connector daemon<br/>:18091<br/>Tailscale/LAN"]
+    RemoteTask["Windows login task<br/>DeskRelay Connector"]
+    RemoteClaude["Claude Code CLI"]
   end
 
-  Network["Tailscale / LAN<br/>서버 PC -> 다른 PC daemon 접근"]
-
-  Browser -->|"HTTP / SSE"| SiteFrontend
-  SiteFrontend -->|"same-origin /api proxy"| SiteBackend
-  SiteBackend --> Registry
-  SiteBackend --> Commands
-  SiteBackend -->|"/api/self/update"| GitHubRepo
-  SiteBackend -->|"HTTP + daemon token"| ServerDaemon
-  SiteBackend -->|"HTTP + daemon token"| Network
-  SiteBackend -->|"/system/uninstall on device removal"| Network
-  SiteBackend -->|"/system/update on connector update"| Network
-  Network --> OtherDaemon
-
-  ServerAutostart --> SiteBackend
-  ServerAutostart --> SiteFrontend
-  ServerAutostart --> ServerDaemon
-  ServerDaemon --> ServerConnectorTask
-  ServerDaemon --> ServerWorkspace
-  ServerDaemon --> ServerBehavior
-  ServerDaemon -->|"/system/update git pull"| GitHubRepo
-  ServerBehavior --> ServerClaude
-
-  OtherDaemon --> OtherTask
-  OtherDaemon --> OtherWorkspace
-  OtherDaemon --> OtherBehavior
-  OtherDaemon -->|"/system/update git pull"| GitHubRepo
-  OtherBehavior --> OtherClaude
-
-  Registry -. "같은 daemonUrl 또는 daemon token 재등록 시 기존 row 갱신" .-> SiteBackend
+  Browser --> Frontend
+  Frontend --> Backend
+  Backend --> Registry
+  Backend --> Commands
+  Backend --> ServerDaemon
+  Backend --> RemoteDaemon
+  Backend --> GitHub
+  ServerTask --> Frontend
+  ServerTask --> Backend
+  ServerTask --> ServerDaemon
+  ServerDaemon --> ServerClaude
+  RemoteTask --> RemoteDaemon
+  RemoteDaemon --> RemoteClaude
+  RemoteDaemon --> GitHub
 ```
 
-## 연결 그래프
+## 요청 흐름
 
 ```mermaid
 sequenceDiagram
-  participant B as 사용자 브라우저
-  participant F as Site frontend
-  participant S as Self-host site server
-  participant R as Device registry
-  participant D as 선택된 Connector daemon
-  participant H as Claude behavior host
+  participant B as Browser
+  participant F as site-frontend
+  participant S as site-backend
+  participant D as selected daemon
+  participant H as behavior host
   participant C as Claude Code CLI
 
-  B->>F: UI 조작
+  B->>F: 메시지 전송
   F->>S: API / SSE
-  S->>R: device 조회
   S->>D: proxy request + daemon token
-  D->>H: behavior 실행
-  H->>C: Claude 세션 실행/이어쓰기
-  C-->>H: streaming / tool / approval 상태
-  H-->>D: run event
+  D->>H: remote-claude behavior 실행
+  H->>C: Claude 세션 실행 또는 이어쓰기
+  C-->>H: stream / tool / approval / usage
+  H-->>D: run events
   D-->>S: event stream
   S-->>F: SSE
-  F-->>B: 세션/권한/스킬/상태 표시
+  F-->>B: transcript와 상태 업데이트
 ```
 
-## 등록 흐름
+## 개발과 검증
 
-```mermaid
-flowchart TD
-  A["1. 서버 PC에서 self-host site server 실행"]
-  B["2. 서버 PC connector daemon 자동 등록"]
-  C["3. 메인 화면 등록 wizard 또는 command 파일에서 다른 PC 등록 명령 복사"]
-  D["4. 다른 PC PowerShell에 등록 명령 붙여넣기"]
-  E["5. GitHub install-connector.ps1 실행<br/>repository 설치/update + connector 시작"]
-  F["6. 다른 PC의 Tailscale/LAN daemonUrl 감지"]
-  G{"7. 서버가 /status 접근 가능?"}
-  H["8. server registry에 device row 등록"]
-  I["9. 브라우저 디바이스 목록에 표시"]
-  X["실패: firewall / Tailscale / local-only bind / token 문제를 분리해서 표시"]
+설치:
 
-  A --> B --> C --> D --> E --> F --> G
-  G -->|yes| H --> I
-  G -->|no| X
+```powershell
+bun install
 ```
 
-## 신뢰 기준
+자주 쓰는 검증:
 
-등록됐다는 것과 쓸 수 있다는 것은 다르다. DeskRelay가 믿을 수 있으려면 최소한 아래 조건을 분리해서 확인해야 한다.
-
-```mermaid
-flowchart TD
-  Install["설치됨<br/>repository와 의존성 있음"]
-  Process["실행 중<br/>connector daemon process 있음"]
-  Local["로컬 준비<br/>127.0.0.1:18091 /status<br/>daemon token 응답"]
-  Remote["외부 접근 가능<br/>server PC -> daemonUrl /status"]
-  Registered["등록됨<br/>registry device row 있음"]
-  Claude["Claude 준비<br/>behavior host + Claude Code CLI 실행 가능"]
-  Workspace["작업 범위 유효<br/>workspace roots가 실제 경로와 맞음"]
-  Recovery["자동 시작<br/>server/connector login task 설치됨"]
-  Usable["사용 가능<br/>브라우저에서 세션 실행 가능"]
-
-  Install --> Process --> Local --> Remote --> Registered --> Claude --> Workspace --> Recovery --> Usable
+```powershell
+bun run test:selfhost-docs
+bun --filter @deskrelay/site-frontend typecheck
+bun --filter @deskrelay/site-frontend test
+bun --filter @deskrelay/site-frontend build
 ```
 
-## 세션 목록과 내부 조회
+전체 검증:
 
-DeskRelay는 사용량과 상태 확인을 위해 Claude CLI의 `/context`, `/status`, `/usage` 같은 내부 조회 명령을 실행할 수 있다. 이런 조회는 사용자 대화가 아니므로 세션 목록을 오염시키면 안 된다.
+```powershell
+bun run check
+bun run typecheck
+bun run test
+bun run build
+```
 
-- 새 내부 조회는 `--no-session-persistence`로 실행해 Claude `.jsonl` 세션 파일을 만들지 않는다.
-- 예전 버전에서 만들어진 `<local-command-caveat>` 기반 내부 명령 전용 세션은 세션 목록을 읽을 때 자동으로 삭제한다.
-- 내부 조회 뒤에 실제 사용자 메시지가 섞인 세션은 삭제하지 않는다.
+self-host 가상 테스트:
 
-## 파워유저 관점의 핵심 목표
+```powershell
+bun run test:selfhost-failures
+bun run test:selfhost-virtual
+```
 
-- 같은 설치/등록 명령을 여러 번 실행해도 상태가 망가지지 않아야 한다.
-- 실패하면 어느 노드에서 실패했는지 보여줘야 한다.
-- 서버와 connector가 서로 접근 가능한지 등록 전에 검증해야 한다.
-- token mismatch, local-only bind, firewall, Tailscale 미연결을 하나의 오프라인으로 뭉개면 안 된다.
-- UI는 예쁜 온보딩보다 현재 노드 상태와 복구 액션을 보여줘야 한다.
-- 설치/등록 안내는 메인 화면으로 모으고, 설정 다이얼로그는 등록된 디바이스 관리만 맡아 중복 동선을 만들지 않는다.
-- 디바이스 제거는 목록에서 숨기는 동작이 아니라, 가능하면 해당 PC의 connector 설치 흔적까지 함께 정리하는 동작이어야 한다.
+로컬 self 서버 시작:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
+```
+
+로컬 self 서버 중지:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-stop.ps1
+```
+
+## 라이선스
+
+Apache-2.0. 자세한 내용은 [LICENSE](LICENSE)를 확인하세요.
