@@ -1,205 +1,149 @@
-# DeskRelay Self 남은 결함 목록
+# DeskRelay Self 남은 작업
 
-이 문서는 self-host 파워유저 관점에서 아직 닫히지 않은 설치/연결 신뢰 결함을 추적한다. 이미 자동 테스트로 닫은 `register-self` 중복 등록, device list 조회 실패, 중복 row 삭제 실패는 제외한다.
+이 문서는 self-host DeskRelay의 설치/연결 신뢰성을 파워유저 도구 수준으로 끌어올리기 위해 남은 작업만 추적한다. 검증은 성공 경로만 보지 않는다. 재실행, stale 상태, 네트워크 실패, 권한 부족, 재부팅 이후 복구까지 확인한다.
 
-## 이번에 보강된 부분
+## 최근 완료
 
-- `register-self`는 이제 단계별 등록 리포트를 출력한다.
-- 로컬 connector token 생성/로드, 환경 변수, 기존 daemon 정리, login task 설치, local `/status`, advertised `/status`, server registry POST, server device list 확인을 분리해서 표시한다.
-- stale local connector가 다른 daemon token으로 포트를 점유하면 등록을 중단하고 원인과 재시도 조건을 알려준다.
-- server-to-connector probe 실패는 token 거부, timeout, 네트워크/방화벽 접근 실패를 구분해서 메시지를 낸다.
-- server 등록 뒤 `/api/devices`를 다시 조회해 실제 목록에 보이는지 확인한다.
+- `register-self` 단계별 등록 리포트 추가
+- daemon token 생성/로드, connector env, 기존 daemon 정리, login task 설치, local `/status`, advertised `/status`, server registry POST, server device list 확인을 분리 표시
+- stale local connector가 다른 daemon token으로 포트를 점유하면 등록 중단 및 재시도 조건 안내
+- advertised daemon probe 실패를 token 거부, timeout, 네트워크/방화벽 접근 실패로 우선 분류
+- server 등록 뒤 `/api/devices`를 다시 조회해 실제 목록 반영 확인
+- server list 확인 실패 회귀 테스트 추가
 
-## D1. 다른 Windows PC 실제 등록 검증 부족
+## P0. 다른 Windows PC 등록 실증
 
-**상태:** 자동 검증 보강, 실제 PC 검증 필요
+**상태:** 자동 테스트 보강됨, 실제 PC 실증 필요
 
-**증상**
-
-서버 PC가 아닌 다른 Windows PC에서 등록 명령을 실행했을 때, repository 설치, connector 시작, daemonUrl 감지, server registry 등록, UI 목록 반영까지 끝까지 검증한 기록이 부족하다.
-
-**위험**
-
-unit test와 가상 smoke는 통과해도 실제 사용자 PC에서는 Git/Bun/PATH/PowerShell/네트워크 상태 때문에 등록이 실패할 수 있다.
-
-**필요 검증**
+**남은 작업**
 
 - 깨끗한 Windows 사용자 profile에서 등록 명령 실행
-- 기존 `$HOME\deskrelay`가 없을 때 clone 되는지 확인
-- 기존 `$HOME\deskrelay`가 다른 repo 또는 dirty repo일 때 backup 후 재설치 되는지 확인
-- 등록 후 서버 UI 디바이스 목록에 즉시 나타나는지 확인
-- 등록 후 선택하면 세션 조회와 새 채팅이 되는지 확인
+- 기존 `$HOME\deskrelay`가 없을 때 clone/install/start/register가 끝까지 진행되는지 확인
+- 기존 `$HOME\deskrelay`가 dirty repo, 다른 repo, 오래된 repo일 때 안전하게 보정되는지 확인
+- 같은 등록 명령을 3회 반복 실행해도 device row가 하나로 수렴하는지 확인
+- 등록 성공 뒤 서버 UI 디바이스 목록에 즉시 표시되는지 확인
+- 등록한 디바이스 선택 뒤 세션 조회와 새 채팅 시작까지 확인
 
-**남은 해결 방향**
+**통과 기준**
 
-- 실제 다른 Windows PC에서 등록 명령을 실행하고 UI 반영까지 확인한다.
-- 실패 단계별 exit code는 아직 단일 `1`이므로, 필요하면 installer 쪽 exit code를 세분화한다.
-- 성공 출력에 daemonUrl, log path는 포함되지만, server가 반환한 device id가 없는 경우 daemonUrl 기준으로만 표시된다.
+- 실패하면 어느 단계에서 막혔는지 명령 출력만으로 알 수 있다.
+- 성공하면 daemon URL, log path, server device list 확인 결과가 출력된다.
+- 같은 PC를 반복 등록해도 중복 디바이스가 생기지 않는다.
 
-## D2. Tailscale 미설치/미연결 상태 분류 부족
+## P0. 설치 스크립트 재실행성 강화
 
-**상태:** 일부 분류, 실제 환경 검증 필요
+**상태:** `register-self`는 일부 reconcile됨, installer 전체 reconcile은 남음
 
-**증상**
+**남은 작업**
 
-다른 PC 등록 시 Tailscale이 없거나 로그인되어 있지 않으면 advertiseHost 감지 또는 server-to-connector 접근이 실패한다. 현재는 방화벽/LAN/Tailscale 문제가 하나의 접근 실패 메시지로 합쳐질 수 있다.
+- Git 미설치, Bun 미설치, PATH 꼬임을 설치 스크립트가 감지하고 명확히 안내
+- 기존 connector process, login task, auth token, workspace root, server registry를 한 번에 보정
+- stale port 점유 시 관리자 권한 필요 여부와 직접 종료 명령을 출력
+- 실패 후 같은 명령을 다시 붙여넣으면 이전 실패 흔적 때문에 새 실패가 생기지 않게 보장
 
-**위험**
+**통과 기준**
 
-사용자가 Tailscale을 설치해야 하는지, 로그인해야 하는지, 같은 tailnet인지, 아니면 LAN으로 접근하면 되는지 판단하기 어렵다.
+- 설치 명령은 "한 번 실행하고 끝"이 아니라 "현재 상태 판별 -> 보정 -> 검증 -> 등록"으로 동작한다.
+- 중간 실패 후 재실행해도 같은 최종 상태로 수렴한다.
 
-**필요 검증**
+## P1. 통합 진단 모델
 
-- Tailscale 미설치 PC
-- Tailscale 설치됐지만 로그아웃된 PC
-- Tailscale 연결은 됐지만 서버 PC와 다른 tailnet인 PC
-- Tailscale IP는 있으나 server PC에서 접근 불가능한 PC
+**상태:** 등록 중 리포트는 있음, 평상시 doctor 모델은 부족
 
-**남은 해결 방향**
+**남은 작업**
 
-- `register-self`는 advertised `/status` timeout과 token 거부를 분리한다.
-- Tailscale adapter 존재 여부, 로그인 여부, 같은 tailnet 여부는 아직 별도 doctor 모델이 필요하다.
-- Tailscale 후보와 LAN 후보를 분리해서 probe하는 로직은 아직 남아 있다.
+- `cr-connector doctor --json` 모델을 정리
+- server diagnostics API 추가 또는 기존 연결 진단 탭과 doctor 결과 연결
+- 서버 실행 여부, site token 유효성, registry 상태, local daemon, advertised daemon, daemon token 일치, behavior 준비, Claude CLI 사용 가능 여부, workspace root, login task를 하나의 구조로 판정
 
-## D3. Windows Firewall 차단 분류 부족
+**통과 기준**
 
-**상태:** 일부 분류, 실제 환경 검증 필요
+- 사용자는 연결 진단 탭 하나만 보고 어느 노드가 실패했는지 판단할 수 있다.
+- 각 실패 항목은 다음 행동을 하나 이상 제공한다.
 
-**증상**
+## P1. Tailscale과 방화벽 실패 분류
 
-connector daemon이 `0.0.0.0:18091`로 떠 있어도 Windows Firewall inbound 정책이 막으면 서버 PC에서 접근할 수 없다.
+**상태:** timeout/token 거부는 분리됨, Tailscale/Firewall 세부 진단은 남음
 
-**위험**
+**남은 작업**
 
-사용자는 daemon이 실행 중인데도 디바이스가 등록되지 않거나 offline으로 보이는 상황을 이해하기 어렵다.
+- Tailscale 미설치, 로그아웃, 다른 tailnet, LAN fallback, Windows Firewall 차단을 서로 다른 실패로 분류
+- Tailscale adapter 존재 여부와 선택된 advertiseHost 근거 출력
+- LAN 후보와 Tailscale 후보를 분리해서 probe
+- Windows firewall rule 존재 여부 확인 및 보정 명령 안내
 
-**필요 검증**
+**통과 기준**
 
-- 대상 PC에서 `18091` inbound 차단
-- server PC에서 `http://<target>:18091/status` 접근 실패 확인
-- 등록 명령이 registry POST 전에 멈추는지 확인
+- `local daemon ok`, `advertised daemon unreachable`, `firewall suspected`, `tailscale missing`, `tailscale logged out`, `wrong network suspected`가 구분된다.
+- registry POST 전에 접근 불가능한 daemon 등록을 멈춘다.
 
-**남은 해결 방향**
+## P1. Login task 재부팅 복구 검증
 
-- `register-self`는 local `/status` 성공 뒤 advertised `/status` 실패를 분리 표시한다.
-- Windows firewall rule 존재 여부 확인과 보정 명령 출력은 아직 doctor/installer 쪽에 남아 있다.
+**상태:** 수동 검증 필요
 
-## D4. Login task 재부팅/재로그인 복구 검증 부족
+**남은 작업**
 
-**상태:** 미검증
+- 서버 PC 재부팅 후 `site-frontend`, `site-backend`, 서버 connector 복구 확인
+- 등록 PC 재부팅 후 connector 자동 실행 확인
+- task path, script path, log path, 마지막 실행 결과를 진단에 포함
+- login task installed와 실제 connector online 차이를 UI에서 구분
 
-**증상**
+**통과 기준**
 
-등록 직후 connector가 떠 있어도, Windows 재로그인 또는 재부팅 후 login task가 정상적으로 connector를 다시 띄우는지 실제 검증이 부족하다.
+- 다음 날 PC를 켜도 등록된 디바이스가 자동으로 사용 가능 상태로 돌아온다.
+- 복구 실패 시 사용자가 봐야 할 로그 위치가 바로 표시된다.
 
-**위험**
+## P2. 실제 Claude run 회귀 검증
 
-처음 등록은 성공했지만 다음 날 디바이스가 offline이 되는 신뢰 문제가 생긴다.
+**상태:** 수동 검증 의존
 
-**필요 검증**
+**남은 작업**
 
-- `login-task install --start` 후 로그아웃/로그인
-- 재부팅 후 connector process 존재 확인
-- log file에 start 기록 확인
-- server UI에서 online 복귀 확인
+- 실제 Claude Code 기준 `ping`, 긴 streaming, 권한 요청, slash command, 이미지 첨부, 생성 이미지 preview 검증
+- streaming 중 브라우저 새로고침 후 마지막 cursor 이후 이벤트 이어받기 확인
+- approval timeout과 daemon timeout 일치 확인
 
-**해결 방향**
+**통과 기준**
 
-- `cr-connector login-task status`를 더 구조화
-- doctor에 task installed, task action, script path, last log tail 포함
-- 등록 성공 후 login task 상태를 반드시 출력
+- 디바이스가 online이면 실제 작업도 새로고침 없이 반영된다.
+- 새로고침이나 SSE 재연결 후에도 run event가 누락되지 않는다.
 
-## D5. 실제 Claude streaming/approval/image preview 검증 부족
+## P2. 업데이트와 꺼진 디바이스 처리
 
-**상태:** 미검증
+**상태:** 상태 표시 기본 구조는 있음, 실패/오프라인 처리는 더 필요
 
-**증상**
+**남은 작업**
 
-connector 등록과 daemon 접근은 별개로, 실제 Claude Code CLI 세션 실행, streaming 업데이트, approval flow, 이미지 preview는 end-to-end 수동 검증 의존도가 높다.
+- 전체 업데이트 상태를 `not_started`, `running`, `succeeded`, `failed`, `pending_until_device_online`으로 고정
+- 꺼진 디바이스는 다음 부팅 때 update pending을 이어받게 설계
+- 실패한 디바이스별 로그와 재시도 액션 제공
+- 업데이트 후 release note 표시 정책 정리
 
-**위험**
+**통과 기준**
 
-디바이스는 online인데 실제 작업이 멈추거나 새로고침해야 보이는 신뢰 문제가 남을 수 있다.
+- 사용자는 각 디바이스가 업데이트 됐는지, 진행 중인지, 실패했는지 즉시 알 수 있다.
+- 꺼져 있던 디바이스도 다음 실행 시 업데이트 누락이 없다.
 
-**필요 검증**
+## P2. 보안 경계 강화
 
-- 새 채팅에서 `ping`
-- 긴 응답 streaming
-- `/permissions`와 권한 변경
-- approval 필요한 tool 실행
-- 이미지 첨부 후 전송
-- Claude가 생성한 이미지 preview
-- streaming 중 브라우저 새로고침 후 이어받기
+**상태:** self-host 전제의 최소 경계는 있음, 파워유저용 가시성 부족
 
-**해결 방향**
+**남은 작업**
 
-- run event backlog/cursor 기반 재연결 검증
-- approval timeout과 daemon timeout 일치
-- 이미지 파일 전달/preview 조건을 doctor 또는 debug panel에 표시
+- Site token 회전/폐기 경로 추가
+- 등록 명령에 token이 포함되는 구조의 노출 위험을 가까운 위치에서 안내
+- daemon port 공개 범위와 unrestricted workspace 옵션의 위험을 액션 옆에 표시
+- 디바이스 제거 시 server registry 삭제와 대상 PC uninstall 실패를 분리 기록
 
-## D6. 상태 진단 모델 부족
+**통과 기준**
 
-**상태:** 등록 리포트 일부 구현, 통합 doctor 필요
+- token을 잃어버렸을 때 폐기하고 새로 발급할 수 있다.
+- 위험한 옵션은 사용자가 의식적으로 켜야 한다.
+- 제거 실패 시 서버에 남은 것과 대상 PC에 남은 것이 분리 표시된다.
 
-**증상**
+## 작업 가드
 
-현재 상태는 UI와 로그, 명령 출력에 흩어져 있다. 파워유저가 어느 노드에서 실패했는지 한 번에 보기 어렵다.
-
-**위험**
-
-연결 문제를 해결할 때 매번 수동으로 `status`, log, netstat, browser UI를 오가야 한다.
-
-**필요 검증**
-
-- 서버 실행 여부
-- site token 유효 여부
-- device registry 상태
-- connector process 상태
-- local /status
-- advertised /status
-- daemon token 일치 여부
-- behavior host 준비 여부
-- Claude CLI 사용 가능 여부
-- workspace roots 유효 여부
-- login task 설치 여부
-
-**남은 해결 방향**
-
-- `register-self` 단계 리포트는 추가됐다.
-- 별도 `cr-connector doctor` JSON 모델, server diagnostics API, UI 연결 진단 통합은 아직 필요하다.
-
-## D7. 설치/등록 명령 재실행성 보장 부족
-
-**상태:** 추가 개선, 실제 재실행 매트릭스 검증 필요
-
-**증상**
-
-같은 등록 명령을 여러 번 실행해도 중복 registry row는 막기 시작했지만, 폴더 상태, task 상태, process 상태, token 상태까지 완전한 reconcile로 보장되지는 않았다.
-
-**위험**
-
-한 번 실패한 PC에서 같은 명령을 다시 실행했을 때 기존 실패 흔적 때문에 다른 실패가 발생할 수 있다.
-
-**필요 검증**
-
-- 등록 명령 3회 연속 실행
-- 중간에 connector process 강제 종료 후 재실행
-- `$HOME\deskrelay` dirty 상태에서 재실행
-- login task가 이미 있을 때 재실행
-- auth token이 이미 있을 때 재실행
-
-**남은 해결 방향**
-
-- `register-self`는 기존 local connector, login task, server row를 reconcile하는 방향으로 보강됐다.
-- installer가 dirty repo, 다른 repo, Git/Bun 미설치, PATH 꼬임까지 책임지는지는 별도 검증이 필요하다.
-- 등록 명령 3회 연속 실행과 강제 종료 후 재실행은 실제 PC에서 검증해야 한다.
-
-## 우선순위
-
-1. D1 다른 Windows PC 실제 등록
-2. D6 통합 상태 진단 모델
-3. D7 설치/등록 재실행성 실제 매트릭스
-4. D4 login task 복구
-5. D2 Tailscale 분류
-6. D3 Firewall 분류
-7. D5 Claude run end-to-end
+- 지금은 self 프로젝트만 본다.
+- product 저장소와 hosted product 배포 경로는 건드리지 않는다.
+- 채팅 화면 UI는 안정성 검증 대상일 뿐, 별도 지시 없이는 수정하지 않는다.
+- 기능을 바꾸면 Settings > Help 또는 README/Manual에 반영할 필요가 있는지 확인한다.
