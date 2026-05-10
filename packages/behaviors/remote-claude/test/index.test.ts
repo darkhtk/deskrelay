@@ -351,7 +351,6 @@ describe("remote-claude behavior chat request", () => {
         source: string;
         email?: string;
         subscriptionType?: string;
-        rateLimitTier?: string;
         accessToken?: string;
         refreshToken?: string;
       };
@@ -360,7 +359,7 @@ describe("remote-claude behavior chat request", () => {
       expect(result.source).toBe("oauth");
       expect(result.email).toBe("dev@example.test");
       expect(result.subscriptionType).toBe("max");
-      expect(result.rateLimitTier).toBe("tier_2");
+      expect("rateLimitTier" in result).toBe(false);
       expect(result.accessToken).toBeUndefined();
       expect(result.refreshToken).toBeUndefined();
     } finally {

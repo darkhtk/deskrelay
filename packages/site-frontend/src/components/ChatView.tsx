@@ -381,7 +381,6 @@ interface ClaudeAccountInfo {
   displayName?: string;
   email?: string;
   subscriptionType?: string;
-  rateLimitTier?: string;
   error?: string;
 }
 
@@ -1066,12 +1065,23 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (!account || account.status !== "logged_in") {
       return t("chat.sidebar.cli-account.signed-out");
     }
-    const identity = account.email || account.accountId || account.displayName;
-    const plan = account.subscriptionType;
-    if (identity && plan) return `${identity} · ${plan}`;
-    if (identity) return identity;
-    if (plan) return `계정 ID 확인 불가 · ${plan}`;
-    return "계정 ID 확인 불가";
+    const cleanPart = (value?: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) return null;
+      if (trimmed === "logged_in" || trimmed === "로그인됨") return null;
+      return trimmed;
+    };
+    const cleanPlan = (value?: string) => {
+      const trimmed = value?.trim();
+      if (!trimmed) return null;
+      if (trimmed.toLowerCase().startsWith("default_claude_")) return null;
+      return trimmed.replace(/^claude[_-]/i, "");
+    };
+    const identity =
+      cleanPart(account.email) ?? cleanPart(account.accountId) ?? cleanPart(account.displayName);
+    const plan = cleanPlan(account.subscriptionType);
+    const parts = [identity, plan].filter(Boolean);
+    return parts.length ? parts.join(" · ") : t("chat.sidebar.cli-account.unavailable");
   };
 
   createEffect(() => {

@@ -193,7 +193,6 @@ interface ClaudeAccountInfo {
   displayName?: string;
   email?: string;
   subscriptionType?: string;
-  rateLimitTier?: string;
   error?: string;
 }
 
@@ -948,40 +947,56 @@ async function readClaudeOAuthAccessToken(): Promise<string | null> {
 async function readClaudeAccountInfo(): Promise<ClaudeAccountInfo> {
   const checkedAt = new Date().toISOString();
   const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+  const envAccountId = process.env.CLAUDE_CODE_ACCOUNT_UUID?.trim();
+  const envEmail = process.env.CLAUDE_CODE_USER_EMAIL?.trim();
   if (envToken) {
     return {
       status: "logged_in",
       source: "env",
       checkedAt,
+      ...(envAccountId ? { accountId: envAccountId } : {}),
+      ...(envEmail ? { email: envEmail } : {}),
     };
   }
 
   try {
     const oauth = await readClaudeOAuthCredentials();
+    const oauthAccount = await readClaudeGlobalOAuthAccount();
     const accessToken = typeof oauth?.accessToken === "string" ? oauth.accessToken.trim() : "";
     if (!accessToken) {
       return { status: "not_logged_in", source: "none", checkedAt };
     }
-    const accountId = firstTrimmedString(oauth, [
-      "accountId",
-      "account_id",
-      "userId",
-      "user_id",
-      "id",
-      "subject",
-      "sub",
-    ]);
-    const displayName = firstTrimmedString(oauth, [
-      "displayName",
-      "display_name",
-      "name",
-      "username",
-      "accountName",
-      "account_name",
-    ]);
-    const email = firstTrimmedString(oauth, ["email", "accountEmail", "account_email"]);
-    const subscriptionType = firstTrimmedString(oauth, ["subscriptionType", "subscription_type"]);
-    const rateLimitTier = firstTrimmedString(oauth, ["rateLimitTier", "rate_limit_tier"]);
+    const accountId =
+      firstTrimmedString(oauth, [
+        "accountId",
+        "account_id",
+        "userId",
+        "user_id",
+        "id",
+        "subject",
+        "sub",
+      ]) ??
+      firstTrimmedString(oauthAccount, ["accountUuid", "accountUUID", "accountId", "account_id"]);
+    const displayName =
+      firstTrimmedString(oauth, [
+        "displayName",
+        "display_name",
+        "name",
+        "username",
+        "accountName",
+        "account_name",
+      ]) ?? firstTrimmedString(oauthAccount, ["displayName", "display_name", "name", "username"]);
+    const email =
+      firstTrimmedString(oauth, ["email", "accountEmail", "account_email"]) ??
+      firstTrimmedString(oauthAccount, ["emailAddress", "email", "accountEmail", "account_email"]);
+    const subscriptionType = normalizeClaudeSubscriptionType(
+      firstTrimmedString(oauth, ["subscriptionType", "subscription_type"]) ??
+        firstTrimmedString(oauthAccount, [
+          "subscriptionType",
+          "subscription_type",
+          "organizationType",
+        ]),
+    );
     return {
       status: "logged_in",
       source: "oauth",
@@ -990,7 +1005,6 @@ async function readClaudeAccountInfo(): Promise<ClaudeAccountInfo> {
       ...(displayName ? { displayName } : {}),
       ...(email ? { email } : {}),
       ...(subscriptionType ? { subscriptionType } : {}),
-      ...(rateLimitTier ? { rateLimitTier } : {}),
     };
   } catch (err) {
     return {
@@ -1011,6 +1025,22 @@ async function readClaudeOAuthCredentials(): Promise<Record<string, unknown> | n
   } catch {
     return null;
   }
+}
+
+async function readClaudeGlobalOAuthAccount(): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await readFile(join(homedir(), ".claude.json"), "utf8");
+    const config = asRecord(JSON.parse(raw));
+    return asRecord(config?.oauthAccount);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeClaudeSubscriptionType(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/^claude[_-]/i, "");
 }
 
 function firstTrimmedString(
