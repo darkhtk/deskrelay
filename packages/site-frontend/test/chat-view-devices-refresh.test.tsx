@@ -1924,6 +1924,12 @@ describe("ChatView device refresh bridge", () => {
       expect(container.textContent).toContain(
         t("chat.error.session-event-limited", { count: 100 }),
       );
+      expect(container.querySelector(".chat-header-session-notice")?.textContent).toContain(
+        t("chat.error.session-event-limited", { count: 100 }),
+      );
+      expect(container.querySelector(".upstream-banner")?.textContent ?? "").not.toContain(
+        t("chat.error.session-event-limited", { count: 100 }),
+      );
       expect(container.textContent).not.toContain("8 MiB");
     });
   });

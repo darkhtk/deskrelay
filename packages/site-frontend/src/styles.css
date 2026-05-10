@@ -2088,6 +2088,16 @@ body.sidebar-collapsed .chat {
   flex-shrink: 0;
   padding: 8px 24px 0;
 }
+.chat-header-session-notice {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
 
 /* Right-to-left marquee for operator announcements. Sits in the
  * middle of .alpha-banner (between the legal links and the feedback

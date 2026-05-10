@@ -1058,6 +1058,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [running, setRunning] = createSignal(false);
   const [cliAction, setCliAction] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  const [sessionNotice, setSessionNotice] = createSignal<string | null>(null);
   let sessionNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   createEffect(() => {
@@ -1077,9 +1078,9 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   function setTransientSessionNotice(message: string) {
     if (sessionNoticeTimer) clearTimeout(sessionNoticeTimer);
-    setError(message);
+    setSessionNotice(message);
     sessionNoticeTimer = setTimeout(() => {
-      if (error() === message) setError(null);
+      if (sessionNotice() === message) setSessionNotice(null);
       sessionNoticeTimer = null;
     }, SESSION_NOTICE_AUTO_DISMISS_MS);
   }
@@ -3134,6 +3135,13 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               <line x1="9" y1="4" x2="9" y2="20" />
             </svg>
           </button>
+          <Show when={sessionNotice()}>
+            {(message) => (
+              <span class="chat-header-session-notice" role="status" aria-live="polite" title={message()}>
+                {message()}
+              </span>
+            )}
+          </Show>
         </div>
 
         <Show
