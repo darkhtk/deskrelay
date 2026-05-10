@@ -2444,7 +2444,7 @@ body.sidebar-collapsed .chat {
 /* ---- Code blocks ---- */
 pre {
   position: relative;
-  background: var(--surface-card);
+  background: var(--code-bg);
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
   padding: 14px;
