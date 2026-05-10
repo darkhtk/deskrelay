@@ -6,8 +6,8 @@
 
 | 순위 | 항목 | 목적 | 현재 상태 |
 | --- | --- | --- | --- |
-| 1 | 다른 Windows PC 등록 실증 | 실제 사용자 설치 실패를 잡는다 | 자동 리포트는 있음, 실제 깨끗한 PC 실증 필요 |
-| 2 | 설치 스크립트 재실행성 강화 | 실패 후 같은 명령 재실행으로 정상 상태에 수렴 | 일부 stale port 감지는 있음, 전체 reconcile 부족 |
+| 1 | 다른 Windows PC 등록 실증 | 실제 사용자 설치 실패를 잡는다 | 자동 리포트와 가상 e2e는 통과, 실제 깨끗한 PC 실증 필요 |
+| 2 | 설치 스크립트 재실행성 강화 | 실패 후 같은 명령 재실행으로 정상 상태에 수렴 | early failure install report 추가, 실제 PC stale/dirty repo 실증 필요 |
 | 3 | 통합 진단 모델 | 연결 진단 탭 하나로 원인과 다음 행동을 판정 | UI 안내는 반영, doctor/API 통합 남음 |
 | 4 | Tailscale/방화벽 실패 분류 | 네트워크 실패를 사용자가 바로 이해 | timeout/token 거부는 분리, 세부 분류 부족 |
 | 5 | 재부팅 복구 검증 | 다음 날 켜도 자동 사용 가능하게 보장 | 수동 검증 필요 |
@@ -32,12 +32,16 @@
 - server list 확인 실패 회귀 테스트 추가
 - `self-verify-connector.ps1` 추가: 실제 PC 등록 후 Git/Bun/repo/workspace/login task/local daemon/advertised daemon/server registry를 JSON report로 남김
 - `install-connector.ps1`가 등록 완료 후 connector 검증 리포트를 자동 실행
+- `install-connector.ps1`가 Git/Bun 부재, local-only server URL, Tailscale 주소 미확보, 방화벽 미보정, stale port, repo 보정, dependency 설치, register-self, connector verification 단계를 `connector-install-*.json`으로 남김
+- early failure에서도 `%LOCALAPPDATA%\DeskRelay\reports\connector-install-*.json` 리포트가 남도록 보강
+- local-only URL/Tailscale 주소 없음/stale port 점유는 같은 명령을 재실행하기 전에 필요한 다음 행동을 콘솔과 JSON report에 같이 남김
 - 가상 self-host e2e에서 connector 검증 리포트 성공 여부 확인
 - 메인 화면, 설정 도움말, 연결 진단 탭, README/Manual에 connector 검증 리포트 위치와 단계명을 반영
+- 가상 self-host e2e에서 서버 설치, 원격 등록, 원격 fs 사용, 디바이스 제거 경로 통과 확인
 
 ## P0. 다른 Windows PC 등록 실증
 
-**상태:** 최우선. 자동 검증 리포트와 UI 안내는 추가됨. 실제 PC 실증 필요
+**상태:** 최우선. 자동 검증 리포트, early failure install report, 가상 e2e는 통과. 실제 PC 실증 필요
 
 **남은 작업**
 
@@ -47,25 +51,25 @@
 - 같은 등록 명령을 3회 반복 실행해도 device row가 하나로 수렴하는지 확인
 - 등록 성공 뒤 서버 UI 디바이스 목록에 즉시 표시되는지 확인
 - 등록한 디바이스 선택 뒤 세션 조회와 새 채팅 시작까지 확인
-- 등록 명령 마지막의 connector verification report 저장 여부 확인
+- 등록 명령 마지막의 connector install report와 connector verification report 저장 여부 확인
 - 실패 시 report의 `failed`, `warn`, `action`, `evidence`가 실제 사용자가 취할 행동으로 충분한지 확인
 
 **통과 기준**
 
 - 실패하면 어느 단계에서 막혔는지 명령 출력만으로 알 수 있다.
 - 성공하면 daemon URL, log path, server device list 확인 결과가 출력된다.
-- verification report JSON에 실패/경고/증거/다음 행동이 남는다.
+- install/verification report JSON에 실패/경고/증거/다음 행동이 남는다.
 - 같은 PC를 반복 등록해도 중복 디바이스가 생기지 않는다.
 
 ## P0. 설치 스크립트 재실행성 강화
 
-**상태:** stale daemon token/port 감지는 추가됨. installer 전체 reconcile은 남음
+**상태:** stale daemon token/port 감지와 early failure install report는 추가됨. 실제 PC의 dirty repo/권한 부족/툴 미설치 수렴 검증은 남음
 
 **남은 작업**
 
-- Git 미설치, Bun 미설치, PATH 꼬임을 설치 스크립트가 감지하고 명확히 안내
+- Git 미설치, Bun 미설치, PATH 꼬임을 설치 스크립트가 감지하고 명확히 안내하는지 실제 PC에서 확인
 - 기존 connector process, login task, auth token, workspace root, server registry를 한 번에 보정
-- stale port 점유 시 관리자 권한 필요 여부와 직접 종료 명령을 출력
+- stale port 점유 시 관리자 권한 필요 여부와 직접 종료 명령이 충분한지 실제 PC에서 확인
 - 실패 후 같은 명령을 다시 붙여넣으면 이전 실패 흔적 때문에 새 실패가 생기지 않게 보장
 - 검증 리포트 실패 항목을 installer가 더 직접적으로 repair할 수 있게 연결
 - Git/Bun 자동 설치가 실패했을 때, 다음 수동 명령과 재실행 조건을 한 화면에 남기기

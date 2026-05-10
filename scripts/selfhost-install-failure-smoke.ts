@@ -83,7 +83,7 @@ try {
 
 async function runSmoke(h: Harness): Promise<void> {
   step("script guard: local-only server URL");
-  await expectPowerShellFailure(
+  const localOnlyOutput = await expectPowerShellFailure(
     [
       "-ExecutionPolicy",
       "Bypass",
@@ -98,13 +98,14 @@ async function runSmoke(h: Harness): Promise<void> {
     ],
     "server URL is local-only",
   );
+  await assertInstallReport(localOnlyOutput, "server-url-local-only");
   pass("local-only copied URL is rejected before install");
 
   if (hasTailscaleIpv4()) {
     pass("tailscale-missing guard skipped because this runner already has a Tailscale IPv4");
   } else {
     step("script guard: tailscale URL without tailscale IP");
-    await expectPowerShellFailure(
+    const tailscaleOutput = await expectPowerShellFailure(
       [
         "-ExecutionPolicy",
         "Bypass",
@@ -119,6 +120,7 @@ async function runSmoke(h: Harness): Promise<void> {
       ],
       "has no Tailscale IPv4 address",
     );
+    await assertInstallReport(tailscaleOutput, "tailscale-missing");
     pass("tailscale URL fails clearly when target PC has no tailscale IP");
   }
 
@@ -323,7 +325,7 @@ async function expectRegisterSelfFailure(
   throw new Error(`expected registerSelf to fail with "${expected}"`);
 }
 
-async function expectPowerShellFailure(args: string[], expected: string): Promise<void> {
+async function expectPowerShellFailure(args: string[], expected: string): Promise<string> {
   const result = await runCommandCapture("powershell.exe", [
     "-NoProfile",
     "-NonInteractive",
@@ -336,6 +338,23 @@ async function expectPowerShellFailure(args: string[], expected: string): Promis
   if (!combined.includes(expected)) {
     throw new Error(`expected PowerShell failure containing "${expected}", got:\n${combined}`);
   }
+  return combined;
+}
+
+async function assertInstallReport(output: string, expectedStepId: string): Promise<void> {
+  const match = output.match(/installer report:\s*(.+)/i);
+  assert(Boolean(match?.[1]), `installer report path missing from output:\n${output}`);
+  const reportPath = match?.[1]?.trim() ?? "";
+  assert(existsSync(reportPath), `installer report was not written: ${reportPath}`);
+  const report = JSON.parse(await Bun.file(reportPath).text()) as {
+    status?: string;
+    steps?: Array<{ id?: string; status?: string }>;
+  };
+  assert(report.status === "failed", `expected failed install report, got ${report.status}`);
+  assert(
+    report.steps?.some((step) => step.id === expectedStepId && step.status === "failed"),
+    `install report did not include failed step ${expectedStepId}`,
+  );
 }
 
 async function postDevice(

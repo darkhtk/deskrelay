@@ -15,12 +15,100 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:InstallSteps = @()
+$script:InstallReportPath = ""
+
+function Get-DefaultInstallReportPath {
+  $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+  $base = if ($env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA "DeskRelay\reports"
+  } else {
+    Join-Path $HOME ".deskrelay\reports"
+  }
+  New-Item -ItemType Directory -Force -Path $base | Out-Null
+  return Join-Path $base "connector-install-$stamp.json"
+}
+
+function Add-InstallStep {
+  param(
+    [string]$Id,
+    [string]$Label,
+    [ValidateSet("ok", "warn", "failed", "skipped", "repaired")]
+    [string]$Status,
+    [string]$Summary,
+    [string[]]$Evidence = @(),
+    [string]$Action = ""
+  )
+  $row = [ordered]@{
+    id = $Id
+    label = $Label
+    status = $Status
+    summary = $Summary
+  }
+  if ($Evidence.Count -gt 0) {
+    $row.evidence = @($Evidence)
+  }
+  if (-not [string]::IsNullOrWhiteSpace($Action)) {
+    $row.action = $Action
+  }
+  $script:InstallSteps += [pscustomobject]$row
+}
+
+function Save-InstallReport {
+  param([ValidateSet("succeeded", "failed")][string]$Status)
+  if ([string]::IsNullOrWhiteSpace($script:InstallReportPath)) {
+    $script:InstallReportPath = Get-DefaultInstallReportPath
+  }
+  $failedCount = @($script:InstallSteps | Where-Object { $_.status -eq "failed" }).Count
+  $warnCount = @($script:InstallSteps | Where-Object { $_.status -eq "warn" }).Count
+  $report = [ordered]@{
+    generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    status = if ($failedCount -gt 0) { "failed" } else { $Status }
+    failed = $failedCount
+    warnings = $warnCount
+    server = $Server
+    repo = $Repo
+    repoUrl = $RepoUrl
+    port = $Port
+    workspaceRoots = $WorkspaceRoots
+    label = $Label
+    steps = @($script:InstallSteps)
+  }
+  $dir = Split-Path -Parent $script:InstallReportPath
+  if ($dir) {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -Path $script:InstallReportPath
+}
+
+function Fail-Install {
+  param(
+    [string]$Id,
+    [string]$Label,
+    [string]$Summary,
+    [string[]]$Evidence = @(),
+    [string]$Action = ""
+  )
+  Add-InstallStep -Id $Id -Label $Label -Status "failed" -Summary $Summary -Evidence $Evidence -Action $Action
+  throw $Summary
+}
+
+trap {
+  $message = $_.Exception.Message
+  if (-not ($script:InstallSteps | Where-Object { $_.status -eq "failed" } | Select-Object -First 1)) {
+    Add-InstallStep -Id "installer-error" -Label "installer" -Status "failed" -Summary $message -Action "Fix the reported condition and run the same registration command again."
+  }
+  Save-InstallReport -Status "failed"
+  Write-Host "installer report: $script:InstallReportPath"
+  break
+}
 
 function Require-Command {
   param([string]$Name, [string]$Hint)
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-    throw "$Name is required. $Hint"
+    Fail-Install -Id "require-$Name" -Label $Name -Summary "$Name is required." -Action $Hint
   }
+  Add-InstallStep -Id "require-$Name" -Label $Name -Status "ok" -Summary "$Name command is available"
 }
 
 function Invoke-Native {
@@ -143,25 +231,40 @@ function Select-AdvertiseEndpoint {
   param([string]$ServerUrl)
   $serverHost = Get-UrlHost -Url $ServerUrl
   if (Test-IsLocalHost -HostName $serverHost) {
-    throw "The DeskRelay server URL is local-only ($serverHost). Open the server command/status file on the server PC and copy the Tailscale or LAN URL, then run registration again."
+    Fail-Install `
+      -Id "server-url-local-only" `
+      -Label "server URL" `
+      -Summary "The DeskRelay server URL is local-only ($serverHost)." `
+      -Action "Open DESKRELAY-SERVER-CODE.txt on the server PC and copy the Tailscale or LAN URL, then run registration again."
   }
   $tailscaleIp = Get-TailscaleIp
   if (Test-IsTailscaleHost -HostName $serverHost) {
     if (-not $tailscaleIp) {
-      throw "DeskRelay server is being reached through Tailscale ($serverHost), but this PC has no Tailscale IPv4 address. Install Tailscale, log in to the same tailnet, then run this registration command again."
+      Fail-Install `
+        -Id "tailscale-missing" `
+        -Label "Tailscale" `
+        -Summary "DeskRelay server is being reached through Tailscale ($serverHost), but this PC has no Tailscale IPv4 address." `
+        -Action "Install Tailscale, log in to the same tailnet as the server PC, then run this registration command again."
     }
+    Add-InstallStep -Id "advertise-host" -Label "advertised connector address" -Status "ok" -Summary "selected Tailscale address $tailscaleIp" -Evidence @("serverHost=$serverHost")
     return [PSCustomObject]@{ Host = $tailscaleIp; Kind = "Tailscale" }
   }
 
   $lanIp = Get-LanIp -ServerHost $serverHost
   if ($lanIp) {
+    Add-InstallStep -Id "advertise-host" -Label "advertised connector address" -Status "ok" -Summary "selected LAN address $lanIp" -Evidence @("serverHost=$serverHost")
     return [PSCustomObject]@{ Host = $lanIp; Kind = "LAN" }
   }
   if ($tailscaleIp) {
+    Add-InstallStep -Id "advertise-host" -Label "advertised connector address" -Status "ok" -Summary "selected fallback Tailscale address $tailscaleIp" -Evidence @("serverHost=$serverHost")
     return [PSCustomObject]@{ Host = $tailscaleIp; Kind = "Tailscale" }
   }
 
-  throw "Could not detect an externally reachable LAN or Tailscale IPv4 address for this PC."
+  Fail-Install `
+    -Id "advertise-host-missing" `
+    -Label "advertised connector address" `
+    -Summary "Could not detect an externally reachable LAN or Tailscale IPv4 address for this PC." `
+    -Action "Connect this PC to the same LAN or Tailscale tailnet as the DeskRelay server, then run registration again."
 }
 
 function Test-IsAdministrator {
@@ -185,6 +288,7 @@ function Ensure-ConnectorFirewallRule {
   $name = "DeskRelay Connector $Port"
   if (-not (Test-IsAdministrator)) {
     Write-Warning "Skipped Windows Firewall setup because PowerShell is not elevated. Registration will still verify server-to-connector access and fail with a firewall hint if the port is blocked."
+    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "warn" -Summary "not elevated; firewall rule was not changed" -Action "If advertised daemon verification fails, rerun PowerShell as Administrator or allow inbound TCP $Port."
     return
   }
   try {
@@ -195,8 +299,10 @@ function Ensure-ConnectorFirewallRule {
       New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Any | Out-Null
     }
     Write-Host "Windows Firewall allows inbound TCP $Port for DeskRelay."
+    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "ok" -Summary "inbound TCP $Port is allowed"
   } catch {
     Write-Warning "Could not update Windows Firewall automatically: $($_.Exception.Message)"
+    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "warn" -Summary "could not update firewall rule" -Evidence @($_.Exception.Message) -Action "Allow inbound TCP $Port manually if advertised daemon verification fails."
   }
 }
 
@@ -277,6 +383,9 @@ function Stop-StaleConnector {
   $pids += @(Get-DeskRelaySupervisorPids)
   $pids += @(Get-PortOwnerPids -Port $Port)
   $pids = @($pids | Where-Object { $_ } | Sort-Object -Unique)
+  if ($pids.Count -eq 0) {
+    Add-InstallStep -Id "stale-process-cleanup" -Label "stale connector cleanup" -Status "ok" -Summary "no stale connector process found on TCP $Port"
+  }
   foreach ($processId in $pids) {
     Stop-ProcessTree -ProcessId ([int]$processId)
   }
@@ -291,7 +400,14 @@ function Stop-StaleConnector {
 
   $remaining = @(Get-PortOwnerPids -Port $Port)
   if ($remaining.Count -gt 0) {
-    throw "TCP $Port is still held by process id(s): $($remaining -join ', '). Close those processes or rerun PowerShell as Administrator, then run this registration command again."
+    Fail-Install `
+      -Id "stale-port" `
+      -Label "stale connector cleanup" `
+      -Summary "TCP $Port is still held by process id(s): $($remaining -join ', ')." `
+      -Action "Close those processes or rerun PowerShell as Administrator, then run this registration command again."
+  }
+  if ($pids.Count -gt 0) {
+    Add-InstallStep -Id "stale-process-cleanup" -Label "stale connector cleanup" -Status "repaired" -Summary "stopped stale process id(s): $($pids -join ', ')"
   }
 }
 
@@ -317,6 +433,7 @@ function Backup-ExistingRepo {
     $i += 1
   }
   Write-Warning "$Reason Moving existing folder to $backup"
+  Add-InstallStep -Id "repo-backup" -Label "DeskRelay repo" -Status "repaired" -Summary $Reason -Evidence @("backup=$backup")
   Set-Location -LiteralPath (Split-Path -Parent $Path)
   Move-Item -LiteralPath $Path -Destination $backup
 }
@@ -325,6 +442,7 @@ function Clone-Fresh {
   param([string]$Url, [string]$Path)
   Invoke-Native "git" @("clone", $Url, $Path)
   Set-Location -LiteralPath $Path
+  Add-InstallStep -Id "repo" -Label "DeskRelay repo" -Status "repaired" -Summary "cloned fresh repo" -Evidence @("path=$Path", "origin=$Url")
 }
 
 function Ensure-DeskRelayRepo {
@@ -364,6 +482,7 @@ function Ensure-DeskRelayRepo {
     Invoke-Native "git" @("fetch", "origin", "main")
     Invoke-Native "git" @("checkout", "main")
     Invoke-Native "git" @("pull", "--ff-only", "origin", "main")
+    Add-InstallStep -Id "repo" -Label "DeskRelay repo" -Status "ok" -Summary "repo is clean and up to date" -Evidence @("path=$Path", "origin=$Url")
   } catch {
     Backup-ExistingRepo -Path $Path -Reason "DeskRelay could not update cleanly."
     Clone-Fresh -Url $Url -Path $Path
@@ -398,6 +517,7 @@ if (-not (Test-Path -LiteralPath $WorkspaceRoots)) {
 }
 
 Invoke-Native "bun" @("install")
+Add-InstallStep -Id "dependencies" -Label "dependencies" -Status "ok" -Summary "bun install completed"
 Invoke-Native "bun" @(
   "run",
   "packages/pc-connector-daemon/src/bin.ts",
@@ -417,6 +537,7 @@ Invoke-Native "bun" @(
   "--label",
   $Label
 )
+Add-InstallStep -Id "register-self" -Label "connector registration" -Status "ok" -Summary "register-self completed"
 
 $verifier = Join-Path $Repo "scripts\self-verify-connector.ps1"
 if (Test-Path -LiteralPath $verifier) {
@@ -440,10 +561,14 @@ if (Test-Path -LiteralPath $verifier) {
     "-Label",
     $Label
   )
+  Add-InstallStep -Id "verification" -Label "connector verification" -Status "ok" -Summary "self-verify-connector completed"
 } else {
   Write-Warning "Connector verifier not found: $verifier"
+  Add-InstallStep -Id "verification" -Label "connector verification" -Status "warn" -Summary "self-verify-connector was not found" -Evidence @($verifier)
 }
 
 Write-Host "External connector URL verified: http://$($endpoint.Host):$Port"
 Write-Host "Registered $Label with DeskRelay server: $serverUrl"
+Save-InstallReport -Status "succeeded"
+Write-Host "installer report: $script:InstallReportPath"
 Open-DeskRelaySite -ServerUrl $serverUrl -Token $SiteToken
