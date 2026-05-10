@@ -10,10 +10,13 @@
 - advertised daemon probe 실패를 token 거부, timeout, 네트워크/방화벽 접근 실패로 우선 분류
 - server 등록 뒤 `/api/devices`를 다시 조회해 실제 목록 반영 확인
 - server list 확인 실패 회귀 테스트 추가
+- `self-verify-connector.ps1` 추가: 실제 PC 등록 후 Git/Bun/repo/workspace/login task/local daemon/advertised daemon/server registry를 JSON report로 남김
+- `install-connector.ps1`가 등록 완료 후 connector 검증 리포트를 자동 실행
+- 가상 self-host e2e에서 connector 검증 리포트 성공 여부 확인
 
 ## P0. 다른 Windows PC 등록 실증
 
-**상태:** 자동 테스트 보강됨, 실제 PC 실증 필요
+**상태:** 자동 검증 리포트 추가됨, 실제 PC 실증 필요
 
 **남은 작업**
 
@@ -23,16 +26,18 @@
 - 같은 등록 명령을 3회 반복 실행해도 device row가 하나로 수렴하는지 확인
 - 등록 성공 뒤 서버 UI 디바이스 목록에 즉시 표시되는지 확인
 - 등록한 디바이스 선택 뒤 세션 조회와 새 채팅 시작까지 확인
+- 등록 명령 마지막의 connector verification report 저장 여부 확인
 
 **통과 기준**
 
 - 실패하면 어느 단계에서 막혔는지 명령 출력만으로 알 수 있다.
 - 성공하면 daemon URL, log path, server device list 확인 결과가 출력된다.
+- verification report JSON에 실패/경고/증거/다음 행동이 남는다.
 - 같은 PC를 반복 등록해도 중복 디바이스가 생기지 않는다.
 
 ## P0. 설치 스크립트 재실행성 강화
 
-**상태:** `register-self`는 일부 reconcile됨, installer 전체 reconcile은 남음
+**상태:** 등록 후 검증 리포트는 추가됨, installer 전체 reconcile은 남음
 
 **남은 작업**
 
@@ -40,6 +45,7 @@
 - 기존 connector process, login task, auth token, workspace root, server registry를 한 번에 보정
 - stale port 점유 시 관리자 권한 필요 여부와 직접 종료 명령을 출력
 - 실패 후 같은 명령을 다시 붙여넣으면 이전 실패 흔적 때문에 새 실패가 생기지 않게 보장
+- 검증 리포트 실패 항목을 installer가 더 직접적으로 repair할 수 있게 연결
 
 **통과 기준**
 

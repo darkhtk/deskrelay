@@ -86,7 +86,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
 2. 메인 화면의 `다른 PC 등록 명령`을 통째로 복사합니다.
 3. 제어하려는 Windows PC의 PowerShell에 붙여넣습니다.
 4. 스크립트가 repo 설치/업데이트, connector 실행, Tailscale/LAN 주소 감지, 서버 접근 검증, 디바이스 등록을 처리합니다.
-5. 성공하면 서버의 디바이스 목록에 새 PC가 나타납니다.
+5. 마지막에 connector 검증 리포트를 생성합니다. 실패하면 어느 단계에서 막혔는지 `ERROR` 항목과 report 경로가 표시됩니다.
+6. 성공하면 서버의 디바이스 목록에 새 PC가 나타납니다.
 
 등록된 PC의 connector 기본 포트는 `18091`입니다.
 
@@ -146,6 +147,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-start.ps1
 - 서버 PC에서 대상 PC의 `18091` 포트에 접근 가능한지 확인
 - 대상 PC 방화벽이 inbound TCP `18091`을 막고 있지 않은지 확인
 - 기존 connector가 포트를 점유하고 있으면 종료 후 등록 명령 재실행
+- 등록 명령 마지막에 출력된 `verification report` JSON을 확인
 
 ### `outside the configured workspace roots`
 

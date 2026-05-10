@@ -215,6 +215,44 @@ async function runScenario(ctx: TestContext): Promise<void> {
   assert(device?.label === "Virtual Remote PC", `unexpected device label: ${device?.label}`);
   pass(`remote registered (${device.id})`);
 
+  step("connector verification report");
+  const verifyReportPath = join(ctx.root, "connector-verify.json");
+  await runPowerShell([
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    join(ctx.repoRoot, "scripts", "self-verify-connector.ps1"),
+    "-Server",
+    ctx.serverUrl,
+    "-SiteToken",
+    ctx.siteToken,
+    "-Repo",
+    ctx.repoRoot,
+    "-Port",
+    String(ctx.remoteDaemonPort),
+    "-DaemonUrl",
+    `http://127.0.0.1:${ctx.remoteDaemonPort}`,
+    "-DaemonToken",
+    await readDaemonToken(remoteAuth),
+    "-WorkspaceRoots",
+    ctx.remoteWorkspace,
+    "-Label",
+    "Virtual Remote PC",
+    "-ReportPath",
+    verifyReportPath,
+    "-SkipLoginTask",
+  ]);
+  const verifyReport = JSON.parse(await Bun.file(verifyReportPath).text()) as {
+    status?: string;
+    steps?: Array<{ id: string; status: string }>;
+  };
+  assert(verifyReport.status === "succeeded", `verification failed: ${verifyReport.status}`);
+  assert(
+    verifyReport.steps?.some((step) => step.id === "server-registry" && step.status === "ok"),
+    "verification report did not confirm server registry",
+  );
+  pass("connector verification report confirms server registry");
+
   step("remote use");
   const roots = await waitJson<{ mode: string; roots: string[] }>(
     `${ctx.serverUrl}/api/devices/${device.id}/fs/roots`,
@@ -430,6 +468,20 @@ function restoreEnv(snapshot: Map<string, string | undefined>): void {
       process.env[key] = value;
     }
   }
+}
+
+async function readDaemonToken(path: string): Promise<string> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() <= deadline) {
+    try {
+      const parsed = JSON.parse(await Bun.file(path).text()) as { token?: unknown };
+      if (typeof parsed.token === "string") return parsed.token;
+    } catch {
+      // wait
+    }
+    await sleep(200);
+  }
+  throw new Error(`daemon auth token was not written: ${path}`);
 }
 
 function assert(condition: unknown, message: string): asserts condition {

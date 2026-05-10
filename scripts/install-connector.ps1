@@ -418,6 +418,32 @@ Invoke-Native "bun" @(
   $Label
 )
 
+$verifier = Join-Path $Repo "scripts\self-verify-connector.ps1"
+if (Test-Path -LiteralPath $verifier) {
+  Invoke-Native "powershell" @(
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    $verifier,
+    "-Server",
+    $serverUrl,
+    "-SiteToken",
+    $SiteToken,
+    "-Repo",
+    $Repo,
+    "-Port",
+    [string]$Port,
+    "-DaemonUrl",
+    "http://$($endpoint.Host):$Port",
+    "-WorkspaceRoots",
+    $WorkspaceRoots,
+    "-Label",
+    $Label
+  )
+} else {
+  Write-Warning "Connector verifier not found: $verifier"
+}
+
 Write-Host "External connector URL verified: http://$($endpoint.Host):$Port"
 Write-Host "Registered $Label with DeskRelay server: $serverUrl"
 Open-DeskRelaySite -ServerUrl $serverUrl -Token $SiteToken
