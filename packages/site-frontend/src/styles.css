@@ -1726,12 +1726,7 @@ body.sidebar-resizing * {
   min-height: 0;
   border: 0;
   background-color: var(--surface-card);
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 30px,
-    color-mix(in srgb, var(--border-subtle) 54%, transparent) 31px
-  );
+  background-image: none;
   color: var(--text);
   font: 12px / 1.7 ui-monospace, monospace;
   outline: none;
@@ -1771,6 +1766,10 @@ body.sidebar-resizing * {
     width: auto;
     left: 0;
     border-left: 0;
+  }
+  .instruction-editor-textarea {
+    font-size: 16px;
+    line-height: 1.55;
   }
   .instruction-editor-actions {
     flex-wrap: wrap;

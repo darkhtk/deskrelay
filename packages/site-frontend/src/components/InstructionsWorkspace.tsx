@@ -41,16 +41,6 @@ function sourceLines(content: string): string[] {
   return content.split(/\r\n|\r|\n/);
 }
 
-function lineOffset(content: string, line: number): number {
-  if (line <= 1) return 0;
-  let offset = 0;
-  const lines = content.split(/\r\n|\r|\n/);
-  for (let i = 0; i < Math.min(line - 1, lines.length); i += 1) {
-    offset += (lines[i]?.length ?? 0) + 1;
-  }
-  return offset;
-}
-
 export const InstructionsWorkspace: Component<InstructionsWorkspaceProps> = (props) => {
   const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
   const [activeEdit, setActiveEdit] = createSignal<ActiveEdit | null>(null);
@@ -77,9 +67,6 @@ export const InstructionsWorkspace: Component<InstructionsWorkspaceProps> = (pro
     if (!active || !source) return;
     queueMicrotask(() => {
       if (!editorEl) return;
-      const offset = lineOffset(props.draft(source), active.line);
-      editorEl.focus();
-      editorEl.setSelectionRange(offset, offset);
       const lineHeight = 20;
       editorEl.scrollTop = Math.max(0, (active.line - 3) * lineHeight);
     });
