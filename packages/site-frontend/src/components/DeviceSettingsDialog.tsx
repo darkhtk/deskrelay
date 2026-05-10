@@ -5,6 +5,7 @@ import { clearDevicePrefs, getDeviceDefaultCwd, setDeviceDefaultCwd } from "../d
 import { t } from "../i18n.ts";
 import { newChatCwdBrowseMode } from "../ui-prefs.ts";
 import { CwdPicker } from "./CwdPicker.tsx";
+import { SettingsScopeLabel, SettingsScopeLabels } from "./SettingsScopeLabel.tsx";
 
 export interface DeviceSettingsPanelProps {
   device: Device;
@@ -129,7 +130,10 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
   return (
     <div class="settings-stack">
       <section class="settings-card">
-        <h3 class="settings-card-title">{t("dsd.section.identity")}</h3>
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">{t("dsd.section.identity")}</h3>
+          <SettingsScopeLabel scope="current device" />
+        </div>
         <div class="settings-row">
           <input
             id="device-label"
@@ -162,7 +166,10 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
       </section>
 
       <section class="settings-card">
-        <h3 class="settings-card-title">{t("dsd.section.cwd")}</h3>
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">{t("dsd.section.cwd")}</h3>
+          <SettingsScopeLabel scope="current device" />
+        </div>
         <p class="settings-card-help">{t("dsd.cwd.help")}</p>
         <div class="settings-row">
           <div style={{ flex: "1", "min-width": "0", position: "relative" }}>
@@ -185,7 +192,10 @@ export const DeviceSettingsPanel: Component<DeviceSettingsPanelProps> = (props) 
       </section>
 
       <section class="settings-card">
-        <h3 class="settings-card-title danger">{t("dsd.section.danger")}</h3>
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title danger">{t("dsd.section.danger")}</h3>
+          <SettingsScopeLabels scopes={["current device", "server"]} />
+        </div>
         <p class="settings-card-help">
           {currentIsServer() ? t("dsd.unpair.server.help") : t("dsd.danger.help")}
         </p>

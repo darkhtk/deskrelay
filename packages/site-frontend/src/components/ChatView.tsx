@@ -71,6 +71,7 @@ import {
 import { NewChatCard } from "./NewChatCard.tsx";
 import { OfflineHint, daemonOfflineBannerMessage, isDaemonOfflineMessage } from "./OfflineHint.tsx";
 import { PermissionModePicker } from "./PermissionModePicker.tsx";
+import { SettingsScopeLabel, SettingsScopeLabels } from "./SettingsScopeLabel.tsx";
 import { type SessionEntry, type SessionGroupDeleteProgress, SessionList } from "./SessionList.tsx";
 import { Transcript } from "./Transcript.tsx";
 
@@ -137,7 +138,9 @@ function writeSidebarWidth(value: number) {
   }
 }
 
-function cleanStoredDeviceSelection(selection: StoredChatDeviceSelection): StoredChatDeviceSelection | null {
+function cleanStoredDeviceSelection(
+  selection: StoredChatDeviceSelection,
+): StoredChatDeviceSelection | null {
   const next: StoredChatDeviceSelection = {};
   if (typeof selection.id === "string" && selection.id.trim()) next.id = selection.id.trim();
   if (typeof selection.label === "string" && selection.label.trim()) {
@@ -295,7 +298,9 @@ function writeStoredChatSessionSelections(selections: StoredChatSessionSelection
   }
 }
 
-function readStoredChatSessionSelection(deviceId: string | null): StoredChatSessionSelection | null {
+function readStoredChatSessionSelection(
+  deviceId: string | null,
+): StoredChatSessionSelection | null {
   if (!deviceId) return null;
   return readStoredChatSessionSelections()[deviceId] ?? null;
 }
@@ -2020,7 +2025,9 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const headerStatusText = () =>
     `${t(infrastructureStatus().mainKey)} · ${infrastructureStatusDetail()}`;
   const headerStatusTitle = () =>
-    [sessionNotice(), headerStatusText()].filter((part): part is string => Boolean(part)).join(" · ");
+    [sessionNotice(), headerStatusText()]
+      .filter((part): part is string => Boolean(part))
+      .join(" · ");
 
   const deviceStatusTone = () => {
     const device = activeDevice();
@@ -2324,10 +2331,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setSidebarOpen(false);
     const dev = effectiveDeviceId();
     if (options.persist !== false) {
-      writeStoredChatSessionSelection(
-        dev,
-        summary ? sessionSelectionFromSummary(summary) : null,
-      );
+      writeStoredChatSessionSelection(dev, summary ? sessionSelectionFromSummary(summary) : null);
     }
     if (!summary) {
       setTranscript([]);
@@ -2918,6 +2922,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
         <Show when={selectedSidebarTab() === "sessions"}>
           <div class="sidebar-section">
+            <span class="sidebar-label sidebar-label-with-scope">
+              <span>{t("chat.sidebar.tab.sessions")}</span>
+              <SettingsScopeLabel scope="current device" />
+            </span>
             <div class="sidebar-primary-row">
               <button
                 type="button"
@@ -3006,7 +3014,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
         <Show when={selectedSidebarTab() === "permissions"}>
           <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
-            <span class="sidebar-label">{t("chat.sidebar.permissions.title")}</span>
+            <span class="sidebar-label sidebar-label-with-scope">
+              <span>{t("chat.sidebar.permissions.title")}</span>
+              <SettingsScopeLabels scopes={["current device", "current session"]} />
+            </span>
             <Show
               when={effectiveDeviceId() && remoteClaudeInstance()}
               fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.not-ready")}</p>}
@@ -3024,7 +3035,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                       {(source) => (
                         <div class="sidebar-info-block sidebar-permission-source">
                           <div class="sidebar-info-title">
-                            <span>{source.label}</span>
+                            <span class="sidebar-info-title-main">
+                              <span>{source.label}</span>
+                              <SettingsScopeLabel
+                                scope={
+                                  source.label === "User settings"
+                                    ? "current device"
+                                    : "current session"
+                                }
+                              />
+                            </span>
                             <span class="sidebar-info-count">
                               {source.exists
                                 ? t("chat.sidebar.permissions.count", {
@@ -3187,7 +3207,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
         <Show when={selectedSidebarTab() === "instructions"}>
           <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
-            <span class="sidebar-label">{t("chat.sidebar.instructions.title")}</span>
+            <span class="sidebar-label sidebar-label-with-scope">
+              <span>{t("chat.sidebar.instructions.title")}</span>
+              <SettingsScopeLabel scope="current session" />
+            </span>
             <Show
               when={effectiveDeviceId()}
               fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.not-ready")}</p>}
@@ -3203,7 +3226,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   <div class="sidebar-flat-list">
                     <div class="sidebar-info-block">
                       <div class="sidebar-info-title">
-                        <span>{t("instructions.workspace.current")}</span>
+                        <span class="sidebar-info-title-main">
+                          <span>{t("instructions.workspace.current")}</span>
+                          <SettingsScopeLabel scope="current session" />
+                        </span>
                       </div>
                       <div class="sidebar-info-path" title={selectedSessionCwd()}>
                         {selectedSessionCwd() || t("instructions.workspace.no-cwd")}
@@ -3219,7 +3245,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                         {(source) => (
                           <div class="sidebar-info-block">
                             <div class="sidebar-info-title">
-                              <span>{source.label}</span>
+                              <span class="sidebar-info-title-main">
+                                <span>{source.label}</span>
+                                <SettingsScopeLabel scope="current session" />
+                              </span>
                               <span class="sidebar-info-count">
                                 {source.exists
                                   ? t("chat.sidebar.instructions.exists")
@@ -3251,7 +3280,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
         <Show when={selectedSidebarTab() === "skills"}>
           <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
-            <span class="sidebar-label">{t("chat.sidebar.skills.title")}</span>
+            <span class="sidebar-label sidebar-label-with-scope">
+              <span>{t("chat.sidebar.skills.title")}</span>
+              <SettingsScopeLabels scopes={["current device", "current session"]} />
+            </span>
             <Show
               when={effectiveDeviceId() && remoteClaudeInstance()}
               fallback={<p class="sidebar-empty">{t("chat.sidebar.panel.not-ready")}</p>}
@@ -3462,11 +3494,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                     ? t("chat.sidebar.instructions.saving")
                     : t("chat.sidebar.instructions.save")}
                 </button>
-                <button
-                  type="button"
-                  class="sidebar-inline-button"
-                  onClick={editor().onClose}
-                >
+                <button type="button" class="sidebar-inline-button" onClick={editor().onClose}>
                   {t("instructions.workspace.close")}
                 </button>
               </div>

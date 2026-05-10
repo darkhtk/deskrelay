@@ -29,6 +29,7 @@ import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
+import { SettingsScopeLabel } from "./components/SettingsScopeLabel.tsx";
 import { t } from "./i18n.ts";
 import {
   instructionScopeEmptyDescription,
@@ -563,7 +564,10 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
   return (
     <div class="settings-stack">
       <section class="settings-card">
-        <h3 class="settings-card-title">{t("settings.theme.title")}</h3>
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">{t("settings.theme.title")}</h3>
+          <SettingsScopeLabel scope="browser" />
+        </div>
         <div class="settings-toggle-row">
           <div class="settings-toggle-copy">
             <span class="settings-toggle-title">{t("settings.theme.title")}</span>
@@ -588,7 +592,10 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
       </section>
 
       <section class="settings-card">
-        <h3 class="settings-card-title">{t("settings.autostart.title")}</h3>
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">{t("settings.autostart.title")}</h3>
+          <SettingsScopeLabel scope="server" />
+        </div>
         <label class="settings-check-row">
           <input
             type="checkbox"
@@ -609,7 +616,10 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
       </section>
 
       <section class="settings-card">
-        <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
+          <SettingsScopeLabel scope="browser" />
+        </div>
         <div class="settings-slider-row">
           <div class="settings-toggle-copy">
             <span class="settings-toggle-title">{t("settings.chat-font-size.title")}</span>
@@ -691,6 +701,10 @@ const LanguageSettings: Component<{ onClearAccess: () => void }> = (props) => {
       </section>
 
       <section class="settings-card settings-danger-section">
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">{t("app.settings.tab.general")}</h3>
+          <SettingsScopeLabel scope="browser" />
+        </div>
         <div class="settings-row">
           <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>
             {t("app.hard-refresh")}
@@ -864,6 +878,7 @@ const InstructionSettings: Component<{
         <div>
           <h3 class="settings-card-title">{t("instructions.title")}</h3>
         </div>
+        <SettingsScopeLabel scope="current device" />
       </div>
 
       <div class="settings-row instruction-context-row">

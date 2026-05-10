@@ -4,6 +4,7 @@ import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { clearDevicePrefs } from "../device-prefs.ts";
 import { t } from "../i18n.ts";
 import { DeviceSettingsPanel } from "./DeviceSettingsDialog.tsx";
+import { SettingsScopeLabel } from "./SettingsScopeLabel.tsx";
 
 export interface DeviceShellProps {
   onDevicesChanged?: () => void | Promise<void>;
@@ -76,7 +77,12 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
       handleRemoved([id]);
       if (result.cleanup && !result.cleanup.ok) {
         props.onManualCleanupRequired?.([
-          { id: device.id, label: device.label, daemonUrl: device.daemonUrl, cleanup: result.cleanup },
+          {
+            id: device.id,
+            label: device.label,
+            daemonUrl: device.daemonUrl,
+            cleanup: result.cleanup,
+          },
         ]);
       }
       void notifyDevicesChanged().catch((err) => {
@@ -92,7 +98,10 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
   return (
     <div class="settings-device-layout">
       <section class="settings-card settings-device-list">
-        <h3 class="settings-card-title">{t("ds.section.devices")}</h3>
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">{t("ds.section.devices")}</h3>
+          <SettingsScopeLabel scope="server" />
+        </div>
         <Show
           when={(devices() ?? []).length > 0}
           fallback={<p class="settings-card-help">{t("ds.devices.empty")}</p>}
@@ -119,7 +128,9 @@ export const DeviceShell: Component<DeviceShellProps> = (props) => {
                 </button>
                 <Show
                   when={!isServerDevice(device)}
-                  fallback={<span class="settings-list-item-meta">{t("ds.devices.server.locked")}</span>}
+                  fallback={
+                    <span class="settings-list-item-meta">{t("ds.devices.server.locked")}</span>
+                  }
                 >
                   <button
                     type="button"

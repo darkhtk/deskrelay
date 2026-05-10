@@ -1087,6 +1087,35 @@ body.sidebar-resizing * {
   letter-spacing: 0.08em;
   color: var(--text-faint);
 }
+.sidebar-label-with-scope {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-scope-labels {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.settings-scope-label {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  padding: 3px 7px;
+  text-transform: none;
+  white-space: nowrap;
+}
 
 /* ---- Phase 6a — device picker (browser-side multi-device) ---- */
 .sidebar-section-devices {
@@ -1426,6 +1455,12 @@ body.sidebar-resizing * {
   gap: 8px;
   font-size: 13px;
   color: var(--text);
+}
+.sidebar-info-title-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 .sidebar-info-count {
   color: var(--text-faint);
@@ -4437,6 +4472,13 @@ dialog.approval-modal-root,
 .settings-card-title.danger {
   color: var(--danger);
 }
+.settings-card-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
 .settings-card-help {
   font-size: 13px;
   color: var(--text-muted);
@@ -4941,6 +4983,9 @@ dialog.approval-modal-root,
   gap: 12px;
 }
 .connection-diagnostics-header h3 {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
   margin: 0;
   font-size: 18px;
 }

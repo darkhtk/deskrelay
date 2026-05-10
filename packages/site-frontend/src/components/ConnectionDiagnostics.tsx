@@ -11,6 +11,7 @@ import {
 } from "../api.ts";
 import { deviceDisplayName } from "../device-display.ts";
 import { t } from "../i18n.ts";
+import { SettingsScopeLabels } from "./SettingsScopeLabel.tsx";
 
 export interface ConnectionDiagnosticsProps {
   initialSelectedDeviceId?: string | null;
@@ -345,7 +346,10 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   return (
     <div class="connection-diagnostics">
       <div class="connection-diagnostics-header">
-        <h3>{t("conn-diag.title")}</h3>
+        <h3>
+          {t("conn-diag.title")}
+          <SettingsScopeLabels scopes={["server", "current device"]} />
+        </h3>
         <Show when={updatedAt()}>
           {(date) => (
             <span class="connection-diagnostics-updated">
