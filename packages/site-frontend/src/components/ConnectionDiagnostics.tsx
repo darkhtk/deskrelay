@@ -239,6 +239,14 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         onAction: diagnosticsError() ? refresh : undefined,
       },
       {
+        tone: updateStatusTone(serverUpdateStatus()),
+        label: "서버 업데이트",
+        detail: updateStatusText(serverUpdateStatus()),
+        action: serverUpdateStatus()?.state === "running" ? undefined : "서버 업데이트",
+        onAction: serverUpdateStatus()?.state === "running" ? undefined : () => void updateServer(),
+        disabled: updating() !== null,
+      },
+      {
         tone: buildTone(),
         label: "버전",
         detail: buildDetail(health()?.build, snapshot?.build),
