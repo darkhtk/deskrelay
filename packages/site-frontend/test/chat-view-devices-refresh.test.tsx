@@ -501,6 +501,131 @@ describe("ChatView device refresh bridge", () => {
     ).toBe(true);
   });
 
+  test("restores the last selected session for the selected device", async () => {
+    localStorage.setItem("cr.chat-selected-device-id", DEV.id);
+    localStorage.setItem(
+      "cr.chat-selected-sessions",
+      JSON.stringify({
+        [DEV.id]: {
+          sessionId: "sess_restore_1",
+          cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+          modifiedAt: "2026-04-30T00:00:00.000Z",
+        },
+        [OTHER_DEV.id]: {
+          sessionId: "sess_other_device",
+          cwd: "C:\\Users\\desktop\\Projects\\deskrelay",
+        },
+      }),
+    );
+    let readSessionParams: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV, OTHER_DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${DEV.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.0-test",
+              loadedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          method?: string;
+          params?: Record<string, unknown>;
+        };
+        if (body.method === "sessions.list") {
+          return new Response(
+            JSON.stringify({
+              result: [
+                {
+                  sessionId: "sess_restore_1",
+                  cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+                  title: "Restored session",
+                  modifiedAt: "2026-04-30T00:00:00.000Z",
+                  fileSize: 512,
+                },
+                {
+                  sessionId: "sess_newer_but_not_selected",
+                  cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+                  title: "Newer unselected session",
+                  modifiedAt: "2026-04-30T01:00:00.000Z",
+                  fileSize: 512,
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (body.method === "sessions.read") {
+          readSessionParams = body.params ?? null;
+          return new Response(
+            JSON.stringify({
+              result: {
+                sessionId: "sess_restore_1",
+                cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+                events: [],
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (body.method === "context.usage") {
+          return new Response(JSON.stringify({ result: { usage: null } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (body.method === "usage.limits") {
+          return new Response(
+            JSON.stringify({ result: { session: null, week: null } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Restored session");
+      expect(readSessionParams).toMatchObject({
+        sessionId: "sess_restore_1",
+        cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+      });
+    });
+    const stored = JSON.parse(localStorage.getItem("cr.chat-selected-sessions") ?? "{}") as Record<
+      string,
+      { sessionId?: string; cwd?: string }
+    >;
+    expect(stored[DEV.id]).toMatchObject({
+      sessionId: "sess_restore_1",
+      cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+    });
+    expect(stored[OTHER_DEV.id]).toMatchObject({ sessionId: "sess_other_device" });
+  });
+
   test("polls CTX with /context and Session/Week with Claude usage limits", async () => {
     vi.useFakeTimers();
     let contextUsageRequests = 0;

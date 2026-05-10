@@ -83,6 +83,7 @@ const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
 const SIDEBAR_WIDTH_STORAGE_KEY = "cr.sidebar-width";
 const CHAT_SELECTED_DEVICE_STORAGE_KEY = "cr.chat-selected-device-id";
+const CHAT_SELECTED_SESSIONS_STORAGE_KEY = "cr.chat-selected-sessions";
 const SIDEBAR_MIN_WIDTH = 260;
 const SIDEBAR_MAX_WIDTH = SIDEBAR_MIN_WIDTH * 2;
 const SIDEBAR_COLLAPSE_DRAG_THRESHOLD = 32;
@@ -93,6 +94,14 @@ interface StoredChatDeviceSelection {
   label?: string;
   daemonUrl?: string;
 }
+
+interface StoredChatSessionSelection {
+  sessionId?: string;
+  cwd?: string;
+  modifiedAt?: string;
+}
+
+type StoredChatSessionSelections = Record<string, StoredChatSessionSelection>;
 
 function latestTranscriptEvents(events: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
   return events.length > SESSION_TRANSCRIPT_EVENT_LIMIT
@@ -223,6 +232,98 @@ function writeStoredChatDeviceSelection(selection: StoredChatDeviceSelection | n
   } catch {
     // Keep the in-memory selection even when browser storage is unavailable.
   }
+}
+
+function cleanStoredSessionSelection(
+  selection: StoredChatSessionSelection,
+): StoredChatSessionSelection | null {
+  const sessionId = selection.sessionId?.trim();
+  if (!sessionId) return null;
+  const next: StoredChatSessionSelection = { sessionId };
+  if (selection.cwd?.trim()) next.cwd = selection.cwd.trim();
+  if (selection.modifiedAt?.trim()) next.modifiedAt = selection.modifiedAt.trim();
+  return next;
+}
+
+function sessionSelectionFromSummary(summary: ClaudeSessionSummary): StoredChatSessionSelection {
+  return {
+    sessionId: summary.sessionId,
+    cwd: summary.cwd,
+    modifiedAt: summary.modifiedAt,
+  };
+}
+
+function readStoredChatSessionSelections(): StoredChatSessionSelections {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const value = localStorage.getItem(CHAT_SELECTED_SESSIONS_STORAGE_KEY)?.trim();
+    if (!value) return {};
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const next: StoredChatSessionSelections = {};
+    for (const [deviceId, rawSelection] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!deviceId.trim() || !rawSelection || typeof rawSelection !== "object") continue;
+      const selection = cleanStoredSessionSelection(rawSelection as StoredChatSessionSelection);
+      if (selection) next[deviceId.trim()] = selection;
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredChatSessionSelections(selections: StoredChatSessionSelections) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const next: StoredChatSessionSelections = {};
+    for (const [deviceId, selection] of Object.entries(selections)) {
+      const cleanDeviceId = deviceId.trim();
+      const cleanSelection = cleanStoredSessionSelection(selection);
+      if (cleanDeviceId && cleanSelection) next[cleanDeviceId] = cleanSelection;
+    }
+    if (Object.keys(next).length) {
+      localStorage.setItem(CHAT_SELECTED_SESSIONS_STORAGE_KEY, JSON.stringify(next));
+    } else {
+      localStorage.removeItem(CHAT_SELECTED_SESSIONS_STORAGE_KEY);
+    }
+  } catch {
+    // Keep the in-memory selection even when browser storage is unavailable.
+  }
+}
+
+function readStoredChatSessionSelection(deviceId: string | null): StoredChatSessionSelection | null {
+  if (!deviceId) return null;
+  return readStoredChatSessionSelections()[deviceId] ?? null;
+}
+
+function writeStoredChatSessionSelection(
+  deviceId: string | null,
+  selection: StoredChatSessionSelection | null,
+) {
+  if (!deviceId) return;
+  const selections = readStoredChatSessionSelections();
+  const cleanSelection = selection ? cleanStoredSessionSelection(selection) : null;
+  if (cleanSelection) {
+    selections[deviceId] = cleanSelection;
+  } else {
+    delete selections[deviceId];
+  }
+  writeStoredChatSessionSelections(selections);
+}
+
+function resolveStoredSessionSelection(
+  selection: StoredChatSessionSelection | null,
+  list: ClaudeSessionSummary[] | undefined,
+): ClaudeSessionSummary | null {
+  const stored = selection ? cleanStoredSessionSelection(selection) : null;
+  if (!stored || !list?.length) return null;
+  if (stored.cwd) {
+    const exact = list.find(
+      (summary) => summary.sessionId === stored.sessionId && summary.cwd === stored.cwd,
+    );
+    if (exact) return exact;
+  }
+  return list.find((summary) => summary.sessionId === stored.sessionId) ?? null;
 }
 
 function runErrorMessage(content: unknown): string | null {
@@ -1539,6 +1640,57 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   let transcriptScroller!: HTMLDivElement;
   let deviceSelect: HTMLSelectElement | undefined;
   let sidebarResizeCleanup: (() => void) | undefined;
+  let lastSelectedSessionDeviceId: string | null = effectiveDeviceId();
+
+  function clearStoredSessionForActiveDevice() {
+    writeStoredChatSessionSelection(effectiveDeviceId(), null);
+  }
+
+  function resetSelectedSessionState(options: { clearStored?: boolean } = {}) {
+    if (options.clearStored) clearStoredSessionForActiveDevice();
+    setSelectedSession(null);
+    setTranscript([]);
+    setCwd("");
+    resetConfirmedPermissionMode();
+  }
+
+  createEffect(() => {
+    const deviceId = effectiveDeviceId();
+    if (deviceId === lastSelectedSessionDeviceId) return;
+    lastSelectedSessionDeviceId = deviceId;
+    resetSelectedSessionState();
+    clearContextUsage();
+    setError(null);
+  });
+
+  createEffect(() => {
+    const deviceId = effectiveDeviceId();
+    const instance = remoteClaudeInstance();
+    const list = sessions();
+    if (!deviceId || !instance || !list || sessions.loading) return;
+
+    const current = selectedSession();
+    if (current) {
+      const stillListed = list.some(
+        (summary) => summary.sessionId === current.sessionId && summary.cwd === current.cwd,
+      );
+      if (stillListed) return;
+      const stored = readStoredChatSessionSelection(deviceId);
+      if (stored?.sessionId === current.sessionId) writeStoredChatSessionSelection(deviceId, null);
+      resetSelectedSessionState();
+      return;
+    }
+
+    if (showNewChat() || cwd().trim()) return;
+    const stored = readStoredChatSessionSelection(deviceId);
+    if (!stored) return;
+    const restored = resolveStoredSessionSelection(stored, list);
+    if (!restored) {
+      if (list.length > 0) writeStoredChatSessionSelection(deviceId, null);
+      return;
+    }
+    void selectSession(restored.sessionId, undefined, { persist: true });
+  });
 
   function isTranscriptAtBottomNow(): boolean {
     if (!transcriptScroller) return true;
@@ -1859,8 +2011,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }),
   );
 
-  const connectionStatusDetail = () =>
-    connectionStatus().detailOverride ?? t(connectionStatus().detailKey);
   const infrastructureStatusDetail = () =>
     infrastructureStatus().detailOverride ?? t(infrastructureStatus().detailKey);
   const headerStatusText = () =>
@@ -2065,10 +2215,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
     // Drop selection if the active session is the one being deleted, then
     // refresh the list so the row disappears.
+    const storedSession = readStoredChatSessionSelection(dev);
+    if (storedSession?.sessionId === id) writeStoredChatSessionSelection(dev, null);
     if (selectedSession()?.sessionId === id) {
-      setSelectedSession(null);
-      setTranscript([]);
-      resetConfirmedPermissionMode();
+      resetSelectedSessionState();
     }
     mutateSessions((current) => (current ?? []).filter((session) => session.sessionId !== id));
     try {
@@ -2144,11 +2294,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return;
     }
     if (selectedSession()?.cwd === cwdToDelete) {
-      setSelectedSession(null);
-      setTranscript([]);
-      setCwd("");
-      resetConfirmedPermissionMode();
+      resetSelectedSessionState();
     }
+    const storedSession = readStoredChatSessionSelection(dev);
+    if (storedSession?.cwd === cwdToDelete) writeStoredChatSessionSelection(dev, null);
     mutateSessions((current) => (current ?? []).filter((session) => session.cwd !== cwdToDelete));
     try {
       await refetchSessions();
@@ -2159,19 +2308,29 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
   }
 
-  async function selectSession(id: string, _entry: SessionEntry | undefined) {
+  async function selectSession(
+    id: string,
+    _entry: SessionEntry | undefined,
+    options: { persist?: boolean } = {},
+  ) {
     const summary = (sessions() ?? []).find((s) => s.sessionId === id) ?? null;
     setSelectedSession(summary);
     setError(null);
     setShowNewChat(false);
     setSidebarOpen(false);
+    const dev = effectiveDeviceId();
+    if (options.persist !== false) {
+      writeStoredChatSessionSelection(
+        dev,
+        summary ? sessionSelectionFromSummary(summary) : null,
+      );
+    }
     if (!summary) {
       setTranscript([]);
       return;
     }
     setCwd(summary.cwd);
     resetConfirmedPermissionMode();
-    const dev = effectiveDeviceId();
     const inst = remoteClaudeInstance();
     if (!dev || !inst) return;
     try {
@@ -2214,10 +2373,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     } catch (err) {
       const message = (err as Error).message;
       if (isMissingSessionFileError(message)) {
-        setSelectedSession(null);
-        setTranscript([]);
-        setCwd("");
-        resetConfirmedPermissionMode();
+        resetSelectedSessionState({ clearStored: true });
         void refetchSessions();
         setTransientSessionNotice(t("chat.error.session-missing"));
         return;
@@ -2232,6 +2388,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     // button), so we explicitly keep the sidebar open here ??closing it
     // would hide the very surface the user just clicked into. The
     // drawer closes when the cwd is confirmed (startSession) instead.
+    clearStoredSessionForActiveDevice();
     setShowNewChat(true);
     setSelectedSession(null);
     setTranscript([]);
@@ -2257,6 +2414,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   function startSession(input: { cwd: string; permissionMode: ClaudePermissionMode }) {
+    clearStoredSessionForActiveDevice();
     setCwd(input.cwd);
     setNextPermissionMode(input.permissionMode);
     setShowNewChat(false);
