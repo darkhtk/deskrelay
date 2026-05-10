@@ -57,6 +57,7 @@ import {
 import { t } from "../i18n.ts";
 import {
   applyTemporaryInstructionsToMessage,
+  chatTranscriptEventLimit,
   newChatCwdBrowseMode,
   scrollToBottomOnSend,
 } from "../ui-prefs.ts";
@@ -77,7 +78,6 @@ import { Transcript } from "./Transcript.tsx";
 
 const SESSION_LIMIT = 200;
 const SESSION_READ_MAX_BYTES = 8 * 1024 * 1024;
-const SESSION_TRANSCRIPT_EVENT_LIMIT = 100;
 const SESSION_NOTICE_AUTO_DISMISS_MS = 5000;
 const BEHAVIOR_READY_RETRY_MS = 1000;
 const BEHAVIOR_READY_MAX_RETRIES = 15;
@@ -109,9 +109,8 @@ interface StoredChatSessionSelection {
 type StoredChatSessionSelections = Record<string, StoredChatSessionSelection>;
 
 function latestTranscriptEvents(events: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
-  return events.length > SESSION_TRANSCRIPT_EVENT_LIMIT
-    ? events.slice(-SESSION_TRANSCRIPT_EVENT_LIMIT)
-    : events;
+  const limit = chatTranscriptEventLimit();
+  return events.length > limit ? events.slice(-limit) : events;
 }
 
 function clampSidebarWidth(value: number): number {
@@ -2419,11 +2418,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     const inst = remoteClaudeInstance();
     if (!dev || !inst) return;
     try {
+      const eventLimit = chatTranscriptEventLimit();
       const res = await api.callBehavior<ClaudeSessionTranscript>(dev, inst, "sessions.read", {
         cwd: summary.cwd,
         sessionId: summary.sessionId,
         maxBytes: SESSION_READ_MAX_BYTES,
-        eventLimit: SESSION_TRANSCRIPT_EVENT_LIMIT,
+        eventLimit,
       });
       if (res.error) throw new Error(res.error.message);
       const rawEvents = (res.result?.events ?? []) as ClaudeStreamEvent[];
@@ -2447,9 +2447,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       }
       scrollTranscriptToBottom();
       if (res.result?.eventsTruncated || locallyEventsTruncated) {
-        setTransientSessionNotice(
-          t("chat.error.session-event-limited", { count: SESSION_TRANSCRIPT_EVENT_LIMIT }),
-        );
+        setTransientSessionNotice(t("chat.error.session-event-limited", { count: eventLimit }));
       } else if (res.result?.truncated) {
         setTransientSessionNotice(
           t("chat.error.session-truncated", { mb: bytesToMiB(SESSION_READ_MAX_BYTES) }),
@@ -2467,6 +2465,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       setTranscript([]);
     }
   }
+
+  let previousTranscriptEventLimit = chatTranscriptEventLimit();
+  createEffect(() => {
+    const nextLimit = chatTranscriptEventLimit();
+    const current = selectedSession();
+    if (nextLimit === previousTranscriptEventLimit) return;
+    previousTranscriptEventLimit = nextLimit;
+    if (!current) return;
+    void selectSession(current.sessionId, undefined, { persist: false });
+  });
 
   function openNewChat() {
     // The NewChatCard renders INSIDE the sidebar (cwd picker + start

@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ChatView } from "../src/components/ChatView.tsx";
 import { t } from "../src/i18n.ts";
+import { setChatTranscriptEventLimit } from "../src/ui-prefs.ts";
 
 const DEV = {
   id: "dev_refresh_1",
@@ -56,6 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  setChatTranscriptEventLimit(100);
   localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -109,10 +111,10 @@ describe("ChatView device refresh bridge", () => {
             });
           }
           if (body.method === "usage.limits") {
-            return new Response(
-              JSON.stringify({ result: { session: null, week: null } }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            );
+            return new Response(JSON.stringify({ result: { session: null, week: null } }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
           }
         }
       }
@@ -591,10 +593,10 @@ describe("ChatView device refresh bridge", () => {
           });
         }
         if (body.method === "usage.limits") {
-          return new Response(
-            JSON.stringify({ result: { session: null, week: null } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
+          return new Response(JSON.stringify({ result: { session: null, week: null } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
         }
       }
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -1940,14 +1942,15 @@ describe("ChatView device refresh bridge", () => {
     });
   });
 
-  test("loads only the latest 100 events and scrolls selected sessions to the bottom", async () => {
+  test("uses the configured transcript event limit and scrolls selected sessions to the bottom", async () => {
+    setChatTranscriptEventLimit(150);
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       cb(0);
       return 1;
     });
 
     let readParams: Record<string, unknown> | null = null;
-    const events = Array.from({ length: 105 }, (_, i) => ({
+    const events = Array.from({ length: 155 }, (_, i) => ({
       type: "assistant",
       message: {
         role: "assistant",
@@ -2042,15 +2045,15 @@ describe("ChatView device refresh bridge", () => {
     fireEvent.click(row);
 
     await waitFor(() => {
-      expect(readParams?.eventLimit).toBe(100);
+      expect(readParams?.eventLimit).toBe(150);
       expect(scroller.scrollTop).toBe(1234);
       expect(container.textContent).not.toContain("message 0");
-      expect(container.textContent).toContain("message 104");
+      expect(container.textContent).toContain("message 154");
       expect(container.textContent).toContain(
-        t("chat.error.session-event-limited", { count: 100 }),
+        t("chat.error.session-event-limited", { count: 150 }),
       );
       expect(container.querySelector(".chat-header-status")?.textContent).toContain(
-        t("chat.error.session-event-limited", { count: 100 }),
+        t("chat.error.session-event-limited", { count: 150 }),
       );
       expect(container.querySelector(".chat-header-current-status")?.textContent).toContain(
         t("connection.status.online.main"),
@@ -2063,17 +2066,14 @@ describe("ChatView device refresh bridge", () => {
         t("connection.status.online.main"),
       );
       expect(container.querySelector(".upstream-banner")?.textContent ?? "").not.toContain(
-        t("chat.error.session-event-limited", { count: 100 }),
+        t("chat.error.session-event-limited", { count: 150 }),
       );
       expect(container.textContent).not.toContain("8 MiB");
     });
   });
 
   test("waits for the run SSE stream and scrolls composer sends/live CLI events into view", async () => {
-    localStorage.setItem(
-      `cr:device:${DEV.id}:defaultCwd`,
-      "C:\\Users\\darkh\\Projects\\deskrelay",
-    );
+    localStorage.setItem(`cr:device:${DEV.id}:defaultCwd`, "C:\\Users\\darkh\\Projects\\deskrelay");
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       cb(0);
       return 1;

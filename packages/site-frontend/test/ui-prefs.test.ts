@@ -5,12 +5,17 @@ import {
   CHAT_FONT_SIZE_DEFAULT,
   CHAT_FONT_SIZE_MAX,
   CHAT_FONT_SIZE_MIN,
+  CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT,
+  CHAT_TRANSCRIPT_EVENT_LIMIT_MAX,
+  CHAT_TRANSCRIPT_EVENT_LIMIT_MIN,
   chatFontSize,
+  chatTranscriptEventLimit,
   getTemporaryInstructionPrefs,
   resetTemporaryInstructionPrefs,
   newChatCwdBrowseMode,
   setAppTheme,
   setChatFontSize,
+  setChatTranscriptEventLimit,
   setNewChatCwdBrowseMode,
   setTemporaryInstructionPrefs,
   setShowCtxUsageMeter,
@@ -26,6 +31,7 @@ afterEach(() => {
   resetTemporaryInstructionPrefs();
   setAppTheme("light");
   setChatFontSize(CHAT_FONT_SIZE_DEFAULT);
+  setChatTranscriptEventLimit(CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT);
   setShowCtxUsageMeter(true);
   setShowSessionUsageMeter(true);
   setShowWeekUsageMeter(true);
@@ -65,6 +71,24 @@ describe("chat font size preferences", () => {
 
     setChatFontSize(CHAT_FONT_SIZE_MIN - 10);
     expect(chatFontSize()).toBe(CHAT_FONT_SIZE_MIN);
+  });
+});
+
+describe("transcript display limit preferences", () => {
+  test("default to the latest 100 events", () => {
+    expect(chatTranscriptEventLimit()).toBe(CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT);
+  });
+
+  test("can persist and clamp the transcript display limit", () => {
+    setChatTranscriptEventLimit(350);
+    expect(chatTranscriptEventLimit()).toBe(350);
+    expect(localStorage.getItem("cr.chat-transcript-event-limit")).toBe("350");
+
+    setChatTranscriptEventLimit(CHAT_TRANSCRIPT_EVENT_LIMIT_MAX + 500);
+    expect(chatTranscriptEventLimit()).toBe(CHAT_TRANSCRIPT_EVENT_LIMIT_MAX);
+
+    setChatTranscriptEventLimit(CHAT_TRANSCRIPT_EVENT_LIMIT_MIN - 50);
+    expect(chatTranscriptEventLimit()).toBe(CHAT_TRANSCRIPT_EVENT_LIMIT_MIN);
   });
 });
 

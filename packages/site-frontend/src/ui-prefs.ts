@@ -7,10 +7,14 @@ const SHOW_WEEK_USAGE_METER_KEY = "cr.show-week-usage-meter";
 const TEMP_INSTRUCTIONS_KEY = "cr.instructions.temp-session";
 const THEME_KEY = "cr.theme";
 const CHAT_FONT_SIZE_KEY = "cr.chat-font-size";
+const CHAT_TRANSCRIPT_EVENT_LIMIT_KEY = "cr.chat-transcript-event-limit";
 const NEW_CHAT_CWD_BROWSE_MODE_KEY = "cr.new-chat-cwd-browse-mode";
 export const CHAT_FONT_SIZE_DEFAULT = 15;
 export const CHAT_FONT_SIZE_MIN = 13;
 export const CHAT_FONT_SIZE_MAX = 20;
+export const CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT = 100;
+export const CHAT_TRANSCRIPT_EVENT_LIMIT_MIN = 100;
+export const CHAT_TRANSCRIPT_EVENT_LIMIT_MAX = 1000;
 
 export type AppTheme = "light" | "dark";
 export type NewChatCwdBrowseMode = "allowed-roots" | "unrestricted";
@@ -64,6 +68,25 @@ function readChatFontSize(): number {
   }
 }
 
+function clampChatTranscriptEventLimit(value: number): number {
+  if (!Number.isFinite(value)) return CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT;
+  return Math.min(
+    CHAT_TRANSCRIPT_EVENT_LIMIT_MAX,
+    Math.max(CHAT_TRANSCRIPT_EVENT_LIMIT_MIN, Math.round(value)),
+  );
+}
+
+function readChatTranscriptEventLimit(): number {
+  try {
+    const raw = globalThis.localStorage?.getItem(CHAT_TRANSCRIPT_EVENT_LIMIT_KEY);
+    if (!raw) return CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT;
+    const value = Number(raw);
+    return clampChatTranscriptEventLimit(value);
+  } catch {
+    return CHAT_TRANSCRIPT_EVENT_LIMIT_DEFAULT;
+  }
+}
+
 function readNewChatCwdBrowseMode(): NewChatCwdBrowseMode {
   try {
     const value = globalThis.localStorage?.getItem(NEW_CHAT_CWD_BROWSE_MODE_KEY);
@@ -107,6 +130,9 @@ const [temporaryInstructions, setTemporaryInstructionsSignal] = createSignal(
 );
 const [appTheme, setAppThemeSignal] = createSignal<AppTheme>(readTheme());
 const [chatFontSize, setChatFontSizeSignal] = createSignal(readChatFontSize());
+const [chatTranscriptEventLimit, setChatTranscriptEventLimitSignal] = createSignal(
+  readChatTranscriptEventLimit(),
+);
 const [newChatCwdBrowseMode, setNewChatCwdBrowseModeSignal] = createSignal<NewChatCwdBrowseMode>(
   readNewChatCwdBrowseMode(),
 );
@@ -114,6 +140,7 @@ const [newChatCwdBrowseMode, setNewChatCwdBrowseModeSignal] = createSignal<NewCh
 export {
   appTheme,
   chatFontSize,
+  chatTranscriptEventLimit,
   newChatCwdBrowseMode,
   scrollToBottomOnSend,
   showCtxUsageMeter,
@@ -170,6 +197,16 @@ export function setChatFontSize(value: number): void {
     // Private mode etc. The in-memory signal still updates for this tab.
   }
   setChatFontSizeSignal(next);
+}
+
+export function setChatTranscriptEventLimit(value: number): void {
+  const next = clampChatTranscriptEventLimit(value);
+  try {
+    globalThis.localStorage?.setItem(CHAT_TRANSCRIPT_EVENT_LIMIT_KEY, String(next));
+  } catch {
+    // Private mode etc. The in-memory signal still updates for this tab.
+  }
+  setChatTranscriptEventLimitSignal(next);
 }
 
 export function setNewChatCwdBrowseMode(value: NewChatCwdBrowseMode): void {

@@ -48,13 +48,17 @@ import {
   type AppTheme,
   CHAT_FONT_SIZE_MAX,
   CHAT_FONT_SIZE_MIN,
+  CHAT_TRANSCRIPT_EVENT_LIMIT_MAX,
+  CHAT_TRANSCRIPT_EVENT_LIMIT_MIN,
   type NewChatCwdBrowseMode,
   appTheme,
   chatFontSize,
+  chatTranscriptEventLimit,
   newChatCwdBrowseMode,
   scrollToBottomOnSend,
   setAppTheme,
   setChatFontSize,
+  setChatTranscriptEventLimit,
   setNewChatCwdBrowseMode,
   setScrollToBottomOnSend,
   setShowCtxUsageMeter,
@@ -1141,6 +1145,26 @@ const LanguageSettings: Component<{
           </label>
         </div>
         <p class="settings-chat-font-preview">{t("settings.chat-font-size.preview")}</p>
+        <div class="settings-slider-row">
+          <div class="settings-toggle-copy">
+            <span class="settings-toggle-title">{t("settings.transcript-event-limit.title")}</span>
+            <span class="settings-toggle-help">{t("settings.transcript-event-limit.help")}</span>
+          </div>
+          <label class="settings-slider-control">
+            <input
+              type="range"
+              min={CHAT_TRANSCRIPT_EVENT_LIMIT_MIN}
+              max={CHAT_TRANSCRIPT_EVENT_LIMIT_MAX}
+              step="50"
+              value={chatTranscriptEventLimit()}
+              aria-label={t("settings.transcript-event-limit.title")}
+              onInput={(event) => setChatTranscriptEventLimit(Number(event.currentTarget.value))}
+            />
+            <span class="settings-slider-value">
+              {t("settings.transcript-event-limit.value", { count: chatTranscriptEventLimit() })}
+            </span>
+          </label>
+        </div>
         <label class="settings-check-row">
           <input
             type="checkbox"
