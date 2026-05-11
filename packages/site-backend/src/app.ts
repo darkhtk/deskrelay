@@ -18,6 +18,7 @@ import {
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
   type ManagerRegistrationDiagnosis,
+  type ManagerRouteCapability,
   type ManagerSecurityBoundary,
   type ManagerSecurityBoundarySummary,
   type ManagerSystemSummary,
@@ -1122,6 +1123,282 @@ async function readSelfServerAutostartStatus(
 
 const SERVER_STARTED_AT = new Date().toISOString();
 
+const SITE_ROUTE_CAPABILITIES = [
+  { method: "GET", path: "/healthz", description: "Read server version and basic health." },
+  { method: "GET", path: "/api/announcement", description: "Read the public update notice." },
+  { method: "GET", path: "/api/capabilities", description: "List server API capabilities." },
+  { method: "GET", path: "/api/manager/tasks", description: "List manager tasks." },
+  { method: "POST", path: "/api/manager/tasks", description: "Create a manager task." },
+  { method: "GET", path: "/api/manager/tasks/:id", description: "Read one manager task." },
+  {
+    method: "GET",
+    path: "/api/manager/tasks/:id/logs",
+    description: "Read task execution log lines.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/tasks/:id/cancel",
+    description: "Cancel a cancellable manager task.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/tasks/:id/retry",
+    description: "Retry a failed, blocked, cancelled, or waiting manager task.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/assistant/chat",
+    description: "Send a message to the server-local DeskRelay assistant CLI.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/audit-log",
+    description: "Read manager task audit log.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/system/summary",
+    description: "Read assistant-oriented system summary.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/devices/:id/actions",
+    description: "Read safe actions available for a device.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/update/plan",
+    description: "Read a server and device update plan.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/update/status",
+    description: "Read server and device update status.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/update/all",
+    description: "Create an update-all manager task.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/registration/last-failure",
+    description: "Analyze the last failed connector registration report.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/registration/diagnose",
+    description: "Diagnose current registration prerequisites and the latest failure.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/registration/repair",
+    description: "Create a registration repair manager task.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/security/boundary",
+    description: "Read server and device security boundary summary.",
+  },
+  { method: "GET", path: "/api/devices", description: "List registered devices." },
+  { method: "POST", path: "/api/devices", description: "Register a device." },
+  {
+    method: "DELETE",
+    path: "/api/devices",
+    description: "Remove all registered devices.",
+    destructive: true,
+  },
+  { method: "GET", path: "/api/devices/update-queue", description: "List queued device updates." },
+  {
+    method: "GET",
+    path: "/api/self/register-other-pc-command",
+    description: "Generate the other-PC registration command.",
+  },
+  {
+    method: "GET",
+    path: "/api/self/remove-other-pc-command",
+    description: "Generate the other-PC cleanup command.",
+  },
+  { method: "GET", path: "/api/self/doctor", description: "Run server diagnostics." },
+  { method: "GET", path: "/api/self/logs", description: "Read server stack logs." },
+  {
+    method: "GET",
+    path: "/api/self/process/status",
+    description: "Read server process status.",
+  },
+  {
+    method: "POST",
+    path: "/api/self/process/restart",
+    description: "Restart the self-host server stack.",
+  },
+  {
+    method: "GET",
+    path: "/api/self/network/status",
+    description: "Read server network status.",
+  },
+  {
+    method: "GET",
+    path: "/api/self/install/status",
+    description: "Read server install status.",
+  },
+  {
+    method: "GET",
+    path: "/api/self/security/boundary",
+    description: "Read server token and network boundary summary.",
+  },
+  { method: "GET", path: "/api/self/autostart", description: "Read server autostart state." },
+  {
+    method: "PUT",
+    path: "/api/self/autostart",
+    description: "Enable or disable server autostart.",
+  },
+  { method: "POST", path: "/api/self/update", description: "Update self-host server." },
+  {
+    method: "GET",
+    path: "/api/self/update/status",
+    description: "Read self-host server update status.",
+  },
+  {
+    method: "GET",
+    path: "/api/self/install-reports",
+    description: "List connector install reports.",
+  },
+  {
+    method: "POST",
+    path: "/api/self/install-reports",
+    description: "Record a connector install report.",
+  },
+  { method: "PATCH", path: "/api/devices/:id", description: "Rename one registered device." },
+  {
+    method: "DELETE",
+    path: "/api/devices/:id",
+    description: "Remove one registered device.",
+    destructive: true,
+  },
+  {
+    method: "GET",
+    path: "/api/devices/:id/behaviors",
+    description: "List loaded device behaviors.",
+  },
+  {
+    method: "GET",
+    path: "/api/devices/:id/capabilities",
+    description: "Read device API capabilities.",
+  },
+  { method: "GET", path: "/api/devices/:id/logs", description: "Read device logs." },
+  {
+    method: "GET",
+    path: "/api/devices/:id/process/status",
+    description: "Read device process status.",
+  },
+  {
+    method: "POST",
+    path: "/api/devices/:id/process/restart",
+    description: "Restart the device connector.",
+  },
+  {
+    method: "GET",
+    path: "/api/devices/:id/network/status",
+    description: "Read device network status.",
+  },
+  {
+    method: "GET",
+    path: "/api/devices/:id/install/status",
+    description: "Read device install status.",
+  },
+  {
+    method: "GET",
+    path: "/api/devices/:id/security/boundary",
+    description: "Read device token, network, and workspace boundary summary.",
+  },
+  {
+    method: "POST",
+    path: "/api/devices/:id/behaviors/load",
+    description: "Load a device behavior package.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/devices/:id/behaviors/:instance",
+    description: "Unload a device behavior.",
+    destructive: true,
+  },
+  {
+    method: "POST",
+    path: "/api/devices/:id/behaviors/:instance/request",
+    description: "Call a device behavior method.",
+  },
+  {
+    method: "GET",
+    path: "/api/devices/:id/events/spaces/:spaceId/stream",
+    description: "Stream behavior events over SSE.",
+  },
+  { method: "GET", path: "/api/devices/:id/fs/list", description: "List files and directories." },
+  { method: "POST", path: "/api/devices/:id/fs/mkdir", description: "Create a directory." },
+  { method: "GET", path: "/api/devices/:id/fs/roots", description: "Read workspace root policy." },
+  {
+    method: "GET",
+    path: "/api/devices/:id/files/preview",
+    description: "Preview a guarded local file.",
+  },
+  { method: "GET", path: "/api/devices/:id/git/status", description: "Read Git status for a cwd." },
+  {
+    method: "GET",
+    path: "/api/devices/:id/instructions",
+    description: "Read Claude instructions for a cwd.",
+  },
+  {
+    method: "PUT",
+    path: "/api/devices/:id/instructions/:scope",
+    description: "Write a Claude instruction file.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/devices/:id/instructions/:scope",
+    description: "Delete a Claude instruction file.",
+    destructive: true,
+  },
+  {
+    method: "GET",
+    path: "/api/devices/:id/diagnostics",
+    description: "Read device diagnostics used by the app.",
+  },
+  {
+    method: "POST",
+    path: "/api/devices/:id/system/update",
+    description: "Update a device connector.",
+  },
+  { method: "GET", path: "/api/devices/:id/doctor", description: "Run device diagnostics." },
+  {
+    method: "POST",
+    path: "/api/devices/:id/approvals/respond",
+    description: "Resolve a pending Claude tool approval.",
+  },
+  {
+    method: "POST",
+    path: "/api/devices/:id/approvals/simulate",
+    description: "Create a simulated approval for diagnostics.",
+  },
+] satisfies ManagerRouteCapability[];
+
+const DESKRELAY_BEHAVIOR_METHODS = [
+  "account.info",
+  "chat",
+  "context.usage",
+  "diagnostics",
+  "interrupt",
+  "permissions.inspect",
+  "permissions.update",
+  "sessions.delete",
+  "sessions.deleteByCwd",
+  "sessions.deleteBySessionId",
+  "sessions.list",
+  "sessions.read",
+  "skills.delete",
+  "skills.inspect",
+  "slashCommands",
+  "usage.limits",
+];
+
 function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
   const build = options.build ?? getDeskRelayBuildInfo();
   return {
@@ -1155,184 +1432,8 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "device.update",
       "autostart",
     ],
-    routes: [
-      { method: "GET", path: "/api/capabilities", description: "List server API capabilities." },
-      { method: "GET", path: "/api/self/logs", description: "Read server stack logs." },
-      {
-        method: "GET",
-        path: "/api/self/process/status",
-        description: "Read server process status.",
-      },
-      {
-        method: "POST",
-        path: "/api/self/process/restart",
-        description: "Restart the self-host server stack.",
-      },
-      {
-        method: "GET",
-        path: "/api/self/network/status",
-        description: "Read server network status.",
-      },
-      {
-        method: "GET",
-        path: "/api/self/install/status",
-        description: "Read server install status.",
-      },
-      {
-        method: "GET",
-        path: "/api/self/security/boundary",
-        description: "Read server token and network boundary summary.",
-      },
-      { method: "GET", path: "/api/manager/tasks", description: "List manager tasks." },
-      { method: "POST", path: "/api/manager/tasks", description: "Create a manager task." },
-      { method: "GET", path: "/api/manager/tasks/:id", description: "Read one manager task." },
-      {
-        method: "POST",
-        path: "/api/manager/assistant/chat",
-        description: "Send a message to the server-local DeskRelay assistant CLI.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/tasks/:id/logs",
-        description: "Read task execution log lines.",
-      },
-      {
-        method: "POST",
-        path: "/api/manager/tasks/:id/cancel",
-        description: "Cancel a cancellable manager task.",
-      },
-      {
-        method: "POST",
-        path: "/api/manager/tasks/:id/retry",
-        description: "Retry a failed, blocked, cancelled, or waiting manager task.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/audit-log",
-        description: "Read manager task audit log.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/system/summary",
-        description: "Read assistant-oriented system summary.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/devices/:id/actions",
-        description: "Read safe actions available for a device.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/update/plan",
-        description: "Read a server and device update plan.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/update/status",
-        description: "Read server and device update status.",
-      },
-      {
-        method: "POST",
-        path: "/api/manager/update/all",
-        description: "Create an update-all manager task.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/registration/last-failure",
-        description: "Analyze the last failed connector registration report.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/registration/diagnose",
-        description: "Diagnose current registration prerequisites and the latest failure.",
-      },
-      {
-        method: "POST",
-        path: "/api/manager/registration/repair",
-        description: "Create a registration repair manager task.",
-      },
-      {
-        method: "GET",
-        path: "/api/manager/security/boundary",
-        description: "Read server and device security boundary summary.",
-      },
-      { method: "GET", path: "/api/devices", description: "List registered devices." },
-      { method: "POST", path: "/api/devices", description: "Register a device." },
-      {
-        method: "DELETE",
-        path: "/api/devices/:id",
-        description: "Remove one device.",
-        destructive: true,
-      },
-      {
-        method: "DELETE",
-        path: "/api/devices",
-        description: "Remove all registered devices.",
-        destructive: true,
-      },
-      {
-        method: "GET",
-        path: "/api/devices/:id/capabilities",
-        description: "Read device API capabilities.",
-      },
-      { method: "GET", path: "/api/devices/:id/logs", description: "Read device logs." },
-      {
-        method: "GET",
-        path: "/api/devices/:id/process/status",
-        description: "Read device process status.",
-      },
-      {
-        method: "POST",
-        path: "/api/devices/:id/process/restart",
-        description: "Restart the device connector.",
-      },
-      {
-        method: "GET",
-        path: "/api/devices/:id/network/status",
-        description: "Read device network status.",
-      },
-      {
-        method: "GET",
-        path: "/api/devices/:id/install/status",
-        description: "Read device install status.",
-      },
-      {
-        method: "GET",
-        path: "/api/devices/:id/security/boundary",
-        description: "Read device token, network, and workspace boundary summary.",
-      },
-      {
-        method: "POST",
-        path: "/api/devices/:id/behaviors/:instance/request",
-        description: "Call a device behavior method.",
-      },
-      { method: "GET", path: "/api/self/doctor", description: "Run server diagnostics." },
-      { method: "GET", path: "/api/devices/:id/doctor", description: "Run device diagnostics." },
-      { method: "POST", path: "/api/self/update", description: "Update self-host server." },
-      {
-        method: "POST",
-        path: "/api/devices/:id/system/update",
-        description: "Update a device connector.",
-      },
-    ],
-    behaviorMethods: [
-      "account.info",
-      "chat",
-      "context.usage",
-      "diagnostics",
-      "interrupt",
-      "permissions.inspect",
-      "permissions.update",
-      "sessions.delete",
-      "sessions.deleteByCwd",
-      "sessions.deleteBySessionId",
-      "sessions.list",
-      "sessions.read",
-      "skills.delete",
-      "skills.inspect",
-      "slashCommands",
-      "usage.limits",
-    ],
+    routes: SITE_ROUTE_CAPABILITIES,
+    behaviorMethods: DESKRELAY_BEHAVIOR_METHODS,
   };
 }
 
@@ -1547,10 +1648,19 @@ function managerAssistantApiBaseUrl(options: SiteAppOptions, requestUrl: string)
   return new URL(options.selfHostUrl ?? requestUrl).origin;
 }
 
+function formatRouteCapabilitiesForInstructions(routes: ManagerRouteCapability[]): string[] {
+  return routes.map((route) => {
+    const destructive = route.destructive ? " destructive" : "";
+    return `- \`${route.method} ${route.path}\`${destructive} - ${route.description}`;
+  });
+}
+
 function buildManagedManagerAssistantInstructions(input: {
   repoRoot: string;
   apiBaseUrl: string;
 }): string {
+  const routeLines = formatRouteCapabilitiesForInstructions(SITE_ROUTE_CAPABILITIES);
+  const behaviorMethodLines = DESKRELAY_BEHAVIOR_METHODS.map((method) => `- \`${method}\``);
   return [
     "# DeskRelay Manager Assistant",
     "",
@@ -1576,6 +1686,8 @@ function buildManagedManagerAssistantInstructions(input: {
     "",
     "Use the DeskRelay HTTP API for operational facts instead of guessing.",
     "For authenticated `/api/*` calls, send `Authorization: Bearer $DESKRELAY_SITE_TOKEN` when the token exists.",
+    "`GET /api/capabilities` is the live source of truth for route and behavior-method discovery.",
+    "Avoid calling `POST /api/manager/assistant/chat` from inside the assistant unless you are deliberately testing the assistant endpoint.",
     "",
     "PowerShell example:",
     "",
@@ -1585,49 +1697,34 @@ function buildManagedManagerAssistantInstructions(input: {
     'Invoke-RestMethod -Headers $headers "$env:DESKRELAY_MANAGER_API_BASE/api/manager/system/summary"',
     "```",
     "",
-    "## Preferred Read APIs",
+    "## Full HTTP API Surface",
     "",
-    "- `GET /healthz` - server version and basic health.",
-    "- `GET /api/capabilities` - server capability flags.",
-    "- `GET /api/devices` - registered devices without daemon tokens.",
-    "- `GET /api/devices/update-queue` - queued device updates.",
-    "- `GET /api/self/doctor` - server-side diagnostic report.",
-    "- `GET /api/self/network/status` - server LAN/Tailscale/public URL view.",
-    "- `GET /api/self/install/status` - server install/update/autostart state.",
-    "- `GET /api/self/update/status` - server update state.",
-    "- `GET /api/self/security/boundary` - server token and exposure boundary.",
-    "- `GET /api/manager/system/summary` - high-level manager summary.",
-    "- `GET /api/manager/update/plan` - update plan.",
-    "- `GET /api/manager/update/status` - server and device update status.",
-    "- `GET /api/manager/registration/diagnose` - registration readiness.",
-    "- `GET /api/manager/registration/last-failure` - most recent registration failure classification.",
-    "- `GET /api/manager/security/boundary` - server/device security boundary summary.",
-    "- `GET /api/manager/tasks` and `GET /api/manager/tasks/:id` - manager task state.",
-    "- `GET /api/manager/tasks/:id/logs` - task logs.",
-    "- `GET /api/manager/audit-log` - recent task audit entries.",
-    "- `GET /api/devices/:id/doctor` - device diagnostic report.",
-    "- `GET /api/devices/:id/install/status` - connector install/update state.",
-    "- `GET /api/devices/:id/network/status` - connector network state.",
-    "- `GET /api/devices/:id/process/status` - connector process state.",
-    "- `GET /api/devices/:id/security/boundary` - device security boundary.",
-    "- `GET /api/devices/:id/logs?source=connector&tail=120` - connector log tail.",
+    ...routeLines,
+    "",
+    "## Device Behavior Methods",
+    "",
+    "Call these through `POST /api/devices/:id/behaviors/:instance/request` with `{ method, params }`.",
+    "The standard Claude behavior instance is usually `remote-claude`, but inspect `/api/devices/:id/behaviors` first.",
+    "",
+    ...behaviorMethodLines,
+    "",
+    "Common payload examples:",
+    "",
+    "```json",
+    '{ "method": "sessions.list", "params": {} }',
+    '{ "method": "sessions.read", "params": { "sessionId": "..." } }',
+    '{ "method": "chat", "params": { "prompt": "...", "cwd": "..." } }',
+    '{ "method": "interrupt", "params": {} }',
+    '{ "method": "permissions.inspect", "params": { "cwd": "..." } }',
+    '{ "method": "permissions.update", "params": { "mode": "auto" } }',
+    "```",
     "",
     "## Write/Task APIs",
     "",
     "- Prefer `dryRun: true` first for manager task shortcuts when available.",
     "- Ask the user before destructive or disruptive actions unless the user already gave explicit instruction.",
-    "- `POST /api/manager/update/all` - update server and registered devices.",
-    "- `POST /api/manager/registration/repair` - repair registration flow.",
-    "- `POST /api/manager/tasks` - create a structured manager task.",
-    "- `POST /api/manager/tasks/:id/cancel` - cancel a cancellable task.",
-    "- `POST /api/manager/tasks/:id/retry` - retry a failed task.",
-    "- `POST /api/self/process/restart` - restart the self-host server process.",
-    "- `POST /api/self/update` - update the self-host server.",
-    "- `PUT /api/self/autostart` - enable or disable server autostart.",
-    "- `POST /api/devices/:id/process/restart` - restart a connector process.",
-    "- `POST /api/devices/:id/system/update` - request connector update.",
-    "- `DELETE /api/devices/:id` - remove one registered device and request cleanup.",
-    "- `DELETE /api/devices` - remove all registered devices and request cleanup.",
+    '- Manager task body: `{ "kind": "diagnose|update-server|update-device|update-all|restart-server|restart-device|repair-registration", "targetId": "optional-device-id", "dryRun": true, "requestedBy": "manager-assistant" }`.',
+    '- Shortcut task bodies accept `{ "dryRun": true, "requestedBy": "manager-assistant" }` when supported.',
     "",
     "## Safety Rules",
     "",

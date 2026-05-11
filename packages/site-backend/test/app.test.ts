@@ -290,7 +290,7 @@ describe("/api/* auth gate", () => {
     const body = (await res.json()) as {
       scope?: string;
       features?: string[];
-      routes?: Array<{ path: string }>;
+      routes?: Array<{ method: string; path: string }>;
     };
     expect(body.scope).toBe("server");
     expect(body.features).toContain("process.restart");
@@ -299,6 +299,10 @@ describe("/api/* auth gate", () => {
       true,
     );
     expect(body.routes?.some((route) => route.path === "/api/manager/update/status")).toBe(true);
+    const routeKeys = new Set(
+      body.routes?.map((route) => `${route.method} ${route.path}`).sort() ?? [],
+    );
+    expect([...routeKeys].sort()).toEqual(siteAppRouteInventory());
   });
 });
 
@@ -1101,6 +1105,9 @@ describe("manager task API", () => {
       const instructions = readFileSync(captured?.instructionsPath ?? "", "utf8");
       expect(instructions).toContain("DeskRelay Manager Assistant");
       expect(instructions).toContain("GET /api/manager/system/summary");
+      expect(instructions).toContain("POST /api/devices/:id/behaviors/:instance/request");
+      expect(instructions).toContain("PUT /api/devices/:id/instructions/:scope");
+      expect(instructions).toContain("sessions.read");
       expect(instructions).toContain("Authorization: Bearer $DESKRELAY_SITE_TOKEN");
       expect(instructions).not.toContain(TOKEN);
     } finally {
