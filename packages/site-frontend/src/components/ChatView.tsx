@@ -746,7 +746,7 @@ function isLocalSlashCommandText(value: string): boolean {
 }
 
 type SettingsOpenOptions = {
-  tab?: "general" | "devices" | "diagnostics" | "instructions";
+  tab?: "general" | "devices" | "assistant" | "diagnostics" | "instructions";
   deviceId?: string | null;
 };
 
@@ -3765,6 +3765,17 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   </Show>
                   <span class="chat-header-current-status">{headerStatusText()}</span>
                 </output>
+                <button
+                  type="button"
+                  class="chat-ai-assistant-button"
+                  onClick={() =>
+                    openSettingsOverlay({ tab: "assistant", deviceId: effectiveDeviceId() })
+                  }
+                  aria-label={t("chat.manager-assistant.open")}
+                  title={t("chat.manager-assistant.open")}
+                >
+                  AI
+                </button>
               </>
             }
           >

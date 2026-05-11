@@ -2248,6 +2248,32 @@ body.sidebar-collapsed .chat {
 .chat-header-current-status {
   flex: 1 1 auto;
 }
+.chat-ai-assistant-button {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.chat-ai-assistant-button:hover {
+  background: transparent;
+  color: var(--accent-coral);
+}
+.chat-ai-assistant-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .chat-header-instruction-actions {
   width: 100%;
   min-width: 0;
