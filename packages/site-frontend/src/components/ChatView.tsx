@@ -110,12 +110,17 @@ const USAGE_CACHE_KEY_PREFIX = "cr.usage-cache";
 const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
 const SIDEBAR_WIDTH_STORAGE_KEY = "cr.sidebar-width";
+const ASSISTANT_WIDTH_STORAGE_KEY = "cr.assistant-width";
 const CHAT_SELECTED_DEVICE_STORAGE_KEY = "cr.chat-selected-device-id";
 const CHAT_SELECTED_SESSIONS_STORAGE_KEY = "cr.chat-selected-sessions";
 const SIDEBAR_MIN_WIDTH = 260;
 const SIDEBAR_MAX_WIDTH = SIDEBAR_MIN_WIDTH * 2;
 const SIDEBAR_COLLAPSE_DRAG_THRESHOLD = 32;
 const SIDEBAR_RESIZE_KEYBOARD_STEP = 20;
+const ASSISTANT_MIN_WIDTH = 320;
+const ASSISTANT_MAX_WIDTH = ASSISTANT_MIN_WIDTH * 2;
+const ASSISTANT_COLLAPSE_DRAG_THRESHOLD = 32;
+const ASSISTANT_RESIZE_KEYBOARD_STEP = 20;
 
 interface StoredChatDeviceSelection {
   id?: string;
@@ -155,6 +160,30 @@ function writeSidebarWidth(value: number) {
   if (typeof localStorage === "undefined") return;
   try {
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(value)));
+  } catch {
+    // Ignore private-mode/localStorage failures; the in-memory width still works.
+  }
+}
+
+function clampAssistantWidth(value: number): number {
+  if (!Number.isFinite(value)) return 380;
+  return Math.min(ASSISTANT_MAX_WIDTH, Math.max(ASSISTANT_MIN_WIDTH, Math.round(value)));
+}
+
+function readAssistantWidth(): number {
+  if (typeof localStorage === "undefined") return 380;
+  try {
+    const stored = Number(localStorage.getItem(ASSISTANT_WIDTH_STORAGE_KEY));
+    return clampAssistantWidth(stored);
+  } catch {
+    return 380;
+  }
+}
+
+function writeAssistantWidth(value: number) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(ASSISTANT_WIDTH_STORAGE_KEY, String(clampAssistantWidth(value)));
   } catch {
     // Ignore private-mode/localStorage failures; the in-memory width still works.
   }
@@ -1793,10 +1822,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [sidebarWidth, setSidebarWidth] = createSignal(readSidebarWidth());
   const [sidebarResizing, setSidebarResizing] = createSignal(false);
   const [sidebarResizeWillCollapse, setSidebarResizeWillCollapse] = createSignal(false);
+  const [assistantWidth, setAssistantWidth] = createSignal(readAssistantWidth());
+  const [assistantResizing, setAssistantResizing] = createSignal(false);
+  const [assistantResizeWillClose, setAssistantResizeWillClose] = createSignal(false);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   let transcriptScroller!: HTMLDivElement;
   let deviceSelect: HTMLSelectElement | undefined;
   let sidebarResizeCleanup: (() => void) | undefined;
+  let assistantResizeCleanup: (() => void) | undefined;
   let lastSelectedSessionDeviceId: string | null = effectiveDeviceId();
 
   function markClientRunStarted(runId: string) {
@@ -2055,13 +2088,16 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     document.body.classList.toggle("sidebar-open", sidebarOpen());
     document.body.classList.toggle("sidebar-collapsed", desktopSidebarCollapsed());
     document.body.classList.toggle("sidebar-resizing", sidebarResizing());
+    document.body.classList.toggle("assistant-resizing", assistantResizing());
   });
   onCleanup(() => {
     sidebarResizeCleanup?.();
+    assistantResizeCleanup?.();
     if (typeof document !== "undefined") {
       document.body.classList.remove("sidebar-open");
       document.body.classList.remove("sidebar-collapsed");
       document.body.classList.remove("sidebar-resizing");
+      document.body.classList.remove("assistant-resizing");
     }
   });
 
@@ -2109,6 +2145,17 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   function clearSidebarResizeListeners() {
     sidebarResizeCleanup?.();
     sidebarResizeCleanup = undefined;
+  }
+
+  function commitAssistantWidth(value: number) {
+    const next = clampAssistantWidth(value);
+    setAssistantWidth(next);
+    writeAssistantWidth(next);
+  }
+
+  function clearAssistantResizeListeners() {
+    assistantResizeCleanup?.();
+    assistantResizeCleanup = undefined;
   }
 
   function beginSidebarResize(event: PointerEvent) {
@@ -2164,6 +2211,58 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setSidebarResizeWillCollapse(false);
   }
 
+  function beginAssistantResize(event: PointerEvent) {
+    if (isMobileSidebarViewport()) return;
+    event.preventDefault();
+    setAssistantOpen(true);
+    clearAssistantResizeListeners();
+
+    const startX = event.clientX;
+    const startWidth = assistantWidth();
+    let rawWidth = startWidth;
+    let closedDuringDrag = false;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault();
+      rawWidth = startWidth + startX - moveEvent.clientX;
+      if (rawWidth < ASSISTANT_MIN_WIDTH - ASSISTANT_COLLAPSE_DRAG_THRESHOLD) {
+        closedDuringDrag = true;
+        commitAssistantWidth(ASSISTANT_MIN_WIDTH);
+        setAssistantOpen(false);
+        setAssistantResizing(false);
+        setAssistantResizeWillClose(false);
+        clearAssistantResizeListeners();
+        return;
+      }
+      setAssistantResizeWillClose(false);
+      setAssistantWidth(clampAssistantWidth(rawWidth));
+    };
+
+    const handleUp = () => {
+      clearAssistantResizeListeners();
+      setAssistantResizing(false);
+      setAssistantResizeWillClose(false);
+      if (closedDuringDrag) return;
+      if (rawWidth < ASSISTANT_MIN_WIDTH - ASSISTANT_COLLAPSE_DRAG_THRESHOLD) {
+        commitAssistantWidth(ASSISTANT_MIN_WIDTH);
+        setAssistantOpen(false);
+        return;
+      }
+      commitAssistantWidth(rawWidth);
+    };
+
+    window.addEventListener("pointermove", handleMove, { passive: false });
+    window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointercancel", handleUp, { once: true });
+    assistantResizeCleanup = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+    setAssistantResizing(true);
+    setAssistantResizeWillClose(false);
+  }
+
   function handleSidebarResizeKeyDown(event: KeyboardEvent) {
     if (isMobileSidebarViewport()) return;
     const step = event.shiftKey ? SIDEBAR_RESIZE_KEYBOARD_STEP * 2 : SIDEBAR_RESIZE_KEYBOARD_STEP;
@@ -2194,6 +2293,37 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       event.preventDefault();
       commitSidebarWidth(SIDEBAR_MAX_WIDTH);
       setDesktopSidebarCollapsed(false);
+    }
+  }
+
+  function handleAssistantResizeKeyDown(event: KeyboardEvent) {
+    if (isMobileSidebarViewport()) return;
+    const step = event.shiftKey
+      ? ASSISTANT_RESIZE_KEYBOARD_STEP * 2
+      : ASSISTANT_RESIZE_KEYBOARD_STEP;
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      if (assistantWidth() <= ASSISTANT_MIN_WIDTH) {
+        commitAssistantWidth(ASSISTANT_MIN_WIDTH);
+        setAssistantOpen(false);
+        return;
+      }
+      commitAssistantWidth(assistantWidth() - step);
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      commitAssistantWidth(assistantWidth() + step);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      commitAssistantWidth(ASSISTANT_MIN_WIDTH);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      commitAssistantWidth(ASSISTANT_MAX_WIDTH);
     }
   }
 
@@ -3129,7 +3259,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       class="signed-in"
       classList={{ "assistant-panel-open": showAssistantDock() }}
       id="signed-in-pane"
-      style={{ "--sidebar-width": `${sidebarWidth()}px` }}
+      style={{
+        "--sidebar-width": `${sidebarWidth()}px`,
+        "--assistant-width": `${assistantWidth()}px`,
+      }}
     >
       <Show when={sidebarOpen()}>
         <button
@@ -4037,6 +4170,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
       <Show when={showAssistantDock()}>
         <aside class="chat-assistant-dock" aria-label={t("chat.manager-assistant.open")}>
+          <div
+            class="assistant-resize-handle"
+            classList={{
+              "is-dragging": assistantResizing(),
+              "will-close": assistantResizeWillClose(),
+            }}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Assistant 창 크기 조절"
+            aria-valuemin={ASSISTANT_MIN_WIDTH}
+            aria-valuemax={ASSISTANT_MAX_WIDTH}
+            aria-valuenow={assistantWidth()}
+            tabIndex={0}
+            onPointerDown={beginAssistantResize}
+            onKeyDown={handleAssistantResizeKeyDown}
+          />
           <ManagerAssistant context={managerAssistantContext()} />
         </aside>
       </Show>

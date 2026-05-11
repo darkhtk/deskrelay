@@ -1671,9 +1671,10 @@ async function runDefaultManagerAssistantCli(
   const assistantOptions = options.managerAssistant;
   const command =
     assistantOptions?.command ?? process.env.DESKRELAY_MANAGER_ASSISTANT_CLI ?? "claude";
-  const args =
+  const args = managerAssistantPermissionArgs(
     assistantOptions?.args ??
-    parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
+      parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS),
+  );
   const timeoutMs = Math.max(5_000, assistantOptions?.timeoutMs ?? 120_000);
   const prompt = buildManagerAssistantPrompt(input);
   const argv = [...args, prompt];
@@ -1807,6 +1808,22 @@ function managerAssistantStreamArgs(args: string[]): string[] {
   }
   if (!normalized.includes("--verbose")) normalized.push("--verbose");
   normalized.push("--output-format", "stream-json");
+  return managerAssistantPermissionArgs(normalized);
+}
+
+function managerAssistantPermissionArgs(args: string[]): string[] {
+  const normalized: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) continue;
+    if (arg === "--permission-mode") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--permission-mode=")) continue;
+    normalized.push(arg);
+  }
+  normalized.push("--permission-mode", "bypassPermissions");
   return normalized;
 }
 

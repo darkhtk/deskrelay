@@ -2189,11 +2189,11 @@ body.sidebar-collapsed .chat {
   .signed-in.assistant-panel-open {
     grid-template-columns:
       var(--sidebar-width, 260px) minmax(0, 1fr)
-      minmax(320px, 380px);
+      var(--assistant-width, 380px);
   }
 
   body.sidebar-collapsed .signed-in.assistant-panel-open {
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+    grid-template-columns: minmax(0, 1fr) var(--assistant-width, 380px);
   }
 }
 
@@ -2203,6 +2203,43 @@ body.sidebar-collapsed .chat {
   margin: 10px 12px 12px 0;
   padding: 12px 0 12px 16px;
   overflow-y: auto;
+  position: relative;
+}
+
+.assistant-resize-handle {
+  position: absolute;
+  top: 0;
+  left: -8px;
+  bottom: 0;
+  width: 16px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.assistant-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 7px;
+  width: 1px;
+  border-radius: 999px;
+  background: transparent;
+  transition: none;
+}
+
+.assistant-resize-handle:focus-visible {
+  outline: none;
+}
+
+body.assistant-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.assistant-resizing * {
+  cursor: col-resize !important;
 }
 
 .chat-assistant-mobile {
@@ -5890,6 +5927,9 @@ dialog.approval-modal-root,
     will-change: transform;
   }
   .sidebar-resize-handle {
+    display: none;
+  }
+  .assistant-resize-handle {
     display: none;
   }
   body.sidebar-open .sidebar {
