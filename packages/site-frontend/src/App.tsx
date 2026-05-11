@@ -485,53 +485,28 @@ export const App: Component = () => {
       <div class="alpha-banner" role="note" aria-label="Top bar">
         <div class="alpha-banner-legal">
           <Show when={chatReady()}>
-            <>
-              <button
-                type="button"
-                class="alpha-banner-back"
-                onClick={reopenLanding}
-                aria-label={t("app.back-home")}
-                title={t("app.back-home")}
+            <button
+              type="button"
+              class="alpha-banner-back alpha-banner-settings"
+              onClick={() => openSettings({ tab: "general", deviceId: activeWorkspace().deviceId })}
+              aria-label={t("app.settings.aria")}
+              title={t("app.settings.title")}
+            >
+              <svg
+                aria-hidden="true"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               >
-                <svg
-                  aria-hidden="true"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="m15 18-6-6 6-6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="alpha-banner-back alpha-banner-settings"
-                onClick={() =>
-                  openSettings({ tab: "general", deviceId: activeWorkspace().deviceId })
-                }
-                aria-label={t("app.settings.aria")}
-                title={t("app.settings.title")}
-              >
-                <svg
-                  aria-hidden="true"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.52a2 2 0 0 1-1 1.73l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.73v-.52a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-              </button>
-            </>
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.52a2 2 0 0 1-1 1.73l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.73v-.52a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
           </Show>
           <Show when={mainPageChrome()}>
             <span class="alpha-banner-legal-text">{t("app.self-host")}</span>
@@ -632,6 +607,7 @@ export const App: Component = () => {
                 <Show when={settingsTab() === "general"}>
                   <GeneralSettings
                     onClearAccess={handleSettingsClearAccess}
+                    onOpenLanding={reopenLanding}
                     initialSelectedDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
                     devicesRevision={devicesRevision()}
                   />
@@ -733,6 +709,7 @@ interface DeviceBuildSnapshot {
 
 const GeneralSettings: Component<{
   onClearAccess: () => void;
+  onOpenLanding?: () => void;
   initialSelectedDeviceId?: string | null;
   devicesRevision?: number;
   section?: "general" | "updates";
@@ -1406,6 +1383,13 @@ const GeneralSettings: Component<{
           <SettingsScopeLabel scope="browser" />
         </div>
         <div class="settings-row">
+          <Show when={props.onOpenLanding}>
+            {(onOpenLanding) => (
+              <button type="button" class="secondary-button" onClick={onOpenLanding()}>
+                {t("app.back-home")}
+              </button>
+            )}
+          </Show>
           <button type="button" class="secondary-button" onClick={() => void hardRefreshApp()}>
             {t("app.hard-refresh")}
           </button>

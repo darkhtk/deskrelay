@@ -1443,6 +1443,15 @@ body.sidebar-resizing * {
 .sidebar-tab-panel {
   gap: 10px;
 }
+.sidebar-skills-panel,
+.sidebar-skills-panel .sidebar-flat-list,
+.sidebar-skills-panel .sidebar-skill-list,
+.sidebar-skills-panel .sidebar-command-list {
+  max-width: 100%;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+}
 .sidebar-empty {
   margin: 0;
   color: var(--text-faint);
@@ -1838,10 +1847,11 @@ body.sidebar-resizing * {
 }
 .sidebar-skill-row {
   display: grid;
-  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1fr) auto;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  max-width: 100%;
   padding: 1px 0;
   text-align: left;
   line-height: 1.35;
@@ -1854,6 +1864,8 @@ body.sidebar-resizing * {
   min-width: 0;
   font-family: ui-monospace, monospace;
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
 }
@@ -1898,9 +1910,11 @@ body.sidebar-resizing * {
 }
 .sidebar-command-row {
   display: grid;
-  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1fr);
   align-items: baseline;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   padding: 1px 0;
   text-align: left;
   position: relative;
@@ -1910,6 +1924,8 @@ body.sidebar-resizing * {
   font-family: ui-monospace, monospace;
   font-size: 11px;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
 }

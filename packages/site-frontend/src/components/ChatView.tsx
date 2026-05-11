@@ -3470,7 +3470,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         </Show>
 
         <Show when={selectedSidebarTab() === "skills"}>
-          <div class="sidebar-section sidebar-section-list sidebar-tab-panel">
+          <div class="sidebar-section sidebar-section-list sidebar-tab-panel sidebar-skills-panel">
             <span class="sidebar-label sidebar-label-with-scope">
               <span>{t("chat.sidebar.skills.title")}</span>
               <SettingsScopeLabels scopes={["current device", "current session"]} />
