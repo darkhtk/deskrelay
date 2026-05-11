@@ -24,6 +24,14 @@ import {
   getToken,
   setToken,
 } from "./api.ts";
+import {
+  browserCacheEnabled,
+  clearBrowserCacheOnOpen,
+  clearDeskRelayBrowserCache,
+  clearDeskRelayBrowserCacheOnOpenIfNeeded,
+  setBrowserCacheEnabled,
+  setClearBrowserCacheOnOpen,
+} from "./browser-cache.ts";
 import { AnnouncementBanner } from "./components/AnnouncementBanner.tsx";
 import {
   ChatView,
@@ -117,6 +125,18 @@ const HELP_SECTIONS: Array<{
   open?: boolean;
   items: string[];
 }> = [
+  {
+    title: "브라우저 캐시",
+    scopes: ["browser"],
+    open: true,
+    items: [
+      "브라우저 캐시는 지금 페이지를 연 기기의 브라우저 저장소에만 남습니다.",
+      "대화 표시 캐시, 로컬 이미지 미리보기 캐시, Session/Week/CTX 조회 캐시만 포함합니다.",
+      "Site token, daemon token, Claude 계정 토큰 원문은 캐시 삭제/저장 대상에 포함하지 않습니다.",
+      "앱을 열 때 캐시 비우기를 켜면 시작 시 이전 대화/이미지 캐시를 지우고 현재 탭에서만 새로 사용합니다.",
+      "공용 PC나 분실 위험이 있는 모바일에서는 캐시 사용을 끄거나 매번 비우는 설정을 권장합니다.",
+    ],
+  },
   {
     title: "적용 범위",
     scopes: ["server", "current device", "current session", "browser"],
@@ -347,6 +367,7 @@ const ContextUsageMeters: Component<{ usage: ContextUsageOverview; visible: bool
 );
 
 export const App: Component = () => {
+  void clearDeskRelayBrowserCacheOnOpenIfNeeded();
   const initialToken = consumeSiteTokenFromUrl() ?? getToken();
   const [localToken, setLocalToken] = createSignal<string | null>(initialToken);
   const hasAccess = () => Boolean(localToken());
@@ -715,6 +736,10 @@ const GeneralSettings: Component<{
   section?: "general" | "updates";
 }> = (props) => {
   const [savingAutostart, setSavingAutostart] = createSignal(false);
+  const [browserCacheStatus, setBrowserCacheStatus] = createSignal<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const [autostart, { mutate: setAutostart }] = createResource(async () => {
     try {
       return await api.selfServerAutostart();
@@ -746,6 +771,23 @@ const GeneralSettings: Component<{
       });
     } finally {
       setSavingAutostart(false);
+    }
+  };
+  const handleClearBrowserCache = async () => {
+    setBrowserCacheStatus(null);
+    try {
+      const result = await clearDeskRelayBrowserCache();
+      setBrowserCacheStatus({
+        kind: "success",
+        message: `브라우저 캐시를 삭제했습니다. 삭제 항목: ${
+          result.localStorageEntries + result.cacheStorageEntries
+        }`,
+      });
+    } catch (err) {
+      setBrowserCacheStatus({
+        kind: "error",
+        message: `브라우저 캐시 삭제 실패: ${(err as Error).message}`,
+      });
     }
   };
   const [overallUpdate, setOverallUpdate] = createSignal<UpdateRunState>({
@@ -1251,6 +1293,59 @@ const GeneralSettings: Component<{
             </For>
           </div>
         </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">브라우저 캐시</h3>
+          <SettingsScopeLabel scope="browser" />
+        </div>
+        <p class="settings-card-help">
+          현재 브라우저에만 남는 임시 캐시입니다. 서버, connector, 다른 디바이스에는 저장되지
+          않습니다.
+        </p>
+        <label class="settings-check-row">
+          <input
+            type="checkbox"
+            checked={browserCacheEnabled()}
+            onChange={(event) => setBrowserCacheEnabled(event.currentTarget.checked)}
+          />
+          <span class="settings-check-copy">
+            <span>브라우저 캐시 사용</span>
+            <span class="settings-check-help">
+              대화 표시, 이미지 미리보기, 사용량 조회 결과를 이 브라우저에 임시 저장합니다.
+            </span>
+          </span>
+        </label>
+        <label class="settings-check-row">
+          <input
+            type="checkbox"
+            checked={clearBrowserCacheOnOpen()}
+            onChange={(event) => setClearBrowserCacheOnOpen(event.currentTarget.checked)}
+          />
+          <span class="settings-check-copy">
+            <span>앱을 열 때 캐시 비우기</span>
+            <span class="settings-check-help">
+              DeskRelay를 열 때 이전 대화/이미지 캐시를 지우고 새로 시작합니다.
+            </span>
+          </span>
+        </label>
+        <div class="settings-row">
+          <button
+            type="button"
+            class="secondary-button danger"
+            onClick={() => void handleClearBrowserCache()}
+          >
+            브라우저 캐시 전체 삭제
+          </button>
+        </div>
+        <Show when={browserCacheStatus()}>
+          {(status) => (
+            <p class={status().kind === "error" ? "settings-error" : "settings-success"}>
+              {status().message}
+            </p>
+          )}
+        </Show>
       </section>
 
       <section class="settings-card">
@@ -2060,6 +2155,7 @@ function joinDisplayPath(base: string, ...parts: string[]): string {
 }
 
 async function hardRefreshApp(): Promise<void> {
+  await clearDeskRelayBrowserCache();
   try {
     if ("caches" in window) {
       const keys = await window.caches.keys();

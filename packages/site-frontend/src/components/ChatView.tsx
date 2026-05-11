@@ -26,6 +26,14 @@ import {
   api,
 } from "../api.ts";
 import {
+  SESSION_TRANSCRIPT_CACHE_TTL_MS,
+  clearDeskRelayBrowserCache,
+  clearSessionTranscriptCache,
+  readBrowserCacheValue,
+  sessionTranscriptCacheKey,
+  writeBrowserCacheValue,
+} from "../browser-cache.ts";
+import {
   claudeEventForTranscript,
   describeCliActionFromEnvelope,
   isApprovalWaitingAction,
@@ -384,11 +392,6 @@ interface UsageLimitsResult {
   checkedAt: string;
 }
 
-interface CachedUsageValue<T> {
-  fetchedAt: number;
-  value: T;
-}
-
 interface ClaudeAccountInfo {
   status: "logged_in" | "not_logged_in";
   source: "oauth" | "env" | "none";
@@ -669,33 +672,11 @@ function usageLimitsCacheKey(deviceId: string, instanceId: string): string {
 }
 
 function readUsageCache<T>(key: string, ttlMs: number): T | undefined {
-  try {
-    const raw = globalThis.localStorage?.getItem(key);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<CachedUsageValue<T>>;
-    if (typeof parsed.fetchedAt !== "number" || !("value" in parsed)) {
-      globalThis.localStorage?.removeItem(key);
-      return undefined;
-    }
-    if (Date.now() - parsed.fetchedAt >= ttlMs) return undefined;
-    return parsed.value as T;
-  } catch {
-    try {
-      globalThis.localStorage?.removeItem(key);
-    } catch {
-      // Ignore storage cleanup failures.
-    }
-    return undefined;
-  }
+  return readBrowserCacheValue<T>(key, ttlMs);
 }
 
 function writeUsageCache<T>(key: string, value: T): void {
-  try {
-    const payload: CachedUsageValue<T> = { fetchedAt: Date.now(), value };
-    globalThis.localStorage?.setItem(key, JSON.stringify(payload));
-  } catch {
-    // Usage probes are an optimization; storage failures should not affect chat.
-  }
+  writeBrowserCacheValue(key, value);
 }
 
 function clampPercent(value: number): number {
@@ -2467,6 +2448,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     if (selectedSession()?.sessionId === id) {
       resetSelectedSessionState();
     }
+    clearSessionTranscriptCache(dev, id);
+    void clearDeskRelayBrowserCache();
     mutateSessions((current) => (current ?? []).filter((session) => session.sessionId !== id));
     try {
       await refetchSessions();
@@ -2545,6 +2528,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     }
     const storedSession = readStoredChatSessionSelection(dev);
     if (storedSession?.cwd === cwdToDelete) writeStoredChatSessionSelection(dev, null);
+    clearSessionTranscriptCache(dev);
+    void clearDeskRelayBrowserCache();
     mutateSessions((current) => (current ?? []).filter((session) => session.cwd !== cwdToDelete));
     try {
       await refetchSessions();
@@ -2579,23 +2564,26 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     resetConfirmedPermissionMode();
     const inst = remoteClaudeInstance();
     if (!dev || !inst) return;
-    try {
-      const eventLimit = chatTranscriptEventLimit();
-      const res = await api.callBehavior<ClaudeSessionTranscript>(dev, inst, "sessions.read", {
-        cwd: summary.cwd,
-        sessionId: summary.sessionId,
-        maxBytes: SESSION_READ_MAX_BYTES,
-        eventLimit,
-      });
-      if (res.error) throw new Error(res.error.message);
-      const rawEvents = (res.result?.events ?? []) as ClaudeStreamEvent[];
+    const eventLimit = chatTranscriptEventLimit();
+    const transcriptCacheKey = sessionTranscriptCacheKey({
+      deviceId: dev,
+      instanceId: inst,
+      cwd: summary.cwd,
+      sessionId: summary.sessionId,
+      eventLimit,
+    });
+    const applyTranscriptResult = (
+      result: ClaudeSessionTranscript,
+      options: { showTruncationNotice?: boolean } = {},
+    ) => {
+      const rawEvents = (result.events ?? []) as ClaudeStreamEvent[];
       const latestRawEvents = latestTranscriptEvents(rawEvents);
       const latestWindowPermissionMode = latestRawEvents.reduce<ClaudePermissionMode | null>(
         (mode, event) => permissionModeFromSystemInit(event) ?? mode,
         null,
       );
       const transcriptPermissionMode =
-        normalizePermissionMode(res.result?.permissionMode) ?? latestWindowPermissionMode;
+        normalizePermissionMode(result.permissionMode) ?? latestWindowPermissionMode;
       const latestEvents = latestRawEvents.flatMap((event) => {
         const transcriptEvent = claudeEventForTranscript(event);
         return transcriptEvent ? [transcriptEvent] : [];
@@ -2610,21 +2598,49 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       scrollTranscriptToBottom();
       void refreshContextUsage(dev, inst);
       void refreshUsageLimits(dev, inst);
-      if (res.result?.eventsTruncated || locallyEventsTruncated) {
+      if (options.showTruncationNotice === false) return;
+      if (result.eventsTruncated || locallyEventsTruncated) {
         setTransientSessionNotice(t("chat.error.session-event-limited", { count: eventLimit }));
-      } else if (res.result?.truncated) {
+      } else if (result.truncated) {
         setTransientSessionNotice(
           t("chat.error.session-truncated", { mb: bytesToMiB(SESSION_READ_MAX_BYTES) }),
         );
       }
+    };
+    let appliedCachedTranscript = false;
+    const cachedTranscript = readBrowserCacheValue<ClaudeSessionTranscript>(
+      transcriptCacheKey,
+      SESSION_TRANSCRIPT_CACHE_TTL_MS,
+    );
+    if (cachedTranscript) {
+      applyTranscriptResult(cachedTranscript, { showTruncationNotice: false });
+      appliedCachedTranscript = true;
+    }
+    try {
+      const res = await api.callBehavior<ClaudeSessionTranscript>(dev, inst, "sessions.read", {
+        cwd: summary.cwd,
+        sessionId: summary.sessionId,
+        maxBytes: SESSION_READ_MAX_BYTES,
+        eventLimit,
+      });
+      if (res.error) throw new Error(res.error.message);
+      const transcriptResult: ClaudeSessionTranscript = res.result ?? {
+        sessionId: summary.sessionId,
+        cwd: summary.cwd,
+        events: [],
+      };
+      writeBrowserCacheValue(transcriptCacheKey, transcriptResult);
+      applyTranscriptResult(transcriptResult);
     } catch (err) {
       const message = (err as Error).message;
       if (isMissingSessionFileError(message)) {
+        clearSessionTranscriptCache(dev, summary.sessionId);
         resetSelectedSessionState({ clearStored: true });
         void refetchSessions();
         setTransientSessionNotice(t("chat.error.session-missing"));
         return;
       }
+      if (appliedCachedTranscript) return;
       setError(message);
       setTranscript([]);
     }

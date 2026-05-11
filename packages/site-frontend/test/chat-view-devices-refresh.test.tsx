@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { setBrowserCacheEnabled } from "../src/browser-cache.ts";
 import { ChatView } from "../src/components/ChatView.tsx";
 import { t } from "../src/i18n.ts";
 import { setChatTranscriptEventLimit } from "../src/ui-prefs.ts";
@@ -57,6 +58,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  setBrowserCacheEnabled(false);
   setChatTranscriptEventLimit(100);
   localStorage.clear();
   vi.unstubAllGlobals();
@@ -739,6 +741,7 @@ describe("ChatView device refresh bridge", () => {
 
   test("reuses cached CTX and Session/Week usage probes within their browser TTL", async () => {
     vi.useFakeTimers();
+    setBrowserCacheEnabled(true);
     let contextUsageRequests = 0;
     let usageLimitsRequests = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

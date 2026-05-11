@@ -13,6 +13,7 @@
 
 import { type Component, createEffect, createMemo, onCleanup, onMount } from "solid-js";
 import { ApiError, type ClaudeStreamEvent, api } from "../api.ts";
+import { readImagePreviewCache, writeImagePreviewCache } from "../browser-cache.ts";
 import { TranscriptModel } from "../claude/transcript-model.ts";
 import { t } from "../i18n.ts";
 
@@ -140,9 +141,10 @@ async function hydrateLocalImagePreview(
 ): Promise<void> {
   const path = preview.dataset.localImagePath ?? "";
   const alt = preview.dataset.localImageAlt || path;
+  const deviceId = options.deviceId;
   preview.dataset.previewState = "loading";
   setPreviewStatus(preview, t("preview.loading"));
-  if (!options.deviceId) {
+  if (!deviceId) {
     setPreviewError(preview, t("preview.error.no-device"), false);
     return;
   }
@@ -151,7 +153,15 @@ async function hydrateLocalImagePreview(
     return;
   }
   try {
-    const blob = await api.filePreview(options.deviceId, path, options.cwd);
+    const cachedBlob = await readImagePreviewCache({
+      deviceId,
+      cwd: options.cwd,
+      path,
+    });
+    const blob = cachedBlob ?? (await api.filePreview(deviceId, path, options.cwd));
+    if (!cachedBlob) {
+      void writeImagePreviewCache({ deviceId, cwd: options.cwd, path }, blob);
+    }
     if (options.generation !== options.currentGeneration()) return;
     const url = URL.createObjectURL(blob);
     options.registerObjectUrl(url);
