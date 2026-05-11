@@ -2118,6 +2118,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setDesktopSidebarCollapsed((v) => !v);
   }
 
+  if (typeof window !== "undefined") {
+    const handleTopbarSidebarToggle = () => toggleSidebar();
+    window.addEventListener("deskrelay:toggle-sidebar", handleTopbarSidebarToggle);
+    onCleanup(() => {
+      window.removeEventListener("deskrelay:toggle-sidebar", handleTopbarSidebarToggle);
+    });
+  }
+
   const showAssistantInChat = () => assistantOpen() && mobileChatViewport();
   const showAssistantDock = () => assistantOpen() && !mobileChatViewport();
   const chatPanelCollapsed = () =>
@@ -3945,28 +3953,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             when={instructionEditorHeaderState()}
             fallback={
               <>
-                <button
-                  type="button"
-                  class="hamburger"
-                  aria-label={t("chat.toggle-sidebar")}
-                  aria-expanded={
-                    isMobileSidebarViewport() ? sidebarOpen() : !desktopSidebarCollapsed()
-                  }
-                  onClick={toggleSidebar}
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <rect x="3" y="4" width="18" height="16" rx="2" />
-                    <line x1="9" y1="4" x2="9" y2="20" />
-                  </svg>
-                </button>
                 <output
                   class={`chat-header-status chat-header-status-${infrastructureStatus().tone}`}
                   aria-live="polite"

@@ -1076,15 +1076,11 @@ describe("ChatView device refresh bridge", () => {
       expect(container.textContent).toContain("Tabbed session");
     });
 
-    const sidebarToggle = container.querySelector(
-      `button[aria-label="${t("chat.toggle-sidebar")}"]`,
-    ) as HTMLButtonElement | null;
-    if (!sidebarToggle) throw new Error("sidebar toggle missing");
-    fireEvent.click(sidebarToggle);
+    window.dispatchEvent(new Event("deskrelay:toggle-sidebar"));
     await waitFor(() => {
       expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
     });
-    fireEvent.click(sidebarToggle);
+    window.dispatchEvent(new Event("deskrelay:toggle-sidebar"));
     await waitFor(() => {
       expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
     });
@@ -1133,7 +1129,7 @@ describe("ChatView device refresh bridge", () => {
     window.dispatchEvent(
       new MouseEvent("pointerup", { clientX: 220, bubbles: true, cancelable: true }),
     );
-    fireEvent.click(sidebarToggle);
+    window.dispatchEvent(new Event("deskrelay:toggle-sidebar"));
     await waitFor(() => {
       expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
     });
