@@ -2765,6 +2765,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       ...pendingAttachments.map((att) => ({
         type: "image",
         source: { type: "base64", media_type: att.mimeType, data: att.dataBase64 },
+        name: att.name,
+        size: att.size,
       })),
     ];
 

@@ -48,22 +48,33 @@ describe("Attachments — add / remove / clear", () => {
     expect(onChange).toHaveBeenCalled();
   });
 
-  test("non-image files are silently dropped", async () => {
+  test("non-image files are rejected with a visible notice", async () => {
     const { api, container } = setup();
     await api().add([nonImageFile()]);
     expect(container.querySelector(".attachment-chip")).toBeFalsy();
+    expect(container.querySelector(".attachment-notice")?.textContent).toContain("지원하지 않는");
   });
 
-  test("oversized files (>10 MB) are dropped", async () => {
+  test("oversized files (>10 MB) are rejected with a visible notice", async () => {
     const { api, container } = setup();
     await api().add([pngFile("big.png", 11 * 1024 * 1024)]);
     expect(container.querySelector(".attachment-chip")).toBeFalsy();
+    expect(container.querySelector(".attachment-notice")?.textContent).toContain("10 MiB");
   });
 
   test("max 8 attachments", async () => {
     const { api, container } = setup();
     await api().add(Array.from({ length: 12 }, (_, i) => pngFile(`p${i}.png`)));
     expect(container.querySelectorAll(".attachment-chip").length).toBe(8);
+    expect(container.querySelector(".attachment-notice")?.textContent).toContain("최대 8개");
+  });
+
+  test("extension fallback accepts image files with missing MIME type", async () => {
+    const { api, container } = setup();
+    const file = new File([new Uint8Array(100)], "photo.jpg", { type: "" });
+    await api().add([file]);
+    const img = container.querySelector(".attachment-thumb") as HTMLImageElement;
+    expect(img.src).toMatch(/^data:image\/jpeg;base64,/);
   });
 
   test("× button removes the chip", async () => {

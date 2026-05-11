@@ -64,6 +64,31 @@ describe("TranscriptModel — assistant + user messages", () => {
     expect(m.entries[0]?.kind === "message" && m.entries[0].role).toBe("user");
   });
 
+  test("user image block keeps attachment metadata in the rendered transcript", () => {
+    const m = new TranscriptModel();
+    m.ingestEvent({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            name: "photo.png",
+            size: 2048,
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "aW1hZ2U=",
+            },
+          },
+        ],
+      },
+    });
+    const html = m.render();
+    expect(html).toContain("photo.png");
+    expect(html).toContain("2 KiB");
+  });
+
   test("string content becomes a text message entry", () => {
     const m = new TranscriptModel();
     m.ingestEvent({

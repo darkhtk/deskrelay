@@ -37,6 +37,8 @@ interface MessageBlock {
   // tool_use / tool_result / image — opaque payload per kind
   payload?: unknown;
   source?: unknown;
+  name?: string | undefined;
+  size?: number | undefined;
 }
 
 interface MessageEntry {
@@ -259,6 +261,7 @@ export class TranscriptModel {
         input?: unknown;
         thinking?: string;
         source?: unknown;
+        size?: unknown;
         tool_use_id?: string;
         content?: string | ToolResultContentBlock[];
         is_error?: boolean;
@@ -277,7 +280,14 @@ export class TranscriptModel {
       ) {
         blocks.push({ kind: "thinking", text: block.thinking });
       } else if (block.type === "image" && block.source) {
-        blocks.push({ kind: "image", source: block.source });
+        blocks.push({
+          kind: "image",
+          source: block.source,
+          ...(typeof block.name === "string" && block.name.trim() ? { name: block.name } : {}),
+          ...(typeof block.size === "number" && Number.isFinite(block.size)
+            ? { size: block.size }
+            : {}),
+        });
       }
     }
     if (blocks.length === 0) return;
@@ -374,9 +384,11 @@ export class TranscriptModel {
     if (block.kind === "image") {
       const src = imageSourceToDataUrl(block.source);
       if (!src) return "";
-      return `<div class="block-image"><img src="${escapeAttr(
+      const name = block.name?.trim() || "image";
+      const caption = imageCaptionHtml(block.name, block.size);
+      return `<figure class="block-image"><img src="${escapeAttr(
         src,
-      )}" alt="image" loading="lazy" /></div>`;
+      )}" alt="${escapeAttr(name)}" loading="lazy" />${caption}</figure>`;
     }
     if (block.kind === "tool_use") {
       const payload = block.payload as { id?: string; name?: string; input?: unknown };
@@ -460,6 +472,26 @@ function safeJsonStringify(obj: unknown): string {
   } catch {
     return "";
   }
+}
+
+function imageCaptionHtml(name: string | undefined, size: number | undefined): string {
+  const parts = [name?.trim(), typeof size === "number" ? formatBytes(size) : ""].filter(Boolean);
+  return parts.length
+    ? `<figcaption class="block-image-caption">${escapeHtml(parts.join(" - "))}</figcaption>`
+    : "";
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = Number.isInteger(value) || value >= 10 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
 interface ImageSource {

@@ -25,6 +25,7 @@
   --code-bg: #f7f7f7;
   --danger: #d92d20;
   --danger-soft: rgba(217, 45, 32, 0.1);
+  --danger-border: rgba(217, 45, 32, 0.24);
   --success: #16833a;
   --warning: #a16207;
   --warning-soft: rgba(161, 98, 7, 0.12);
@@ -71,6 +72,7 @@
   --code-bg: #101010;
   --danger: #ff6b6b;
   --danger-soft: rgba(255, 107, 107, 0.14);
+  --danger-border: rgba(255, 107, 107, 0.3);
   --success: #57c783;
   --warning: #d9a94a;
   --warning-soft: rgba(217, 169, 74, 0.14);
@@ -600,29 +602,69 @@ body.sidebar-resizing * {
   flex-shrink: 0;
 }
 .attachment-name {
+  display: inline-flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.attachment-name span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attachment-meta {
+  color: var(--text-faint);
+  font-size: 10px;
 }
 .attachment-remove {
   border: 0;
   background: transparent;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: 14px;
+  font-size: 0;
   padding: 0 4px;
+}
+.attachment-remove::before {
+  content: "x";
+  font-size: 14px;
 }
 .attachment-remove:hover {
   color: var(--danger);
 }
+.attachment-notice {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  max-width: min(100%, 520px);
+  padding: 4px 8px;
+  border: 1px solid var(--danger-border);
+  border-radius: 999px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 
+.block-image {
+  margin: 10px 0;
+}
 .block-image img {
   display: block;
   max-width: 100%;
   max-height: 320px;
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
-  margin: 6px 0;
+  margin: 0;
+}
+.block-image-caption {
+  max-width: min(100%, 520px);
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* ---- Phase 9b — new folder mkdir form ---- */
@@ -4372,6 +4414,9 @@ dialog.approval-modal-root,
   padding: 0;
   border: 0;
   background: transparent;
+}
+.local-image-preview[data-preview-state="ready"] .message-image {
+  margin-bottom: 0;
 }
 .local-image-preview-status {
   min-width: 0;

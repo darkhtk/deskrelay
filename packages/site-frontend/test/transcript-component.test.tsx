@@ -149,4 +149,36 @@ describe("Transcript (Solid)", () => {
     expect(filePreview).toHaveBeenCalledWith("dev_1", "dog.png", "C:\\repo");
     expect(container.textContent).not.toContain("file://");
   });
+
+  test("hydrates plain local image filenames through the daemon preview API", async () => {
+    const createObjectUrl = vi.fn(() => "blob:plain-dog-preview");
+    Object.defineProperty(URL, "createObjectURL", {
+      value: createObjectUrl,
+      configurable: true,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      value: vi.fn(),
+      configurable: true,
+    });
+    const filePreview = vi
+      .spyOn(api, "filePreview")
+      .mockResolvedValue(new Blob([new Uint8Array([7, 8, 9])], { type: "image/png" }));
+
+    const { container } = render(() => (
+      <Transcript
+        deviceId="dev_1"
+        cwd={"C:\\repo"}
+        events={ev({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "created dog.png" }] },
+        } as ClaudeStreamEvent)}
+      />
+    ));
+
+    await waitFor(() => {
+      const img = container.querySelector<HTMLImageElement>("img.local-image-preview-img");
+      expect(img?.src).toBe("blob:plain-dog-preview");
+    });
+    expect(filePreview).toHaveBeenCalledWith("dev_1", "dog.png", "C:\\repo");
+  });
 });

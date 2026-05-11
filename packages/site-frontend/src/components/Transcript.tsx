@@ -12,7 +12,7 @@
 // transcript a single user produces in one session.
 
 import { type Component, createEffect, createMemo, onCleanup, onMount } from "solid-js";
-import { ApiError, api, type ClaudeStreamEvent } from "../api.ts";
+import { ApiError, type ClaudeStreamEvent, api } from "../api.ts";
 import { TranscriptModel } from "../claude/transcript-model.ts";
 import { t } from "../i18n.ts";
 
@@ -86,6 +86,7 @@ export const Transcript: Component<TranscriptProps> = (props) => {
     const localGeneration = generation;
     queueMicrotask(() => {
       if (!rootEl || localGeneration !== generation) return;
+      promotePlainLocalImagePaths(rootEl);
       resetLocalImagePreviewStates(rootEl);
       hydrateLocalImagePreviews(rootEl, {
         deviceId,
@@ -159,12 +160,91 @@ async function hydrateLocalImagePreview(
     img.alt = alt;
     img.loading = "lazy";
     img.className = "message-image local-image-preview-img";
+    const caption = createImageCaption(alt);
     preview.dataset.previewState = "ready";
-    preview.replaceChildren(img);
+    preview.replaceChildren(...(caption ? [img, caption] : [img]));
   } catch (err) {
     if (options.generation !== options.currentGeneration()) return;
     setPreviewError(preview, previewErrorMessage(err), previewErrorRetryable(err));
   }
+}
+
+const PLAIN_LOCAL_IMAGE_PATH =
+  /(^|[\s([{"'])([^\s()[\]{}"'<>|`]+?\.(?:png|jpe?g|webp|gif))(?=$|[\s)\].,;:!?}])/gi;
+
+function promotePlainLocalImagePaths(root: HTMLElement): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.textContent || !PLAIN_LOCAL_IMAGE_PATH.test(node.textContent)) {
+        PLAIN_LOCAL_IMAGE_PATH.lastIndex = 0;
+        return NodeFilter.FILTER_REJECT;
+      }
+      PLAIN_LOCAL_IMAGE_PATH.lastIndex = 0;
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (parent.closest("a, code, pre, button, textarea, .local-image-preview")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes: Text[] = [];
+  while (nodes.length < 12) {
+    const node = walker.nextNode();
+    if (!node) break;
+    nodes.push(node as Text);
+  }
+  for (const node of nodes) promotePlainLocalImagePathNode(node);
+}
+
+function promotePlainLocalImagePathNode(node: Text): void {
+  const text = node.textContent ?? "";
+  PLAIN_LOCAL_IMAGE_PATH.lastIndex = 0;
+  let cursor = 0;
+  const fragment = document.createDocumentFragment();
+  while (true) {
+    const match = PLAIN_LOCAL_IMAGE_PATH.exec(text);
+    if (!match) break;
+    const prefix = match[1] ?? "";
+    const path = match[2] ?? "";
+    if (!isPlainLocalImageCandidate(path)) continue;
+    const start = match.index + prefix.length;
+    if (start > cursor) fragment.append(document.createTextNode(text.slice(cursor, start)));
+    fragment.append(createLocalImagePreview(path));
+    cursor = start + path.length;
+  }
+  if (cursor === 0) return;
+  if (cursor < text.length) fragment.append(document.createTextNode(text.slice(cursor)));
+  node.replaceWith(fragment);
+}
+
+function isPlainLocalImageCandidate(path: string): boolean {
+  const trimmed = path.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return false;
+  if (/[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed)) return false;
+  return /\.(png|jpe?g|webp|gif)$/i.test(trimmed);
+}
+
+function createLocalImagePreview(path: string): HTMLElement {
+  const figure = document.createElement("figure");
+  figure.className = "local-image-preview";
+  figure.dataset.localImagePath = path;
+  figure.dataset.localImageAlt = path;
+  figure.dataset.previewPromoted = "true";
+  const status = document.createElement("span");
+  status.className = "local-image-preview-status";
+  status.textContent = t("preview.loading");
+  figure.append(status);
+  return figure;
+}
+
+function createImageCaption(label: string): HTMLElement | null {
+  const clean = label.trim();
+  if (!clean) return null;
+  const caption = document.createElement("figcaption");
+  caption.className = "block-image-caption";
+  caption.textContent = clean;
+  return caption;
 }
 
 function setPreviewStatus(preview: HTMLElement, message: string): void {
