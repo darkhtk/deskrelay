@@ -89,6 +89,55 @@ describe("ConnectionDiagnostics", () => {
     expect(container.textContent).toContain("/home/me/proj");
   });
 
+  test("always shows the current high-level connection state", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify([SAMPLE_DEVICE]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${SAMPLE_DEVICE.id}/diagnostics`)) {
+        return diagnosticsResponse();
+      }
+      if (url.endsWith(`/api/devices/${SAMPLE_DEVICE.id}/doctor`)) {
+        return new Response(JSON.stringify({ checks: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/self/install-reports?limit=5")) {
+        return new Response(JSON.stringify({ reports: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/healthz")) {
+        return new Response(
+          JSON.stringify({ ok: true, version: "0.0.0", devices: 1, build: SERVER_BUILD }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const { container } = render(() => (
+      <ConnectionDiagnostics initialSelectedDeviceId={SAMPLE_DEVICE.id} />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Server");
+      expect(container.textContent).toContain("Device");
+      expect(container.textContent).toContain("Connector");
+      expect(container.textContent).toContain("Site");
+      expect(container.textContent).toContain("Version");
+    });
+    await waitFor(() => {
+      expect(container.querySelectorAll(".connection-diagnostics-metric .tone-ok").length).toBe(5);
+    });
+  });
+
   test("surfaces fetch errors as inline error text without breaking the panel", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = String(input);

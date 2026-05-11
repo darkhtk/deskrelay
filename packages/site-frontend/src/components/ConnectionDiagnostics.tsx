@@ -155,18 +155,70 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     return "pending";
   };
 
+  const serverTone = (): Tone => {
+    if (health.loading) return "pending";
+    return health()?.ok ? "ok" : "bad";
+  };
+
+  const daemonStatusDetail = (): string => {
+    const snapshot = diagnostics();
+    if (diagnostics.loading) return t("conn-diag.loading");
+    if (diagnosticsError()) {
+      return t("conn-diag.daemon.error", { error: diagnosticsError()?.message ?? "" });
+    }
+    if (snapshot?.ok) {
+      return t("conn-diag.daemon.running", {
+        started: snapshot.startedAt ? formatTime(snapshot.startedAt) : t("conn-diag.unknown"),
+      });
+    }
+    return t("conn-diag.unknown");
+  };
+
+  const currentStatusRows = (): StatusRow[] => {
+    const device = selectedDevice();
+    return [
+      {
+        tone: serverTone(),
+        label: "Server",
+        detail: health.loading
+          ? t("conn-diag.loading")
+          : health()
+            ? `running · ${buildLabel(health()?.build)}`
+            : "status unavailable",
+      },
+      {
+        tone: device ? deviceConnectionTone() : "offline",
+        label: "Device",
+        detail: device
+          ? `${deviceDisplayName(device)} · ${
+              device.connectionState === "offline" ? t("conn-diag.value.offline") : "selected"
+            }`
+          : t("conn-diag.no-device"),
+      },
+      {
+        tone: daemonTone(),
+        label: "Connector",
+        detail: daemonStatusDetail(),
+      },
+      {
+        tone: deviceConnectionTone(),
+        label: "Site",
+        detail:
+          device?.connectionState === "offline"
+            ? t("conn-diag.site.offline", { seen: formatOptionalTime(device.lastSeenAt) })
+            : t("conn-diag.site.online", { seen: formatOptionalTime(device?.lastSeenAt) }),
+      },
+      {
+        tone: buildTone(),
+        label: "Version",
+        detail: buildDetail(health()?.build, diagnostics()?.build),
+      },
+    ];
+  };
+
   const rows = (): StatusRow[] => {
     const device = selectedDevice();
     const snapshot = diagnostics();
-    const daemonDetail = diagnostics.loading
-      ? t("conn-diag.loading")
-      : diagnosticsError()
-        ? t("conn-diag.daemon.error", { error: diagnosticsError()?.message ?? "" })
-        : snapshot?.ok
-          ? t("conn-diag.daemon.running", {
-              started: snapshot.startedAt ? formatTime(snapshot.startedAt) : t("conn-diag.unknown"),
-            })
-          : t("conn-diag.unknown");
 
     const workspaceMode = snapshot?.workspaceRoots?.mode ?? t("conn-diag.unknown");
     const baseRows: StatusRow[] = [
@@ -185,7 +237,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       {
         tone: daemonTone(),
         label: t("conn-diag.row.daemon"),
-        detail: daemonDetail,
+        detail: daemonStatusDetail(),
         action: diagnosticsError() ? t("conn-diag.action.refresh") : undefined,
         onAction: diagnosticsError() ? refresh : undefined,
       },
@@ -318,32 +370,16 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       </Show>
 
       <div class="connection-diagnostics-summary" aria-label={t("conn-diag.summary")}>
-        <Metric
-          label={t("conn-diag.summary.install")}
-          value={selectedDevice() ? t("conn-diag.value.ready") : t("conn-diag.value.not-ready")}
-        />
-        <Metric
-          label={t("conn-diag.summary.daemon")}
-          value={
-            diagnosticsError()
-              ? t("conn-diag.value.not-ready")
-              : diagnostics.loading
-                ? t("conn-diag.loading")
-                : diagnostics()?.ok
-                  ? t("conn-diag.value.ready")
-                  : t("conn-diag.unknown")
-          }
-        />
-        <Metric
-          label={t("conn-diag.summary.site")}
-          value={
-            !selectedDevice()
-              ? t("conn-diag.value.not-ready")
-              : selectedDevice()?.connectionState === "offline"
-                ? t("conn-diag.value.offline")
-                : t("conn-diag.value.connected")
-          }
-        />
+        <For each={currentStatusRows()}>
+          {(row) => (
+            <Metric
+              tone={row.tone}
+              label={row.label}
+              value={toneLabel(row.tone)}
+              detail={row.detail}
+            />
+          )}
+        </For>
       </div>
 
       <Show
@@ -391,10 +427,14 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   );
 };
 
-const Metric: Component<{ label: string; value: string }> = (props) => (
+const Metric: Component<{ tone: Tone; label: string; value: string; detail: string }> = (props) => (
   <div class="connection-diagnostics-metric">
-    <div class="connection-diagnostics-metric-label">{props.label}</div>
+    <div class="connection-diagnostics-metric-label">
+      <span class={`connection-diagnostics-dot tone-${props.tone}`} />
+      <span>{props.label}</span>
+    </div>
     <div class="connection-diagnostics-metric-value">{props.value}</div>
+    <div class="connection-diagnostics-metric-detail">{props.detail}</div>
   </div>
 );
 
@@ -499,6 +539,14 @@ function diagnosticTone(severity: DiagnosticSeverity): Tone {
   if (severity === "warn") return "warning";
   if (severity === "error") return "bad";
   return "pending";
+}
+
+function toneLabel(tone: Tone): string {
+  if (tone === "ok") return "OK";
+  if (tone === "pending") return "Checking";
+  if (tone === "warning") return "Warning";
+  if (tone === "bad") return "Error";
+  return "Offline";
 }
 
 function updateStatusTone(status: SelfServerUpdateStatus | null | undefined): Tone {
