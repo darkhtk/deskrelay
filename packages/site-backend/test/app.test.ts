@@ -1104,6 +1104,9 @@ describe("manager task API", () => {
       ).toBe(true);
       const instructions = readFileSync(captured?.instructionsPath ?? "", "utf8");
       expect(instructions).toContain("DeskRelay Manager Assistant");
+      expect(instructions).toContain("administrator and supervisor");
+      expect(instructions).toContain("## Intent First");
+      expect(instructions).toContain("Understand Intent -> Choose Scope -> Read State");
       expect(instructions).toContain("GET /api/manager/system/summary");
       expect(instructions).toContain("POST /api/devices/:id/behaviors/:instance/request");
       expect(instructions).toContain("PUT /api/devices/:id/instructions/:scope");
