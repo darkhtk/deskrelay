@@ -319,6 +319,7 @@ describe("doctor endpoints", () => {
     };
     expect(body.scope).toBe("server");
     expect(findCheck(body.checks, "server.token")?.severity).toBe("ok");
+    expect(findCheck(body.checks, "server.security-boundary")?.severity).toBe("ok");
     expect(findCheck(body.checks, "server.devices")?.severity).toBe("warn");
   });
 
@@ -384,6 +385,10 @@ describe("doctor endpoints", () => {
     expect(findCheck(body.checks, "device.daemon")?.severity).toBe("ok");
     expect(findCheck(body.checks, "device.claude")?.severity).toBe("error");
     expect(findCheck(body.checks, "device.workspace")?.severity).toBe("ok");
+    expect(findCheck(body.checks, "device.security-boundary")?.summary).toContain(
+      "restricted workspace access",
+    );
+    expect(findCheck(body.checks, "device.claude")?.summary).not.toContain("remote-claude");
   });
 });
 

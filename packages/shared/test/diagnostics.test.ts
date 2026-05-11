@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type UpdateState,
   diagnosticCheckFromStep,
   diagnosticStepFromCheck,
   normalizeDiagnosticStep,
@@ -97,5 +98,19 @@ describe("diagnostics shared model", () => {
     expect(
       worstDiagnosticSeverity([{ severity: "ok" }, { severity: "unknown" }, { severity: "warn" }]),
     ).toBe("warn");
+  });
+
+  test("names update states that UI and daemon can share", () => {
+    const states: UpdateState[] = [
+      "not_started",
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "restart_required",
+      "pending_until_device_online",
+    ];
+    expect(states).toContain("restart_required");
+    expect(states).toContain("pending_until_device_online");
   });
 });

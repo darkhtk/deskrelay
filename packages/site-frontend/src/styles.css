@@ -4642,6 +4642,10 @@ dialog.approval-modal-root,
 .settings-update-dot.update-phase-queued {
   background: var(--warning);
 }
+.settings-update-dot.update-phase-pending,
+.settings-update-dot.update-phase-restart_required {
+  background: var(--warning);
+}
 .settings-command-copy {
   display: flex;
   align-items: center;

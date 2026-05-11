@@ -47,8 +47,19 @@ describe("updateLocalSourceConnector", () => {
     });
 
     expect(result.changed).toBe(true);
+    expect(result.state).toBe("succeeded");
     expect(result.restartScheduled).toBe(true);
     expect(result.restartRequested).toBe(true);
+    expect(result.steps.map((step) => step.id)).toEqual([
+      "repo",
+      "working-tree",
+      "git-fetch",
+      "git-pull",
+      "dependencies",
+      "login-task",
+      "restart",
+    ]);
+    expect(result.steps.every((step) => step.source === "updater")).toBe(true);
     expect(restartRequests).toEqual(["DeskRelay Connector"]);
     expect(result.before.shortCommit).toBe("a".repeat(12));
     expect(result.after.shortCommit).toBe("b".repeat(12));
@@ -93,8 +104,13 @@ describe("updateLocalSourceConnector", () => {
 
     expect(result.restartScheduled).toBe(true);
     expect(result.restartRequested).toBe(false);
+    expect(result.state).toBe("restart_required");
     expect(result.restartRequestError).toBe("cannot start task");
     expect(result.warning).toContain("automatic restart request failed");
+    expect(result.steps.find((step) => step.id === "restart")).toMatchObject({
+      status: "warn",
+      retrySafe: true,
+    });
   });
 
   test("refuses to update a dirty tracked checkout before fetching", async () => {

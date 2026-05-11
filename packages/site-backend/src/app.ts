@@ -768,6 +768,7 @@ async function requestDaemonSystemUpdate(
     return Response.json(
       {
         ok: false,
+        state: "failed",
         error: `cannot reach daemon: ${(err as Error).message}`,
         fallbackCommand,
       },
@@ -786,6 +787,7 @@ async function requestDaemonSystemUpdate(
     return Response.json(
       {
         ok: false,
+        state: "failed",
         error: unavailable
           ? "connector update API is unavailable on this device. Re-run the registration command."
           : error,
@@ -882,6 +884,19 @@ function classifyRemoteHost(host: string): AccessUrl["kind"] {
     return "LAN";
   }
   return "Current URL";
+}
+
+function daemonNetworkKind(rawUrl: string): "local" | "tailscale" | "lan" | "public" | "unknown" {
+  try {
+    const host = new URL(rawUrl).hostname.replace(/^\[|\]$/g, "");
+    if (isLocalHost(host)) return "local";
+    const kind = classifyRemoteHost(host);
+    if (kind === "Tailscale") return "tailscale";
+    if (kind === "LAN") return "lan";
+    return "public";
+  } catch {
+    return "unknown";
+  }
 }
 
 function dedupeUrls(rows: AccessUrl[]): AccessUrl[] {
@@ -1023,6 +1038,19 @@ async function buildServerDiagnosticReport(
       detail: input.token
         ? "Browsers and connector registration commands can authenticate."
         : "Restart the server with a CR_SITE_TOKEN value.",
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "server.security-boundary",
+      label: "Security boundary",
+      severity: input.token ? "ok" : "error",
+      summary: input.token
+        ? "site token protects browser and registration APIs"
+        : "site token protection is unavailable",
+      detail:
+        "Connector daemon tokens are stored by the server and are not returned by public device APIs.",
       generatedAt,
     }),
   );
@@ -1183,7 +1211,7 @@ async function buildDeviceDiagnosticReport(
     checks.push(
       diagnosticCheck({
         id: "device.claude",
-        label: "Claude module",
+        label: "Claude command bridge",
         severity: "unknown",
         summary: "not checked because daemon status failed",
         generatedAt,
@@ -1218,19 +1246,19 @@ async function buildDeviceDiagnosticReport(
   checks.push(
     diagnosticCheck({
       id: "device.claude",
-      label: "Claude module",
+      label: "Claude command bridge",
       severity:
         remoteClaudeLoaded === true ? "ok" : remoteClaudeLoaded === false ? "error" : "unknown",
       summary:
         remoteClaudeLoaded === true
-          ? "remote-claude behavior is loaded"
+          ? "Claude command bridge is ready"
           : remoteClaudeLoaded === false
-            ? "remote-claude behavior is not loaded"
-            : "remote-claude load state is unknown",
+            ? "Claude command bridge is not ready"
+            : "Claude command bridge state is unknown",
       detail:
         remoteClaudeLoaded === false
-          ? "Restart or update the connector; chat cannot run until this module loads."
-          : behaviorSummary(payload),
+          ? "Restart or update the connector before starting chat runs."
+          : "Connector reports that command execution support is available.",
       generatedAt,
     }),
   );
@@ -1249,6 +1277,24 @@ async function buildDeviceDiagnosticReport(
           : workspaceMode === "restricted"
             ? "No allowed workspace roots are configured."
             : "Unrestricted workspace access is enabled.",
+      generatedAt,
+    }),
+  );
+  checks.push(
+    diagnosticCheck({
+      id: "device.security-boundary",
+      label: "Security boundary",
+      severity:
+        daemonNetworkKind(input.device.daemonUrl) === "public" || workspaceMode === "unrestricted"
+          ? "warn"
+          : "ok",
+      summary: `${daemonNetworkKind(input.device.daemonUrl)} connector URL, ${workspaceMode} workspace access`,
+      detail:
+        workspaceMode === "unrestricted"
+          ? "Unrestricted workspace browsing is enabled for this device. Keep the connector behind LAN/VPN access."
+          : roots.length > 0
+            ? `Allowed roots: ${roots.join("; ")}`
+            : "No workspace roots are exposed beyond daemon policy.",
       generatedAt,
     }),
   );
@@ -1397,14 +1443,6 @@ function buildSummary(build: DeskRelayBuildInfo | undefined): string {
   if (!build) return "unknown";
   const dirty = build.dirty ? "+dirty" : "";
   return `${build.shortCommit || build.version || "unknown"}${dirty}`;
-}
-
-function behaviorSummary(payload: DaemonStatusPayload): string {
-  const behavior = (payload.behaviors ?? []).find(
-    (candidate) => candidate.instanceId === "remote-claude" || candidate.name === "remote-claude",
-  );
-  if (!behavior) return "behavior list is empty or remote-claude is absent.";
-  return `${behavior.name ?? "remote-claude"}@${behavior.version ?? "unknown"}`;
 }
 
 async function probeDaemonStatus(

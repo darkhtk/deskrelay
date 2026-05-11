@@ -347,7 +347,63 @@ describe("registerSelf", () => {
         source: "register-self",
       });
       expect(step?.evidence).toContain(`daemonUrl=http://100.64.1.2:${port}`);
+      expect(step?.evidence).toContain("network=tailscale");
       expect(step?.action).toMatch(/inbound TCP/);
+    }
+  });
+
+  test("classifies daemon token rejection as a retry-safe registration mismatch", async () => {
+    const port = 19100;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === `http://127.0.0.1:${port}/status`) return Response.json({ ok: true });
+      if (url === `http://100.64.1.2:${port}/status`) {
+        return Response.json({ error: "bad token" }, { status: 401 });
+      }
+      throw new Error(`unexpected fetch: GET ${url}`);
+    }) as typeof fetch;
+
+    try {
+      await registerSelfForTest({ port, fetchImpl });
+      throw new Error("expected registerSelf to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegisterSelfError);
+      const step = (err as RegisterSelfError).report.steps.find(
+        (step) => step.id === "advertised-daemon",
+      );
+      expect(step).toMatchObject({
+        status: "failed",
+        severity: "error",
+        source: "register-self",
+      });
+      expect(step?.summary).toContain("daemon token was rejected");
+      expect(step?.action).toMatch(/Rerun/);
+      expect(step?.evidence).toContain("status=HTTP 401");
+    }
+  });
+
+  test("classifies advertised DNS failures separately from firewall timeouts", async () => {
+    const port = 19101;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === `http://127.0.0.1:${port}/status`) return Response.json({ ok: true });
+      if (url === `http://deskrelay-missing.test:${port}/status`) {
+        throw new Error("getaddrinfo ENOTFOUND deskrelay-missing.test");
+      }
+      throw new Error(`unexpected fetch: GET ${url}`);
+    }) as typeof fetch;
+
+    try {
+      await registerSelfForTest({ port, fetchImpl, advertiseHost: "deskrelay-missing.test" });
+      throw new Error("expected registerSelf to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegisterSelfError);
+      const step = (err as RegisterSelfError).report.steps.find(
+        (step) => step.id === "advertised-daemon",
+      );
+      expect(step?.summary).toContain("could not be resolved");
+      expect(step?.evidence).toContain("network=public");
+      expect(step?.action).toMatch(/advertise-host/);
     }
   });
 
@@ -446,12 +502,16 @@ function makeRegisterFetch(
   }) as typeof fetch;
 }
 
-async function registerSelfForTest(options: { port: number; fetchImpl: typeof fetch }) {
+async function registerSelfForTest(options: {
+  port: number;
+  fetchImpl: typeof fetch;
+  advertiseHost?: string;
+}) {
   return await registerSelf({
     serverUrl: "http://deskrelay.test:18193/",
     siteToken: "site-token",
     port: options.port,
-    advertiseHost: "100.64.1.2",
+    advertiseHost: options.advertiseHost ?? "100.64.1.2",
     label: "Replacement",
     fetchImpl: options.fetchImpl,
     installTask: async () => ({

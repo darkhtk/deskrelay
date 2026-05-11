@@ -1,4 +1,4 @@
-import type { DiagnosticReport } from "@deskrelay/shared";
+import type { DiagnosticReport, DiagnosticStep, UpdateState } from "@deskrelay/shared";
 
 const LEGACY_TOKEN_KEY = "cr.site-token";
 const TOKEN_KEY_PREFIX = "cr.site-token:";
@@ -253,6 +253,7 @@ export interface SelfServerUpdateStatus {
 
 export interface DeviceUpdateResponse {
   ok?: boolean;
+  state?: UpdateState;
   changed?: boolean;
   restartScheduled?: boolean;
   restartRequested?: boolean;
@@ -261,6 +262,7 @@ export interface DeviceUpdateResponse {
   error?: string;
   fallbackCommand?: string;
   daemonStatus?: number;
+  steps?: DiagnosticStep[];
   before?: { shortCommit?: string };
   after?: { shortCommit?: string };
 }

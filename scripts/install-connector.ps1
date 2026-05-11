@@ -37,19 +37,36 @@ function Add-InstallStep {
     [string]$Status,
     [string]$Summary,
     [string[]]$Evidence = @(),
-    [string]$Action = ""
+    [string]$Action = "",
+    [string]$Severity = "",
+    [string]$Source = "installer",
+    [bool]$RetrySafe = $false
   )
+  if ([string]::IsNullOrWhiteSpace($Severity)) {
+    $Severity = switch ($Status) {
+      "failed" { "error" }
+      "warn" { "warn" }
+      "repaired" { "warn" }
+      "running" { "unknown" }
+      default { "ok" }
+    }
+  }
   $row = [ordered]@{
     id = $Id
     label = $Label
     status = $Status
+    severity = $Severity
     summary = $Summary
+    source = $Source
   }
   if ($Evidence.Count -gt 0) {
     $row.evidence = @($Evidence)
   }
   if (-not [string]::IsNullOrWhiteSpace($Action)) {
     $row.action = $Action
+  }
+  if ($RetrySafe) {
+    $row.retrySafe = $true
   }
   $script:InstallSteps += [pscustomobject]$row
 }
@@ -87,16 +104,17 @@ function Fail-Install {
     [string]$Label,
     [string]$Summary,
     [string[]]$Evidence = @(),
-    [string]$Action = ""
+    [string]$Action = "",
+    [bool]$RetrySafe = $true
   )
-  Add-InstallStep -Id $Id -Label $Label -Status "failed" -Summary $Summary -Evidence $Evidence -Action $Action
+  Add-InstallStep -Id $Id -Label $Label -Status "failed" -Summary $Summary -Evidence $Evidence -Action $Action -RetrySafe:$RetrySafe
   throw $Summary
 }
 
 trap {
   $message = $_.Exception.Message
   if (-not ($script:InstallSteps | Where-Object { $_.status -eq "failed" } | Select-Object -First 1)) {
-    Add-InstallStep -Id "installer-error" -Label "installer" -Status "failed" -Summary $message -Action "Fix the reported condition and run the same registration command again."
+    Add-InstallStep -Id "installer-error" -Label "installer" -Status "failed" -Summary $message -Action "Fix the reported condition and run the same registration command again." -RetrySafe:$true
   }
   Save-InstallReport -Status "failed"
   Write-Host "installer report: $script:InstallReportPath"
@@ -235,6 +253,7 @@ function Select-AdvertiseEndpoint {
       -Id "server-url-local-only" `
       -Label "server URL" `
       -Summary "The DeskRelay server URL is local-only ($serverHost)." `
+      -Evidence @("serverHost=$serverHost", "serverUrl=$ServerUrl") `
       -Action "Open DESKRELAY-SERVER-CODE.txt on the server PC and copy the Tailscale or LAN URL, then run registration again."
   }
   $tailscaleIp = Get-TailscaleIp
@@ -244,6 +263,7 @@ function Select-AdvertiseEndpoint {
         -Id "tailscale-missing" `
         -Label "Tailscale" `
         -Summary "DeskRelay server is being reached through Tailscale ($serverHost), but this PC has no Tailscale IPv4 address." `
+        -Evidence @("serverHost=$serverHost", "tailscaleIp=missing") `
         -Action "Install Tailscale, log in to the same tailnet as the server PC, then run this registration command again."
     }
     Add-InstallStep -Id "advertise-host" -Label "advertised connector address" -Status "ok" -Summary "selected Tailscale address $tailscaleIp" -Evidence @("serverHost=$serverHost")
@@ -264,6 +284,7 @@ function Select-AdvertiseEndpoint {
     -Id "advertise-host-missing" `
     -Label "advertised connector address" `
     -Summary "Could not detect an externally reachable LAN or Tailscale IPv4 address for this PC." `
+    -Evidence @("serverHost=$serverHost") `
     -Action "Connect this PC to the same LAN or Tailscale tailnet as the DeskRelay server, then run registration again."
 }
 
@@ -288,7 +309,7 @@ function Ensure-ConnectorFirewallRule {
   $name = "DeskRelay Connector $Port"
   if (-not (Test-IsAdministrator)) {
     Write-Warning "Skipped Windows Firewall setup because PowerShell is not elevated. Registration will still verify server-to-connector access and fail with a firewall hint if the port is blocked."
-    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "warn" -Summary "not elevated; firewall rule was not changed" -Action "If advertised daemon verification fails, rerun PowerShell as Administrator or allow inbound TCP $Port."
+    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "warn" -Summary "not elevated; firewall rule was not changed" -Evidence @("admin=false", "port=$Port") -Action "If advertised daemon verification fails, rerun PowerShell as Administrator or allow inbound TCP $Port." -RetrySafe:$true
     return
   }
   try {
@@ -299,10 +320,10 @@ function Ensure-ConnectorFirewallRule {
       New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Any | Out-Null
     }
     Write-Host "Windows Firewall allows inbound TCP $Port for DeskRelay."
-    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "ok" -Summary "inbound TCP $Port is allowed"
+    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "ok" -Summary "inbound TCP $Port is allowed" -Evidence @("port=$Port")
   } catch {
     Write-Warning "Could not update Windows Firewall automatically: $($_.Exception.Message)"
-    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "warn" -Summary "could not update firewall rule" -Evidence @($_.Exception.Message) -Action "Allow inbound TCP $Port manually if advertised daemon verification fails."
+    Add-InstallStep -Id "firewall" -Label "Windows Firewall" -Status "warn" -Summary "could not update firewall rule" -Evidence @("port=$Port", $_.Exception.Message) -Action "Allow inbound TCP $Port manually if advertised daemon verification fails." -RetrySafe:$true
   }
 }
 
@@ -404,6 +425,7 @@ function Stop-StaleConnector {
       -Id "stale-port" `
       -Label "stale connector cleanup" `
       -Summary "TCP $Port is still held by process id(s): $($remaining -join ', ')." `
+      -Evidence @("port=$Port", "pids=$($remaining -join ',')") `
       -Action "Close those processes or rerun PowerShell as Administrator, then run this registration command again."
   }
   if ($pids.Count -gt 0) {

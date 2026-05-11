@@ -161,11 +161,11 @@ const HELP_SECTIONS: Array<{
     items: [
       "연결됨은 서버가 선택한 디바이스의 daemon에 접근 가능하다는 뜻입니다.",
       "오프라인은 서버가 해당 daemon에 접근하지 못한다는 뜻입니다.",
-      "Claude 모듈 준비 안 됨은 connector는 살아 있지만 remote-claude behavior가 준비되지 않은 상태입니다.",
+      "Claude command bridge 준비 안 됨은 connector는 살아 있지만 Claude 실행 준비가 끝나지 않은 상태입니다.",
       "업데이트 실행 버튼은 설정 > 일반 탭에 모여 있습니다.",
       "전체 업데이트는 등록된 connector를 먼저 갱신한 뒤 서버 PC의 git 저장소를 갱신하고 서버를 재시작합니다.",
-      "디바이스별 업데이트 상태는 일반 탭에서 확인합니다. 꺼진 디바이스는 켜진 뒤 다시 처리해야 합니다.",
-      "connector 업데이트는 대상 PC의 Windows 로그인 작업을 다시 실행하도록 요청합니다. 요청 실패는 성공으로 표시하지 않습니다.",
+      "디바이스별 업데이트 상태는 일반 탭에서 확인합니다. 꺼진 디바이스는 실패가 아니라 온라인 대기로 표시합니다.",
+      "connector 업데이트는 대상 PC의 Windows 로그인 작업을 다시 실행하도록 요청합니다. 요청 실패는 재시작 필요로 표시합니다.",
       "연결 진단 탭은 상태 확인과 새로고침 중심으로 사용합니다.",
     ],
   },
@@ -694,7 +694,14 @@ const HelpSettings: Component = () => (
   </section>
 );
 
-type UpdatePhase = "idle" | "queued" | "running" | "succeeded" | "failed";
+type UpdatePhase =
+  | "idle"
+  | "queued"
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "restart_required";
 
 interface UpdateRunState {
   phase: UpdatePhase;
@@ -757,6 +764,7 @@ const LanguageSettings: Component<{
   const [updating, setUpdating] = createSignal<"all" | "server" | string | null>(null);
   const [serverUpdateBaseline, setServerUpdateBaseline] = createSignal<string | null>(null);
   const [lastUpdateDeviceFailures, setLastUpdateDeviceFailures] = createSignal(0);
+  const [lastUpdateDeviceRestarts, setLastUpdateDeviceRestarts] = createSignal(0);
   const [devices, { refetch: refetchDevices }] = createResource(
     () => props.devicesRevision ?? 0,
     async () => {
@@ -819,6 +827,7 @@ const LanguageSettings: Component<{
   async function updateServer(): Promise<void> {
     setUpdating("server");
     setLastUpdateDeviceFailures(0);
+    setLastUpdateDeviceRestarts(0);
     setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
     setOverallUpdate({ phase: "running", message: "서버 업데이트 시작 요청 중" });
     try {
@@ -850,7 +859,7 @@ const LanguageSettings: Component<{
     try {
       const result = await api.updateDevice(device.id);
       const state = {
-        phase: result.error || result.restartRequestError ? "failed" : "succeeded",
+        phase: connectorUpdatePhase(result),
         message: connectorUpdateMessage(result),
         ...(result.fallbackCommand ? { fallbackCommand: result.fallbackCommand } : {}),
       } satisfies UpdateRunState;
@@ -889,6 +898,7 @@ const LanguageSettings: Component<{
     }
     setUpdating("all");
     setLastUpdateDeviceFailures(0);
+    setLastUpdateDeviceRestarts(0);
     setOverallUpdate({ phase: "running", message: "전체 업데이트 진행 중" });
     setDeviceUpdateStates(
       Object.fromEntries(
@@ -903,16 +913,24 @@ const LanguageSettings: Component<{
     );
 
     let failures = 0;
+    let restartRequired = 0;
     for (const device of connectorTargets) {
       const result = await updateConnector(device);
       if (result?.phase === "failed") failures += 1;
+      if (result?.phase === "restart_required") restartRequired += 1;
     }
     setLastUpdateDeviceFailures(failures);
+    setLastUpdateDeviceRestarts(restartRequired);
 
     if (!shouldUpdateServer) {
       setOverallUpdate({
-        phase: failures > 0 ? "failed" : "succeeded",
-        message: failures > 0 ? `connector 업데이트 실패 ${failures}건` : "connector 업데이트 완료",
+        phase: failures > 0 ? "failed" : restartRequired > 0 ? "restart_required" : "succeeded",
+        message:
+          failures > 0
+            ? `connector 업데이트 실패 ${failures}건`
+            : restartRequired > 0
+              ? `connector 업데이트 완료 · 재시작 필요 ${restartRequired}건`
+              : "connector 업데이트 완료",
       });
       setUpdating(null);
       return;
@@ -925,7 +943,9 @@ const LanguageSettings: Component<{
           ? "서버 업데이트 요청 중"
           : failures > 0
             ? `connector 업데이트 실패 ${failures}건 · 서버 업데이트 요청 중`
-            : "connector 업데이트 완료 · 서버 업데이트 요청 중",
+            : restartRequired > 0
+              ? `connector 재시작 필요 ${restartRequired}건 · 서버 업데이트 요청 중`
+              : "connector 업데이트 완료 · 서버 업데이트 요청 중",
     });
     setUpdating("all");
     setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
@@ -958,12 +978,15 @@ const LanguageSettings: Component<{
     if (!isTrackedServerUpdateStatus(status, serverUpdateBaseline())) return;
     if (status?.state === "succeeded") {
       const failures = lastUpdateDeviceFailures();
+      const restartRequired = lastUpdateDeviceRestarts();
       setOverallUpdate({
-        phase: failures > 0 ? "failed" : "succeeded",
+        phase: failures > 0 ? "failed" : restartRequired > 0 ? "restart_required" : "succeeded",
         message:
           failures > 0
             ? `${updateStatusText(status)} · 디바이스 업데이트 실패 ${failures}건`
-            : updateStatusText(status),
+            : restartRequired > 0
+              ? `${updateStatusText(status)} · connector 재시작 필요 ${restartRequired}건`
+              : updateStatusText(status),
       });
     }
     if (status?.state === "failed") {
@@ -1156,7 +1179,11 @@ const LanguageSettings: Component<{
                         ? "진행 중"
                         : canUpdateConnector(device, snapshot())
                           ? "connector 업데이트"
-                          : "최신"}
+                          : phase() === "pending"
+                            ? "대기"
+                            : phase() === "restart_required"
+                              ? "재시작 필요"
+                              : "최신"}
                     </button>
                   </div>
                   <Show when={state()?.fallbackCommand}>
@@ -1344,7 +1371,10 @@ function connectorUpdateMessage(result: DeviceUpdateResponse): string {
   const after = result.after?.shortCommit;
   const range = before && after ? ` · ${before} → ${after}` : "";
   if (result.restartRequestError) {
-    return `connector 업데이트 완료, 재시작 요청 실패: ${result.restartRequestError}${range}`;
+    return `connector 업데이트 완료 · 재시작 필요: ${result.restartRequestError}${range}`;
+  }
+  if (result.state === "restart_required") {
+    return result.warning ?? `connector 업데이트 완료 · 재시작 필요${range}`;
   }
   if (result.restartScheduled) {
     return result.changed
@@ -1352,6 +1382,13 @@ function connectorUpdateMessage(result: DeviceUpdateResponse): string {
       : `connector가 이미 최신 상태, 재시작 요청됨${range}`;
   }
   return result.warning ?? `connector 업데이트 완료${range}`;
+}
+
+function connectorUpdatePhase(result: DeviceUpdateResponse): UpdatePhase {
+  if (result.error || result.state === "failed") return "failed";
+  if (result.state === "pending_until_device_online") return "pending";
+  if (result.state === "restart_required" || result.restartRequestError) return "restart_required";
+  return "succeeded";
 }
 
 function updateStatusPhase(status: SelfServerUpdateStatus | null | undefined): UpdatePhase {
@@ -1404,7 +1441,7 @@ function deviceUpdatePhase(
   runState: UpdateRunState | null,
 ): UpdatePhase {
   if (runState) return runState.phase;
-  if (device.connectionState === "offline") return "failed";
+  if (device.connectionState === "offline") return "pending";
   if (snapshot?.error) return "failed";
   const same = sameBuild(server, snapshot?.build);
   if (same === true) return "succeeded";
@@ -1419,7 +1456,7 @@ function deviceUpdateStatusText(
   runState: UpdateRunState | null,
 ): string {
   if (runState) return runState.message;
-  if (device.connectionState === "offline") return "오프라인: connector 상태 확인 불가";
+  if (device.connectionState === "offline") return "오프라인: 온라인 상태가 되면 업데이트 가능";
   if (snapshot?.error) return `상태 확인 실패: ${snapshot.error}`;
   return buildDetail(server, snapshot?.build);
 }

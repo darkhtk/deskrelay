@@ -402,22 +402,57 @@ function classifyAdvertisedProbeFailure(
   daemonUrl: string,
   port: number,
 ): { summary: string; hint: string; message: string; evidence: string[]; action: string } {
+  const host = hostFromUrl(daemonUrl);
+  const network = classifyAdvertisedNetwork(host);
+  const baseEvidence = [
+    `daemonUrl=${daemonUrl}`,
+    `port=${port}`,
+    `host=${host || "unknown"}`,
+    `network=${network}`,
+    `error=${error}`,
+  ];
   if (error === "HTTP 401" || error === "HTTP 403") {
     return {
       summary: `server reached ${daemonUrl}, but daemon token was rejected (${error})`,
       hint: "Rerun the registration command so the server stores this PC's current daemon token.",
       action:
         "Rerun the same registration command so the server stores this PC's current daemon token.",
-      evidence: [`daemonUrl=${daemonUrl}`, `status=${error}`],
+      evidence: [...baseEvidence, `status=${error}`],
       message: `daemon token rejected at ${daemonUrl}: ${error}`,
     };
   }
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|name not resolved/i.test(error)) {
+    return {
+      summary: `local daemon is ready, but ${daemonUrl} could not be resolved`,
+      hint: "Use a Tailscale IPv4, LAN IPv4, or resolvable hostname for the advertised connector address.",
+      action:
+        "Rerun registration after Tailscale/LAN DNS is available, or pass a reachable --advertise-host value.",
+      evidence: baseEvidence,
+      message: `cannot resolve connector address ${daemonUrl}. Use a reachable Tailscale/LAN address.`,
+    };
+  }
+  if (/ECONNREFUSED|connection refused/i.test(error)) {
+    return {
+      summary: `local daemon is ready, but ${daemonUrl} refused the advertised connection`,
+      hint: `Confirm the connector login task is bound to 0.0.0.0 and nothing else owns TCP ${port}.`,
+      action:
+        "Rerun registration so the installer can replace the login task and stale connector process.",
+      evidence: baseEvidence,
+      message: `connector refused at ${daemonUrl}. Reinstall the login task and retry TCP ${port}.`,
+    };
+  }
   if (/timed|abort/i.test(error)) {
+    const routeHint =
+      network === "tailscale"
+        ? "Tailscale must be logged in on both PCs and Windows Firewall must allow inbound connector traffic."
+        : network === "lan"
+          ? "Both PCs must be on the same LAN/VPN and Windows Firewall must allow inbound connector traffic."
+          : "The advertised address must be routable from the server and protected by a private network.";
     return {
       summary: `local daemon is ready, but ${daemonUrl} timed out from the advertised address`,
-      hint: `Check Tailscale/LAN routing and Windows Firewall inbound TCP ${port}.`,
+      hint: `${routeHint} Check inbound TCP ${port}.`,
       action: `Allow inbound TCP ${port} for the connector, confirm Tailscale/LAN reachability, then rerun registration.`,
-      evidence: [`daemonUrl=${daemonUrl}`, `port=${port}`, `error=${error}`],
+      evidence: baseEvidence,
       message: `cannot reach connector at ${daemonUrl}: timeout. Check Windows Firewall or Tailscale/LAN access for TCP ${port}.`,
     };
   }
@@ -425,9 +460,33 @@ function classifyAdvertisedProbeFailure(
     summary: `local daemon is ready, but ${daemonUrl} is not reachable (${error})`,
     hint: `Check Windows Firewall, Tailscale/LAN access, and whether this PC is advertising the correct IP for TCP ${port}.`,
     action: `Check the advertised connector address and inbound TCP ${port}, then rerun registration.`,
-    evidence: [`daemonUrl=${daemonUrl}`, `port=${port}`, `error=${error}`],
+    evidence: baseEvidence,
     message: `cannot reach connector at ${daemonUrl}. Check Windows Firewall or Tailscale/LAN access for TCP ${port}.`,
   };
+}
+
+function hostFromUrl(raw: string): string {
+  try {
+    return new URL(raw).hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    return "";
+  }
+}
+
+function classifyAdvertisedNetwork(
+  host: string,
+): "local" | "tailscale" | "lan" | "public" | "unknown" {
+  if (!host) return "unknown";
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return "local";
+  if (host.startsWith("100.")) return "tailscale";
+  if (
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+  ) {
+    return "lan";
+  }
+  return "public";
 }
 
 /*

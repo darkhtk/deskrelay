@@ -20,6 +20,15 @@ export type DiagnosticSource =
   | "updater"
   | "test";
 
+export type UpdateState =
+  | "not_started"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "restart_required"
+  | "pending_until_device_online";
+
 export type DiagnosticActionKind =
   | "retry"
   | "repair"

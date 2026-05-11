@@ -348,13 +348,28 @@ async function assertInstallReport(output: string, expectedStepId: string): Prom
   assert(existsSync(reportPath), `installer report was not written: ${reportPath}`);
   const report = JSON.parse(await Bun.file(reportPath).text()) as {
     status?: string;
-    steps?: Array<{ id?: string; status?: string }>;
+    steps?: Array<{
+      id?: string;
+      status?: string;
+      severity?: string;
+      source?: string;
+      retrySafe?: boolean;
+    }>;
   };
   assert(report.status === "failed", `expected failed install report, got ${report.status}`);
-  assert(
-    report.steps?.some((step) => step.id === expectedStepId && step.status === "failed"),
-    `install report did not include failed step ${expectedStepId}`,
+  const failed = report.steps?.find(
+    (step) => step.id === expectedStepId && step.status === "failed",
   );
+  assert(Boolean(failed), `install report did not include failed step ${expectedStepId}`);
+  assert(
+    failed?.severity === "error",
+    `failed step ${expectedStepId} did not include error severity`,
+  );
+  assert(
+    failed?.source === "installer",
+    `failed step ${expectedStepId} did not include installer source`,
+  );
+  assert(failed?.retrySafe === true, `failed step ${expectedStepId} was not marked retrySafe`);
 }
 
 async function postDevice(

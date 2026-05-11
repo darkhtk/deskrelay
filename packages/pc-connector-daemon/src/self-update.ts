@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
+import { type DiagnosticStep, type UpdateState, normalizeDiagnosticStep } from "@deskrelay/shared";
 import { getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { queryLoginTask } from "./login-task.ts";
 
@@ -8,6 +9,7 @@ const execFileAsync = promisify(execFile);
 
 export interface LocalConnectorUpdateResult {
   ok: true;
+  state: Extract<UpdateState, "succeeded" | "restart_required">;
   repoRoot: string;
   branch: string;
   before: {
@@ -29,6 +31,7 @@ export interface LocalConnectorUpdateResult {
   restartRequested: boolean;
   restartRequestError?: string;
   warning?: string;
+  steps: DiagnosticStep[];
 }
 
 export interface LocalConnectorUpdateOptions {
@@ -55,6 +58,7 @@ const UPDATE_TIMEOUT_MS = 120_000;
 export async function updateLocalSourceConnector(
   options: LocalConnectorUpdateOptions = {},
 ): Promise<LocalConnectorUpdateResult> {
+  const steps: DiagnosticStep[] = [];
   const repoRoot = options.repoRoot ?? process.cwd();
   const branch = options.branch?.trim() || DEFAULT_BRANCH;
   const runner = options.runner ?? runCommand;
@@ -64,6 +68,7 @@ export async function updateLocalSourceConnector(
   if (!existsSync(`${repoRoot}/.git`) && !existsSync(`${repoRoot}\\.git`)) {
     throw new Error(`DeskRelay source checkout not found: ${repoRoot}`);
   }
+  addUpdateStep(steps, "repo", "source checkout", "ok", `using ${repoRoot}`);
 
   const dirty = await gitText(runner, repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
   if (dirty.trim()) {
@@ -71,8 +76,10 @@ export async function updateLocalSourceConnector(
       "Cannot update while tracked files have local changes. Commit or stash them, then retry.",
     );
   }
+  addUpdateStep(steps, "working-tree", "working tree", "ok", "no tracked local changes");
 
   await runner("git", ["fetch", "origin", branch], { cwd: repoRoot, timeoutMs: UPDATE_TIMEOUT_MS });
+  addUpdateStep(steps, "git-fetch", "git fetch", "ok", `fetched origin/${branch}`);
   const remoteCommit = await gitText(runner, repoRoot, ["rev-parse", `origin/${branch}`]);
   if (!remoteCommit) {
     throw new Error(`Could not resolve origin/${branch}.`);
@@ -83,12 +90,34 @@ export async function updateLocalSourceConnector(
       cwd: repoRoot,
       timeoutMs: UPDATE_TIMEOUT_MS,
     });
+    addUpdateStep(
+      steps,
+      "git-pull",
+      "git pull",
+      "repaired",
+      `fast-forwarded ${shortCommit(beforeCommit)} to ${shortCommit(remoteCommit)}`,
+    );
+  } else {
+    addUpdateStep(steps, "git-pull", "git pull", "skipped", "already at origin head");
   }
 
   await runner("bun", ["install"], { cwd: repoRoot, timeoutMs: UPDATE_TIMEOUT_MS });
+  addUpdateStep(steps, "dependencies", "dependencies", "ok", "bun install completed");
   const afterCommit = await gitText(runner, repoRoot, ["rev-parse", "HEAD"]);
   const loginTask = await (options.loginTaskStatus ?? defaultLoginTaskStatus)();
   const restartScheduled = Boolean(loginTask.supported && loginTask.installed);
+  addUpdateStep(
+    steps,
+    "login-task",
+    "login task",
+    restartScheduled ? "ok" : "warn",
+    restartScheduled
+      ? `${loginTask.taskName} is installed`
+      : "connector login task was not detected",
+    restartScheduled
+      ? { retrySafe: true }
+      : { action: "Restart the connector manually after the update.", retrySafe: true },
+  );
   const restartRequest = restartScheduled
     ? await (options.restartLoginTask ?? defaultRestartLoginTask)(loginTask.taskName).catch(
         (err) => ({
@@ -99,9 +128,31 @@ export async function updateLocalSourceConnector(
     : { ok: false };
   const restartRequested = restartRequest.ok === true;
   const restartRequestError = restartRequest.ok ? undefined : restartRequest.error;
+  addUpdateStep(
+    steps,
+    "restart",
+    "connector restart",
+    restartRequested ? "ok" : "warn",
+    restartRequested
+      ? "restart was requested through the login task"
+      : restartRequestError
+        ? `restart request failed: ${restartRequestError}`
+        : "manual restart is required",
+    restartRequested
+      ? { retrySafe: true }
+      : {
+          action: restartRequestError
+            ? "Restart the DeskRelay Connector login task manually, then refresh diagnostics."
+            : "Start the connector manually or install the login task.",
+          retrySafe: true,
+        },
+  );
+  const state: Extract<UpdateState, "succeeded" | "restart_required"> =
+    restartScheduled && restartRequested ? "succeeded" : "restart_required";
 
   return {
     ok: true,
+    state,
     repoRoot,
     branch,
     before: {
@@ -133,7 +184,30 @@ export async function updateLocalSourceConnector(
           warning: `Connector updated, but automatic restart request failed: ${restartRequestError}`,
         }
       : {}),
+    steps,
   };
+}
+
+function addUpdateStep(
+  steps: DiagnosticStep[],
+  id: string,
+  label: string,
+  status: DiagnosticStep["status"],
+  summary: string,
+  options: { action?: string; retrySafe?: boolean } = {},
+): void {
+  steps.push(
+    normalizeDiagnosticStep({
+      id,
+      label,
+      status,
+      summary,
+      ...(options.action ? { action: options.action } : {}),
+      ...(options.retrySafe ? { retrySafe: true } : {}),
+      source: "updater",
+      lastCheckedAt: new Date().toISOString(),
+    }),
+  );
 }
 
 async function defaultLoginTaskStatus(): Promise<{
