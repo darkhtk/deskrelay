@@ -1,4 +1,8 @@
-import type { ManagerAssistantChatContext, ManagerAssistantChatMessage } from "@deskrelay/shared";
+import type {
+  ManagerAssistantChatContext,
+  ManagerAssistantChatMessage,
+  ManagerAssistantStreamStatus,
+} from "@deskrelay/shared";
 import { type Component, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { type ClaudeStreamEvent, api } from "../api.ts";
 import { Composer } from "./Composer.tsx";
@@ -7,7 +11,7 @@ import { Transcript } from "./Transcript.tsx";
 const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
   id: "assistant-initial",
   role: "assistant",
-  text: "DeskRelay 관리용 대화창입니다. 서버 PC의 DeskRelay 기본 폴더에서 Claude CLI로 응답합니다.",
+  text: "DeskRelay 상태 점검, 업데이트, 복구를 도와드릴게요.",
   createdAt: new Date().toISOString(),
 };
 
@@ -19,6 +23,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [messages, setMessages] = createSignal<ManagerAssistantChatMessage[]>([INITIAL_MESSAGE]);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [status, setStatus] = createSignal<ManagerAssistantStreamStatus | null>(null);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   let transcriptScroller: HTMLDivElement | undefined;
 
@@ -72,18 +77,54 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     setMessages(history);
     setTranscriptAtBottom(true);
     setError(null);
+    setStatus({
+      phase: "preparing",
+      tone: "thinking",
+      main: "요청 준비 중",
+      detail: "선택 컨텍스트 전달",
+    });
     setBusy(true);
+    let streamError: string | null = null;
     try {
-      const response = await api.managerAssistantChat({
-        message: text,
-        history,
-        ...(props.context ? { context: props.context } : {}),
-      });
-      setMessages((current) => [...current, response.message]);
+      await api.managerAssistantChatStream(
+        {
+          message: text,
+          history,
+          ...(props.context ? { context: props.context } : {}),
+        },
+        (event) => {
+          if (event.type === "status") {
+            setStatus(event.status);
+            return;
+          }
+          if (event.type === "message") {
+            setMessages((current) => [...current, event.message]);
+            return;
+          }
+          if (event.type === "error") {
+            streamError = event.error;
+            setError(event.error);
+            setStatus({
+              phase: "error",
+              tone: "warning",
+              main: "Assistant 오류",
+              detail: event.error,
+            });
+          }
+        },
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      streamError = err instanceof Error ? err.message : String(err);
+      setError(streamError);
+      setStatus({
+        phase: "error",
+        tone: "warning",
+        main: "Assistant 오류",
+        detail: streamError,
+      });
     } finally {
       setBusy(false);
+      if (!streamError) setStatus(null);
     }
   };
 
@@ -129,11 +170,15 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             </svg>
           </button>
         </Show>
-        <Show when={busy()}>
-          <output class="composer-status composer-status-thinking" aria-live="polite">
-            <span class="composer-status-main">AI Assistant</span>
-            <span class="composer-status-detail">응답 대기</span>
-          </output>
+        <Show when={status()}>
+          {(guidance) => (
+            <output class={`composer-status composer-status-${guidance().tone}`} aria-live="polite">
+              <span class="composer-status-main">{guidance().main}</span>
+              <Show when={guidance().detail}>
+                {(detail) => <span class="composer-status-detail">{detail()}</span>}
+              </Show>
+            </output>
+          )}
         </Show>
         <Composer
           onSend={send}

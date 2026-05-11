@@ -11,6 +11,8 @@ import {
   type ManagerAssistantChatMessage,
   type ManagerAssistantChatRequest,
   type ManagerAssistantChatResponse,
+  type ManagerAssistantStreamEvent,
+  type ManagerAssistantStreamStatus,
   type ManagerCapabilities,
   type ManagerDeviceActions,
   type ManagerInstallStatus,
@@ -221,6 +223,18 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
+  });
+
+  app.post("/api/manager/assistant/chat/stream", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const request = parseManagerAssistantChatRequest(body);
+    if (!request.ok) return c.json({ error: request.error }, 400);
+    return streamManagerAssistantChat(request.value, options, c.req.url);
   });
 
   app.get("/api/manager/audit-log", async (c) => {
@@ -1153,6 +1167,11 @@ const SITE_ROUTE_CAPABILITIES = [
     description: "Send a message to the server-local DeskRelay assistant CLI.",
   },
   {
+    method: "POST",
+    path: "/api/manager/assistant/chat/stream",
+    description: "Stream server-local DeskRelay assistant CLI status and final response.",
+  },
+  {
     method: "GET",
     path: "/api/manager/audit-log",
     description: "Read manager task audit log.",
@@ -1550,6 +1569,101 @@ async function runManagerAssistantChat(
   };
 }
 
+function streamManagerAssistantChat(
+  request: ManagerAssistantChatRequest,
+  options: SiteAppOptions,
+  requestUrl: string,
+): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (event: ManagerAssistantStreamEvent) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+
+      void (async () => {
+        const started = Date.now();
+        try {
+          emit(
+            managerAssistantStatusEvent({
+              phase: "preparing",
+              tone: "thinking",
+              main: "요청 준비 중",
+              detail: "선택 컨텍스트 확인",
+            }),
+          );
+          const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+          const apiBaseUrl = managerAssistantApiBaseUrl(options, requestUrl);
+          const workspace = await ensureManagerAssistantWorkspace(repoRoot, apiBaseUrl);
+          const cwd = options.managerAssistant?.runner ? repoRoot : workspace.cwd;
+          const history = normalizeAssistantHistory(request.history);
+          const input: ManagerAssistantRunInput = {
+            message: request.message.trim(),
+            history,
+            context: request.context,
+            cwd,
+            repoRoot,
+            instructionsPath: workspace.instructionsPath,
+            apiBaseUrl,
+          };
+          const runner = options.managerAssistant?.runner;
+          const result = runner
+            ? await runCustomManagerAssistantRunner(input, runner, emit)
+            : await runDefaultManagerAssistantCliStream(input, options, emit);
+          emit({
+            type: "message",
+            cwd,
+            command: result.command,
+            durationMs: Date.now() - started,
+            message: {
+              id: `assistant_${randomBytes(10).toString("base64url")}`,
+              role: "assistant",
+              text: result.text,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        } catch (error) {
+          emit({ type: "error", error: errorMessage(error) });
+        } finally {
+          controller.close();
+        }
+      })();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      "x-accel-buffering": "no",
+    },
+  });
+}
+
+async function runCustomManagerAssistantRunner(
+  input: ManagerAssistantRunInput,
+  runner: (input: ManagerAssistantRunInput) => Promise<ManagerAssistantRunResult>,
+  emit: (event: ManagerAssistantStreamEvent) => void,
+): Promise<ManagerAssistantRunResult> {
+  emit(
+    managerAssistantStatusEvent({
+      phase: "running",
+      tone: "thinking",
+      main: "Assistant 실행 중",
+      detail: "테스트 runner",
+    }),
+  );
+  const result = await runner(input);
+  emit(
+    managerAssistantStatusEvent({
+      phase: "finalizing",
+      tone: "thinking",
+      main: "결과 정리 중",
+    }),
+  );
+  return result;
+}
+
 async function runDefaultManagerAssistantCli(
   input: ManagerAssistantRunInput,
   options: SiteAppOptions,
@@ -1601,6 +1715,274 @@ async function runDefaultManagerAssistantCli(
     text,
     command: `${command} ${args.join(" ")}`.trim(),
   };
+}
+
+async function runDefaultManagerAssistantCliStream(
+  input: ManagerAssistantRunInput,
+  options: SiteAppOptions,
+  emit: (event: ManagerAssistantStreamEvent) => void,
+): Promise<ManagerAssistantRunResult> {
+  const assistantOptions = options.managerAssistant;
+  const command =
+    assistantOptions?.command ?? process.env.DESKRELAY_MANAGER_ASSISTANT_CLI ?? "claude";
+  const baseArgs =
+    assistantOptions?.args ??
+    parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
+  const args = managerAssistantStreamArgs(baseArgs);
+  const timeoutMs = Math.max(5_000, assistantOptions?.timeoutMs ?? 120_000);
+  const prompt = buildManagerAssistantPrompt(input);
+  const argv = [...args, prompt];
+  let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  emit(
+    managerAssistantStatusEvent({
+      phase: "running",
+      tone: "thinking",
+      main: "Claude CLI 시작 중",
+      detail: "관리 assistant",
+    }),
+  );
+  try {
+    proc = Bun.spawn([command, ...argv], {
+      cwd: input.cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+      env: {
+        ...process.env,
+        ...(options.token ? { DESKRELAY_SITE_TOKEN: options.token } : {}),
+        DESKRELAY_MANAGER_API_BASE: input.apiBaseUrl,
+        DESKRELAY_MANAGER_ASSISTANT: "1",
+        DESKRELAY_MANAGER_ASSISTANT_INSTRUCTIONS: input.instructionsPath,
+        DESKRELAY_REPOSITORY_ROOT: input.repoRoot,
+      },
+    });
+  } catch (error) {
+    throw new Error(`Could not start manager assistant CLI (${command}): ${errorMessage(error)}`);
+  }
+
+  proc.stdin.end();
+  const stdout = readManagerAssistantStdout(proc.stdout, emit);
+  const stderr = readManagerAssistantStderr(proc.stderr, emit);
+  const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
+    proc.kill();
+  });
+  const [stdoutResult, stderrText] = await Promise.all([stdout, stderr]);
+  if (exitCode !== 0) {
+    throw new Error(
+      `Manager assistant CLI exited with code ${exitCode}${
+        stderrText.trim() ? `: ${stderrText.trim()}` : ""
+      }`,
+    );
+  }
+  const text =
+    stdoutResult.resultText.trim() ||
+    stdoutResult.assistantText.trim() ||
+    stdoutResult.rawText.trim() ||
+    stderrText.trim();
+  if (!text) throw new Error("Manager assistant CLI returned no output.");
+  emit(
+    managerAssistantStatusEvent({
+      phase: "finalizing",
+      tone: "thinking",
+      main: "결과 정리 중",
+    }),
+  );
+  return {
+    text,
+    command: `${command} ${args.join(" ")}`.trim(),
+  };
+}
+
+function managerAssistantStreamArgs(args: string[]): string[] {
+  const normalized: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) continue;
+    if (arg === "--output-format") {
+      index += 1;
+      continue;
+    }
+    if (arg?.startsWith("--output-format=")) continue;
+    normalized.push(arg);
+  }
+  if (!normalized.includes("--verbose")) normalized.push("--verbose");
+  normalized.push("--output-format", "stream-json");
+  return normalized;
+}
+
+interface ManagerAssistantStdoutResult {
+  resultText: string;
+  assistantText: string;
+  rawText: string;
+}
+
+async function readManagerAssistantStdout(
+  stream: ReadableStream<Uint8Array>,
+  emit: (event: ManagerAssistantStreamEvent) => void,
+): Promise<ManagerAssistantStdoutResult> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let buffer = "";
+  let resultText = "";
+  let assistantText = "";
+  let rawText = "";
+
+  const consumeLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      rawText += `${trimmed}\n`;
+      return;
+    }
+    if (!isRecord(parsed) || typeof parsed.type !== "string") {
+      rawText += `${trimmed}\n`;
+      return;
+    }
+    emit({ type: "claude_event", event: parsed });
+    const status = managerAssistantStatusFromClaudeEvent(parsed);
+    if (status) emit(managerAssistantStatusEvent(status));
+    const result = managerAssistantResultTextFromEvent(parsed);
+    if (result) resultText = result;
+    const text = managerAssistantAssistantTextFromEvent(parsed);
+    if (text) assistantText += `${text}\n`;
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      consumeLine(line);
+      newline = buffer.indexOf("\n");
+    }
+  }
+  const trailing = `${buffer}${decoder.decode()}`.trim();
+  if (trailing) consumeLine(trailing);
+  return { resultText, assistantText, rawText };
+}
+
+async function readManagerAssistantStderr(
+  stream: ReadableStream<Uint8Array>,
+  emit: (event: ManagerAssistantStreamEvent) => void,
+): Promise<string> {
+  const text = await new Response(stream).text();
+  const firstLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (firstLine) {
+    emit(
+      managerAssistantStatusEvent({
+        phase: "running",
+        tone: "warning",
+        main: "CLI 메시지 수신",
+        detail: truncateForStatus(firstLine),
+      }),
+    );
+  }
+  return text;
+}
+
+function managerAssistantStatusEvent(
+  status: ManagerAssistantStreamStatus,
+): ManagerAssistantStreamEvent {
+  return { type: "status", status };
+}
+
+function managerAssistantStatusFromClaudeEvent(
+  event: Record<string, unknown>,
+): ManagerAssistantStreamStatus | null {
+  const type = typeof event.type === "string" ? event.type : "";
+  if (type === "system") {
+    return { phase: "running", tone: "thinking", main: "CLI 초기화 중" };
+  }
+  if (type === "result") {
+    return { phase: "finalizing", tone: "thinking", main: "결과 정리 중" };
+  }
+  if (type === "assistant") {
+    const tool = managerAssistantToolUseFromEvent(event);
+    if (tool) {
+      return {
+        phase: tool.detail?.startsWith("DeskRelay API") ? "api" : "tool",
+        tone: "thinking",
+        main: tool.detail?.startsWith("DeskRelay API")
+          ? "DeskRelay API 호출 중"
+          : `도구 실행 중: ${tool.name}`,
+        ...(tool.detail ? { detail: tool.detail } : {}),
+      };
+    }
+    const blocks = managerAssistantMessageBlocks(event);
+    if (blocks.some((block) => block.type === "thinking")) {
+      return { phase: "running", tone: "thinking", main: "판단 중" };
+    }
+    if (blocks.some((block) => block.type === "text")) {
+      return { phase: "running", tone: "thinking", main: "응답 작성 중" };
+    }
+  }
+  if (
+    type === "user" &&
+    managerAssistantMessageBlocks(event).some((block) => block.type === "tool_result")
+  ) {
+    return { phase: "running", tone: "thinking", main: "도구 결과 확인 중" };
+  }
+  return null;
+}
+
+function managerAssistantToolUseFromEvent(
+  event: Record<string, unknown>,
+): { name: string; detail?: string } | null {
+  for (const block of managerAssistantMessageBlocks(event)) {
+    if (block.type !== "tool_use") continue;
+    const name = typeof block.name === "string" && block.name.trim() ? block.name.trim() : "tool";
+    const detail = managerAssistantToolDetail(name, block.input);
+    return detail ? { name, detail } : { name };
+  }
+  return null;
+}
+
+function managerAssistantMessageBlocks(
+  event: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  const message = isRecord(event.message) ? event.message : null;
+  const content = message?.content;
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!Array.isArray(content)) return [];
+  return content.filter(isRecord);
+}
+
+function managerAssistantToolDetail(name: string, input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  const command = typeof input.command === "string" ? input.command : "";
+  if (!command) return undefined;
+  const apiMatch = command.match(/\/api\/[A-Za-z0-9_./:-]+/);
+  if (apiMatch) return `DeskRelay API ${apiMatch[0]}`;
+  if (name.toLowerCase() === "bash") return "명령 실행";
+  return undefined;
+}
+
+function managerAssistantResultTextFromEvent(event: Record<string, unknown>): string {
+  if (event.type !== "result") return "";
+  return typeof event.result === "string" ? event.result : "";
+}
+
+function managerAssistantAssistantTextFromEvent(event: Record<string, unknown>): string {
+  if (event.type !== "assistant") return "";
+  const parts: string[] = [];
+  for (const block of managerAssistantMessageBlocks(event)) {
+    if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
+  }
+  return parts.join("\n");
+}
+
+function truncateForStatus(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 
 function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
@@ -1720,7 +2102,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "Use the DeskRelay HTTP API for operational facts instead of guessing.",
     "For authenticated `/api/*` calls, send `Authorization: Bearer $DESKRELAY_SITE_TOKEN` when the token exists.",
     "`GET /api/capabilities` is the live source of truth for route and behavior-method discovery.",
-    "Avoid calling `POST /api/manager/assistant/chat` from inside the assistant unless you are deliberately testing the assistant endpoint.",
+    "Avoid calling `POST /api/manager/assistant/chat` or `POST /api/manager/assistant/chat/stream` from inside the assistant unless you are deliberately testing the assistant endpoint.",
     "",
     "PowerShell example:",
     "",

@@ -496,6 +496,11 @@ describe("API route inventory", () => {
           [400],
         ],
         [
+          "POST /api/manager/assistant/chat/stream",
+          authedRequest("POST", "/api/manager/assistant/chat/stream", {}),
+          [400],
+        ],
+        [
           "GET /api/manager/devices/:id/actions",
           authedRequest("GET", `/api/manager/devices/${deviceId}/actions`),
         ],
@@ -1063,6 +1068,36 @@ describe("manager task API", () => {
     expect(body.message?.text).toContain("message=상태 알려줘");
     expect(body.message?.text).toContain("history=1");
     expect(body.message?.text).toContain("context=session_1");
+  });
+
+  test("manager assistant stream reports status before final response", async () => {
+    const cwd = join(tmpdir(), "deskrelay-assistant-stream-test");
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: {
+        cwd,
+        runner: async (input) => ({
+          command: "fake-claude -p",
+          text: `streamed ${input.message}`,
+        }),
+      },
+    });
+
+    const res = await app.fetch(
+      authedRequest("POST", "/api/manager/assistant/chat/stream", {
+        message: "업데이트 상태 확인",
+        history: [],
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const text = await res.text();
+    expect(text).toContain('"type":"status"');
+    expect(text).toContain('"main":"Assistant 실행 중"');
+    expect(text).toContain('"type":"message"');
+    expect(text).toContain("streamed 업데이트 상태 확인");
   });
 
   test("manager assistant chat creates managed Claude instructions outside user-editable scopes", async () => {

@@ -3,6 +3,7 @@ import type {
   DiagnosticStep,
   ManagerAssistantChatRequest,
   ManagerAssistantChatResponse,
+  ManagerAssistantStreamEvent,
   ManagerCapabilities,
   ManagerDeviceActions,
   ManagerInstallStatus,
@@ -385,6 +386,56 @@ async function requestBlob(path: string): Promise<Blob> {
   return await res.blob();
 }
 
+async function requestEventStream<E>(
+  path: string,
+  body: unknown,
+  onEvent: (event: E) => void,
+): Promise<void> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const token = getToken();
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(`${resolveBaseUrl()}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const parsed = await readResponse(res);
+    const message =
+      parsed && typeof parsed === "object" && "error" in parsed
+        ? String((parsed as { error: unknown }).error)
+        : `HTTP ${res.status}`;
+    throw new ApiError(message, res.status, parsed);
+  }
+  if (!res.body) throw new ApiError("stream response had no body", res.status);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const flush = (chunk: string) => {
+    buffer += chunk;
+    let separator = buffer.indexOf("\n\n");
+    while (separator >= 0) {
+      const raw = buffer.slice(0, separator);
+      buffer = buffer.slice(separator + 2);
+      const data = raw
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      if (data) onEvent(JSON.parse(data) as E);
+      separator = buffer.indexOf("\n\n");
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    flush(decoder.decode(value, { stream: true }));
+  }
+  flush(decoder.decode());
+}
+
 async function readLocalSiteToken(): Promise<string | null> {
   try {
     const res = await fetch(`${resolveBaseUrl()}/__deskrelay/local-site-token`, {
@@ -469,6 +520,15 @@ export const api = {
     request<ManagerTaskLogResponse>("GET", `/api/manager/tasks/${id}/logs`),
   managerAssistantChat: (input: ManagerAssistantChatRequest) =>
     request<ManagerAssistantChatResponse>("POST", "/api/manager/assistant/chat", input),
+  managerAssistantChatStream: (
+    input: ManagerAssistantChatRequest,
+    onEvent: (event: ManagerAssistantStreamEvent) => void,
+  ) =>
+    requestEventStream<ManagerAssistantStreamEvent>(
+      "/api/manager/assistant/chat/stream",
+      input,
+      onEvent,
+    ),
   cancelManagerTask: (id: string) =>
     request<ManagerTask>("POST", `/api/manager/tasks/${id}/cancel`),
   retryManagerTask: (id: string) => request<ManagerTask>("POST", `/api/manager/tasks/${id}/retry`),

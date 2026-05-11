@@ -267,6 +267,35 @@ export interface ManagerAssistantChatResponse {
   durationMs: number;
 }
 
+export type ManagerAssistantStreamTone = "context" | "thinking" | "warning";
+
+export type ManagerAssistantStreamPhase =
+  | "preparing"
+  | "running"
+  | "tool"
+  | "api"
+  | "finalizing"
+  | "error";
+
+export interface ManagerAssistantStreamStatus {
+  phase: ManagerAssistantStreamPhase;
+  tone: ManagerAssistantStreamTone;
+  main: string;
+  detail?: string;
+}
+
+export type ManagerAssistantStreamEvent =
+  | { type: "status"; status: ManagerAssistantStreamStatus }
+  | { type: "claude_event"; event: unknown }
+  | {
+      type: "message";
+      message: ManagerAssistantChatMessage;
+      cwd: string;
+      command: string;
+      durationMs: number;
+    }
+  | { type: "error"; error: string };
+
 export interface ManagerActionDescriptor {
   id: string;
   label: string;

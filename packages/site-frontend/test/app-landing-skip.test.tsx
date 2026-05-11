@@ -190,7 +190,7 @@ describe("App landing flow", () => {
     });
   });
 
-  test("settings manager assistant sends a server-local CLI chat message", async () => {
+  test("settings manager assistant streams a server-local CLI chat message", async () => {
     window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     const requests: Array<{ url: string; method: string; body?: string }> = [];
 
@@ -206,6 +206,18 @@ describe("App landing flow", () => {
           status: 200,
           headers: { "content-type": "application/json" },
         });
+      }
+      if (url.endsWith("/api/manager/assistant/chat/stream") && init?.method === "POST") {
+        return new Response(
+          [
+            'data: {"type":"status","status":{"phase":"tool","tone":"thinking","main":"도구 실행 중: Bash","detail":"DeskRelay API /api/manager/system/summary"}}',
+            "",
+            'data: {"type":"message","cwd":"C:\\\\deskrelay","command":"claude -p","durationMs":42,"message":{"id":"assistant-1","role":"assistant","text":"서버 PC의 DeskRelay 폴더에서 확인했습니다.","createdAt":"2026-01-01T00:00:00.000Z"}}',
+            "",
+            "",
+          ].join("\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
       }
       if (url.endsWith("/api/manager/assistant/chat") && init?.method === "POST") {
         return new Response(
@@ -244,7 +256,8 @@ describe("App landing flow", () => {
 
     await waitFor(() => {
       const request = requests.find(
-        (entry) => entry.url.endsWith("/api/manager/assistant/chat") && entry.method === "POST",
+        (entry) =>
+          entry.url.endsWith("/api/manager/assistant/chat/stream") && entry.method === "POST",
       );
       const body = JSON.parse(request?.body ?? "{}") as { message?: string; history?: unknown[] };
       expect(body.message).toBe("서버 상태 알려줘");
