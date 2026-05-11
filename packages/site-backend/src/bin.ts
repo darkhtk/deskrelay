@@ -13,6 +13,7 @@ import { createGitUpdateNoticeSource } from "./update-notice.ts";
 
 const port = process.env.CR_SITE_PORT ? Number(process.env.CR_SITE_PORT) : 18092;
 const host = process.env.CR_SITE_HOST ?? "127.0.0.1";
+const idleTimeoutSeconds = positiveNumber(process.env.CR_SITE_IDLE_TIMEOUT_SECONDS, 255);
 
 let token = process.env.CR_SITE_TOKEN ?? "";
 let tokenGenerated = false;
@@ -70,6 +71,7 @@ const app = createSiteApp({
 const server = Bun.serve({
   hostname: host,
   port,
+  idleTimeout: idleTimeoutSeconds,
   fetch: app.fetch,
 });
 
@@ -147,4 +149,10 @@ function defaultAuthFilePath(): string {
   }
   const xdg = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
   return join(xdg, "deskrelay", "site-auth.json");
+}
+
+function positiveNumber(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
