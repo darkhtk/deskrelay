@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
+import { createJsonDeviceUpdateQueueStore } from "./device-update-queue-store.ts";
 import { createJsonInstallReportStore } from "./install-report-store.ts";
 import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
 import { createPowerShellSelfServerUpdater } from "./self-server-update.ts";
@@ -65,6 +66,9 @@ const app = createSiteApp({
   }),
   installReportStore: createJsonInstallReportStore(
     join(selfServerRoot, "state", "install-reports.json"),
+  ),
+  deviceUpdateQueue: createJsonDeviceUpdateQueueStore(
+    join(selfServerRoot, "state", "device-update-queue.json"),
   ),
 });
 

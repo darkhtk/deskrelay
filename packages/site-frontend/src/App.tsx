@@ -15,6 +15,7 @@ import {
   type DeskRelayBuildInfo,
   type Device,
   type DeviceCleanupEntry,
+  type DeviceUpdateQueueEntry,
   type DeviceUpdateResponse,
   type SelfServerUpdateStatus,
   api,
@@ -766,6 +767,7 @@ const LanguageSettings: Component<{
   const [serverUpdateBaseline, setServerUpdateBaseline] = createSignal<string | null>(null);
   const [lastUpdateDeviceFailures, setLastUpdateDeviceFailures] = createSignal(0);
   const [lastUpdateDeviceRestarts, setLastUpdateDeviceRestarts] = createSignal(0);
+  const [lastUpdateDevicePending, setLastUpdateDevicePending] = createSignal(0);
   const [devices, { refetch: refetchDevices }] = createResource(
     () => props.devicesRevision ?? 0,
     async () => {
@@ -783,6 +785,10 @@ const LanguageSettings: Component<{
   const [serverUpdateStatus, { refetch: refetchServerUpdateStatus }] = createResource(
     () => props.devicesRevision ?? 0,
     () => api.selfUpdateStatus().catch(() => null),
+  );
+  const [deviceUpdateQueue, { refetch: refetchDeviceUpdateQueue }] = createResource(
+    () => props.devicesRevision ?? 0,
+    () => api.deviceUpdateQueue().catch(() => ({ entries: [] as DeviceUpdateQueueEntry[] })),
   );
   const [deviceBuildSnapshots, { refetch: refetchDeviceBuildSnapshots }] = createResource(
     () => {
@@ -822,6 +828,7 @@ const LanguageSettings: Component<{
     void refetchDevices();
     void refetchHealth();
     void refetchServerUpdateStatus();
+    void refetchDeviceUpdateQueue();
     void refetchDeviceBuildSnapshots();
   }
 
@@ -829,6 +836,7 @@ const LanguageSettings: Component<{
     setUpdating("server");
     setLastUpdateDeviceFailures(0);
     setLastUpdateDeviceRestarts(0);
+    setLastUpdateDevicePending(0);
     setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
     setOverallUpdate({ phase: "running", message: "서버 업데이트 시작 요청 중" });
     try {
@@ -865,6 +873,7 @@ const LanguageSettings: Component<{
         ...(result.fallbackCommand ? { fallbackCommand: result.fallbackCommand } : {}),
       } satisfies UpdateRunState;
       setDeviceUpdateState(device.id, state);
+      void refetchDeviceUpdateQueue();
       setTimeout(refreshUpdateState, result.restartScheduled ? 5000 : 2000);
       return state;
     } catch (err) {
@@ -877,6 +886,7 @@ const LanguageSettings: Component<{
         ...(body?.fallbackCommand ? { fallbackCommand: body.fallbackCommand } : {}),
       } satisfies UpdateRunState;
       setDeviceUpdateState(device.id, state);
+      void refetchDeviceUpdateQueue();
       return state;
     } finally {
       setUpdating(null);
@@ -890,7 +900,11 @@ const LanguageSettings: Component<{
   async function updateAll(): Promise<void> {
     const list = devices() ?? [];
     const connectorTargets = list.filter((device) =>
-      connectorNeedsUpdate(device, deviceBuildSnapshot(device.id)),
+      connectorNeedsUpdate(
+        device,
+        deviceBuildSnapshot(device.id),
+        deviceUpdateQueueEntry(device.id),
+      ),
     );
     const shouldUpdateServer = canUpdateServer();
     if (!shouldUpdateServer && connectorTargets.length === 0) {
@@ -900,6 +914,7 @@ const LanguageSettings: Component<{
     setUpdating("all");
     setLastUpdateDeviceFailures(0);
     setLastUpdateDeviceRestarts(0);
+    setLastUpdateDevicePending(0);
     setOverallUpdate({ phase: "running", message: "전체 업데이트 진행 중" });
     setDeviceUpdateStates(
       Object.fromEntries(
@@ -915,17 +930,27 @@ const LanguageSettings: Component<{
 
     let failures = 0;
     let restartRequired = 0;
+    let pending = 0;
     for (const device of connectorTargets) {
       const result = await updateConnector(device);
       if (result?.phase === "failed") failures += 1;
       if (result?.phase === "restart_required") restartRequired += 1;
+      if (result?.phase === "pending") pending += 1;
     }
     setLastUpdateDeviceFailures(failures);
     setLastUpdateDeviceRestarts(restartRequired);
+    setLastUpdateDevicePending(pending);
 
     if (!shouldUpdateServer) {
       setOverallUpdate({
-        phase: failures > 0 ? "failed" : restartRequired > 0 ? "restart_required" : "succeeded",
+        phase:
+          failures > 0
+            ? "failed"
+            : restartRequired > 0
+              ? "restart_required"
+              : pending > 0
+                ? "pending"
+                : "succeeded",
         message:
           failures > 0
             ? `connector 업데이트 실패 ${failures}건`
@@ -933,6 +958,9 @@ const LanguageSettings: Component<{
               ? `connector 업데이트 완료 · 재시작 필요 ${restartRequired}건`
               : "connector 업데이트 완료",
       });
+      if (pending > 0 && failures === 0 && restartRequired === 0) {
+        setOverallUpdate({ phase: "pending", message: `connector 업데이트 대기 ${pending}건` });
+      }
       setUpdating(null);
       return;
     }
@@ -972,6 +1000,12 @@ const LanguageSettings: Component<{
     }
   }
 
+  const activeDeviceUpdates = createMemo(() =>
+    (deviceUpdateQueue()?.entries ?? []).some(
+      (entry) => entry.state === "pending_until_device_online" || entry.state === "running",
+    ),
+  );
+
   createEffect(() => {
     const current = overallUpdate();
     const status = serverUpdateStatus();
@@ -980,8 +1014,16 @@ const LanguageSettings: Component<{
     if (status?.state === "succeeded") {
       const failures = lastUpdateDeviceFailures();
       const restartRequired = lastUpdateDeviceRestarts();
+      const pending = lastUpdateDevicePending();
       setOverallUpdate({
-        phase: failures > 0 ? "failed" : restartRequired > 0 ? "restart_required" : "succeeded",
+        phase:
+          failures > 0
+            ? "failed"
+            : restartRequired > 0
+              ? "restart_required"
+              : pending > 0
+                ? "pending"
+                : "succeeded",
         message:
           failures > 0
             ? `${updateStatusText(status)} · 디바이스 업데이트 실패 ${failures}건`
@@ -989,6 +1031,12 @@ const LanguageSettings: Component<{
               ? `${updateStatusText(status)} · connector 재시작 필요 ${restartRequired}건`
               : updateStatusText(status),
       });
+      if (pending > 0 && failures === 0 && restartRequired === 0) {
+        setOverallUpdate({
+          phase: "pending",
+          message: `${updateStatusText(status)} · connector 업데이트 대기 ${pending}건`,
+        });
+      }
     }
     if (status?.state === "failed") {
       setOverallUpdate({ phase: "failed", message: updateStatusText(status) });
@@ -999,6 +1047,7 @@ const LanguageSettings: Component<{
     const status = serverUpdateStatus();
     const shouldPoll =
       overallUpdate().phase === "running" ||
+      activeDeviceUpdates() ||
       (isTrackedServerUpdateStatus(status, serverUpdateBaseline()) && status?.state === "running");
     if (!shouldPoll) return;
     const timer = window.setInterval(refreshUpdateState, 2500);
@@ -1008,6 +1057,9 @@ const LanguageSettings: Component<{
   const deviceBuildSnapshot = (deviceId: string): DeviceBuildSnapshot | null =>
     (deviceBuildSnapshots() ?? []).find((snapshot) => snapshot.deviceId === deviceId) ?? null;
 
+  const deviceUpdateQueueEntry = (deviceId: string): DeviceUpdateQueueEntry | null =>
+    (deviceUpdateQueue()?.entries ?? []).find((entry) => entry.deviceId === deviceId) ?? null;
+
   const serverUpdateIsRunning = () => serverUpdateStatus()?.state === "running";
 
   const canUpdateServer = () =>
@@ -1016,17 +1068,29 @@ const LanguageSettings: Component<{
     serverUpdateStatus()?.updateAvailable === true &&
     !serverUpdateIsRunning();
 
-  const connectorNeedsUpdate = (device: Device, snapshot: DeviceBuildSnapshot | null): boolean =>
-    device.connectionState !== "offline" &&
-    !snapshot?.error &&
-    sameBuild(health()?.build, snapshot?.build) === false;
+  const connectorNeedsUpdate = (
+    device: Device,
+    snapshot: DeviceBuildSnapshot | null,
+    queueEntry: DeviceUpdateQueueEntry | null,
+  ): boolean => {
+    if (isActiveDeviceUpdateQueue(queueEntry)) return false;
+    if (device.connectionState === "offline" || snapshot?.error) return Boolean(health()?.build);
+    return sameBuild(health()?.build, snapshot?.build) === false;
+  };
 
   const canUpdateConnector = (device: Device, snapshot: DeviceBuildSnapshot | null): boolean =>
-    updating() === null && !deviceBuildSnapshots.loading && connectorNeedsUpdate(device, snapshot);
+    updating() === null &&
+    !deviceBuildSnapshots.loading &&
+    !deviceUpdateQueue.loading &&
+    connectorNeedsUpdate(device, snapshot, deviceUpdateQueueEntry(device.id));
 
   const canUpdateAnyConnector = createMemo(() =>
     (devices() ?? []).some((device) =>
-      connectorNeedsUpdate(device, deviceBuildSnapshot(device.id)),
+      connectorNeedsUpdate(
+        device,
+        deviceBuildSnapshot(device.id),
+        deviceUpdateQueueEntry(device.id),
+      ),
     ),
   );
 
@@ -1034,6 +1098,7 @@ const LanguageSettings: Component<{
     updating() === null &&
     !serverUpdateStatus.loading &&
     !deviceBuildSnapshots.loading &&
+    !deviceUpdateQueue.loading &&
     !serverUpdateIsRunning() &&
     (canUpdateServer() || canUpdateAnyConnector());
 
@@ -1159,7 +1224,9 @@ const LanguageSettings: Component<{
             {(device) => {
               const state = () => deviceUpdateStates()[device.id] ?? null;
               const snapshot = () => deviceBuildSnapshot(device.id);
-              const phase = () => deviceUpdatePhase(device, health()?.build, snapshot(), state());
+              const queueEntry = () => deviceUpdateQueueEntry(device.id);
+              const phase = () =>
+                deviceUpdatePhase(device, health()?.build, snapshot(), state(), queueEntry());
               return (
                 <div class="settings-update-device">
                   <div class="settings-update-row">
@@ -1167,7 +1234,13 @@ const LanguageSettings: Component<{
                       <span class={`settings-update-dot update-phase-${phase()}`} />
                       <span class="settings-update-label">{deviceDisplayName(device)}</span>
                       <span class="settings-update-detail">
-                        {deviceUpdateStatusText(device, health()?.build, snapshot(), state())}
+                        {deviceUpdateStatusText(
+                          device,
+                          health()?.build,
+                          snapshot(),
+                          state(),
+                          queueEntry(),
+                        )}
                       </span>
                     </div>
                     <button
@@ -1367,6 +1440,9 @@ function buildLabel(build: DeskRelayBuildInfo | undefined): string {
 }
 
 function connectorUpdateMessage(result: DeviceUpdateResponse): string {
+  if (result.state === "pending_until_device_online") {
+    return result.warning ?? "대기 중 · 디바이스가 온라인이 되면 자동 업데이트";
+  }
   if (result.error) return `connector 업데이트 실패: ${result.error}`;
   const before = result.before?.shortCommit;
   const after = result.after?.shortCommit;
@@ -1440,8 +1516,12 @@ function deviceUpdatePhase(
   server: DeskRelayBuildInfo | undefined,
   snapshot: DeviceBuildSnapshot | null,
   runState: UpdateRunState | null,
+  queueEntry: DeviceUpdateQueueEntry | null,
 ): UpdatePhase {
   if (runState) return runState.phase;
+  if (shouldUseDeviceUpdateQueue(queueEntry, server, snapshot)) {
+    return deviceUpdateQueuePhase(queueEntry);
+  }
   if (device.connectionState === "offline") return "pending";
   if (snapshot?.error) return "failed";
   const same = sameBuild(server, snapshot?.build);
@@ -1455,11 +1535,67 @@ function deviceUpdateStatusText(
   server: DeskRelayBuildInfo | undefined,
   snapshot: DeviceBuildSnapshot | null,
   runState: UpdateRunState | null,
+  queueEntry: DeviceUpdateQueueEntry | null,
 ): string {
   if (runState) return runState.message;
+  if (shouldUseDeviceUpdateQueue(queueEntry, server, snapshot)) {
+    return deviceUpdateQueueStatusText(queueEntry);
+  }
   if (device.connectionState === "offline") return "오프라인: 온라인 상태가 되면 업데이트 가능";
   if (snapshot?.error) return `상태 확인 실패: ${snapshot.error}`;
   return buildDetail(server, snapshot?.build);
+}
+
+function isActiveDeviceUpdateQueue(entry: DeviceUpdateQueueEntry | null): boolean {
+  return entry?.state === "pending_until_device_online" || entry?.state === "running";
+}
+
+function shouldUseDeviceUpdateQueue(
+  entry: DeviceUpdateQueueEntry | null,
+  server: DeskRelayBuildInfo | undefined,
+  snapshot: DeviceBuildSnapshot | null,
+): entry is DeviceUpdateQueueEntry {
+  if (!entry) return false;
+  if (entry.state === "pending_until_device_online" || entry.state === "running") return true;
+  if (entry.state === "failed" || entry.state === "restart_required") return true;
+  if (entry.state === "succeeded")
+    return !snapshot?.error && sameBuild(server, snapshot?.build) !== false;
+  return false;
+}
+
+function deviceUpdateQueuePhase(entry: DeviceUpdateQueueEntry): UpdatePhase {
+  if (entry.state === "pending_until_device_online" || entry.state === "queued") return "pending";
+  if (entry.state === "running") return "running";
+  if (entry.state === "failed") return "failed";
+  if (entry.state === "restart_required" || entry.restartRequestError) return "restart_required";
+  if (entry.state === "succeeded") return "succeeded";
+  return "idle";
+}
+
+function deviceUpdateQueueStatusText(entry: DeviceUpdateQueueEntry): string {
+  const range =
+    entry.before?.shortCommit && entry.after?.shortCommit
+      ? ` · ${entry.before.shortCommit} -> ${entry.after.shortCommit}`
+      : "";
+  if (entry.state === "pending_until_device_online") {
+    return entry.error
+      ? `대기 중 · 디바이스가 온라인이 되면 자동 업데이트 (${entry.error})`
+      : "대기 중 · 디바이스가 온라인이 되면 자동 업데이트";
+  }
+  if (entry.state === "queued") return "대기 중";
+  if (entry.state === "running") return "connector 업데이트 진행 중";
+  if (entry.state === "restart_required") {
+    return entry.restartRequestError
+      ? `재시작 필요 · ${entry.restartRequestError}${range}`
+      : `재시작 필요${range}`;
+  }
+  if (entry.state === "failed") {
+    return `connector 업데이트 실패${entry.error ? ` · ${entry.error}` : ""}`;
+  }
+  if (entry.state === "succeeded") {
+    return entry.changed === false ? `최신 상태 확인됨${range}` : `connector 업데이트 완료${range}`;
+  }
+  return "업데이트 상태 없음";
 }
 
 const InstructionSettings: Component<{

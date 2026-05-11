@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { Hono } from "hono";
 import { createSiteApp } from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
+import type {
+  DeviceUpdateEntryInput,
+  DeviceUpdateQueueStore,
+  StoredDeviceUpdateEntry,
+} from "../src/device-update-queue-store.ts";
 
 const TOKEN = "test-token";
 const DAEMON_URL = "http://daemon.test:18091";
@@ -71,6 +76,32 @@ function authedRequest(method: string, path: string, body?: unknown): Request {
 
 function findCheck<T extends { id: string }>(checks: T[], id: string): T | undefined {
   return checks.find((check) => check.id === id);
+}
+
+function createMemoryUpdateQueueStore(): DeviceUpdateQueueStore {
+  const entries = new Map<string, StoredDeviceUpdateEntry>();
+  return {
+    async list() {
+      return [...entries.values()].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      );
+    },
+    async get(deviceId) {
+      return entries.get(deviceId);
+    },
+    async upsert(input: DeviceUpdateEntryInput) {
+      const now = new Date().toISOString();
+      const entry: StoredDeviceUpdateEntry = {
+        ...input,
+        updatedAt: input.updatedAt ?? now,
+      };
+      entries.set(entry.deviceId, entry);
+      return entry;
+    },
+    async remove(deviceId) {
+      entries.delete(deviceId);
+    },
+  };
 }
 
 let setup: MockSetup;
@@ -352,6 +383,102 @@ describe("self-host command helper", () => {
     );
     expect(listed.status).toBe(200);
     expect((await listed.json()).reports).toHaveLength(1);
+  });
+});
+
+describe("device connector update queue", () => {
+  test("queues connector update when a registered device is offline", async () => {
+    const registry = new InMemoryDeviceRegistry();
+    const queue = createMemoryUpdateQueueStore();
+    const app = createSiteApp({
+      registry,
+      token: TOKEN,
+      deviceUpdateQueue: queue,
+      selfHostUrl: "http://100.64.1.2:18193",
+      fetchImpl: async () => {
+        throw new Error("connection refused");
+      },
+    });
+    const device = registry.register({
+      daemonUrl: DAEMON_URL,
+      label: "Office",
+      authToken: "daemon-token",
+    });
+
+    const res = await app.fetch(
+      new Request(`http://site.local/api/devices/${device.id}/system/update`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { state?: string; fallbackCommand?: string };
+    expect(body.state).toBe("pending_until_device_online");
+    expect(body.fallbackCommand).toContain("-SiteToken");
+
+    const listed = await app.fetch(
+      new Request("http://site.local/api/devices/update-queue", {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(listed.status).toBe(200);
+    const payload = (await listed.json()) as { entries: StoredDeviceUpdateEntry[] };
+    expect(payload.entries).toHaveLength(1);
+    expect(payload.entries[0]?.deviceId).toBe(device.id);
+    expect(payload.entries[0]?.state).toBe("pending_until_device_online");
+  });
+
+  test("retries a queued connector update when diagnostics can reach the daemon", async () => {
+    const registry = new InMemoryDeviceRegistry();
+    const queue = createMemoryUpdateQueueStore();
+    let updateCalls = 0;
+    const app = createSiteApp({
+      registry,
+      token: TOKEN,
+      deviceUpdateQueue: queue,
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.endsWith("/status")) {
+          return Response.json({ ok: true, build: { shortCommit: "old" } });
+        }
+        if (url.endsWith("/system/update")) {
+          updateCalls += 1;
+          return Response.json({
+            ok: true,
+            state: "succeeded",
+            changed: true,
+            before: { shortCommit: "old" },
+            after: { shortCommit: "new" },
+          });
+        }
+        return Response.json({ ok: true });
+      },
+    });
+    const device = registry.register({
+      daemonUrl: DAEMON_URL,
+      label: "Office",
+      authToken: "daemon-token",
+    });
+    await queue.upsert({
+      deviceId: device.id,
+      label: device.label,
+      daemonUrl: device.daemonUrl,
+      state: "pending_until_device_online",
+      requestedAt: "2026-05-11T00:00:00.000Z",
+      error: "cannot reach daemon",
+    });
+
+    const res = await app.fetch(
+      new Request(`http://site.local/api/devices/${device.id}/diagnostics`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(updateCalls).toBe(1);
+    expect((await queue.get(device.id))?.state).toBe("succeeded");
   });
 });
 

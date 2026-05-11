@@ -278,6 +278,27 @@ export interface DeviceUpdateResponse {
   after?: { shortCommit?: string };
 }
 
+export interface DeviceUpdateQueueEntry {
+  deviceId: string;
+  label?: string;
+  daemonUrl?: string;
+  state: UpdateState;
+  requestedAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  warning?: string;
+  fallbackCommand?: string;
+  daemonStatus?: number;
+  before?: { shortCommit?: string };
+  after?: { shortCommit?: string };
+  changed?: boolean;
+  restartScheduled?: boolean;
+  restartRequested?: boolean;
+  restartRequestError?: string;
+}
+
 export interface BrowserClientContext {
   address: string;
   isLocal: boolean;
@@ -412,6 +433,8 @@ export const api = {
   selfUpdateStatus: () => request<SelfServerUpdateStatus>("GET", "/api/self/update/status"),
   installReports: () =>
     request<{ reports: InstallReportRecord[] }>("GET", "/api/self/install-reports?limit=5"),
+  deviceUpdateQueue: () =>
+    request<{ entries: DeviceUpdateQueueEntry[] }>("GET", "/api/devices/update-queue"),
   updateDevice: (id: string) =>
     request<DeviceUpdateResponse>("POST", `/api/devices/${id}/system/update`),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>

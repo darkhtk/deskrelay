@@ -3,6 +3,7 @@ import {
   type DiagnosticCheck,
   type DiagnosticReport,
   type DiagnosticSeverity,
+  type UpdateState,
   diagnosticStepFromCheck,
 } from "@deskrelay/shared";
 import { type DeskRelayBuildInfo, getDeskRelayBuildInfo } from "@deskrelay/shared/version";
@@ -14,8 +15,9 @@ import {
   DeviceRegistryError,
   normalizeDaemonUrl,
 } from "./device-registry.ts";
-import type { InstallReportStore } from "./install-report-store.ts";
+import type { DeviceUpdateQueueStore } from "./device-update-queue-store.ts";
 import { loc } from "./i18n.ts";
+import type { InstallReportStore } from "./install-report-store.ts";
 import type {
   SelfServerAutostartController,
   SelfServerAutostartStatus,
@@ -38,6 +40,7 @@ export interface SiteAppOptions {
   selfServerAutostart?: SelfServerAutostartController;
   selfServerUpdater?: SelfServerUpdater;
   installReportStore?: InstallReportStore;
+  deviceUpdateQueue?: DeviceUpdateQueueStore;
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -76,6 +79,12 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   }
 
   app.get("/api/devices", (c) => c.json(registry.list().map(toPublicDevice)));
+
+  app.get("/api/devices/update-queue", async (c) => {
+    return c.json({
+      entries: options.deviceUpdateQueue ? await options.deviceUpdateQueue.list() : [],
+    });
+  });
 
   app.get("/api/self/register-other-pc-command", (c) => {
     if (!options.token) {
@@ -281,6 +290,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const cleanup = [];
     for (const device of devices) {
       cleanup.push(await unregisterDeviceWithCleanup(fetchImpl, registry, device, localToken));
+      await options.deviceUpdateQueue?.remove(device.id);
     }
     return c.json({ ok: true, cleanup });
   });
@@ -290,6 +300,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const device = registry.get(id);
     if (!device) return c.json({ error: `unknown device: ${id}` }, 404);
     const result = await unregisterDeviceWithCleanup(fetchImpl, registry, device, localToken);
+    await options.deviceUpdateQueue?.remove(device.id);
     return c.json({ ok: true, cleanup: result.cleanup });
   });
 
@@ -487,28 +498,42 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.get("/api/devices/:id/diagnostics", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
-    return proxyJson(
-      fetchImpl,
-      "GET",
-      `${device.daemonUrl}/status`,
-      undefined,
-      daemonToken(device, localToken),
-    );
+    const token = daemonToken(device, localToken);
+    const headers: Record<string, string> = {};
+    if (token) headers.authorization = `Bearer ${token}`;
+    let upstream: Response;
+    try {
+      upstream = await fetchImpl(`${device.daemonUrl}/status`, { method: "GET", headers });
+    } catch (err) {
+      return c.json({ error: `cannot reach daemon: ${(err as Error).message}` }, 502);
+    }
+    const text = await upstream.text();
+    if (upstream.ok && options.deviceUpdateQueue) {
+      const fallbackCommand = buildFallbackRegisterCommandForRequest(options, c.req.url);
+      void retryQueuedDeviceSystemUpdate(
+        fetchImpl,
+        device,
+        token,
+        fallbackCommand,
+        options.deviceUpdateQueue,
+      ).catch(() => undefined);
+    }
+    return new Response(text, {
+      status: upstream.status,
+      headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    });
   });
 
   app.post("/api/devices/:id/system/update", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
-    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
-    const preferredUrl = pickRemoteAccessUrl(urls);
-    const fallbackCommand = options.token
-      ? buildRegisterOtherPcCommand({ siteUrl: preferredUrl, siteToken: options.token })
-      : "";
+    const fallbackCommand = buildFallbackRegisterCommandForRequest(options, c.req.url);
     return await requestDaemonSystemUpdate(
       fetchImpl,
       device,
       daemonToken(device, localToken),
       fallbackCommand,
+      options.deviceUpdateQueue,
     );
   });
 
@@ -775,9 +800,22 @@ async function requestDaemonSystemUpdate(
   device: Device,
   token: string | undefined,
   fallbackCommand: string,
+  queue?: DeviceUpdateQueueStore,
 ): Promise<Response> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
+  const now = new Date().toISOString();
+  const existing = await queue?.get(device.id);
+  const requestedAt =
+    existing?.state === "pending_until_device_online" ? existing.requestedAt : now;
+  await queue?.upsert({
+    deviceId: device.id,
+    label: device.label,
+    daemonUrl: device.daemonUrl,
+    state: "running",
+    requestedAt,
+    startedAt: now,
+  });
   let res: Response;
   try {
     res = await fetchImpl(`${device.daemonUrl}/system/update`, {
@@ -786,14 +824,25 @@ async function requestDaemonSystemUpdate(
       body: JSON.stringify({}),
     });
   } catch (err) {
+    const error = `cannot reach daemon: ${(err as Error).message}`;
+    await queue?.upsert({
+      deviceId: device.id,
+      label: device.label,
+      daemonUrl: device.daemonUrl,
+      state: "pending_until_device_online",
+      requestedAt,
+      error,
+      fallbackCommand,
+    });
     return Response.json(
       {
-        ok: false,
-        state: "failed",
-        error: `cannot reach daemon: ${(err as Error).message}`,
+        ok: true,
+        state: "pending_until_device_online",
+        warning: "connector is offline. Update will run automatically when this device is online.",
+        error,
         fallbackCommand,
       },
-      { status: 502 },
+      { status: 202 },
     );
   }
 
@@ -805,13 +854,25 @@ async function requestDaemonSystemUpdate(
       payload && typeof payload === "object" && "error" in payload
         ? String((payload as { error: unknown }).error)
         : `daemon update failed with HTTP ${res.status}`;
+    const finalError = unavailable
+      ? "connector update API is unavailable on this device. Re-run the registration command."
+      : error;
+    await queue?.upsert({
+      deviceId: device.id,
+      label: device.label,
+      daemonUrl: device.daemonUrl,
+      state: "failed",
+      requestedAt,
+      completedAt: new Date().toISOString(),
+      error: finalError,
+      daemonStatus: res.status,
+      fallbackCommand,
+    });
     return Response.json(
       {
         ok: false,
         state: "failed",
-        error: unavailable
-          ? "connector update API is unavailable on this device. Re-run the registration command."
-          : error,
+        error: finalError,
         daemonStatus: res.status,
         fallbackCommand,
       },
@@ -819,7 +880,75 @@ async function requestDaemonSystemUpdate(
     );
   }
 
-  return Response.json(payload ?? { ok: true });
+  const responsePayload = isRecord(payload) ? payload : { ok: true };
+  const finalState =
+    normalizeUpdateState(responsePayload.state) ??
+    (typeof responsePayload.restartRequestError === "string" ? "restart_required" : "succeeded");
+  await queue?.upsert({
+    deviceId: device.id,
+    label: device.label,
+    daemonUrl: device.daemonUrl,
+    state: finalState,
+    requestedAt,
+    completedAt: new Date().toISOString(),
+    ...(typeof responsePayload.error === "string" ? { error: responsePayload.error } : {}),
+    ...(typeof responsePayload.warning === "string" ? { warning: responsePayload.warning } : {}),
+    ...(isRecord(responsePayload.before)
+      ? { before: responsePayload.before as Partial<DeskRelayBuildInfo> }
+      : {}),
+    ...(isRecord(responsePayload.after)
+      ? { after: responsePayload.after as Partial<DeskRelayBuildInfo> }
+      : {}),
+    ...(typeof responsePayload.changed === "boolean" ? { changed: responsePayload.changed } : {}),
+    ...(typeof responsePayload.restartScheduled === "boolean"
+      ? { restartScheduled: responsePayload.restartScheduled }
+      : {}),
+    ...(typeof responsePayload.restartRequested === "boolean"
+      ? { restartRequested: responsePayload.restartRequested }
+      : {}),
+    ...(typeof responsePayload.restartRequestError === "string"
+      ? { restartRequestError: responsePayload.restartRequestError }
+      : {}),
+  });
+
+  return Response.json(responsePayload);
+}
+
+async function retryQueuedDeviceSystemUpdate(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  token: string | undefined,
+  fallbackCommand: string,
+  queue: DeviceUpdateQueueStore,
+): Promise<void> {
+  const entry = await queue.get(device.id);
+  if (entry?.state !== "pending_until_device_online") return;
+  await requestDaemonSystemUpdate(fetchImpl, device, token, fallbackCommand, queue);
+}
+
+function buildFallbackRegisterCommandForRequest(
+  options: SiteAppOptions,
+  requestUrl: string,
+): string {
+  if (!options.token) return "";
+  const urls = getAccessUrls(options.selfHostUrl ?? requestUrl);
+  const preferredUrl = pickRemoteAccessUrl(urls);
+  return buildRegisterOtherPcCommand({ siteUrl: preferredUrl, siteToken: options.token });
+}
+
+function normalizeUpdateState(value: unknown): UpdateState | undefined {
+  if (
+    value === "not_started" ||
+    value === "queued" ||
+    value === "running" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "restart_required" ||
+    value === "pending_until_device_online"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function parseJsonPayload(text: string): unknown {
@@ -829,6 +958,10 @@ function parseJsonPayload(text: string): unknown {
   } catch {
     return { raw: text };
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function orderDevicesForRemoval(devices: Device[]): Device[] {
