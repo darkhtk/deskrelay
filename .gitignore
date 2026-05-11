@@ -80,6 +80,15 @@ UPDATE-DESKRELAY-SERVER.txt
 REMOVE-DESKRELAY-SERVER.txt
 .local-test-logs/
 
+# local-only internal notes; not user-facing documentation
+AGENTS.md
+AI_MAINTAINABILITY_REFACTOR_PLAN.md
+DEVELOPER_TOOL_EVALUATION.md
+REMAINING_DEFECTS.md
+USABILITY_EVALUATION.md
+docs/INSTRUCTIONS-MANAGEMENT-PLAN.md
+docs/VERSION-COMPATIBILITY.md
+
 # Local backend/dev runtime
 .dev.vars
 
