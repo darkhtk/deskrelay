@@ -58,7 +58,6 @@ export const ManagerAssistant: Component = () => {
       <div class="manager-assistant-header">
         <div>
           <h3>AI Assistant</h3>
-          <p>서버 PC의 DeskRelay 폴더에서 실행되는 CLI 대화</p>
         </div>
       </div>
 
