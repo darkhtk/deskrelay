@@ -1817,6 +1817,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [draftConversationId, setDraftConversationId] = createSignal(createDraftConversationId());
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = createSignal(false);
+  const [mainChatOpen, setMainChatOpen] = createSignal(true);
   const [assistantOpen, setAssistantOpen] = createSignal(false);
   const [mobileChatViewport, setMobileChatViewport] = createSignal(isMobileSidebarViewport());
   const [sidebarWidth, setSidebarWidth] = createSignal(readSidebarWidth());
@@ -2119,14 +2120,42 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   const showAssistantInChat = () => assistantOpen() && mobileChatViewport();
   const showAssistantDock = () => assistantOpen() && !mobileChatViewport();
+  const chatPanelCollapsed = () =>
+    !mainChatOpen() && showAssistantDock() && mainPanelMode() === "chat";
+  const mainChatHidden = () => chatPanelCollapsed() || showAssistantInChat();
+
+  function toggleMainChatPanel() {
+    if (mobileChatViewport()) {
+      const nextAssistantOpen = !assistantOpen();
+      setMainChatOpen(!nextAssistantOpen);
+      setAssistantOpen(nextAssistantOpen);
+      setMainPanelMode("chat");
+      if (nextAssistantOpen) setSidebarOpen(false);
+      return;
+    }
+    if (chatPanelCollapsed()) {
+      setMainChatOpen(true);
+      return;
+    }
+    setMainPanelMode("chat");
+    setMainChatOpen(false);
+    if (!assistantOpen()) setAssistantOpen(true);
+  }
 
   function toggleManagerAssistant() {
     const next = !assistantOpen();
     setAssistantOpen(next);
-    if (!next) return;
+    if (!next) {
+      setMainChatOpen(true);
+      return;
+    }
     setMainPanelMode("chat");
     if (isMobileSidebarViewport()) setSidebarOpen(false);
   }
+
+  createEffect(() => {
+    if (!showAssistantDock() && !mobileChatViewport()) setMainChatOpen(true);
+  });
 
   if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
     const media = window.matchMedia("(max-width: 720px)");
@@ -3257,7 +3286,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   return (
     <section
       class="signed-in"
-      classList={{ "assistant-panel-open": showAssistantDock() }}
+      classList={{
+        "assistant-panel-open": showAssistantDock(),
+        "main-chat-collapsed": chatPanelCollapsed(),
+      }}
       id="signed-in-pane"
       style={{
         "--sidebar-width": `${sidebarWidth()}px`,
@@ -3903,7 +3935,11 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         />
       </aside>
 
-      <section class="chat" onPaste={handlePaste}>
+      <section
+        class="chat"
+        classList={{ "chat-collapsed": chatPanelCollapsed() }}
+        onPaste={handlePaste}
+      >
         <div class="chat-header">
           <Show
             when={instructionEditorHeaderState()}
@@ -3941,6 +3977,27 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   </Show>
                   <span class="chat-header-current-status">{headerStatusText()}</span>
                 </output>
+                <button
+                  type="button"
+                  class="chat-ai-assistant-button"
+                  classList={{ active: mainChatHidden() }}
+                  onClick={toggleMainChatPanel}
+                  aria-pressed={mainChatHidden()}
+                  aria-label={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
+                  title={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                  </svg>
+                </button>
                 <button
                   type="button"
                   class="chat-ai-assistant-button"
@@ -3997,179 +4054,209 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         </div>
 
         <Show
-          when={mainPanelMode() === "instructions"}
+          when={chatPanelCollapsed()}
           fallback={
             <Show
-              when={showAssistantInChat()}
+              when={mainPanelMode() === "instructions"}
               fallback={
-                <>
-                  <div
-                    ref={transcriptScroller}
-                    class="transcript"
-                    onScroll={updateTranscriptBottomState}
-                  >
-                    <div class="transcript-inner">
-                      <Show
-                        when={transcript().length > 0 || selectedSession()}
-                        fallback={
+                <Show
+                  when={showAssistantInChat()}
+                  fallback={
+                    <>
+                      <div
+                        ref={transcriptScroller}
+                        class="transcript"
+                        onScroll={updateTranscriptBottomState}
+                      >
+                        <div class="transcript-inner">
                           <Show
-                            when={(devices() ?? []).length === 0}
+                            when={transcript().length > 0 || selectedSession()}
                             fallback={
-                              <div class="empty-chat">
-                                <p>
-                                  {showNewChat() || cwd()
-                                    ? t("chat.empty.new-session")
-                                    : t("chat.empty.select-session")}
-                                </p>
-                              </div>
-                            }
-                          >
-                            {/* First-run state: signed in but no PC paired yet.
+                              <Show
+                                when={(devices() ?? []).length === 0}
+                                fallback={
+                                  <div class="empty-chat">
+                                    <p>
+                                      {showNewChat() || cwd()
+                                        ? t("chat.empty.new-session")
+                                        : t("chat.empty.select-session")}
+                                    </p>
+                                  </div>
+                                }
+                              >
+                                {/* First-run state: signed in but no PC paired yet.
                             Push the pair flow front-and-center so the user
                             doesn't have to discover it through the sidebar. */}
-                            <div class="empty-chat empty-chat-no-device">
-                              <h2>{t("chat.empty.no-device.title")}</h2>
-                              <p>{t("chat.empty.no-device.body")}</p>
-                              <button
-                                type="button"
-                                class="primary-button"
-                                onClick={() => openSettingsOverlay({ tab: "devices" })}
-                              >
-                                {t("chat.empty.no-device.cta")}
-                              </button>
-                            </div>
+                                <div class="empty-chat empty-chat-no-device">
+                                  <h2>{t("chat.empty.no-device.title")}</h2>
+                                  <p>{t("chat.empty.no-device.body")}</p>
+                                  <button
+                                    type="button"
+                                    class="primary-button"
+                                    onClick={() => openSettingsOverlay({ tab: "devices" })}
+                                  >
+                                    {t("chat.empty.no-device.cta")}
+                                  </button>
+                                </div>
+                              </Show>
+                            }
+                          >
+                            <Transcript
+                              events={transcript()}
+                              deviceId={effectiveDeviceId()}
+                              cwd={cwd()}
+                            />
                           </Show>
-                        }
-                      >
-                        <Transcript
-                          events={transcript()}
-                          deviceId={effectiveDeviceId()}
-                          cwd={cwd()}
-                        />
-                      </Show>
-                    </div>
-                  </div>
+                        </div>
+                      </div>
 
-                  <Show when={error()}>
-                    {(msg) => (
-                      // role="alert" announces the error to assistive tech without
-                      // relying on <output>, which is phrasing content and can't
-                      // legally contain the OfflineHint's block-level <div>.
-                      <div class="upstream-banner" role="alert">
-                        <span class="upstream-banner-message">
-                          {isDaemonOfflineMessage(msg())
-                            ? daemonOfflineBannerMessage(activeDevice()?.label)
-                            : msg()}
-                        </span>
-                        <OfflineHint
-                          message={msg()}
-                          deviceLabel={activeDevice()?.label}
-                          onPickDevice={openSidebarForDevicePick}
+                      <Show when={error()}>
+                        {(msg) => (
+                          // role="alert" announces the error to assistive tech without
+                          // relying on <output>, which is phrasing content and can't
+                          // legally contain the OfflineHint's block-level <div>.
+                          <div class="upstream-banner" role="alert">
+                            <span class="upstream-banner-message">
+                              {isDaemonOfflineMessage(msg())
+                                ? daemonOfflineBannerMessage(activeDevice()?.label)
+                                : msg()}
+                            </span>
+                            <OfflineHint
+                              message={msg()}
+                              deviceLabel={activeDevice()?.label}
+                              onPickDevice={openSidebarForDevicePick}
+                            />
+                          </div>
+                        )}
+                      </Show>
+                      <div class="composer-shell">
+                        <Show when={!transcriptAtBottom() && transcript().length > 0}>
+                          <button
+                            type="button"
+                            class="scroll-to-bottom-button"
+                            aria-label={t("chat.scroll-to-bottom.aria")}
+                            title={t("chat.scroll-to-bottom.title")}
+                            onClick={handleScrollToBottomClick}
+                          >
+                            <svg
+                              aria-hidden="true"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M12 5v14" />
+                              <path d="m6 13 6 6 6-6" />
+                            </svg>
+                          </button>
+                        </Show>
+                        <Show when={showComposerStatus()}>
+                          <output
+                            class={`composer-status composer-status-${composerGuidance()?.tone ?? "context"}`}
+                            aria-live="polite"
+                          >
+                            <Show when={composerGuidance()}>
+                              {(guidance) => (
+                                <>
+                                  <span class="composer-status-main">{guidance().main}</span>
+                                  <Show when={guidance().detail}>
+                                    {(detail) => (
+                                      <span class="composer-status-detail">{detail()}</span>
+                                    )}
+                                  </Show>
+                                </>
+                              )}
+                            </Show>
+                            <Show when={composerGuidance()?.action}>
+                              {(action) => (
+                                <button
+                                  type="button"
+                                  class="composer-status-action"
+                                  onClick={() => openConnectionStatusAction(action())}
+                                >
+                                  {t(`connection.action.${action()}`)}
+                                </button>
+                              )}
+                            </Show>
+                          </output>
+                        </Show>
+                        <Attachments
+                          ref={(api) => {
+                            attachmentsApi = api;
+                          }}
+                          onChange={(items) => setAttachmentCount(items.length)}
+                        />
+                        <Composer
+                          onSend={sendMessage}
+                          onInterrupt={() => void interrupt()}
+                          inFlight={running()}
+                          hasExtraContent={() => attachmentCount() > 0}
+                          onAttachClick={handleAttachClick}
+                          slashCommands={composerSlashCommands()}
+                          contextRemainingPercent={
+                            props.showContextUsageMeter === false
+                              ? undefined
+                              : (contextUsage().ctx?.remainingPercent ?? null)
+                          }
                         />
                       </div>
-                    )}
-                  </Show>
-                  <div class="composer-shell">
-                    <Show when={!transcriptAtBottom() && transcript().length > 0}>
-                      <button
-                        type="button"
-                        class="scroll-to-bottom-button"
-                        aria-label={t("chat.scroll-to-bottom.aria")}
-                        title={t("chat.scroll-to-bottom.title")}
-                        onClick={handleScrollToBottomClick}
-                      >
-                        <svg
-                          aria-hidden="true"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <path d="M12 5v14" />
-                          <path d="m6 13 6 6 6-6" />
-                        </svg>
-                      </button>
-                    </Show>
-                    <Show when={showComposerStatus()}>
-                      <output
-                        class={`composer-status composer-status-${composerGuidance()?.tone ?? "context"}`}
-                        aria-live="polite"
-                      >
-                        <Show when={composerGuidance()}>
-                          {(guidance) => (
-                            <>
-                              <span class="composer-status-main">{guidance().main}</span>
-                              <Show when={guidance().detail}>
-                                {(detail) => <span class="composer-status-detail">{detail()}</span>}
-                              </Show>
-                            </>
-                          )}
-                        </Show>
-                        <Show when={composerGuidance()?.action}>
-                          {(action) => (
-                            <button
-                              type="button"
-                              class="composer-status-action"
-                              onClick={() => openConnectionStatusAction(action())}
-                            >
-                              {t(`connection.action.${action()}`)}
-                            </button>
-                          )}
-                        </Show>
-                      </output>
-                    </Show>
-                    <Attachments
-                      ref={(api) => {
-                        attachmentsApi = api;
-                      }}
-                      onChange={(items) => setAttachmentCount(items.length)}
-                    />
-                    <Composer
-                      onSend={sendMessage}
-                      onInterrupt={() => void interrupt()}
-                      inFlight={running()}
-                      hasExtraContent={() => attachmentCount() > 0}
-                      onAttachClick={handleAttachClick}
-                      slashCommands={composerSlashCommands()}
-                      contextRemainingPercent={
-                        props.showContextUsageMeter === false
-                          ? undefined
-                          : (contextUsage().ctx?.remainingPercent ?? null)
-                      }
-                    />
+                    </>
+                  }
+                >
+                  <div class="chat-assistant-mobile">
+                    <ManagerAssistant context={managerAssistantContext()} />
                   </div>
-                </>
+                </Show>
               }
             >
-              <div class="chat-assistant-mobile">
-                <ManagerAssistant context={managerAssistantContext()} />
-              </div>
+              <InstructionsWorkspace
+                cwd={workspaceInstructionsResult()?.cwd ?? selectedSessionCwd()}
+                sources={workspaceInstructionSources()}
+                loading={workspaceInstructions.loading}
+                error={workspaceInstructionsError()}
+                draft={instructionDraft}
+                dirty={instructionDraftDirty}
+                savingScope={savingInstructionScope()}
+                status={instructionEditStatus()}
+                onInput={setInstructionDraft}
+                onReset={resetInstructionDraft}
+                onSave={(source) => void saveWorkspaceInstructionSource(source)}
+                onDelete={(source) => void deleteWorkspaceInstructionSource(source)}
+                onReload={() => void refetchWorkspaceInstructions()}
+                onBack={() => setMainPanelMode("chat")}
+                onEditorHeaderStateChange={setInstructionEditorHeaderState}
+              />
             </Show>
           }
         >
-          <InstructionsWorkspace
-            cwd={workspaceInstructionsResult()?.cwd ?? selectedSessionCwd()}
-            sources={workspaceInstructionSources()}
-            loading={workspaceInstructions.loading}
-            error={workspaceInstructionsError()}
-            draft={instructionDraft}
-            dirty={instructionDraftDirty}
-            savingScope={savingInstructionScope()}
-            status={instructionEditStatus()}
-            onInput={setInstructionDraft}
-            onReset={resetInstructionDraft}
-            onSave={(source) => void saveWorkspaceInstructionSource(source)}
-            onDelete={(source) => void deleteWorkspaceInstructionSource(source)}
-            onReload={() => void refetchWorkspaceInstructions()}
-            onBack={() => setMainPanelMode("chat")}
-            onEditorHeaderStateChange={setInstructionEditorHeaderState}
-          />
+          <div class="chat-collapsed-placeholder" aria-hidden="true" />
         </Show>
       </section>
 
       <Show when={showAssistantDock()}>
         <aside class="chat-assistant-dock" aria-label={t("chat.manager-assistant.open")}>
+          <button
+            type="button"
+            class="chat-ai-assistant-button assistant-dock-chat-toggle"
+            classList={{ active: mainChatHidden() }}
+            onClick={toggleMainChatPanel}
+            aria-pressed={mainChatHidden()}
+            aria-label={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
+            title={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+            </svg>
+          </button>
           <div
             class="assistant-resize-handle"
             classList={{

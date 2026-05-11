@@ -2195,6 +2195,14 @@ body.sidebar-collapsed .chat {
   body.sidebar-collapsed .signed-in.assistant-panel-open {
     grid-template-columns: minmax(0, 1fr) var(--assistant-width, 380px);
   }
+
+  .signed-in.assistant-panel-open.main-chat-collapsed {
+    grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
+  }
+
+  body.sidebar-collapsed .signed-in.assistant-panel-open.main-chat-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .chat-assistant-dock {
@@ -2204,6 +2212,13 @@ body.sidebar-collapsed .chat {
   padding: 12px 0 12px 16px;
   overflow-y: auto;
   position: relative;
+}
+
+.assistant-dock-chat-toggle {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+  z-index: 4;
 }
 
 .assistant-resize-handle {
@@ -2317,6 +2332,13 @@ body.assistant-resizing * {
 .chat-header-current-status {
   flex: 1 1 auto;
 }
+.chat.chat-collapsed {
+  display: none;
+}
+.chat-collapsed-placeholder {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .chat-ai-assistant-button {
   flex: 0 0 auto;
   width: 32px;
@@ -2339,7 +2361,8 @@ body.assistant-resizing * {
   background: transparent;
   color: var(--accent-coral);
 }
-.chat-ai-assistant-button.active {
+.chat-ai-assistant-button.active,
+.chat-ai-assistant-button[aria-pressed="true"] {
   color: var(--accent-coral);
 }
 .chat-ai-assistant-button:focus-visible {

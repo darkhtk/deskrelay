@@ -122,6 +122,9 @@ describe("settings and chrome invariants", () => {
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
 
     expect(chatViewSource).toContain('class="chat-ai-assistant-button"');
+    expect(chatViewSource).toContain("toggleMainChatPanel");
+    expect(chatViewSource).toContain("assistant-dock-chat-toggle");
+    expect(chatViewSource).toContain('"main-chat-collapsed": chatPanelCollapsed()');
     expect(chatViewSource).toContain("toggleManagerAssistant");
     expect(chatViewSource).toContain('class="chat-assistant-dock"');
     expect(chatViewSource).toContain('class="chat-assistant-mobile"');
@@ -129,6 +132,10 @@ describe("settings and chrome invariants", () => {
     expect(styles).toContain(".chat-ai-assistant-button");
     expect(styles).toContain(".signed-in.assistant-panel-open");
     expect(styles).toContain(".chat-assistant-dock");
+    expect(styles).toContain(".assistant-dock-chat-toggle");
+    expect(styles).toContain(".chat.chat-collapsed");
+    expect(styles).toContain(".chat-ai-assistant-button.active");
+    expect(styles).toContain('.chat-ai-assistant-button[aria-pressed="true"]');
     expect(styles).toContain(".chat-assistant-mobile");
     expect(styles).toMatch(/\.chat-ai-assistant-button\s*{[^}]*width:\s*32px;/s);
   });
