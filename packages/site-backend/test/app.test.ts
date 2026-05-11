@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
@@ -82,6 +82,18 @@ function findCheck<T extends { id: string }>(checks: T[], id: string): T | undef
   return checks.find((check) => check.id === id);
 }
 
+function siteAppRouteInventory(): string[] {
+  const source = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+  const routePattern = /app\.(get|post|put|patch|delete)\("([^"]+)"/g;
+  const routes = new Set<string>();
+  for (const match of source.matchAll(routePattern)) {
+    const method = match[1]?.toUpperCase();
+    const path = match[2];
+    if (method && path) routes.add(`${method} ${path}`);
+  }
+  return [...routes].sort();
+}
+
 function createMemoryUpdateQueueStore(): DeviceUpdateQueueStore {
   const entries = new Map<string, StoredDeviceUpdateEntry>();
   return {
@@ -106,6 +118,134 @@ function createMemoryUpdateQueueStore(): DeviceUpdateQueueStore {
       entries.delete(deviceId);
     },
   };
+}
+
+function mockDaemonApiResponse(req: Request): Response {
+  const url = new URL(req.url);
+  const path = url.pathname;
+  const build = {
+    version: "0.0.0",
+    commit: "local",
+    shortCommit: "local",
+    dirty: false,
+    source: "package",
+  };
+  if (path === "/status") {
+    return Response.json({
+      ok: true,
+      version: "0.0.0",
+      build,
+      label: "Remote PC",
+      workspaceRoots: ["C:\\Users\\darkh\\Projects"],
+      diagnostics: {
+        approvalsHookEnabled: true,
+        pendingApprovals: 0,
+      },
+      behaviors: [{ instanceId: "remote-claude", packageName: "remote-claude", version: "0.0.1" }],
+    });
+  }
+  if (path === "/network/status") {
+    return Response.json({
+      scope: "device",
+      generatedAt: new Date(0).toISOString(),
+      tailscale: {
+        detected: true,
+        addresses: [{ kind: "tailscale", address: "100.64.1.44", label: "tailscale" }],
+        interfaceNames: ["Tailscale"],
+      },
+      addresses: [{ kind: "tailscale", address: "100.64.1.44", label: "tailscale" }],
+      probes: [],
+      summary: { severity: "ok", message: "network ready" },
+    });
+  }
+  if (path === "/install/status") {
+    return Response.json({
+      scope: "device",
+      build,
+      installed: true,
+      running: true,
+      autostart: { supported: true, installed: true, taskName: "DeskRelay Connector" },
+      summary: { severity: "ok", message: "installed" },
+    });
+  }
+  if (path === "/security/boundary") {
+    return Response.json({
+      scope: "device",
+      generatedAt: new Date(0).toISOString(),
+      tokenBoundary: {
+        daemonTokenAvailable: true,
+        browserReceivesDaemonToken: false,
+      },
+      networkBoundary: {
+        url: "http://daemon.test:18091",
+        kind: "tailscale",
+        publicExposure: false,
+      },
+      warnings: [],
+      summary: { severity: "ok", message: "private" },
+    });
+  }
+  if (path === "/process/status") {
+    return Response.json({
+      scope: "device",
+      kind: "connector",
+      build,
+      pid: 4321,
+      startedAt: new Date(0).toISOString(),
+      uptimeMs: 1000,
+      platform: process.platform,
+      arch: process.arch,
+    });
+  }
+  if (path === "/events/spaces/remote-claude.default/stream") {
+    return new Response('id: 1\ndata: {"ok":true}\n\n', {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }
+  if (path === "/files/preview") {
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      status: 200,
+      headers: { "content-type": "image/png", "content-length": "4" },
+    });
+  }
+  if (path === "/behaviors") {
+    return Response.json([
+      { instanceId: "remote-claude", name: "remote-claude", version: "0.0.1", loadedAt: "x" },
+    ]);
+  }
+  if (path === "/capabilities") {
+    return Response.json({ apiVersion: "1", features: ["manager"] });
+  }
+  if (path === "/logs") {
+    return Response.json({ scope: "device", source: "connector", lines: ["ready"] });
+  }
+  if (path === "/fs/list") {
+    return Response.json({ path: url.searchParams.get("path") ?? "", entries: [] });
+  }
+  if (path === "/fs/roots") {
+    return Response.json({ roots: ["C:\\Users\\darkh\\Projects"] });
+  }
+  if (path === "/git/status") {
+    return Response.json({ cwd: url.searchParams.get("cwd") ?? "", branch: "main", dirty: false });
+  }
+  if (path === "/instructions") {
+    return Response.json({ cwd: url.searchParams.get("cwd") ?? null, sources: [] });
+  }
+  if (path.startsWith("/instructions/")) {
+    return Response.json({
+      ok: true,
+      scope: path.split("/").at(-1),
+      exists: req.method !== "DELETE",
+    });
+  }
+  if (path === "/system/update") {
+    return Response.json({ ok: true, state: "running" });
+  }
+  if (path === "/system/uninstall") {
+    return Response.json({ ok: true, removed: true });
+  }
+  return Response.json({ ok: true, path, method: req.method });
 }
 
 let setup: MockSetup;
@@ -159,6 +299,421 @@ describe("/api/* auth gate", () => {
       true,
     );
     expect(body.routes?.some((route) => route.path === "/api/manager/update/status")).toBe(true);
+  });
+});
+
+describe("API route inventory", () => {
+  test("every declared site API route has smoke coverage", async () => {
+    const registry = new InMemoryDeviceRegistry();
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const deviceUpdateQueue = createMemoryUpdateQueueStore();
+    const logDir = mkdtempSync(join(tmpdir(), "deskrelay-api-smoke-"));
+    const calls: MockDaemonCall[] = [];
+    const installReports: unknown[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const headers: Record<string, string> = {};
+      if (init?.headers) {
+        for (const [key, value] of Object.entries(init.headers as Record<string, string>)) {
+          headers[key] = value;
+        }
+      }
+      calls.push({
+        method: init?.method ?? "GET",
+        url,
+        headers,
+        ...(typeof init?.body === "string" ? { body: init.body } : {}),
+      });
+      return mockDaemonApiResponse(new Request(url, init));
+    }) as typeof fetch;
+
+    writeFileSync(join(logDir, "site-backend.log"), "info: backend ready\n", "utf8");
+    writeFileSync(join(logDir, "site-frontend.log"), "info: frontend ready\n", "utf8");
+    writeFileSync(join(logDir, "daemon.log"), "info: daemon ready\n", "utf8");
+
+    const app = createSiteApp({
+      registry,
+      token: TOKEN,
+      fetchImpl,
+      localDaemonToken: "daemon-token",
+      selfHostUrl: "http://100.64.1.2:18193",
+      logDir,
+      managerTaskStore,
+      deviceUpdateQueue,
+      installReportStore: {
+        async list(limit = 10) {
+          return installReports.slice(0, limit) as never;
+        },
+        async add(input) {
+          const report = {
+            id: `install_${installReports.length + 1}`,
+            receivedAt: new Date(0).toISOString(),
+            status: "succeeded",
+            label: "Remote PC",
+            server: "http://100.64.1.2:18193",
+            steps: [],
+            input,
+          };
+          installReports.unshift(report);
+          return report as never;
+        },
+      },
+      selfServerAutostart: {
+        async status() {
+          return { supported: true, installed: false, taskName: "DeskRelay Self Server" };
+        },
+        async setEnabled(enabled) {
+          return { supported: true, installed: enabled, taskName: "DeskRelay Self Server" };
+        },
+      },
+      selfServerProcess: {
+        async status() {
+          return {
+            scope: "server",
+            kind: "site-server",
+            build: {
+              version: "0.0.0",
+              commit: "local",
+              shortCommit: "local",
+              dirty: false,
+              source: "package",
+            },
+            pid: 1234,
+            startedAt: new Date(0).toISOString(),
+            uptimeMs: 1000,
+            platform: process.platform,
+            arch: process.arch,
+          };
+        },
+        async restart() {
+          return { supported: true, accepted: true, message: "restart accepted", pid: 1235 };
+        },
+      },
+      selfServerUpdater: {
+        async status() {
+          return { state: "idle", updateAvailable: false };
+        },
+        async update() {
+          return { supported: true, started: true, pid: 1236, status: { state: "running" } };
+        },
+      },
+      build: {
+        version: "0.0.0",
+        commit: "local",
+        shortCommit: "local",
+        dirty: false,
+        source: "package",
+      },
+    });
+
+    const coveredRoutes = new Set<string>();
+    const failures: string[] = [];
+    const assertRoute = async (
+      key: string,
+      request: Request,
+      expectedStatuses: number[] = [200],
+    ): Promise<Response> => {
+      coveredRoutes.add(key);
+      const res = await app.fetch(request);
+      if (!expectedStatuses.includes(res.status)) {
+        failures.push(`${key} returned ${res.status}: ${await res.clone().text()}`);
+      }
+      return res;
+    };
+
+    try {
+      await assertRoute("GET /healthz", new Request("http://site.local/healthz"));
+      await assertRoute("GET /api/announcement", new Request("http://site.local/api/announcement"));
+      await assertRoute("GET /api/capabilities", authedRequest("GET", "/api/capabilities"));
+
+      const registerRes = await assertRoute(
+        "POST /api/devices",
+        authedRequest("POST", "/api/devices", {
+          daemonUrl: DAEMON_URL,
+          authToken: "daemon-token",
+          label: "Remote PC",
+        }),
+        [201],
+      );
+      const registered = (await registerRes.json()) as { id: string };
+      const deviceId = registered.id;
+
+      const pendingTask = await managerTaskStore.create({
+        kind: "update-server",
+        dryRun: true,
+        requestedBy: "browser",
+        steps: [],
+      });
+      const failedTask = await managerTaskStore.create({
+        kind: "diagnose",
+        dryRun: true,
+        requestedBy: "browser",
+        steps: [],
+      });
+      await managerTaskStore.update(failedTask.id, {
+        state: "failed",
+        error: "synthetic failure",
+      });
+
+      const smokeRoutes: Array<[string, Request, number[]?]> = [
+        ["GET /api/manager/tasks", authedRequest("GET", "/api/manager/tasks?limit=5")],
+        [
+          "POST /api/manager/tasks",
+          authedRequest("POST", "/api/manager/tasks", {
+            kind: "diagnose",
+            dryRun: true,
+            requestedBy: "browser",
+          }),
+          [202],
+        ],
+        [
+          "GET /api/manager/tasks/:id/logs",
+          authedRequest("GET", `/api/manager/tasks/${pendingTask.id}/logs`),
+        ],
+        [
+          "POST /api/manager/tasks/:id/cancel",
+          authedRequest("POST", `/api/manager/tasks/${pendingTask.id}/cancel`),
+          [202],
+        ],
+        [
+          "POST /api/manager/tasks/:id/retry",
+          authedRequest("POST", `/api/manager/tasks/${failedTask.id}/retry`),
+          [202],
+        ],
+        [
+          "GET /api/manager/tasks/:id",
+          authedRequest("GET", `/api/manager/tasks/${pendingTask.id}`),
+        ],
+        ["GET /api/manager/audit-log", authedRequest("GET", "/api/manager/audit-log?limit=5")],
+        ["GET /api/manager/system/summary", authedRequest("GET", "/api/manager/system/summary")],
+        [
+          "GET /api/manager/devices/:id/actions",
+          authedRequest("GET", `/api/manager/devices/${deviceId}/actions`),
+        ],
+        ["GET /api/manager/update/plan", authedRequest("GET", "/api/manager/update/plan")],
+        ["GET /api/manager/update/status", authedRequest("GET", "/api/manager/update/status")],
+        [
+          "POST /api/manager/update/all",
+          authedRequest("POST", "/api/manager/update/all", {
+            dryRun: true,
+            requestedBy: "browser",
+          }),
+          [202],
+        ],
+        [
+          "GET /api/manager/registration/last-failure",
+          authedRequest("GET", "/api/manager/registration/last-failure"),
+        ],
+        [
+          "GET /api/manager/registration/diagnose",
+          authedRequest("GET", "/api/manager/registration/diagnose"),
+        ],
+        [
+          "POST /api/manager/registration/repair",
+          authedRequest("POST", "/api/manager/registration/repair", {
+            dryRun: true,
+            requestedBy: "browser",
+          }),
+          [202, 409],
+        ],
+        [
+          "GET /api/manager/security/boundary",
+          authedRequest("GET", "/api/manager/security/boundary"),
+        ],
+        ["GET /api/devices", authedRequest("GET", "/api/devices")],
+        ["GET /api/devices/update-queue", authedRequest("GET", "/api/devices/update-queue")],
+        [
+          "GET /api/self/register-other-pc-command",
+          authedRequest("GET", "/api/self/register-other-pc-command"),
+        ],
+        [
+          "GET /api/self/remove-other-pc-command",
+          authedRequest("GET", "/api/self/remove-other-pc-command"),
+        ],
+        ["GET /api/self/doctor", authedRequest("GET", "/api/self/doctor")],
+        ["GET /api/self/logs", authedRequest("GET", "/api/self/logs?source=server&tail=5")],
+        ["GET /api/self/process/status", authedRequest("GET", "/api/self/process/status")],
+        [
+          "POST /api/self/process/restart",
+          authedRequest("POST", "/api/self/process/restart"),
+          [202],
+        ],
+        ["GET /api/self/network/status", authedRequest("GET", "/api/self/network/status")],
+        ["GET /api/self/install/status", authedRequest("GET", "/api/self/install/status")],
+        ["GET /api/self/security/boundary", authedRequest("GET", "/api/self/security/boundary")],
+        ["GET /api/self/autostart", authedRequest("GET", "/api/self/autostart")],
+        ["PUT /api/self/autostart", authedRequest("PUT", "/api/self/autostart", { enabled: true })],
+        ["POST /api/self/update", authedRequest("POST", "/api/self/update"), [202]],
+        ["GET /api/self/update/status", authedRequest("GET", "/api/self/update/status")],
+        ["GET /api/self/install-reports", authedRequest("GET", "/api/self/install-reports")],
+        [
+          "POST /api/self/install-reports",
+          authedRequest("POST", "/api/self/install-reports", {
+            status: "succeeded",
+            label: "Remote PC",
+            steps: [],
+          }),
+          [201],
+        ],
+        [
+          "PATCH /api/devices/:id",
+          authedRequest("PATCH", `/api/devices/${deviceId}`, { label: "Renamed PC" }),
+        ],
+        [
+          "GET /api/devices/:id/behaviors",
+          authedRequest("GET", `/api/devices/${deviceId}/behaviors`),
+        ],
+        [
+          "GET /api/devices/:id/capabilities",
+          authedRequest("GET", `/api/devices/${deviceId}/capabilities`),
+        ],
+        [
+          "GET /api/devices/:id/logs",
+          authedRequest("GET", `/api/devices/${deviceId}/logs?source=connector&tail=5`),
+        ],
+        [
+          "GET /api/devices/:id/process/status",
+          authedRequest("GET", `/api/devices/${deviceId}/process/status`),
+        ],
+        [
+          "POST /api/devices/:id/process/restart",
+          authedRequest("POST", `/api/devices/${deviceId}/process/restart`, {}),
+        ],
+        [
+          "GET /api/devices/:id/network/status",
+          authedRequest("GET", `/api/devices/${deviceId}/network/status`),
+        ],
+        [
+          "GET /api/devices/:id/install/status",
+          authedRequest("GET", `/api/devices/${deviceId}/install/status`),
+        ],
+        [
+          "GET /api/devices/:id/security/boundary",
+          authedRequest("GET", `/api/devices/${deviceId}/security/boundary`),
+        ],
+        [
+          "POST /api/devices/:id/behaviors/load",
+          authedRequest("POST", `/api/devices/${deviceId}/behaviors/load`, {
+            packageDir: "remote-claude",
+          }),
+        ],
+        [
+          "DELETE /api/devices/:id/behaviors/:instance",
+          authedRequest("DELETE", `/api/devices/${deviceId}/behaviors/remote-claude`),
+        ],
+        [
+          "POST /api/devices/:id/behaviors/:instance/request",
+          authedRequest("POST", `/api/devices/${deviceId}/behaviors/remote-claude/request`, {
+            method: "ping",
+            params: {},
+          }),
+        ],
+        [
+          "GET /api/devices/:id/events/spaces/:spaceId/stream",
+          authedRequest(
+            "GET",
+            `/api/devices/${deviceId}/events/spaces/${encodeURIComponent("remote-claude.default")}/stream`,
+          ),
+        ],
+        [
+          "GET /api/devices/:id/fs/list",
+          authedRequest(
+            "GET",
+            `/api/devices/${deviceId}/fs/list?path=${encodeURIComponent("C:\\Users")}&workspaceScope=unrestricted`,
+          ),
+        ],
+        [
+          "POST /api/devices/:id/fs/mkdir",
+          authedRequest("POST", `/api/devices/${deviceId}/fs/mkdir`, {
+            path: "C:\\Users\\darkh\\Projects\\new",
+          }),
+        ],
+        [
+          "GET /api/devices/:id/fs/roots",
+          authedRequest("GET", `/api/devices/${deviceId}/fs/roots`),
+        ],
+        [
+          "GET /api/devices/:id/files/preview",
+          authedRequest(
+            "GET",
+            `/api/devices/${deviceId}/files/preview?path=${encodeURIComponent("shot.png")}&cwd=${encodeURIComponent(
+              "C:\\repo",
+            )}`,
+          ),
+        ],
+        [
+          "GET /api/devices/:id/git/status",
+          authedRequest(
+            "GET",
+            `/api/devices/${deviceId}/git/status?cwd=${encodeURIComponent("C:\\repo")}`,
+          ),
+        ],
+        [
+          "GET /api/devices/:id/instructions",
+          authedRequest(
+            "GET",
+            `/api/devices/${deviceId}/instructions?cwd=${encodeURIComponent("C:\\repo")}`,
+          ),
+        ],
+        [
+          "PUT /api/devices/:id/instructions/:scope",
+          authedRequest("PUT", `/api/devices/${deviceId}/instructions/project`, {
+            cwd: "C:\\repo",
+            content: "rules",
+          }),
+        ],
+        [
+          "DELETE /api/devices/:id/instructions/:scope",
+          authedRequest("DELETE", `/api/devices/${deviceId}/instructions/local`, {
+            cwd: "C:\\repo",
+          }),
+        ],
+        [
+          "GET /api/devices/:id/diagnostics",
+          authedRequest("GET", `/api/devices/${deviceId}/diagnostics`),
+        ],
+        [
+          "POST /api/devices/:id/system/update",
+          authedRequest("POST", `/api/devices/${deviceId}/system/update`),
+        ],
+        ["GET /api/devices/:id/doctor", authedRequest("GET", `/api/devices/${deviceId}/doctor`)],
+        [
+          "POST /api/devices/:id/approvals/respond",
+          authedRequest("POST", `/api/devices/${deviceId}/approvals/respond`, {
+            decision: "allow",
+          }),
+        ],
+        [
+          "POST /api/devices/:id/approvals/simulate",
+          authedRequest("POST", `/api/devices/${deviceId}/approvals/simulate`, {
+            tool: "Read",
+          }),
+        ],
+      ];
+
+      for (const [key, request, statuses] of smokeRoutes) {
+        await assertRoute(key, request, statuses);
+      }
+
+      registry.register({
+        daemonUrl: "http://daemon-2.test:18091",
+        label: "Second PC",
+        authToken: "daemon-token",
+      });
+      await assertRoute(
+        "DELETE /api/devices/:id",
+        authedRequest("DELETE", `/api/devices/${deviceId}`),
+      );
+      await assertRoute("DELETE /api/devices", authedRequest("DELETE", "/api/devices"));
+
+      expect(failures).toEqual([]);
+      expect([...coveredRoutes].sort()).toEqual(siteAppRouteInventory());
+      expect(calls.some((call) => call.url.endsWith("/hooks/pretooluse/respond"))).toBe(true);
+      expect(calls.some((call) => call.url.endsWith("/fs/mkdir"))).toBe(true);
+      expect(calls.some((call) => call.url.endsWith("/git/status?cwd=C%3A%5Crepo"))).toBe(true);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
   });
 });
 
