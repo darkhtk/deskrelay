@@ -1,6 +1,8 @@
 import type {
   DiagnosticReport,
   DiagnosticStep,
+  ManagerAssistantChatRequest,
+  ManagerAssistantChatResponse,
   ManagerCapabilities,
   ManagerDeviceActions,
   ManagerInstallStatus,
@@ -465,6 +467,8 @@ export const api = {
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
   managerTaskLogs: (id: string) =>
     request<ManagerTaskLogResponse>("GET", `/api/manager/tasks/${id}/logs`),
+  managerAssistantChat: (input: ManagerAssistantChatRequest) =>
+    request<ManagerAssistantChatResponse>("POST", "/api/manager/assistant/chat", input),
   cancelManagerTask: (id: string) =>
     request<ManagerTask>("POST", `/api/manager/tasks/${id}/cancel`),
   retryManagerTask: (id: string) => request<ManagerTask>("POST", `/api/manager/tasks/${id}/retry`),

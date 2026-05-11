@@ -273,10 +273,10 @@ const HELP_SECTIONS: Array<{
     scopes: ["server", "current device"],
     open: true,
     items: [
-      "설정 > 관리 Assistant는 manager task API를 호출해 진단, 업데이트, 서버 재시작, 등록 복구를 실행합니다.",
-      "전체 업데이트, 서버 재시작, 등록 복구처럼 상태를 바꾸는 작업은 실행 전 확인을 요구합니다.",
-      "실패, 중단, 디바이스 대기 상태의 작업은 최근 작업 목록에서 재시도할 수 있습니다.",
-      "작업 로그는 서버에 저장된 manager task 기록을 읽어 보여주며, 사용자가 조치할 수 없는 내부 세부 정보는 최소화합니다.",
+      "AI 버튼 또는 설정 > 관리 Assistant에서 서버 PC의 DeskRelay 폴더에 있는 CLI와 대화합니다.",
+      "Assistant는 DeskRelay API와 로컬 명령을 이용해 진단, 업데이트, 복구 방법을 설명하거나 실행을 도울 수 있습니다.",
+      "상태를 바꾸는 작업은 사용자가 명시적으로 요청했을 때만 진행해야 합니다.",
+      "응답은 서버 PC에서 실행되는 CLI 결과이므로, 서버 PC의 git, bun, Tailscale, connector 상태에 영향을 받습니다.",
     ],
   },
 ];

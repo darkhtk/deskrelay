@@ -487,6 +487,11 @@ describe("API route inventory", () => {
         ["GET /api/manager/audit-log", authedRequest("GET", "/api/manager/audit-log?limit=5")],
         ["GET /api/manager/system/summary", authedRequest("GET", "/api/manager/system/summary")],
         [
+          "POST /api/manager/assistant/chat",
+          authedRequest("POST", "/api/manager/assistant/chat", {}),
+          [400],
+        ],
+        [
           "GET /api/manager/devices/:id/actions",
           authedRequest("GET", `/api/manager/devices/${deviceId}/actions`),
         ],
@@ -1004,6 +1009,47 @@ describe("manager task API", () => {
     const task = (await res.json()) as { state?: string; error?: string };
     expect(task.state).toBe("blocked");
     expect(task.error).toContain("unknown device");
+  });
+
+  test("manager assistant chat runs in the server repo folder", async () => {
+    const cwd = join(tmpdir(), "deskrelay-assistant-test");
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: {
+        cwd,
+        runner: async (input) => ({
+          command: "fake-claude -p",
+          text: `cwd=${input.cwd}; message=${input.message}; history=${input.history.length}`,
+        }),
+      },
+    });
+
+    const res = await app.fetch(
+      authedRequest("POST", "/api/manager/assistant/chat", {
+        message: "상태 알려줘",
+        history: [
+          {
+            id: "m1",
+            role: "assistant",
+            text: "준비됨",
+            createdAt: "2026-05-11T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      cwd?: string;
+      command?: string;
+      message?: { role?: string; text?: string };
+    };
+    expect(body.cwd).toBe(cwd);
+    expect(body.command).toBe("fake-claude -p");
+    expect(body.message?.role).toBe("assistant");
+    expect(body.message?.text).toContain("cwd=");
+    expect(body.message?.text).toContain("message=상태 알려줘");
+    expect(body.message?.text).toContain("history=1");
   });
 
   test("update plan and last registration failure APIs expose structured manager data", async () => {

@@ -190,22 +190,9 @@ describe("App landing flow", () => {
     });
   });
 
-  test("settings manager assistant creates a diagnose task", async () => {
+  test("settings manager assistant sends a server-local CLI chat message", async () => {
     window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     const requests: Array<{ url: string; method: string; body?: string }> = [];
-    const task = {
-      id: "task_diag_1",
-      kind: "diagnose",
-      state: "succeeded",
-      dryRun: true,
-      requestedBy: "manager-assistant",
-      targetId: null,
-      targetLabel: null,
-      steps: [{ ts: "2026-01-01T00:00:00.000Z", level: "info", message: "diagnosed" }],
-      error: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    };
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -220,34 +207,21 @@ describe("App landing flow", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      if (url.endsWith("/api/manager/system/summary")) {
+      if (url.endsWith("/api/manager/assistant/chat") && init?.method === "POST") {
         return new Response(
           JSON.stringify({
-            build: { version: "0.0.0" },
-            summary: { severity: "ok", message: "ready" },
-            devices: [],
-            recentTasks: [task],
+            cwd: "C:\\deskrelay",
+            command: "claude -p",
+            durationMs: 42,
+            message: {
+              id: "assistant-1",
+              role: "assistant",
+              text: "서버 PC의 DeskRelay 폴더에서 확인했습니다.",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
-      }
-      if (url.includes("/api/manager/tasks/task_diag_1/logs")) {
-        return new Response(JSON.stringify({ taskId: task.id, lines: ["diagnosed"] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.includes("/api/manager/tasks?")) {
-        return new Response(JSON.stringify({ tasks: [task] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.endsWith("/api/manager/tasks") && init?.method === "POST") {
-        return new Response(JSON.stringify(task), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
       }
       return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
         status: 200,
@@ -260,24 +234,20 @@ describe("App landing flow", () => {
     fireEvent.click(settings);
     fireEvent.click(await screen.findByRole("button", { name: "관리 Assistant" }));
 
-    await waitFor(() => {
-      expect(container.querySelector(".manager-action")).toBeTruthy();
-    });
-    const action = container.querySelector<HTMLButtonElement>(".manager-action");
-    if (!action) throw new Error("manager assistant action missing");
-    fireEvent.click(action);
+    const input = await screen.findByPlaceholderText("DeskRelay 관리에 대해 물어보세요...");
+    fireEvent.input(input, { target: { value: "서버 상태 알려줘" } });
+    const send = container.querySelector<HTMLButtonElement>(".manager-assistant-input button");
+    if (!send) throw new Error("manager assistant send button missing");
+    fireEvent.click(send);
 
     await waitFor(() => {
       const request = requests.find(
-        (entry) => entry.url.endsWith("/api/manager/tasks") && entry.method === "POST",
+        (entry) => entry.url.endsWith("/api/manager/assistant/chat") && entry.method === "POST",
       );
-      expect(request?.body).toBe(
-        JSON.stringify({
-          kind: "diagnose",
-          dryRun: true,
-          requestedBy: "manager-assistant",
-        }),
-      );
+      const body = JSON.parse(request?.body ?? "{}") as { message?: string; history?: unknown[] };
+      expect(body.message).toBe("서버 상태 알려줘");
+      expect(body.history?.length).toBeGreaterThan(0);
+      expect(container.textContent).toContain("서버 PC의 DeskRelay 폴더에서 확인했습니다.");
     });
   });
 

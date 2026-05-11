@@ -5447,6 +5447,10 @@ dialog.approval-modal-root,
   gap: 16px;
   min-height: 0;
 }
+.manager-assistant-chat {
+  height: 100%;
+  gap: 12px;
+}
 .manager-assistant-header,
 .manager-section-head,
 .manager-assistant-confirm {
@@ -5561,6 +5565,11 @@ dialog.approval-modal-root,
   overflow-y: auto;
   padding-right: 4px;
 }
+.manager-assistant-chat .manager-assistant-thread {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+}
 .manager-message {
   border-left: 3px solid var(--border-subtle);
   display: grid;
@@ -5580,6 +5589,9 @@ dialog.approval-modal-root,
 .manager-message-user {
   border-left-color: var(--accent-coral);
 }
+.manager-message-pending {
+  opacity: 0.72;
+}
 .manager-message-good {
   border-left-color: var(--success);
 }
@@ -5593,6 +5605,17 @@ dialog.approval-modal-root,
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+.manager-assistant-input textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.manager-assistant-error {
+  color: var(--danger);
+  font-size: 12px;
+  border-top: 1px solid var(--danger-border);
+  padding-top: 8px;
 }
 .manager-task-section,
 .manager-task-log {

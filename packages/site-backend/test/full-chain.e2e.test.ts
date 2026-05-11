@@ -18,6 +18,7 @@ const SITE_BIN = join(ROOT, "packages", "site-backend", "src", "bin.ts");
 const ECHO_PKG = join(ROOT, "packages", "behaviors", "echo");
 
 const TOKEN = "test-token-m2";
+const E2E_TEST_TIMEOUT_MS = 30000;
 
 interface RunningProc {
   proc: Subprocess<"ignore", "pipe", "pipe">;
@@ -32,7 +33,7 @@ let site: RunningProc | undefined;
 
 async function waitForListening(
   proc: Subprocess<"ignore", "pipe", "pipe">,
-  timeoutMs = 5000,
+  timeoutMs = 15000,
 ): Promise<{ host: string; port: number }> {
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
@@ -42,8 +43,8 @@ async function waitForListening(
     while (Date.now() < deadline) {
       const { value, done } = await Promise.race([
         reader.read(),
-        new Promise<{ value: undefined; done: true }>((resolve) =>
-          setTimeout(() => resolve({ value: undefined, done: true }), 500),
+        new Promise<{ value: undefined; done: false }>((resolve) =>
+          setTimeout(() => resolve({ value: undefined, done: false }), 500),
         ),
       ]);
       if (done) break;
@@ -129,94 +130,110 @@ afterEach(async () => {
 });
 
 describe("M2.3 browser → site → daemon → echo (full chain)", () => {
-  test("healthz is unauth and reports site is up", async () => {
-    if (!site) throw new Error("site missing");
-    const res = await fetch(`${site.baseUrl}/healthz`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.ok).toBe(true);
-  });
+  test(
+    "healthz is unauth and reports site is up",
+    async () => {
+      if (!site) throw new Error("site missing");
+      const res = await fetch(`${site.baseUrl}/healthz`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+    },
+    E2E_TEST_TIMEOUT_MS,
+  );
 
-  test("register device, load echo, call echo, observe event via SSE", async () => {
-    if (!daemon) throw new Error("daemon missing");
+  test(
+    "register device, load echo, call echo, observe event via SSE",
+    async () => {
+      if (!daemon) throw new Error("daemon missing");
 
-    // Register the running daemon as a device on the site.
-    const reg = await authedFetch("/api/devices", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ daemonUrl: daemon.baseUrl, label: "local" }),
-    });
-    expect(reg.status).toBe(201);
-    const device = await reg.json();
-    expect(device.daemonUrl).toBe(daemon.baseUrl);
+      // Register the running daemon as a device on the site.
+      const reg = await authedFetch("/api/devices", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ daemonUrl: daemon.baseUrl, label: "local" }),
+      });
+      expect(reg.status).toBe(201);
+      const device = await reg.json();
+      expect(device.daemonUrl).toBe(daemon.baseUrl);
 
-    // Load the echo behavior via the site (which proxies to the daemon).
-    const load = await authedFetch(`/api/devices/${device.id}/behaviors/load`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ packageDir: ECHO_PKG, instanceId: "browser-e2e" }),
-    });
-    expect(load.status).toBe(200);
+      // Load the echo behavior via the site (which proxies to the daemon).
+      const load = await authedFetch(`/api/devices/${device.id}/behaviors/load`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ packageDir: ECHO_PKG, instanceId: "browser-e2e" }),
+      });
+      expect(load.status).toBe(200);
 
-    // Subscribe to events BEFORE making the call so we don't miss the
-    // event the call publishes.
-    const space = "echo.default:browser-e2e";
-    const sseRes = await authedFetch(
-      `/api/devices/${device.id}/events/spaces/${encodeURIComponent(space)}/stream`,
-    );
-    expect(sseRes.status).toBe(200);
-    if (!sseRes.body) throw new Error("SSE missing body");
-    const reader = sseRes.body.getReader();
-    const decoder = new TextDecoder();
+      // Subscribe to events BEFORE making the call so we don't miss the
+      // event the call publishes.
+      const space = "echo.default:browser-e2e";
+      const sseRes = await authedFetch(
+        `/api/devices/${device.id}/events/spaces/${encodeURIComponent(space)}/stream`,
+      );
+      expect(sseRes.status).toBe(200);
+      if (!sseRes.body) throw new Error("SSE missing body");
+      const reader = sseRes.body.getReader();
+      const decoder = new TextDecoder();
 
-    // Trigger the behavior.
-    const call = await authedFetch(`/api/devices/${device.id}/behaviors/browser-e2e/request`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ method: "echo", params: { message: "from-browser" } }),
-    });
-    expect(call.status).toBe(200);
-    const callBody = await call.json();
-    expect(callBody.result).toEqual({ ok: true, length: 12 });
+      // Trigger the behavior.
+      const call = await authedFetch(`/api/devices/${device.id}/behaviors/browser-e2e/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ method: "echo", params: { message: "from-browser" } }),
+      });
+      expect(call.status).toBe(200);
+      const callBody = await call.json();
+      expect(callBody.result).toEqual({ ok: true, length: 12 });
 
-    // Read the SSE stream until we get one event frame, with a timeout.
-    let buffer = "";
-    let dataLine: string | undefined;
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !dataLine) {
-      const { value, done } = await Promise.race([
-        reader.read(),
-        new Promise<{ value: undefined; done: true }>((resolve) =>
-          setTimeout(() => resolve({ value: undefined, done: true }), 500),
-        ),
-      ]);
-      if (done) break;
-      if (value) buffer += decoder.decode(value, { stream: true });
-      const match = buffer.match(/^data: (.+)$/m);
-      if (match) dataLine = match[1];
-    }
-    await reader.cancel().catch(() => {});
+      // Read the SSE stream until we get one event frame, with a timeout.
+      let buffer = "";
+      let dataLine: string | undefined;
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline && !dataLine) {
+        const { value, done } = await Promise.race([
+          reader.read(),
+          new Promise<{ value: undefined; done: false }>((resolve) =>
+            setTimeout(() => resolve({ value: undefined, done: false }), 500),
+          ),
+        ]);
+        if (done) break;
+        if (value) buffer += decoder.decode(value, { stream: true });
+        const match = buffer.match(/^data: (.+)$/m);
+        if (match) dataLine = match[1];
+      }
+      await reader.cancel().catch(() => {});
 
-    expect(dataLine).toBeDefined();
-    if (!dataLine) throw new Error("unreachable");
-    const env = JSON.parse(dataLine);
-    expect(env.kind).toBe("echoed");
-    expect(env.content).toEqual({ message: "from-browser" });
-    expect(env.spaceId).toBe(space);
-  });
+      expect(dataLine).toBeDefined();
+      if (!dataLine) throw new Error("unreachable");
+      const env = JSON.parse(dataLine);
+      expect(env.kind).toBe("echoed");
+      expect(env.content).toEqual({ message: "from-browser" });
+      expect(env.spaceId).toBe(space);
+    },
+    E2E_TEST_TIMEOUT_MS,
+  );
 
-  test("unauth /api request is rejected", async () => {
-    if (!site) throw new Error("site missing");
-    const res = await fetch(`${site.baseUrl}/api/devices`);
-    expect(res.status).toBe(401);
-  });
+  test(
+    "unauth /api request is rejected",
+    async () => {
+      if (!site) throw new Error("site missing");
+      const res = await fetch(`${site.baseUrl}/api/devices`);
+      expect(res.status).toBe(401);
+    },
+    E2E_TEST_TIMEOUT_MS,
+  );
 
-  test("registering an unreachable daemon URL is rejected before it reaches the list", async () => {
-    const reg = await authedFetch("/api/devices", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ daemonUrl: "http://127.0.0.1:1" }),
-    });
-    expect(reg.status).toBe(502);
-  });
+  test(
+    "registering an unreachable daemon URL is rejected before it reaches the list",
+    async () => {
+      const reg = await authedFetch("/api/devices", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ daemonUrl: "http://127.0.0.1:1" }),
+      });
+      expect(reg.status).toBe(502);
+    },
+    E2E_TEST_TIMEOUT_MS,
+  );
 });

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,9 @@ import {
   type DiagnosticReport,
   type DiagnosticSeverity,
   MANAGER_API_VERSION,
+  type ManagerAssistantChatMessage,
+  type ManagerAssistantChatRequest,
+  type ManagerAssistantChatResponse,
   type ManagerCapabilities,
   type ManagerDeviceActions,
   type ManagerInstallStatus,
@@ -68,7 +72,27 @@ export interface SiteAppOptions {
   installReportStore?: InstallReportStore;
   deviceUpdateQueue?: DeviceUpdateQueueStore;
   managerTaskStore?: ManagerTaskStore;
+  managerAssistant?: ManagerAssistantOptions;
   logDir?: string;
+}
+
+export interface ManagerAssistantRunInput {
+  message: string;
+  history: ManagerAssistantChatMessage[];
+  cwd: string;
+}
+
+export interface ManagerAssistantRunResult {
+  text: string;
+  command: string;
+}
+
+export interface ManagerAssistantOptions {
+  cwd?: string;
+  command?: string;
+  args?: string[];
+  timeoutMs?: number;
+  runner?: (input: ManagerAssistantRunInput) => Promise<ManagerAssistantRunResult>;
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -173,6 +197,22 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const task = await managerTaskStore.get(c.req.param("id"));
     if (!task) return c.json({ error: "unknown task" }, 404);
     return c.json(task);
+  });
+
+  app.post("/api/manager/assistant/chat", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const request = parseManagerAssistantChatRequest(body);
+    if (!request.ok) return c.json({ error: request.error }, 400);
+    try {
+      return c.json(await runManagerAssistantChat(request.value, options));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
   });
 
   app.get("/api/manager/audit-log", async (c) => {
@@ -1101,6 +1141,7 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "manager.task-control",
       "manager.action-discovery",
       "manager.security-summary",
+      "manager.assistant-chat",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -1140,6 +1181,11 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       { method: "GET", path: "/api/manager/tasks", description: "List manager tasks." },
       { method: "POST", path: "/api/manager/tasks", description: "Create a manager task." },
       { method: "GET", path: "/api/manager/tasks/:id", description: "Read one manager task." },
+      {
+        method: "POST",
+        path: "/api/manager/assistant/chat",
+        description: "Send a message to the server-local DeskRelay assistant CLI.",
+      },
       {
         method: "GET",
         path: "/api/manager/tasks/:id/logs",
@@ -1358,6 +1404,132 @@ function buildManagerTaskLogResponse(task: ManagerTask): ManagerTaskLogResponse 
     ...(task.result !== undefined ? { result: task.result } : {}),
     ...(task.error ? { error: task.error } : {}),
   };
+}
+
+async function runManagerAssistantChat(
+  request: ManagerAssistantChatRequest,
+  options: SiteAppOptions,
+): Promise<ManagerAssistantChatResponse> {
+  const started = Date.now();
+  const cwd = options.managerAssistant?.cwd ?? process.cwd();
+  const history = normalizeAssistantHistory(request.history);
+  const runner =
+    options.managerAssistant?.runner ??
+    ((input: ManagerAssistantRunInput) => runDefaultManagerAssistantCli(input, options));
+  const result = await runner({
+    message: request.message.trim(),
+    history,
+    cwd,
+  });
+  return {
+    cwd,
+    command: result.command,
+    durationMs: Date.now() - started,
+    message: {
+      id: `assistant_${randomBytes(10).toString("base64url")}`,
+      role: "assistant",
+      text: result.text,
+      createdAt: new Date().toISOString(),
+    },
+  };
+}
+
+async function runDefaultManagerAssistantCli(
+  input: ManagerAssistantRunInput,
+  options: SiteAppOptions,
+): Promise<ManagerAssistantRunResult> {
+  const assistantOptions = options.managerAssistant;
+  const command =
+    assistantOptions?.command ?? process.env.DESKRELAY_MANAGER_ASSISTANT_CLI ?? "claude";
+  const args =
+    assistantOptions?.args ??
+    parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
+  const timeoutMs = Math.max(5_000, assistantOptions?.timeoutMs ?? 120_000);
+  const prompt = buildManagerAssistantPrompt(input);
+  const argv = [...args, prompt];
+  let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  try {
+    proc = Bun.spawn([command, ...argv], {
+      cwd: input.cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+      env: {
+        ...process.env,
+        DESKRELAY_MANAGER_ASSISTANT: "1",
+      },
+    });
+  } catch (error) {
+    throw new Error(`Could not start manager assistant CLI (${command}): ${errorMessage(error)}`);
+  }
+
+  proc.stdin.end();
+  const stdout = new Response(proc.stdout).text();
+  const stderr = new Response(proc.stderr).text();
+  const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
+    proc.kill();
+  });
+  const [out, err] = await Promise.all([stdout, stderr]);
+  if (exitCode !== 0) {
+    throw new Error(
+      `Manager assistant CLI exited with code ${exitCode}${err.trim() ? `: ${err.trim()}` : ""}`,
+    );
+  }
+  const text = out.trim() || err.trim();
+  if (!text) throw new Error("Manager assistant CLI returned no output.");
+  return {
+    text,
+    command: `${command} ${args.join(" ")}`.trim(),
+  };
+}
+
+function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
+  const recent = input.history.slice(-12);
+  const transcript = recent
+    .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text}`)
+    .join("\n\n");
+  return [
+    "You are the DeskRelay manager assistant.",
+    "You are running on the server PC in the DeskRelay repository root.",
+    `Repository root: ${input.cwd}`,
+    "Talk with the user as a practical local development assistant.",
+    "Answer in Korean unless the user asks for another language.",
+    "If you did not actually run a command, do not claim that you did.",
+    transcript ? `Previous conversation:\n${transcript}` : "",
+    `User: ${input.message}`,
+    "Assistant:",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function parseManagerAssistantArgs(raw: string | undefined): string[] {
+  if (!raw?.trim()) return ["-p"];
+  return raw
+    .split(" ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          onTimeout();
+          reject(new Error(`Manager assistant CLI timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function cancelManagerTask(
@@ -2312,6 +2484,43 @@ function parseManagerTaskRequest(
   };
 }
 
+function parseManagerAssistantChatRequest(
+  input: unknown,
+): { ok: true; value: ManagerAssistantChatRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "body must be an object" };
+  if (typeof input.message !== "string" || !input.message.trim()) {
+    return { ok: false, error: "message is required" };
+  }
+  if (input.message.length > 20_000) return { ok: false, error: "message is too long" };
+  return {
+    ok: true,
+    value: {
+      message: input.message.trim(),
+      history: normalizeAssistantHistory(input.history),
+    },
+  };
+}
+
+function normalizeAssistantHistory(input: unknown): ManagerAssistantChatMessage[] {
+  if (!Array.isArray(input)) return [];
+  const history: ManagerAssistantChatMessage[] = [];
+  for (const item of input) {
+    if (!isRecord(item)) continue;
+    if (item.role !== "user" && item.role !== "assistant" && item.role !== "system") continue;
+    if (typeof item.text !== "string" || !item.text.trim()) continue;
+    history.push({
+      id: typeof item.id === "string" && item.id.trim() ? item.id : `history_${history.length}`,
+      role: item.role,
+      text: item.text.trim().slice(0, 20_000),
+      createdAt:
+        typeof item.createdAt === "string" && item.createdAt.trim()
+          ? item.createdAt
+          : new Date(0).toISOString(),
+    });
+  }
+  return history.slice(-20);
+}
+
 async function parseManagerShortcutRequest(
   req: { json(): Promise<unknown> },
   kind: ManagerTaskKind,
@@ -3056,6 +3265,10 @@ function parseJsonPayload(text: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function orderDevicesForRemoval(devices: Device[]): Device[] {

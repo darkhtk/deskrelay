@@ -238,6 +238,25 @@ export interface ManagerTaskLogResponse {
   error?: string;
 }
 
+export interface ManagerAssistantChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  createdAt: string;
+}
+
+export interface ManagerAssistantChatRequest {
+  message: string;
+  history?: ManagerAssistantChatMessage[];
+}
+
+export interface ManagerAssistantChatResponse {
+  message: ManagerAssistantChatMessage;
+  cwd: string;
+  command: string;
+  durationMs: number;
+}
+
 export interface ManagerActionDescriptor {
   id: string;
   label: string;
