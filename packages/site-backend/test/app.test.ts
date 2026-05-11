@@ -631,6 +631,138 @@ describe("manager task API", () => {
       "repair-registration",
     );
   });
+
+  test("virtual self-host lifecycle covers command generation, remote registration, update, and removal", async () => {
+    const registry = new InMemoryDeviceRegistry();
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const deviceUpdateQueue = createMemoryUpdateQueueStore();
+    const calls: MockDaemonCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const headers: Record<string, string> = {};
+      if (init?.headers) {
+        for (const [key, value] of Object.entries(init.headers as Record<string, string>)) {
+          headers[key] = value;
+        }
+      }
+      calls.push({
+        method: init?.method ?? "GET",
+        url,
+        headers,
+        ...(typeof init?.body === "string" ? { body: init.body } : {}),
+      });
+      const path = new URL(url).pathname;
+      if (path === "/healthz") {
+        return Response.json({ ok: true, version: "0.0.0" });
+      }
+      if (path === "/system/update") {
+        return Response.json({ ok: true, state: "running", message: "update queued" });
+      }
+      if (path === "/system/uninstall") {
+        return Response.json({ ok: true, removed: true });
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    const app = createSiteApp({
+      registry,
+      token: TOKEN,
+      fetchImpl,
+      managerTaskStore,
+      deviceUpdateQueue,
+      selfHostUrl: "http://server.local:18193",
+      build: {
+        version: "0.0.0",
+        commit: "local",
+        shortCommit: "local",
+        dirty: false,
+        source: "package",
+      },
+      selfServerUpdater: {
+        async status() {
+          return { state: "idle", updateAvailable: true };
+        },
+        async update() {
+          return { supported: true, started: true, pid: 1234, status: { state: "running" } };
+        },
+      },
+      selfServerProcess: {
+        async status() {
+          return {
+            scope: "server",
+            kind: "site-server",
+            build: {
+              version: "0.0.0",
+              commit: "local",
+              shortCommit: "local",
+              dirty: false,
+              source: "package",
+            },
+            pid: 1234,
+            startedAt: new Date(0).toISOString(),
+            uptimeMs: 1000,
+            platform: process.platform,
+            arch: process.arch,
+          };
+        },
+        async restart() {
+          return { supported: true, accepted: true, message: "restart accepted", pid: 1235 };
+        },
+      },
+    });
+
+    const commandRes = await app.fetch(authedRequest("GET", "/api/self/register-other-pc-command"));
+    expect(commandRes.status).toBe(200);
+    const command = (await commandRes.json()) as { command?: string; preferredUrl?: string };
+    expect(command.command).toContain("install-connector.ps1");
+    expect(command.command).toContain("-SiteToken");
+    expect(command.preferredUrl).toContain(":18193");
+
+    const registerRes = await app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: DAEMON_URL,
+        authToken: "daemon-token",
+        label: "Remote PC",
+      }),
+    );
+    expect(registerRes.status).toBe(201);
+    const device = (await registerRes.json()) as { id: string; label: string };
+    expect(device.label).toBe("Remote PC");
+
+    const updateRes = await app.fetch(
+      authedRequest("POST", "/api/manager/update/all", {
+        dryRun: false,
+        requestedBy: "manager-assistant",
+      }),
+    );
+    expect(updateRes.status).toBe(202);
+    const updateTask = (await updateRes.json()) as { kind?: string; state?: string };
+    expect(updateTask.kind).toBe("update-all");
+    expect(["running", "waiting_for_device", "succeeded"].includes(updateTask.state ?? "")).toBe(
+      true,
+    );
+    expect(calls.some((call) => call.url === `${DAEMON_URL}/system/update`)).toBe(true);
+
+    const restartRes = await app.fetch(
+      authedRequest("POST", "/api/manager/tasks", {
+        kind: "restart-server",
+        dryRun: false,
+        requestedBy: "manager-assistant",
+      }),
+    );
+    expect(restartRes.status).toBe(202);
+    expect(((await restartRes.json()) as { state?: string }).state).toBe("succeeded");
+
+    const removeRes = await app.fetch(authedRequest("DELETE", `/api/devices/${device.id}`));
+    expect(removeRes.status).toBe(200);
+    expect(calls.some((call) => call.url === `${DAEMON_URL}/system/uninstall`)).toBe(true);
+
+    const devicesRes = await app.fetch(authedRequest("GET", "/api/devices"));
+    expect(await devicesRes.json()).toEqual([]);
+    const tasksRes = await app.fetch(authedRequest("GET", "/api/manager/tasks"));
+    expect(((await tasksRes.json()) as { tasks?: unknown[] }).tasks?.length).toBeGreaterThanOrEqual(
+      2,
+    );
+  });
 });
 
 describe("device filesystem proxy", () => {

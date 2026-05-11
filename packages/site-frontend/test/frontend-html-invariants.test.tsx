@@ -183,7 +183,7 @@ describe("settings and chrome invariants", () => {
     fireEvent.click(screen.getByRole("button", { name: t("login.token.submit") }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: t("app.back-home") })).toBeTruthy();
+      expect(screen.getByRole("button", { name: t("app.settings.aria") })).toBeTruthy();
       expect(container.querySelector('a[href="/privacy"]')).toBeNull();
       expect(container.querySelector('a[href="/terms"]')).toBeNull();
     });

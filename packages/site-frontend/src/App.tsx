@@ -42,6 +42,7 @@ import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
+import { ManagerAssistant } from "./components/ManagerAssistant.tsx";
 import {
   type SettingsScope,
   SettingsScopeLabel,
@@ -84,12 +85,20 @@ import {
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
 
-type SettingsTab = "general" | "updates" | "devices" | "diagnostics" | "instructions" | "help";
+type SettingsTab =
+  | "general"
+  | "updates"
+  | "devices"
+  | "assistant"
+  | "diagnostics"
+  | "instructions"
+  | "help";
 
 const SETTINGS_TABS: SettingsTab[] = [
   "general",
   "updates",
   "devices",
+  "assistant",
   "diagnostics",
   "instructions",
   "help",
@@ -259,9 +268,21 @@ const HELP_SECTIONS: Array<{
       "서버와 connector 버전이 다르면 업데이트를 실행하거나 등록 명령을 다시 실행합니다.",
     ],
   },
+  {
+    title: "관리 Assistant",
+    scopes: ["server", "current device"],
+    open: true,
+    items: [
+      "설정 > 관리 Assistant는 manager task API를 호출해 진단, 업데이트, 서버 재시작, 등록 복구를 실행합니다.",
+      "전체 업데이트, 서버 재시작, 등록 복구처럼 상태를 바꾸는 작업은 실행 전 확인을 요구합니다.",
+      "실패, 중단, 디바이스 대기 상태의 작업은 최근 작업 목록에서 재시도할 수 있습니다.",
+      "작업 로그는 서버에 저장된 manager task 기록을 읽어 보여주며, 사용자가 조치할 수 없는 내부 세부 정보는 최소화합니다.",
+    ],
+  },
 ];
 
 function settingsTabLabel(value: SettingsTab): string {
+  if (value === "assistant") return "관리 Assistant";
   return value === "help" ? "도움말" : t(`app.settings.tab.${value}`);
 }
 
@@ -668,6 +689,9 @@ export const App: Component = () => {
                     onDeviceSelected={activateRegisteredDevice}
                     onManualCleanupRequired={handleManualCleanupRequired}
                   />
+                </Show>
+                <Show when={settingsTab() === "assistant"}>
+                  <ManagerAssistant />
                 </Show>
                 <Show when={settingsTab() === "diagnostics"}>
                   <ConnectionDiagnostics

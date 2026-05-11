@@ -112,7 +112,7 @@ describe("App landing flow", () => {
     window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     render(() => <App />);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: t("app.back-home") })).toBeTruthy();
+      expect(screen.getByRole("button", { name: t("app.settings.aria") })).toBeTruthy();
     });
     expect(screen.queryByRole("button", { name: t("landing.cta.start") })).toBeNull();
   });
@@ -187,6 +187,97 @@ describe("App landing flow", () => {
     await waitFor(() => {
       expect(checkbox.checked).toBe(true);
       expect(requests.some((req) => req.body === JSON.stringify({ enabled: true }))).toBe(true);
+    });
+  });
+
+  test("settings manager assistant creates a diagnose task", async () => {
+    window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
+    const requests: Array<{ url: string; method: string; body?: string }> = [];
+    const task = {
+      id: "task_diag_1",
+      kind: "diagnose",
+      state: "succeeded",
+      dryRun: true,
+      requestedBy: "manager-assistant",
+      targetId: null,
+      targetLabel: null,
+      steps: [{ ts: "2026-01-01T00:00:00.000Z", level: "info", message: "diagnosed" }],
+      error: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method ?? "GET",
+        ...(typeof init?.body === "string" ? { body: init.body } : {}),
+      });
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/manager/system/summary")) {
+        return new Response(
+          JSON.stringify({
+            build: { version: "0.0.0" },
+            summary: { severity: "ok", message: "ready" },
+            devices: [],
+            recentTasks: [task],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/api/manager/tasks/task_diag_1/logs")) {
+        return new Response(JSON.stringify({ taskId: task.id, lines: ["diagnosed"] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/api/manager/tasks?")) {
+        return new Response(JSON.stringify({ tasks: [task] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/manager/tasks") && init?.method === "POST") {
+        return new Response(JSON.stringify(task), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const { container } = render(() => <App />);
+    const settings = await screen.findByRole("button", { name: t("app.settings.aria") });
+    fireEvent.click(settings);
+    fireEvent.click(await screen.findByRole("button", { name: "관리 Assistant" }));
+
+    await waitFor(() => {
+      expect(container.querySelector(".manager-action")).toBeTruthy();
+    });
+    const action = container.querySelector<HTMLButtonElement>(".manager-action");
+    if (!action) throw new Error("manager assistant action missing");
+    fireEvent.click(action);
+
+    await waitFor(() => {
+      const request = requests.find(
+        (entry) => entry.url.endsWith("/api/manager/tasks") && entry.method === "POST",
+      );
+      expect(request?.body).toBe(
+        JSON.stringify({
+          kind: "diagnose",
+          dryRun: true,
+          requestedBy: "manager-assistant",
+        }),
+      );
     });
   });
 
@@ -342,11 +433,11 @@ describe("App landing flow", () => {
 
     await waitFor(() => {
       expect(window.localStorage.getItem("cr.site-token:http://test.local")).toBe("tok-fragment");
-      expect(screen.getByRole("button", { name: t("app.back-home") })).toBeTruthy();
+      expect(screen.getByRole("button", { name: t("app.settings.aria") })).toBeTruthy();
     });
   });
 
-  test("chat top-bar back button reopens the main landing screen", async () => {
+  test("settings general tab can reopen the main landing screen", async () => {
     render(() => <App />);
 
     const openButton = screen.getAllByRole("button", { name: t("landing.cta.start") })[0];
@@ -357,6 +448,8 @@ describe("App landing flow", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: t("login.token.submit") }));
 
+    const settings = await screen.findByRole("button", { name: t("app.settings.aria") });
+    fireEvent.click(settings);
     const back = await screen.findByRole("button", { name: t("app.back-home") });
     fireEvent.click(back);
 

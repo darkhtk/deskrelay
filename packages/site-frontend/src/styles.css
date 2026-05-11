@@ -5378,6 +5378,212 @@ dialog.approval-modal-root,
 .connection-diagnostics-update .settings-command-textarea {
   min-height: 160px;
 }
+
+.manager-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+.manager-assistant-header,
+.manager-section-head,
+.manager-assistant-confirm {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.manager-assistant-header h3,
+.manager-section-head h4 {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+  margin: 0;
+}
+.manager-assistant-header p,
+.manager-section-head span,
+.manager-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0;
+}
+.manager-assistant-summary {
+  border-bottom: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.manager-summary-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px 10px;
+}
+.manager-summary-item + .manager-summary-item {
+  border-left: 1px solid var(--border-subtle);
+}
+.manager-summary-item span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-summary-item strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-assistant-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+}
+.manager-action {
+  align-items: flex-start;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  min-height: 58px;
+  padding: 10px 12px;
+  text-align: left;
+}
+.manager-action:hover {
+  border-color: var(--border-strong);
+}
+.manager-action span {
+  font-size: 13px;
+  font-weight: 650;
+}
+.manager-action small {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-action-changes {
+  border-color: var(--warning);
+}
+.manager-action-restart {
+  border-color: var(--danger-border);
+}
+.manager-assistant-confirm {
+  border-bottom: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border-subtle);
+  padding: 12px 0;
+}
+.manager-assistant-confirm div {
+  display: grid;
+  gap: 4px;
+  margin-right: auto;
+  min-width: 0;
+}
+.manager-assistant-confirm strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.manager-assistant-confirm span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.manager-assistant-thread,
+.manager-task-list,
+.manager-log-body {
+  display: grid;
+  gap: 8px;
+}
+.manager-assistant-thread {
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.manager-message {
+  border-left: 3px solid var(--border-subtle);
+  display: grid;
+  gap: 4px;
+  padding: 6px 0 6px 10px;
+}
+.manager-message span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-message p {
+  color: var(--text);
+  font-size: 13px;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.manager-message-user {
+  border-left-color: var(--accent-coral);
+}
+.manager-message-good {
+  border-left-color: var(--success);
+}
+.manager-message-warn {
+  border-left-color: var(--warning);
+}
+.manager-message-bad {
+  border-left-color: var(--danger);
+}
+.manager-assistant-input {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.manager-task-section,
+.manager-task-log {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+}
+.manager-task-row {
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 8px 0;
+}
+.manager-task-main {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+.manager-task-main strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-task-main span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.manager-task-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.manager-log-body {
+  max-height: 180px;
+  overflow-y: auto;
+}
+.manager-log-body code {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
 @media (max-width: 760px) {
   .connection-diagnostics-header,
   .connection-diagnostics-device {

@@ -1,3 +1,4 @@
+import type { ManagerTask } from "@deskrelay/shared";
 import { type Component, For, Show, createResource, createSignal } from "solid-js";
 import {
   type DiagnosticCheck,
@@ -53,6 +54,14 @@ export const Landing: Component<LandingProps> = (props) => {
     () => (props.authed ? "ready" : null),
     async () => await api.selfUpdateStatus().catch(() => null),
   );
+  const [managerTasks, { refetch: refetchManagerTasks }] = createResource(
+    () => (props.authed ? "ready" : null),
+    async () =>
+      await api
+        .managerTasks(3)
+        .then((response) => response.tasks)
+        .catch(() => []),
+  );
 
   const refreshAll = async () => {
     await Promise.all([
@@ -64,6 +73,7 @@ export const Landing: Component<LandingProps> = (props) => {
       props.authed ? refetchRegisterCommand() : Promise.resolve(),
       props.authed ? refetchRemoveCommand() : Promise.resolve(),
       props.authed ? refetchUpdateStatus() : Promise.resolve(),
+      props.authed ? refetchManagerTasks() : Promise.resolve(),
     ]);
   };
 
@@ -113,6 +123,7 @@ export const Landing: Component<LandingProps> = (props) => {
     if (state === "failed") return "bad";
     return "neutral";
   };
+  const latestManagerTask = () => managerTasks()?.[0] ?? null;
   const deviceCount = () => devices()?.length ?? health()?.devices ?? 0;
   const remoteUrl = () => registerCommand()?.preferredUrl ?? "";
   const siteToken = () => registerCommand()?.siteToken ?? "";
@@ -231,6 +242,12 @@ export const Landing: Component<LandingProps> = (props) => {
       label: "업데이트",
       value: updateStatusLabel(updateStatus()),
       detail: updateStatusDetail(updateStatus()),
+    },
+    {
+      tone: managerTaskTone(latestManagerTask()),
+      label: "관리 작업",
+      value: managerTaskValue(latestManagerTask(), managerTasks.loading),
+      detail: managerTaskDetail(latestManagerTask()),
     },
   ];
 
@@ -463,6 +480,69 @@ function updateStatusDetail(status: SelfServerUpdateStatus | null | undefined): 
   if (status.state === "running") return `업데이트 작업이 실행 중입니다${range}`;
   if (status.state === "succeeded") return `마지막 업데이트가 정상 종료됐습니다${range}`;
   return `마지막 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+}
+
+function managerTaskTone(task: ManagerTask | null): StepTone {
+  if (!task) return "neutral";
+  if (task.state === "succeeded") return "good";
+  if (task.state === "failed" || task.state === "cancelled") return "bad";
+  if (
+    task.state === "blocked" ||
+    task.state === "waiting_for_device" ||
+    task.state === "restart_required"
+  ) {
+    return "warn";
+  }
+  return "wait";
+}
+
+function managerTaskValue(task: ManagerTask | null, loading: boolean): string {
+  if (loading) return "조회 중";
+  if (!task) return "기록 없음";
+  return `${managerTaskKindLabel(task.kind)} · ${managerTaskStateLabel(task.state)}`;
+}
+
+function managerTaskDetail(task: ManagerTask | null): string {
+  if (!task) return "설정 > 관리 Assistant에서 작업을 실행할 수 있습니다.";
+  return task.error ?? `${task.steps.length}단계 기록 · ${formatShortDate(task.updatedAt)}`;
+}
+
+function managerTaskKindLabel(kind: ManagerTask["kind"]): string {
+  const labels: Record<ManagerTask["kind"], string> = {
+    diagnose: "진단",
+    "update-server": "서버 업데이트",
+    "update-device": "디바이스 업데이트",
+    "update-all": "전체 업데이트",
+    "restart-server": "서버 재시작",
+    "restart-device": "디바이스 재시작",
+    "repair-registration": "등록 복구",
+  };
+  return labels[kind] ?? kind;
+}
+
+function managerTaskStateLabel(state: ManagerTask["state"]): string {
+  const labels: Record<ManagerTask["state"], string> = {
+    pending: "대기",
+    running: "진행 중",
+    blocked: "중단",
+    waiting_for_device: "디바이스 대기",
+    restart_required: "재시작 필요",
+    succeeded: "완료",
+    failed: "실패",
+    cancelled: "취소",
+  };
+  return labels[state] ?? state;
+}
+
+function formatShortDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function isKnownUpdateState(value: unknown): value is SelfServerUpdateStatus["state"] {
