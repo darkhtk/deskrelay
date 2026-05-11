@@ -1,7 +1,8 @@
 import type { ManagerAssistantChatMessage } from "@deskrelay/shared";
-import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import { api } from "../api.ts";
+import { type Component, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { type ClaudeStreamEvent, api } from "../api.ts";
 import { Composer } from "./Composer.tsx";
+import { Transcript } from "./Transcript.tsx";
 
 const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
   id: "assistant-initial",
@@ -14,18 +15,45 @@ export const ManagerAssistant: Component = () => {
   const [messages, setMessages] = createSignal<ManagerAssistantChatMessage[]>([INITIAL_MESSAGE]);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  let threadEl: HTMLDivElement | undefined;
+  const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
+  let transcriptScroller: HTMLDivElement | undefined;
+
+  const transcriptEvents = createMemo<ClaudeStreamEvent[]>(() =>
+    messages().map((message) => ({
+      type: message.role,
+      message: {
+        role: message.role,
+        content: [{ type: "text", text: message.text }],
+      },
+    })),
+  );
 
   createEffect(() => {
     messages();
+    busy();
     queueMicrotask(() => {
-      if (threadEl) threadEl.scrollTop = threadEl.scrollHeight;
+      if (transcriptScroller && transcriptAtBottom()) {
+        transcriptScroller.scrollTop = transcriptScroller.scrollHeight;
+      }
     });
   });
 
   onCleanup(() => {
-    threadEl = undefined;
+    transcriptScroller = undefined;
   });
+
+  const updateTranscriptBottomState = () => {
+    const el = transcriptScroller;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setTranscriptAtBottom(distance < 8);
+  };
+
+  const scrollToBottom = () => {
+    if (!transcriptScroller) return;
+    transcriptScroller.scrollTo({ top: transcriptScroller.scrollHeight, behavior: "smooth" });
+    setTranscriptAtBottom(true);
+  };
 
   const send = async (value: string) => {
     const text = value.trim();
@@ -38,6 +66,7 @@ export const ManagerAssistant: Component = () => {
     };
     const history = [...messages(), userMessage];
     setMessages(history);
+    setTranscriptAtBottom(true);
     setError(null);
     setBusy(true);
     try {
@@ -55,38 +84,52 @@ export const ManagerAssistant: Component = () => {
 
   return (
     <div class="manager-assistant manager-assistant-chat">
-      <div class="manager-assistant-header">
-        <div>
-          <h3>AI Assistant</h3>
+      <div
+        ref={transcriptScroller}
+        class="transcript manager-assistant-transcript"
+        onScroll={updateTranscriptBottomState}
+      >
+        <div class="transcript-inner">
+          <Transcript events={transcriptEvents()} />
         </div>
-      </div>
-
-      <div ref={threadEl} class="manager-assistant-thread" aria-live="polite">
-        <For each={messages()}>
-          {(message) => (
-            <article class={`manager-message manager-message-${message.role}`}>
-              <span>{message.role === "user" ? "나" : "AI"}</span>
-              <p>{message.text}</p>
-            </article>
-          )}
-        </For>
-        <Show when={busy()}>
-          <article class="manager-message manager-message-assistant manager-message-pending">
-            <span>AI</span>
-            <p>응답 대기 중...</p>
-          </article>
-        </Show>
       </div>
 
       <Show when={error()}>
         {(message) => (
-          <div class="manager-assistant-error" role="alert">
-            {message()}
+          <div class="upstream-banner manager-assistant-error" role="alert">
+            <span class="upstream-banner-message">{message()}</span>
           </div>
         )}
       </Show>
 
-      <div class="manager-assistant-composer">
+      <div class="composer-shell manager-assistant-composer">
+        <Show when={!transcriptAtBottom() && messages().length > 0}>
+          <button
+            type="button"
+            class="scroll-to-bottom-button"
+            aria-label="아래로 이동"
+            title="아래로 이동"
+            onClick={scrollToBottom}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 5v14" />
+              <path d="m6 13 6 6 6-6" />
+            </svg>
+          </button>
+        </Show>
+        <Show when={busy()}>
+          <output class="composer-status composer-status-thinking" aria-live="polite">
+            <span class="composer-status-main">AI Assistant</span>
+            <span class="composer-status-detail">응답 대기</span>
+          </output>
+        </Show>
         <Composer
           onSend={send}
           disabled={busy()}

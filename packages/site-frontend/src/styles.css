@@ -5444,12 +5444,11 @@ dialog.approval-modal-root,
 .manager-assistant {
   display: flex;
   flex-direction: column;
-  gap: 16px;
   min-height: 0;
 }
 .manager-assistant-chat {
   height: 100%;
-  gap: 12px;
+  gap: 0;
 }
 .manager-assistant-header,
 .manager-section-head,
@@ -5554,73 +5553,24 @@ dialog.approval-modal-root,
   color: var(--text-muted);
   font-size: 12px;
 }
-.manager-assistant-thread,
 .manager-task-list,
 .manager-log-body {
   display: grid;
   gap: 8px;
 }
-.manager-assistant-thread {
-  max-height: 250px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-.manager-assistant-chat .manager-assistant-thread {
-  flex: 1 1 auto;
-  max-height: none;
-  min-height: 0;
-}
-.manager-message {
-  border-left: 3px solid var(--border-subtle);
-  display: grid;
-  gap: 4px;
-  padding: 6px 0 6px 10px;
-}
-.manager-message span {
-  color: var(--text-faint);
-  font-size: 11px;
-}
-.manager-message p {
-  color: var(--text);
-  font-size: 13px;
-  margin: 0;
-  white-space: pre-wrap;
-}
-.manager-message-user {
-  border-left-color: var(--accent-coral);
-}
-.manager-message-pending {
-  opacity: 0.72;
-}
-.manager-message-good {
-  border-left-color: var(--success);
-}
-.manager-message-warn {
-  border-left-color: var(--warning);
-}
-.manager-message-bad {
-  border-left-color: var(--danger);
-}
-.manager-assistant-composer {
+.manager-assistant-error {
   flex: 0 0 auto;
 }
-.manager-assistant-composer .slash-picker-root {
-  margin-left: 0;
-  margin-right: 0;
-  max-width: none;
+.manager-assistant-transcript {
+  flex: 1 1 auto;
+  min-height: 0;
 }
-.manager-assistant-composer .composer-card {
-  margin: 0;
-  max-width: none;
+.manager-assistant-transcript > .transcript-inner > .transcript {
+  padding-left: 0;
+  padding-right: 0;
 }
-.manager-assistant-composer .composer-input {
-  min-height: 72px;
-}
-.manager-assistant-error {
-  color: var(--danger);
-  font-size: 12px;
-  border-top: 1px solid var(--danger-border);
-  padding-top: 8px;
+.manager-assistant-chat .composer-shell {
+  flex: 0 0 auto;
 }
 .manager-task-section,
 .manager-task-log {
