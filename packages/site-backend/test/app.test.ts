@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import { createSiteApp } from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
@@ -138,6 +141,122 @@ describe("/api/* auth gate", () => {
     const res = await setup.app.fetch(authedRequest("GET", "/api/devices"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
+  });
+
+  test("authed /api/capabilities reports manager routes", async () => {
+    const res = await setup.app.fetch(authedRequest("GET", "/api/capabilities"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scope?: string;
+      features?: string[];
+      routes?: Array<{ path: string }>;
+    };
+    expect(body.scope).toBe("server");
+    expect(body.features).toContain("process.restart");
+    expect(body.routes?.some((route) => route.path === "/api/devices/:id/process/restart")).toBe(
+      true,
+    );
+  });
+});
+
+describe("manager logs and process APIs", () => {
+  test("GET /api/self/logs tails server log files", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "deskrelay-site-log-"));
+    writeFileSync(join(dir, "site-backend.log"), "one\ntwo\nthree\n", "utf8");
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      logDir: dir,
+    });
+    try {
+      const res = await app.fetch(authedRequest("GET", "/api/self/logs?tail=2"));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { exists?: boolean; lines?: string[] };
+      expect(body.exists).toBe(true);
+      expect(body.lines).toEqual(["two", "three"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("GET /api/self/process/status and POST /api/self/process/restart use controller", async () => {
+    let restartCalls = 0;
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      selfServerProcess: {
+        async status() {
+          return {
+            scope: "server",
+            kind: "site-server",
+            build: {
+              version: "0.0.0",
+              commit: "abc",
+              shortCommit: "abc",
+              dirty: false,
+              source: "env",
+            },
+            pid: 123,
+            startedAt: "2026-05-11T00:00:00.000Z",
+            uptimeMs: 1000,
+            platform: process.platform,
+            arch: process.arch,
+          };
+        },
+        async restart() {
+          restartCalls += 1;
+          return { supported: true, accepted: true, message: "restart accepted", pid: 456 };
+        },
+      },
+    });
+
+    const status = await app.fetch(authedRequest("GET", "/api/self/process/status"));
+    expect(status.status).toBe(200);
+    expect((await status.json()).pid).toBe(123);
+
+    const restart = await app.fetch(authedRequest("POST", "/api/self/process/restart"));
+    expect(restart.status).toBe(202);
+    expect(restartCalls).toBe(1);
+    expect(await restart.json()).toEqual({
+      supported: true,
+      accepted: true,
+      message: "restart accepted",
+      pid: 456,
+    });
+  });
+
+  test("device manager APIs proxy to the selected daemon", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "test",
+    });
+    setup.setMockResponse((req) => Response.json({ upstream: new URL(req.url).pathname }));
+
+    const caps = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${device.id}/capabilities`),
+    );
+    expect(caps.status).toBe(200);
+    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/capabilities`);
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+
+    const logs = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${device.id}/logs?tail=3&level=error`),
+    );
+    expect(logs.status).toBe(200);
+    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/logs?source=connector&tail=3&level=error`);
+
+    const status = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${device.id}/process/status`),
+    );
+    expect(status.status).toBe(200);
+    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/process/status`);
+
+    const restart = await setup.app.fetch(
+      authedRequest("POST", `/api/devices/${device.id}/process/restart`),
+    );
+    expect(restart.status).toBe(200);
+    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/process/restart`);
   });
 });
 

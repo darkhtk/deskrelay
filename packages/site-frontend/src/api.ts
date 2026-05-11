@@ -1,4 +1,12 @@
-import type { DiagnosticReport, DiagnosticStep, UpdateState } from "@deskrelay/shared";
+import type {
+  DiagnosticReport,
+  DiagnosticStep,
+  ManagerCapabilities,
+  ManagerLogResponse,
+  ManagerProcessStatus,
+  ManagerRestartResult,
+  UpdateState,
+} from "@deskrelay/shared";
 
 const LEGACY_TOKEN_KEY = "cr.site-token";
 const TOKEN_KEY_PREFIX = "cr.site-token:";
@@ -418,9 +426,20 @@ export const api = {
   localSiteToken: () => readLocalSiteToken(),
   browserClientContext: () => readBrowserClientContext(),
 
+  capabilities: () => request<ManagerCapabilities>("GET", "/api/capabilities"),
   selfDoctor: () => request<DiagnosticReport>("GET", "/api/self/doctor"),
   deviceDoctor: (deviceId: string) =>
     request<DiagnosticReport>("GET", `/api/devices/${deviceId}/doctor`),
+  selfLogs: (options?: { source?: string; tail?: number; level?: string }) => {
+    const qs = new URLSearchParams();
+    if (options?.source) qs.set("source", options.source);
+    if (typeof options?.tail === "number") qs.set("tail", String(options.tail));
+    if (options?.level) qs.set("level", options.level);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request<ManagerLogResponse>("GET", `/api/self/logs${suffix}`);
+  },
+  selfProcessStatus: () => request<ManagerProcessStatus>("GET", "/api/self/process/status"),
+  restartSelfProcess: () => request<ManagerRestartResult>("POST", "/api/self/process/restart"),
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerOtherPcCommand: () =>
     request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),
@@ -448,6 +467,21 @@ export const api = {
   unregisterAllDevices: () => request<UnregisterAllDevicesResponse>("DELETE", "/api/devices"),
   renameDevice: (id: string, label: string) =>
     request<Device>("PATCH", `/api/devices/${id}`, { label }),
+
+  deviceCapabilities: (deviceId: string) =>
+    request<ManagerCapabilities>("GET", `/api/devices/${deviceId}/capabilities`),
+  deviceLogs: (deviceId: string, options?: { source?: string; tail?: number; level?: string }) => {
+    const qs = new URLSearchParams();
+    if (options?.source) qs.set("source", options.source);
+    if (typeof options?.tail === "number") qs.set("tail", String(options.tail));
+    if (options?.level) qs.set("level", options.level);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request<ManagerLogResponse>("GET", `/api/devices/${deviceId}/logs${suffix}`);
+  },
+  deviceProcessStatus: (deviceId: string) =>
+    request<ManagerProcessStatus>("GET", `/api/devices/${deviceId}/process/status`),
+  restartDeviceProcess: (deviceId: string) =>
+    request<ManagerRestartResult>("POST", `/api/devices/${deviceId}/process/restart`),
 
   listBehaviors: (deviceId: string) =>
     request<BehaviorSummary[]>("GET", `/api/devices/${deviceId}/behaviors`),

@@ -1,8 +1,13 @@
+import { readFile, stat } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
+import { join } from "node:path";
 import {
   type DiagnosticCheck,
   type DiagnosticReport,
   type DiagnosticSeverity,
+  MANAGER_API_VERSION,
+  type ManagerCapabilities,
+  type ManagerLogResponse,
   type UpdateState,
   diagnosticStepFromCheck,
 } from "@deskrelay/shared";
@@ -22,6 +27,7 @@ import type {
   SelfServerAutostartController,
   SelfServerAutostartStatus,
 } from "./self-server-autostart.ts";
+import type { SelfServerProcessController } from "./self-server-process.ts";
 import type { SelfServerUpdater } from "./self-server-update.ts";
 import type { UpdateNoticeSource } from "./update-notice.ts";
 
@@ -38,9 +44,11 @@ export interface SiteAppOptions {
   localDaemonToken?: string;
   selfHostUrl?: string;
   selfServerAutostart?: SelfServerAutostartController;
+  selfServerProcess?: SelfServerProcessController;
   selfServerUpdater?: SelfServerUpdater;
   installReportStore?: InstallReportStore;
   deviceUpdateQueue?: DeviceUpdateQueueStore;
+  logDir?: string;
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -77,6 +85,8 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return await bearerAuth({ token: options.token ?? "" })(c, next);
     });
   }
+
+  app.get("/api/capabilities", (c) => c.json(serverCapabilities(options)));
 
   app.get("/api/devices", (c) => c.json(registry.list().map(toPublicDevice)));
 
@@ -136,6 +146,60 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         urls,
       }),
     );
+  });
+
+  app.get("/api/self/logs", async (c) => {
+    const source = normalizeSelfLogSource(c.req.query("source"));
+    if (!source) return c.json({ error: "unsupported log source" }, 400);
+    const level = normalizeLogLevel(c.req.query("level"));
+    return c.json(
+      await readLogResponse({
+        scope: "server",
+        source,
+        path: selfLogPath(options, source),
+        tail: clampTail(c.req.query("tail")),
+        ...(level ? { level } : {}),
+      }),
+    );
+  });
+
+  app.get("/api/self/process/status", async (c) => {
+    if (!options.selfServerProcess) {
+      return c.json(defaultSelfProcessStatus(build));
+    }
+    try {
+      return c.json(await options.selfServerProcess.status());
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  app.post("/api/self/process/restart", async (c) => {
+    if (!options.selfServerProcess) {
+      return c.json(
+        {
+          supported: false,
+          accepted: false,
+          message: "self-server restart is not configured",
+          error: "self-server restart is not configured",
+        },
+        501,
+      );
+    }
+    try {
+      const result = await options.selfServerProcess.restart();
+      return c.json(result, result.accepted ? 202 : 409);
+    } catch (err) {
+      return c.json(
+        {
+          supported: true,
+          accepted: false,
+          message: "self-server restart failed",
+          error: (err as Error).message,
+        },
+        500,
+      );
+    }
   });
 
   app.get("/api/self/autostart", async (c) => {
@@ -312,6 +376,59 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       "GET",
       `${device.daemonUrl}/behaviors`,
       undefined,
+      daemonToken(device, localToken),
+    );
+  });
+
+  app.get("/api/devices/:id/capabilities", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return proxyJson(
+      fetchImpl,
+      "GET",
+      `${device.daemonUrl}/capabilities`,
+      undefined,
+      daemonToken(device, localToken),
+    );
+  });
+
+  app.get("/api/devices/:id/logs", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    const qs = new URLSearchParams();
+    qs.set("source", c.req.query("source") ?? "connector");
+    qs.set("tail", String(clampTail(c.req.query("tail"))));
+    const level = normalizeLogLevel(c.req.query("level"));
+    if (level) qs.set("level", level);
+    return proxyJson(
+      fetchImpl,
+      "GET",
+      `${device.daemonUrl}/logs?${qs.toString()}`,
+      undefined,
+      daemonToken(device, localToken),
+    );
+  });
+
+  app.get("/api/devices/:id/process/status", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return proxyJson(
+      fetchImpl,
+      "GET",
+      `${device.daemonUrl}/process/status`,
+      undefined,
+      daemonToken(device, localToken),
+    );
+  });
+
+  app.post("/api/devices/:id/process/restart", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return proxyJson(
+      fetchImpl,
+      "POST",
+      `${device.daemonUrl}/process/restart`,
+      await c.req.text(),
       daemonToken(device, localToken),
     );
   });
@@ -727,6 +844,199 @@ async function readSelfServerAutostartStatus(
       taskName: "DeskRelay Self Server",
       error: (err as Error).message,
     };
+  }
+}
+
+const SERVER_STARTED_AT = new Date().toISOString();
+
+function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
+  const build = options.build ?? getDeskRelayBuildInfo();
+  return {
+    scope: "server",
+    apiVersion: MANAGER_API_VERSION,
+    build,
+    platform: process.platform,
+    arch: process.arch,
+    features: [
+      "capabilities",
+      "logs",
+      "process.status",
+      "process.restart",
+      "devices",
+      "device.proxy",
+      "diagnostics",
+      "install.reports",
+      "self.update",
+      "device.update",
+      "autostart",
+    ],
+    routes: [
+      { method: "GET", path: "/api/capabilities", description: "List server API capabilities." },
+      { method: "GET", path: "/api/self/logs", description: "Read server stack logs." },
+      {
+        method: "GET",
+        path: "/api/self/process/status",
+        description: "Read server process status.",
+      },
+      {
+        method: "POST",
+        path: "/api/self/process/restart",
+        description: "Restart the self-host server stack.",
+      },
+      { method: "GET", path: "/api/devices", description: "List registered devices." },
+      { method: "POST", path: "/api/devices", description: "Register a device." },
+      {
+        method: "DELETE",
+        path: "/api/devices/:id",
+        description: "Remove one device.",
+        destructive: true,
+      },
+      {
+        method: "DELETE",
+        path: "/api/devices",
+        description: "Remove all registered devices.",
+        destructive: true,
+      },
+      {
+        method: "GET",
+        path: "/api/devices/:id/capabilities",
+        description: "Read device API capabilities.",
+      },
+      { method: "GET", path: "/api/devices/:id/logs", description: "Read device logs." },
+      {
+        method: "GET",
+        path: "/api/devices/:id/process/status",
+        description: "Read device process status.",
+      },
+      {
+        method: "POST",
+        path: "/api/devices/:id/process/restart",
+        description: "Restart the device connector.",
+      },
+      {
+        method: "POST",
+        path: "/api/devices/:id/behaviors/:instance/request",
+        description: "Call a device behavior method.",
+      },
+      { method: "GET", path: "/api/self/doctor", description: "Run server diagnostics." },
+      { method: "GET", path: "/api/devices/:id/doctor", description: "Run device diagnostics." },
+      { method: "POST", path: "/api/self/update", description: "Update self-host server." },
+      {
+        method: "POST",
+        path: "/api/devices/:id/system/update",
+        description: "Update a device connector.",
+      },
+    ],
+    behaviorMethods: [
+      "account.info",
+      "chat",
+      "context.usage",
+      "diagnostics",
+      "interrupt",
+      "permissions.inspect",
+      "permissions.update",
+      "sessions.delete",
+      "sessions.deleteByCwd",
+      "sessions.deleteBySessionId",
+      "sessions.list",
+      "sessions.read",
+      "skills.delete",
+      "skills.inspect",
+      "slashCommands",
+      "usage.limits",
+    ],
+  };
+}
+
+function defaultSelfProcessStatus(build: DeskRelayBuildInfo) {
+  return {
+    scope: "server",
+    kind: "site-server",
+    build,
+    pid: process.pid,
+    startedAt: SERVER_STARTED_AT,
+    uptimeMs: Math.max(0, Date.now() - Date.parse(SERVER_STARTED_AT)),
+    platform: process.platform,
+    arch: process.arch,
+  };
+}
+
+function normalizeSelfLogSource(value: string | undefined): string | undefined {
+  const raw = (value ?? "server").trim().toLowerCase();
+  if (raw === "server" || raw === "site-backend" || raw === "backend") return "site-backend";
+  if (raw === "frontend" || raw === "site-frontend") return "site-frontend";
+  if (raw === "daemon" || raw === "connector") return "daemon";
+  return undefined;
+}
+
+function selfLogPath(options: SiteAppOptions, source: string): string {
+  const logDir =
+    options.logDir ?? process.env.CR_DEV_LOG_DIR ?? join(process.cwd(), ".self-server", "logs");
+  if (source === "site-frontend") return join(logDir, "site-frontend.log");
+  if (source === "daemon") return join(logDir, "daemon.log");
+  return join(logDir, "site-backend.log");
+}
+
+function clampTail(value: string | undefined): number {
+  const n = Number(value ?? "200");
+  if (!Number.isFinite(n)) return 200;
+  return Math.max(1, Math.min(1000, Math.floor(n)));
+}
+
+function normalizeLogLevel(value: string | undefined): string | undefined {
+  const level = (value ?? "").trim().toLowerCase();
+  return level ? level : undefined;
+}
+
+async function readLogResponse(input: {
+  scope: "server";
+  source: string;
+  path: string;
+  tail: number;
+  level?: string;
+}): Promise<ManagerLogResponse> {
+  const readAt = new Date().toISOString();
+  try {
+    await stat(input.path);
+    const raw = await readFile(input.path, "utf8");
+    const allLines = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const nonEmptyLines = allLines.at(-1) === "" ? allLines.slice(0, -1) : allLines;
+    const filtered = input.level
+      ? nonEmptyLines.filter((line) => logLineMatchesLevel(line, input.level ?? ""))
+      : nonEmptyLines;
+    const lines = filtered.slice(-input.tail);
+    return {
+      scope: input.scope,
+      source: input.source,
+      path: input.path,
+      exists: true,
+      tail: input.tail,
+      lines,
+      truncated: filtered.length > lines.length,
+      readAt,
+    };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      scope: input.scope,
+      source: input.source,
+      path: input.path,
+      exists: false,
+      tail: input.tail,
+      lines: [],
+      truncated: false,
+      readAt,
+      error: code === "ENOENT" ? "log file not found" : (err as Error).message,
+    };
+  }
+}
+
+function logLineMatchesLevel(line: string, level: string): boolean {
+  try {
+    const parsed = JSON.parse(line) as { level?: unknown };
+    return typeof parsed.level === "string" && parsed.level.toLowerCase() === level;
+  } catch {
+    return line.toLowerCase().includes(level);
   }
 }
 

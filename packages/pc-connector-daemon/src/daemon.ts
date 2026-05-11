@@ -18,8 +18,17 @@
 // (see auth-token.ts). The CLI, the site-ws-client, and any self-host
 // site backend running on the same machine read that file. Browsers never see this token. A constructor without an authToken is rejected so we do not accidentally expose an unauthenticated daemon.
 
+import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { BehaviorHostError, type BehaviorHostLogRecord } from "@deskrelay/behavior-sdk";
 import { InProcessSubscriptionBroker } from "@deskrelay/core";
+import {
+  MANAGER_API_VERSION,
+  type ManagerCapabilities,
+  type ManagerLogResponse,
+  type ManagerProcessStatus,
+  type ManagerRestartResult,
+} from "@deskrelay/shared";
 import type { EventEnvelope } from "@deskrelay/shared/event";
 import { type SpaceId, isSpaceId } from "@deskrelay/shared/space";
 import { getDeskRelayBuildInfo } from "@deskrelay/shared/version";
@@ -30,12 +39,14 @@ import { filePreviewErrorStatus, previewFile, safePreviewFilename } from "./file
 import { FsError, listDir, makeDir } from "./fs.ts";
 import { gitStatus } from "./git.ts";
 import {
+  type ClaudeInstructionScope,
   InstructionError,
   deleteClaudeInstruction,
   readClaudeInstructions,
   writeClaudeInstruction,
-  type ClaudeInstructionScope,
 } from "./instructions.ts";
+import { WINDOWS_LOGIN_TASK_LOG_NAME, queryLoginTask } from "./login-task.ts";
+import { defaultStateDir } from "./state-file.ts";
 import type { WorkspaceRoots } from "./workspaces.ts";
 
 const UNRESTRICTED_WORKSPACE_ROOTS: WorkspaceRoots = { mode: "unrestricted", roots: [] };
@@ -115,6 +126,11 @@ export interface DaemonOptions {
   /** Pull the local source checkout and restart through the login task when
    *  available. Wired by bin.ts for the real daemon; tests may provide a stub. */
   requestSelfUpdate?: () => Promise<unknown>;
+  /** Restart the connector without pulling source. Wired by bin.ts for the
+   *  real daemon; tests may provide a stub. */
+  requestSelfRestart?: () => Promise<ManagerRestartResult>;
+  /** Preferred connector log path. Defaults to the login-task connector log. */
+  logPath?: string;
 }
 
 interface ResolvedListen {
@@ -224,6 +240,18 @@ export class Daemon {
       if (req.method === "GET" && path === "/status") {
         return this.#handleStatus();
       }
+      if (req.method === "GET" && path === "/capabilities") {
+        return this.#handleCapabilities();
+      }
+      if (req.method === "GET" && path === "/logs") {
+        return await this.#handleLogs(url);
+      }
+      if (req.method === "GET" && path === "/process/status") {
+        return await this.#handleProcessStatus();
+      }
+      if (req.method === "POST" && path === "/process/restart") {
+        return await this.#handleProcessRestart();
+      }
       if (req.method === "GET" && path === "/behaviors") {
         return this.#handleListBehaviors();
       }
@@ -321,6 +349,56 @@ export class Daemon {
         pendingApprovals: this.approvals.pendingCount(),
       },
     });
+  }
+
+  #handleCapabilities(): Response {
+    return jsonResponse(200, this.#capabilities());
+  }
+
+  async #handleLogs(url: URL): Promise<Response> {
+    const source = normalizeLogSource(url.searchParams.get("source"), ["connector", "daemon"]);
+    if (!source) {
+      return jsonResponse(400, { error: "unsupported log source" });
+    }
+    const tail = clampTail(url.searchParams.get("tail"));
+    const level = normalizeLogLevel(url.searchParams.get("level"));
+    return jsonResponse(
+      200,
+      await readLogResponse({
+        scope: "device",
+        source,
+        path: this.#options.logPath ?? defaultConnectorLogPath(),
+        tail,
+        ...(level ? { level } : {}),
+      }),
+    );
+  }
+
+  async #handleProcessStatus(): Promise<Response> {
+    return jsonResponse(200, await this.#processStatus());
+  }
+
+  async #handleProcessRestart(): Promise<Response> {
+    const restart = this.#options.requestSelfRestart;
+    if (!restart) {
+      return jsonResponse(501, {
+        supported: false,
+        accepted: false,
+        message: "connector restart is not wired",
+        error: "connector restart is not wired",
+      } satisfies ManagerRestartResult);
+    }
+    try {
+      const result = await restart();
+      return jsonResponse(result.accepted ? 202 : 409, result);
+    } catch (err) {
+      return jsonResponse(500, {
+        supported: true,
+        accepted: false,
+        message: "connector restart failed",
+        error: (err as Error).message,
+      } satisfies ManagerRestartResult);
+    }
   }
 
   #handlePublicPairingStatusOptions(req: Request): Response {
@@ -531,6 +609,131 @@ export class Daemon {
         ...(m.metered ? { metered: { kind: m.metered.kind } } : {}),
       };
     });
+  }
+
+  #capabilities(): ManagerCapabilities {
+    return {
+      scope: "device",
+      apiVersion: MANAGER_API_VERSION,
+      build: getDeskRelayBuildInfo(),
+      platform: process.platform,
+      arch: process.arch,
+      features: [
+        "capabilities",
+        "logs",
+        "process.status",
+        "process.restart",
+        "behaviors",
+        "events",
+        "filesystem",
+        "file.preview",
+        "git.status",
+        "instructions",
+        "approvals",
+        "system.update",
+        "system.uninstall",
+      ],
+      routes: [
+        { method: "GET", path: "/capabilities", description: "List daemon API capabilities." },
+        { method: "GET", path: "/logs", description: "Read connector logs." },
+        { method: "GET", path: "/process/status", description: "Read connector process status." },
+        {
+          method: "POST",
+          path: "/process/restart",
+          description: "Restart the connector process.",
+        },
+        { method: "GET", path: "/status", description: "Read daemon health." },
+        { method: "GET", path: "/behaviors", description: "List loaded behaviors." },
+        { method: "POST", path: "/behaviors/load", description: "Load a behavior package." },
+        {
+          method: "POST",
+          path: "/behaviors/:instanceId/request",
+          description: "Call a behavior method.",
+        },
+        {
+          method: "DELETE",
+          path: "/behaviors/:instanceId",
+          description: "Unload a behavior.",
+          destructive: true,
+        },
+        {
+          method: "GET",
+          path: "/events/spaces/:spaceId/stream",
+          description: "Stream behavior events over SSE.",
+        },
+        { method: "GET", path: "/fs/list", description: "List files and directories." },
+        { method: "GET", path: "/fs/roots", description: "Read workspace root policy." },
+        { method: "POST", path: "/fs/mkdir", description: "Create a directory." },
+        { method: "GET", path: "/files/preview", description: "Preview a guarded local file." },
+        { method: "GET", path: "/git/status", description: "Read Git status for a cwd." },
+        { method: "GET", path: "/instructions", description: "Read Claude instructions." },
+        { method: "PUT", path: "/instructions/:scope", description: "Write Claude instruction." },
+        {
+          method: "DELETE",
+          path: "/instructions/:scope",
+          description: "Delete Claude instruction.",
+          destructive: true,
+        },
+        {
+          method: "POST",
+          path: "/system/uninstall",
+          description: "Uninstall local connector.",
+          destructive: true,
+        },
+        { method: "POST", path: "/system/update", description: "Update local connector." },
+        {
+          method: "POST",
+          path: "/hooks/pretooluse/respond",
+          description: "Resolve pending tool approval.",
+        },
+      ],
+      behaviorMethods: [
+        "account.info",
+        "chat",
+        "context.usage",
+        "diagnostics",
+        "interrupt",
+        "permissions.inspect",
+        "permissions.update",
+        "sessions.delete",
+        "sessions.deleteByCwd",
+        "sessions.deleteBySessionId",
+        "sessions.list",
+        "sessions.read",
+        "skills.delete",
+        "skills.inspect",
+        "slashCommands",
+        "usage.limits",
+      ],
+    };
+  }
+
+  async #processStatus(): Promise<ManagerProcessStatus> {
+    const loginTask = await queryLoginTask().catch((err) => ({
+      supported: process.platform === "win32",
+      installed: false,
+      taskName: "DeskRelay Connector",
+      error: (err as Error).message,
+    }));
+    return {
+      scope: "device",
+      kind: "connector-daemon",
+      build: getDeskRelayBuildInfo(),
+      pid: process.pid,
+      startedAt: this.#startedAt,
+      uptimeMs: Math.max(0, Date.now() - Date.parse(this.#startedAt)),
+      platform: process.platform,
+      arch: process.arch,
+      ...(this.#listening ? { listening: this.#listening } : {}),
+      autostart: {
+        supported: loginTask.supported,
+        installed: loginTask.installed,
+        taskName: loginTask.taskName,
+        ...("error" in loginTask && typeof loginTask.error === "string"
+          ? { error: loginTask.error }
+          : {}),
+      },
+    };
   }
 
   async #handleFsList(url: URL): Promise<Response> {
@@ -832,6 +1035,80 @@ function isTrustedPublicPairingStatusOrigin(origin: string): boolean {
     return true;
   }
   return false;
+}
+
+function defaultConnectorLogPath(): string {
+  return join(defaultStateDir(), "logs", WINDOWS_LOGIN_TASK_LOG_NAME);
+}
+
+function normalizeLogSource(value: string | null, allowed: string[]): string | undefined {
+  const raw = (value ?? allowed[0] ?? "").trim().toLowerCase();
+  if (!raw) return undefined;
+  if (raw === "daemon") return allowed.includes("connector") ? "connector" : undefined;
+  return allowed.includes(raw) ? raw : undefined;
+}
+
+function clampTail(value: string | null): number {
+  const n = Number(value ?? "200");
+  if (!Number.isFinite(n)) return 200;
+  return Math.max(1, Math.min(1000, Math.floor(n)));
+}
+
+function normalizeLogLevel(value: string | null): string | undefined {
+  const level = (value ?? "").trim().toLowerCase();
+  return level ? level : undefined;
+}
+
+async function readLogResponse(input: {
+  scope: "device";
+  source: string;
+  path: string;
+  tail: number;
+  level?: string;
+}): Promise<ManagerLogResponse> {
+  const readAt = new Date().toISOString();
+  try {
+    await stat(input.path);
+    const raw = await readFile(input.path, "utf8");
+    const allLines = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const nonEmptyLines = allLines.at(-1) === "" ? allLines.slice(0, -1) : allLines;
+    const filtered = input.level
+      ? nonEmptyLines.filter((line) => logLineMatchesLevel(line, input.level ?? ""))
+      : nonEmptyLines;
+    const lines = filtered.slice(-input.tail);
+    return {
+      scope: input.scope,
+      source: input.source,
+      path: input.path,
+      exists: true,
+      tail: input.tail,
+      lines,
+      truncated: filtered.length > lines.length,
+      readAt,
+    };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      scope: input.scope,
+      source: input.source,
+      path: input.path,
+      exists: false,
+      tail: input.tail,
+      lines: [],
+      truncated: false,
+      readAt,
+      error: code === "ENOENT" ? "log file not found" : (err as Error).message,
+    };
+  }
+}
+
+function logLineMatchesLevel(line: string, level: string): boolean {
+  try {
+    const parsed = JSON.parse(line) as { level?: unknown };
+    return typeof parsed.level === "string" && parsed.level.toLowerCase() === level;
+  } catch {
+    return line.toLowerCase().includes(level);
+  }
 }
 
 function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {

@@ -39,6 +39,7 @@ Base URL for the browser/self-host page is usually the frontend URL, for example
 | Method | Path | Purpose | Input |
 |---|---|---|---|
 | `GET` | `/healthz` | Site health, version, build info, registered device count. | none |
+| `GET` | `/api/capabilities` | Server API capabilities, feature list, and assistant-visible routes. | none |
 | `GET` | `/api/announcement` | Current version/update notice payload. | none |
 | `GET` | `/api/devices` | List registered devices. | none |
 | `POST` | `/api/devices` | Register or replace a device after probing its daemon. | JSON `{ daemonUrl, label?, authToken?, deviceKey? }` |
@@ -49,6 +50,9 @@ Base URL for the browser/self-host page is usually the frontend URL, for example
 | `GET` | `/api/self/register-other-pc-command` | Build a copy-paste command for registering another PC. | none |
 | `GET` | `/api/self/remove-other-pc-command` | Build a copy-paste command for removing another PC connector. | none |
 | `GET` | `/api/self/doctor` | Server-side diagnostic report. | none |
+| `GET` | `/api/self/logs` | Read server stack logs. | query `source=server|frontend|daemon`, `tail`, optional `level` |
+| `GET` | `/api/self/process/status` | Read server process status and recorded stack components. | none |
+| `POST` | `/api/self/process/restart` | Request server stack restart when wired. | none |
 | `GET` | `/api/self/autostart` | Server login-task/autostart status. | none |
 | `PUT` | `/api/self/autostart` | Enable/disable server autostart. | JSON `{ enabled: boolean }` |
 | `POST` | `/api/self/update` | Start self-server update. | none |
@@ -62,6 +66,10 @@ These routes resolve `:id` through the site device registry, attach the device d
 
 | Method | Path | Proxies To | Purpose |
 |---|---|---|---|
+| `GET` | `/api/devices/:id/capabilities` | `GET /capabilities` | Read device API capabilities. |
+| `GET` | `/api/devices/:id/logs` | `GET /logs` | Read connector logs. |
+| `GET` | `/api/devices/:id/process/status` | `GET /process/status` | Read connector process status. |
+| `POST` | `/api/devices/:id/process/restart` | `POST /process/restart` | Request connector restart. |
 | `GET` | `/api/devices/:id/behaviors` | `GET /behaviors` | List loaded behaviors. |
 | `POST` | `/api/devices/:id/behaviors/load` | `POST /behaviors/load` | Load a behavior package. |
 | `DELETE` | `/api/devices/:id/behaviors/:instance` | `DELETE /behaviors/:instance` | Unload behavior. |
@@ -88,6 +96,10 @@ The connector daemon defaults to `http://127.0.0.1:18091` on local-only runs and
 | Method | Path | Purpose | Input |
 |---|---|---|---|
 | `GET` | `/pairing/status` | Public minimal pairing state for local browser detection. | none |
+| `GET` | `/capabilities` | Daemon API capabilities, feature list, routes, and behavior method names. | none |
+| `GET` | `/logs` | Read connector log tail. | query `source=connector|daemon`, `tail`, optional `level` |
+| `GET` | `/process/status` | Read connector daemon process status, build, listening address, and login task state. | none |
+| `POST` | `/process/restart` | Request connector restart through the login task when wired. | none |
 | `GET` | `/status` | Service health, build, listening address, workspace roots, loaded behaviors, broker stats, pairing state, diagnostic flags. | none |
 | `GET` | `/behaviors` | Loaded behavior summaries. | none |
 | `POST` | `/behaviors/load` | Load behavior package. | JSON `{ packageDir, instanceId? }` |
@@ -273,7 +285,7 @@ Important env/flags:
 | Tier | Allowed Without Confirmation | Should Confirm |
 |---|---|---|
 | Read-only status | health, devices, diagnostics, doctor, update status, usage/account read, session list/read, git status, fs roots/list. | none |
-| Non-destructive repair | self update, connector update, autostart toggle, registering/re-registering same device after explicit user intent. | when it restarts processes. |
+| Non-destructive repair | self update, connector update, process restart, autostart toggle, registering/re-registering same device after explicit user intent. | when it restarts processes. |
 | Claude Code automation | `chat`, slash commands, `interrupt`. | confirm before long-running, destructive, or repo-wide modification prompts. |
 | Local file writes | instructions write/delete, permissions update, mkdir. | always describe target path/scope first. |
 | Destructive operations | device removal, all-device removal, connector uninstall, session delete, skill delete, repo removal. | always confirm and show affected target. |
@@ -284,8 +296,5 @@ These are not separate APIs today, so the assistant must compose existing calls:
 
 | Need | Current Composition |
 |---|---|
-| Restart one connector | `POST /api/devices/:id/system/update` or connector login-task script; no dedicated restart-only endpoint. |
-| Read connector logs | no site/daemon endpoint; currently manual file path from login-task output. |
-| Read server logs | no site endpoint; scripts/process output only. |
 | Validate Tailscale install/status | installer and diagnostics infer from addresses/reachability; no dedicated Tailscale API. |
 | Run arbitrary DeskRelay maintenance task | use Claude Code `chat` in repo cwd, or add a dedicated assistant behavior later. |

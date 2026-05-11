@@ -83,6 +83,20 @@ export interface QueryLoginTaskResult {
   raw?: string;
 }
 
+export interface RestartLoginTaskOptions {
+  platform?: NodeJS.Platform;
+  taskName?: string;
+  runner?: CommandRunner;
+}
+
+export interface RestartLoginTaskResult {
+  supported: boolean;
+  installed: boolean;
+  restarted: boolean;
+  taskName: string;
+  error?: string;
+}
+
 function defaultWindowsLoginTaskName(): string {
   const override = process.env.CR_CONNECTOR_LOGIN_TASK_NAME?.trim();
   return override || WINDOWS_LOGIN_TASK_NAME;
@@ -210,6 +224,37 @@ export async function queryLoginTask(
   const query = await runner("schtasks.exe", ["/Query", "/TN", taskName, "/FO", "LIST", "/V"]);
   if (query.code !== 0) return { supported: true, installed: false, taskName };
   return { supported: true, installed: true, taskName, raw: query.stdout || query.stderr };
+}
+
+export async function restartLoginTask(
+  opts: RestartLoginTaskOptions = {},
+): Promise<RestartLoginTaskResult> {
+  const platform = opts.platform ?? process.platform;
+  const taskName = opts.taskName ?? defaultWindowsLoginTaskName();
+  if (platform !== "win32") {
+    return { supported: false, installed: false, restarted: false, taskName };
+  }
+  const runner = opts.runner ?? runCommand;
+  const query = await queryLoginTask({ platform, taskName, runner });
+  if (!query.installed) {
+    return { supported: true, installed: false, restarted: false, taskName };
+  }
+  await runner("schtasks.exe", ["/End", "/TN", taskName]).catch(() => ({
+    code: 1,
+    stdout: "",
+    stderr: "",
+  }));
+  const run = await runner("schtasks.exe", ["/Run", "/TN", taskName]);
+  if (run.code !== 0) {
+    return {
+      supported: true,
+      installed: true,
+      restarted: false,
+      taskName,
+      error: `failed to start login task: ${combineOutput(run)}`,
+    };
+  }
+  return { supported: true, installed: true, restarted: true, taskName };
 }
 
 export function defaultLoginTaskLaunch(

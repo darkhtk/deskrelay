@@ -9,6 +9,7 @@ import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registr
 import { createJsonDeviceUpdateQueueStore } from "./device-update-queue-store.ts";
 import { createJsonInstallReportStore } from "./install-report-store.ts";
 import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
+import { createPowerShellSelfServerProcessController } from "./self-server-process.ts";
 import { createPowerShellSelfServerUpdater } from "./self-server-update.ts";
 import { createGitUpdateNoticeSource } from "./update-notice.ts";
 
@@ -40,9 +41,16 @@ const updateNotice =
       });
 const deviceRegistryFile = process.env.CR_SITE_DEVICE_REGISTRY_FILE ?? defaultDeviceRegistryFile();
 const selfServerRoot = process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self-server");
+const logDir = process.env.CR_DEV_LOG_DIR ?? join(selfServerRoot, "logs");
+const processFile =
+  process.env.CR_DEV_PROCESS_FILE ?? join(selfServerRoot, "state", "dev-processes.json");
 const registry = deviceRegistryFile
   ? new JsonFileDeviceRegistry(deviceRegistryFile)
   : new InMemoryDeviceRegistry();
+const selfServerAutostart = createPowerShellSelfServerAutostartController({
+  repoRoot: process.cwd(),
+  root: selfServerRoot,
+});
 
 const app = createSiteApp({
   registry,
@@ -55,9 +63,13 @@ const app = createSiteApp({
   ...(updateNotice ? { updateNotice } : {}),
   ...(localDaemonToken ? { localDaemonToken } : {}),
   ...(process.env.CR_DEV_FRONTEND_URL ? { selfHostUrl: process.env.CR_DEV_FRONTEND_URL } : {}),
-  selfServerAutostart: createPowerShellSelfServerAutostartController({
+  selfServerAutostart,
+  selfServerProcess: createPowerShellSelfServerProcessController({
     repoRoot: process.cwd(),
     root: selfServerRoot,
+    processFile,
+    logDir,
+    autostartStatus: () => selfServerAutostart.status(),
   }),
   selfServerUpdater: createPowerShellSelfServerUpdater({
     repoRoot: process.cwd(),
@@ -70,6 +82,7 @@ const app = createSiteApp({
   deviceUpdateQueue: createJsonDeviceUpdateQueueStore(
     join(selfServerRoot, "state", "device-update-queue.json"),
   ),
+  logDir,
 });
 
 const server = Bun.serve({

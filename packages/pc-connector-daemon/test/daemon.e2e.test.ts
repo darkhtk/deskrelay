@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BehaviorFetcher } from "../src/behavior-fetcher.ts";
@@ -70,6 +70,94 @@ describe("Daemon HTTP API — basics", () => {
     expect(d.build?.version).toBe("0.0.0");
     expect(typeof d.build?.shortCommit).toBe("string");
     expect(typeof d.build?.dirty).toBe("boolean");
+  });
+
+  test("GET /capabilities lists manager API routes and behavior methods", async () => {
+    const r = await http("GET", "/capabilities");
+    expect(r.status).toBe(200);
+    const d = r.data as {
+      scope?: string;
+      apiVersion?: string;
+      features?: string[];
+      routes?: Array<{ method: string; path: string }>;
+      behaviorMethods?: string[];
+    };
+    expect(d.scope).toBe("device");
+    expect(d.apiVersion).toBe("2026-05-11");
+    expect(d.features).toContain("process.restart");
+    expect(d.routes?.some((route) => route.path === "/logs")).toBe(true);
+    expect(d.behaviorMethods).toContain("chat");
+  });
+
+  test("GET /logs tails the configured connector log", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "deskrelay-log-"));
+    const logPath = join(dir, "connector.log");
+    writeFileSync(
+      logPath,
+      [
+        JSON.stringify({ level: "info", msg: "one" }),
+        JSON.stringify({ level: "error", msg: "two" }),
+        JSON.stringify({ level: "error", msg: "three" }),
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await daemon.stop();
+    daemon = new Daemon({
+      port: 0,
+      bunPath: process.execPath,
+      authToken: TEST_AUTH_TOKEN,
+      logPath,
+    });
+    const listening = daemon.start();
+    baseUrl = `http://${listening.host}:${listening.port}`;
+    try {
+      const r = await http("GET", "/logs?tail=1&level=error");
+      expect(r.status).toBe(200);
+      const d = r.data as { exists?: boolean; lines?: string[]; truncated?: boolean };
+      expect(d.exists).toBe(true);
+      expect(d.lines).toEqual([JSON.stringify({ level: "error", msg: "three" })]);
+      expect(d.truncated).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("GET /process/status reports the daemon process", async () => {
+    const r = await http("GET", "/process/status");
+    expect(r.status).toBe(200);
+    const d = r.data as {
+      scope?: string;
+      kind?: string;
+      pid?: number;
+      uptimeMs?: number;
+      listening?: { port?: number };
+    };
+    expect(d.scope).toBe("device");
+    expect(d.kind).toBe("connector-daemon");
+    expect(d.pid).toBe(process.pid);
+    expect(typeof d.uptimeMs).toBe("number");
+    expect(d.listening?.port).toBeGreaterThan(0);
+  });
+
+  test("POST /process/restart invokes the wired restart callback", async () => {
+    let calls = 0;
+    await daemon.stop();
+    daemon = new Daemon({
+      port: 0,
+      bunPath: process.execPath,
+      authToken: TEST_AUTH_TOKEN,
+      requestSelfRestart: async () => {
+        calls += 1;
+        return { supported: true, accepted: true, message: "restart accepted" };
+      },
+    });
+    const listening = daemon.start();
+    baseUrl = `http://${listening.host}:${listening.port}`;
+    const r = await http("POST", "/process/restart");
+    expect(r.status).toBe(202);
+    expect(calls).toBe(1);
+    expect(r.data).toEqual({ supported: true, accepted: true, message: "restart accepted" });
   });
 
   test("unknown route returns 404", async () => {

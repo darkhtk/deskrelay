@@ -47,6 +47,7 @@ import {
   readLoginTaskScript,
   removeLoginTask,
   removeSourceRunLoginTask,
+  restartLoginTask,
 } from "./login-task.ts";
 import { RegisterSelfError, formatRegisterSelfReport, registerSelf } from "./self-register.ts";
 import { updateLocalSourceConnector } from "./self-update.ts";
@@ -435,6 +436,9 @@ const getPairingStatus = (): DaemonPairingStatus => {
     ...(diag.lastError ? { lastError: diag.lastError } : {}),
   };
 };
+const connectorLogPath =
+  process.env.CR_CONNECTOR_LOG_PATH ??
+  (process.env.CR_DEV_LOG_DIR ? join(process.env.CR_DEV_LOG_DIR, "daemon.log") : undefined);
 
 const daemon = new Daemon({
   host,
@@ -462,6 +466,39 @@ const daemon = new Daemon({
     }
     return result;
   },
+  requestSelfRestart: async () => {
+    const result = await restartLoginTask();
+    if (!result.supported) {
+      return {
+        supported: false,
+        accepted: false,
+        message: "connector login task is unsupported on this OS",
+      };
+    }
+    if (!result.installed) {
+      return {
+        supported: true,
+        accepted: false,
+        message: "connector login task is not installed",
+      };
+    }
+    if (!result.restarted) {
+      return {
+        supported: true,
+        accepted: false,
+        message: "connector restart request failed",
+        ...(result.error ? { error: result.error } : {}),
+      };
+    }
+    const exitTimer = setTimeout(() => process.exit(0), 500);
+    (exitTimer as { unref?: () => void }).unref?.();
+    return {
+      supported: true,
+      accepted: true,
+      message: `connector restart requested through ${result.taskName}`,
+    };
+  },
+  ...(connectorLogPath ? { logPath: connectorLogPath } : {}),
   onLog: (record) => {
     process.stderr.write(`${JSON.stringify(record)}\n`);
   },
