@@ -163,24 +163,6 @@ body.sidebar-open {
   gap: 10px;
 }
 
-.brand {
-  display: inline-flex;
-  align-items: center;
-  font-family: "Tiempos Headline", "Charter", "Iowan Old Style", Georgia, serif;
-  font-weight: 600;
-  font-size: 18px;
-  gap: 5px;
-  letter-spacing: 0;
-  color: var(--text);
-}
-
-.brand-mark {
-  display: block;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-}
-
 .hamburger {
   display: inline-flex;
   background: transparent;
@@ -315,10 +297,6 @@ body.sidebar-resizing {
 
 body.sidebar-resizing * {
   cursor: col-resize !important;
-}
-
-.sidebar-brand {
-  padding: 4px 8px 18px;
 }
 
 .sidebar-section {
@@ -5573,12 +5551,6 @@ dialog.approval-modal-root,
 @media (max-width: 720px) {
   .signed-in {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* Header is cramped at 320-390px wide. Keep the brand on one line. */
-  .brand {
-    font-size: 16px;
-    white-space: nowrap;
   }
 
   /* Composer placeholder text is too long for 320px. The mobile

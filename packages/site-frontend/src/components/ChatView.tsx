@@ -2982,13 +2982,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       </Show>
 
       <aside class={`sidebar${sidebarOpen() ? " sidebar-open" : ""}`}>
-        <div class="sidebar-brand">
-          <span class="brand">
-            <img class="brand-mark" src="/deskrelay-logo-mark.svg" alt="" aria-hidden="true" />
-            {t("app.brand")}
-          </span>
-        </div>
-
         <div class="sidebar-section sidebar-section-devices">
           <span class="sidebar-label">{t("chat.sidebar.device.label")}</span>
           <button
