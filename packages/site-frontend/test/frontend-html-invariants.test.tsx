@@ -100,6 +100,15 @@ describe("settings and chrome invariants", () => {
     expect(styles).toMatch(/\.context-meter-reset\s*{[^}]*margin-left:\s*auto;/s);
   });
 
+  test("touch form controls avoid mobile focus auto-zoom", () => {
+    const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
+
+    expect(styles).toContain("@media (hover: none) and (pointer: coarse)");
+    expect(styles).toContain(".composer-input");
+    expect(styles).toContain(".instruction-editor-textarea");
+    expect(styles).toContain("font-size: max(16px, 1em)");
+  });
+
   test("general settings, devices, diagnostics, instructions, and hard refresh live in unified settings", () => {
     const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
