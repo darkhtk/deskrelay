@@ -109,6 +109,14 @@ describe("settings and chrome invariants", () => {
     expect(styles).toContain("font-size: max(16px, 1em)");
   });
 
+  test("top settings button uses a gear icon", () => {
+    const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
+
+    expect(appSource).toContain('class="alpha-banner-back alpha-banner-settings"');
+    expect(appSource).toContain("M12.22 2h-.44");
+    expect(appSource).not.toContain("M12 2v3M12 19v3M2 12h3M19 12h3");
+  });
+
   test("general settings, devices, diagnostics, instructions, and hard refresh live in unified settings", () => {
     const appSource = readFileSync(resolve(pkgRoot, "src/App.tsx"), "utf8");
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");

@@ -93,6 +93,9 @@ const BEHAVIOR_READY_MAX_RETRIES = 15;
 const DEVICE_OFFLINE_REFETCH_MS = 1500;
 const STREAM_OPEN_GRACE_MS = 2500;
 const CONTEXT_USAGE_POLL_MS = 5 * 60 * 1000;
+const CONTEXT_USAGE_CACHE_TTL_MS = 60 * 1000;
+const USAGE_LIMITS_CACHE_TTL_MS = 5 * 60 * 1000;
+const USAGE_CACHE_KEY_PREFIX = "cr.usage-cache";
 const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
 const SIDEBAR_WIDTH_STORAGE_KEY = "cr.sidebar-width";
@@ -381,6 +384,11 @@ interface UsageLimitsResult {
   checkedAt: string;
 }
 
+interface CachedUsageValue<T> {
+  fetchedAt: number;
+  value: T;
+}
+
 interface ClaudeAccountInfo {
   status: "logged_in" | "not_logged_in";
   source: "oauth" | "env" | "none";
@@ -625,6 +633,69 @@ function usageFromUsed(
     remainingPercent: clampPercent(100 - usedPercent),
     source,
   };
+}
+
+function encodedUsageCachePart(value: string | null | undefined): string {
+  return encodeURIComponent(value?.trim() || "-");
+}
+
+function contextUsageCacheKey(input: {
+  deviceId: string;
+  instanceId: string;
+  cwd: string;
+  sessionId: string | null;
+  permissionMode: ClaudePermissionMode;
+  model: string | null;
+}): string {
+  return [
+    USAGE_CACHE_KEY_PREFIX,
+    "ctx",
+    encodedUsageCachePart(input.deviceId),
+    encodedUsageCachePart(input.instanceId),
+    encodedUsageCachePart(input.cwd),
+    encodedUsageCachePart(input.sessionId),
+    encodedUsageCachePart(input.permissionMode),
+    encodedUsageCachePart(input.model),
+  ].join(":");
+}
+
+function usageLimitsCacheKey(deviceId: string, instanceId: string): string {
+  return [
+    USAGE_CACHE_KEY_PREFIX,
+    "limits",
+    encodedUsageCachePart(deviceId),
+    encodedUsageCachePart(instanceId),
+  ].join(":");
+}
+
+function readUsageCache<T>(key: string, ttlMs: number): T | undefined {
+  try {
+    const raw = globalThis.localStorage?.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<CachedUsageValue<T>>;
+    if (typeof parsed.fetchedAt !== "number" || !("value" in parsed)) {
+      globalThis.localStorage?.removeItem(key);
+      return undefined;
+    }
+    if (Date.now() - parsed.fetchedAt >= ttlMs) return undefined;
+    return parsed.value as T;
+  } catch {
+    try {
+      globalThis.localStorage?.removeItem(key);
+    } catch {
+      // Ignore storage cleanup failures.
+    }
+    return undefined;
+  }
+}
+
+function writeUsageCache<T>(key: string, value: T): void {
+  try {
+    const payload: CachedUsageValue<T> = { fetchedAt: Date.now(), value };
+    globalThis.localStorage?.setItem(key, JSON.stringify(payload));
+  } catch {
+    // Usage probes are an optimization; storage failures should not affect chat.
+  }
 }
 
 function clampPercent(value: number): number {
@@ -1802,37 +1873,83 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     return cwd().trim() || getDeviceDefaultCwd(deviceId) || ".";
   }
 
-  async function refreshContextUsage(deviceId: string, instanceId: string) {
+  async function refreshContextUsage(
+    deviceId: string,
+    instanceId: string,
+    options: { force?: boolean } = {},
+  ) {
     const seq = ++contextUsageRequestSeq;
+    const selected = selectedSession();
+    const cwdForProbe = contextUsageCwd(deviceId);
+    const permissionMode = confirmedPermissionMode() ?? requestedPermissionMode();
+    const model = selectedClaudeModel();
+    const cacheKey = contextUsageCacheKey({
+      deviceId,
+      instanceId,
+      cwd: cwdForProbe,
+      sessionId: selected?.sessionId ?? null,
+      permissionMode,
+      model: model ?? null,
+    });
+    if (!options.force) {
+      const cached = readUsageCache<ContextUsageSnapshot | null>(
+        cacheKey,
+        CONTEXT_USAGE_CACHE_TTL_MS,
+      );
+      if (cached !== undefined && cached !== null) {
+        if (seq === contextUsageRequestSeq) setProbedContextUsage(cached);
+        return;
+      }
+    }
     try {
       const res = await api.callBehavior<ContextUsageResult>(
         deviceId,
         instanceId,
         "context.usage",
         {
-          cwd: contextUsageCwd(deviceId),
-          permissionMode: confirmedPermissionMode() ?? requestedPermissionMode(),
-          ...(selectedClaudeModel() ? { model: selectedClaudeModel() } : {}),
+          cwd: cwdForProbe,
+          permissionMode,
+          ...(selected?.sessionId ? { sessionId: selected.sessionId } : {}),
+          ...(model ? { model } : {}),
         },
       );
       if (seq !== contextUsageRequestSeq) return;
       if (res.error) return;
-      setProbedContextUsage(res.result?.usage ?? null);
+      const usage = res.result?.usage ?? null;
+      if (usage) writeUsageCache(cacheKey, usage);
+      setProbedContextUsage(usage);
     } catch {
       if (seq === contextUsageRequestSeq) setProbedContextUsage(null);
     }
   }
 
-  async function refreshUsageLimits(deviceId: string, instanceId: string) {
+  async function refreshUsageLimits(
+    deviceId: string,
+    instanceId: string,
+    options: { force?: boolean } = {},
+  ) {
     const seq = ++usageLimitsRequestSeq;
+    const cacheKey = usageLimitsCacheKey(deviceId, instanceId);
+    if (!options.force) {
+      const cached = readUsageCache<{
+        session: ContextUsageSnapshot | null;
+        week: ContextUsageSnapshot | null;
+      }>(cacheKey, USAGE_LIMITS_CACHE_TTL_MS);
+      if (cached !== undefined && (cached.session || cached.week)) {
+        if (seq === usageLimitsRequestSeq) setProbedUsageLimits(cached);
+        return;
+      }
+    }
     try {
       const res = await api.callBehavior<UsageLimitsResult>(deviceId, instanceId, "usage.limits");
       if (seq !== usageLimitsRequestSeq) return;
       if (res.error) return;
-      setProbedUsageLimits({
+      const usage = {
         session: res.result?.session ?? null,
         week: res.result?.week ?? null,
-      });
+      };
+      if (usage.session || usage.week) writeUsageCache(cacheKey, usage);
+      setProbedUsageLimits(usage);
     } catch {
       if (seq === usageLimitsRequestSeq) setProbedUsageLimits({ session: null, week: null });
     }
@@ -2394,6 +2511,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return;
     }
     setCwd(summary.cwd);
+    setProbedContextUsage(null);
     resetConfirmedPermissionMode();
     const inst = remoteClaudeInstance();
     if (!dev || !inst) return;
@@ -2426,6 +2544,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         resetConfirmedPermissionMode();
       }
       scrollTranscriptToBottom();
+      void refreshContextUsage(dev, inst);
+      void refreshUsageLimits(dev, inst);
       if (res.result?.eventsTruncated || locallyEventsTruncated) {
         setTransientSessionNotice(t("chat.error.session-event-limited", { count: eventLimit }));
       } else if (res.result?.truncated) {
@@ -2465,6 +2585,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setShowNewChat(true);
     setSelectedSession(null);
     setTranscript([]);
+    clearContextUsage();
     setError(null);
     resetConfirmedPermissionMode();
   }
@@ -2784,8 +2905,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         markRunPermissionModeUnknown(requestedModeForRun);
       }
       if (chatAccepted) {
-        void refreshContextUsage(dev, inst);
-        void refreshUsageLimits(dev, inst);
+        void refreshContextUsage(dev, inst, { force: true });
+        void refreshUsageLimits(dev, inst, { force: true });
       }
       abort.abort();
       setRunning(false);
