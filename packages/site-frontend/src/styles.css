@@ -805,6 +805,33 @@ body.sidebar-resizing * {
   padding: 4px 8px;
   background: var(--bg-soft);
   border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+}
+.session-list-group-toggle {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.session-list-group-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.session-list-group-caret {
+  width: 8px;
+  flex: 0 0 8px;
+  text-align: center;
+  color: var(--text-muted);
 }
 .session-list-group-title {
   flex: 1;
@@ -812,6 +839,10 @@ body.sidebar-resizing * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.session-list-group-count {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 .session-group-delete {
   border: 0;

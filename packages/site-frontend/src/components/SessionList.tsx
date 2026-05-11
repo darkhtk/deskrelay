@@ -1,7 +1,7 @@
 // SessionList: sidebar list of past sessions for the active behavior
 // instance. Sorted mtime-desc by the caller.
 
-import { type Component, For, Show, createSignal, onCleanup } from "solid-js";
+import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { cwdBasename, formatAgo } from "../claude/session-utils.ts";
 import { t } from "../i18n.ts";
 
@@ -40,6 +40,12 @@ export interface SessionListProps {
   /** When true, render entries grouped by cwd with a sticky header per
    *  workspace. Default false keeps the legacy flat list. */
   groupByCwd?: boolean | undefined;
+  /** Preferred cwd to expand when grouped rows first appear. */
+  preferredExpandedCwd?: string | null | undefined;
+  /** Expand every group while filtering so search results are never hidden. */
+  expandAllGroups?: boolean | undefined;
+  /** Resets in-memory group toggles when the active device changes. */
+  groupStateKey?: string | null | undefined;
 }
 
 export interface SessionGroupDeleteProgress {
@@ -50,6 +56,8 @@ export interface SessionGroupDeleteProgress {
 export const SessionList: Component<SessionListProps> = (props) => {
   const [armedId, setArmedId] = createSignal<string | null>(null);
   const [armedGroupCwd, setArmedGroupCwd] = createSignal<string | null>(null);
+  const [groupToggles, setGroupToggles] = createSignal<Record<string, boolean | undefined>>({});
+  let lastGroupStateKey = props.groupStateKey;
   let armTimer: ReturnType<typeof setTimeout> | null = null;
 
   function clearArm() {
@@ -109,6 +117,67 @@ export const SessionList: Component<SessionListProps> = (props) => {
     }
   }
 
+  function selectedGroupCwd(): string | null {
+    const selected = props.entries.find((entry) => entry.sessionId === props.selectedId);
+    return selected?.cwd ?? null;
+  }
+
+  function preferredGroupCwd(): string | null {
+    const groups = grouped();
+    const selectedCwd = selectedGroupCwd();
+    if (selectedCwd !== null && groups.some((group) => group.cwd === selectedCwd)) {
+      return selectedCwd;
+    }
+    const preferred = props.preferredExpandedCwd;
+    if (preferred && groups.some((group) => group.cwd === preferred)) {
+      return preferred;
+    }
+    return groups[0]?.cwd ?? null;
+  }
+
+  function isGroupExpanded(cwd: string): boolean {
+    if (props.expandAllGroups) return true;
+    const toggled = groupToggles()[cwd];
+    if (toggled !== undefined) return toggled;
+    return cwd === preferredGroupCwd();
+  }
+
+  function toggleGroup(cwd: string) {
+    clearArm();
+    const nextExpanded = !isGroupExpanded(cwd);
+    setGroupToggles((current) => ({ ...current, [cwd]: nextExpanded }));
+  }
+
+  createEffect(() => {
+    const key = props.groupStateKey;
+    if (key === lastGroupStateKey) return;
+    lastGroupStateKey = key;
+    clearArm();
+    setGroupToggles({});
+  });
+
+  createEffect(() => {
+    const selectedCwd = selectedGroupCwd();
+    if (!selectedCwd) return;
+    setGroupToggles((current) =>
+      current[selectedCwd] === false ? { ...current, [selectedCwd]: true } : current,
+    );
+  });
+
+  createEffect(() => {
+    const known = new Set(grouped().map((group) => group.cwd));
+    setGroupToggles((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const cwd of Object.keys(next)) {
+        if (known.has(cwd)) continue;
+        delete next[cwd];
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  });
+
   onCleanup(() => {
     if (armTimer) clearTimeout(armTimer);
   });
@@ -167,8 +236,24 @@ export const SessionList: Component<SessionListProps> = (props) => {
           <For each={grouped()}>
             {(group) => (
               <>
-                <div class="session-list-group-header" title={group.cwd}>
-                  <span class="session-list-group-title">{cwdBasename(group.cwd) || "—"}</span>
+                <div
+                  class={`session-list-group-header${
+                    isGroupExpanded(group.cwd) ? " session-list-group-header-expanded" : ""
+                  }`}
+                  title={group.cwd}
+                >
+                  <button
+                    type="button"
+                    class="session-list-group-toggle"
+                    aria-expanded={isGroupExpanded(group.cwd) ? "true" : "false"}
+                    onClick={() => toggleGroup(group.cwd)}
+                  >
+                    <span class="session-list-group-caret" aria-hidden="true">
+                      {isGroupExpanded(group.cwd) ? "v" : ">"}
+                    </span>
+                    <span class="session-list-group-title">{cwdBasename(group.cwd) || "—"}</span>
+                    <span class="session-list-group-count">{group.rows.length}</span>
+                  </button>
                   <Show when={props.onDeleteGroup}>
                     <button
                       type="button"
@@ -215,7 +300,9 @@ export const SessionList: Component<SessionListProps> = (props) => {
                     );
                   }}
                 </Show>
-                <For each={group.rows}>{(entry) => renderRow(entry)}</For>
+                <Show when={isGroupExpanded(group.cwd)}>
+                  <For each={group.rows}>{(entry) => renderRow(entry)}</For>
+                </Show>
               </>
             )}
           </For>

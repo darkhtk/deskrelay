@@ -165,23 +165,99 @@ describe("SessionList — groupByCwd", () => {
     expect(container.querySelectorAll(".session-list-group-header").length).toBe(0);
   });
 
-  test("groupByCwd renders one header per workspace", () => {
+  test("groupByCwd renders one header per workspace and expands the newest group", () => {
     const { container } = render(() => (
       <SessionList
         entries={[
-          sample({ sessionId: "a", cwd: "/x/alpha" }),
-          sample({ sessionId: "b", cwd: "/x/alpha" }),
-          sample({ sessionId: "c", cwd: "/x/beta" }),
+          sample({ sessionId: "a", title: "alpha first", cwd: "/x/alpha" }),
+          sample({ sessionId: "b", title: "alpha second", cwd: "/x/alpha" }),
+          sample({ sessionId: "c", title: "beta only", cwd: "/x/beta" }),
         ]}
         groupByCwd={true}
       />
     ));
-    const headers = Array.from(container.querySelectorAll(".session-list-group-header")).map(
+    const headers = Array.from(container.querySelectorAll(".session-list-group-title")).map(
       (h) => h.textContent ?? "",
     );
     expect(headers).toEqual(["alpha", "beta"]);
-    // All three rows still rendered.
+    expect(container.querySelectorAll(".session-item-row").length).toBe(2);
+    expect(container.textContent).toContain("alpha first");
+    expect(container.textContent).toContain("alpha second");
+    expect(container.textContent).not.toContain("beta only");
+  });
+
+  test("clicking a project header toggles that project without using the delete area", () => {
+    const { container } = render(() => (
+      <SessionList
+        entries={[
+          sample({ sessionId: "a", title: "alpha first", cwd: "/x/alpha" }),
+          sample({ sessionId: "b", title: "alpha second", cwd: "/x/alpha" }),
+          sample({ sessionId: "c", title: "beta only", cwd: "/x/beta" }),
+        ]}
+        groupByCwd={true}
+      />
+    ));
+
+    const headers = Array.from(
+      container.querySelectorAll(".session-list-group-toggle"),
+    ) as HTMLElement[];
+    fireEvent.click(headers[1] as HTMLElement);
     expect(container.querySelectorAll(".session-item-row").length).toBe(3);
+    expect(container.textContent).toContain("beta only");
+
+    fireEvent.click(headers[0] as HTMLElement);
+    expect(container.querySelectorAll(".session-item-row").length).toBe(1);
+    expect(container.textContent).not.toContain("alpha first");
+    expect(container.textContent).toContain("beta only");
+  });
+
+  test("selectedId expands the selected session's project first", () => {
+    const { container } = render(() => (
+      <SessionList
+        entries={[
+          sample({ sessionId: "a", title: "alpha first", cwd: "/x/alpha" }),
+          sample({ sessionId: "b", title: "alpha second", cwd: "/x/alpha" }),
+          sample({ sessionId: "c", title: "beta only", cwd: "/x/beta" }),
+        ]}
+        selectedId="c"
+        groupByCwd={true}
+      />
+    ));
+    expect(container.querySelectorAll(".session-item-row").length).toBe(1);
+    expect(container.textContent).toContain("beta only");
+    expect(container.textContent).not.toContain("alpha first");
+  });
+
+  test("preferredExpandedCwd restores the stored session's project when no row is selected", () => {
+    const { container } = render(() => (
+      <SessionList
+        entries={[
+          sample({ sessionId: "a", title: "alpha first", cwd: "/x/alpha" }),
+          sample({ sessionId: "c", title: "beta only", cwd: "/x/beta" }),
+        ]}
+        groupByCwd={true}
+        preferredExpandedCwd="/x/beta"
+      />
+    ));
+    expect(container.querySelectorAll(".session-item-row").length).toBe(1);
+    expect(container.textContent).toContain("beta only");
+    expect(container.textContent).not.toContain("alpha first");
+  });
+
+  test("expandAllGroups keeps search results visible across projects", () => {
+    const { container } = render(() => (
+      <SessionList
+        entries={[
+          sample({ sessionId: "a", title: "alpha first", cwd: "/x/alpha" }),
+          sample({ sessionId: "c", title: "beta only", cwd: "/x/beta" }),
+        ]}
+        groupByCwd={true}
+        expandAllGroups={true}
+      />
+    ));
+    expect(container.querySelectorAll(".session-item-row").length).toBe(2);
+    expect(container.textContent).toContain("alpha first");
+    expect(container.textContent).toContain("beta only");
   });
 
   test("group delete arms then confirms with cwd and group rows", () => {
@@ -198,6 +274,7 @@ describe("SessionList — groupByCwd", () => {
     fireEvent.click(button);
     expect(onDeleteGroup).not.toHaveBeenCalled();
     expect(button.textContent).toBe(t("sl.delete-group.label"));
+    expect(container.querySelectorAll(".session-item-row").length).toBe(2);
 
     fireEvent.click(button);
     expect(onDeleteGroup).toHaveBeenCalledWith("/x/alpha", entries);

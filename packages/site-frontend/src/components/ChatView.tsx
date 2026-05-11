@@ -1290,6 +1290,9 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     );
   };
 
+  const preferredSessionGroupCwd = () =>
+    selectedSession()?.cwd ?? readStoredChatSessionSelection(effectiveDeviceId())?.cwd ?? null;
+
   function toggleSessionSearch() {
     if (showSessionSearch()) {
       setShowSessionSearch(false);
@@ -3200,6 +3203,9 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               }
               deletingGroups={deletingSessionGroups()}
               groupByCwd={true}
+              preferredExpandedCwd={preferredSessionGroupCwd()}
+              expandAllGroups={Boolean(sessionSearch().trim())}
+              groupStateKey={effectiveDeviceId()}
             />
           </div>
         </Show>
