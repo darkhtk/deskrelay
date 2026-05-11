@@ -5601,15 +5601,20 @@ dialog.approval-modal-root,
 .manager-message-bad {
   border-left-color: var(--danger);
 }
-.manager-assistant-input {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+.manager-assistant-composer {
+  flex: 0 0 auto;
 }
-.manager-assistant-input textarea {
+.manager-assistant-composer .slash-picker-root {
+  margin-left: 0;
+  margin-right: 0;
+  max-width: none;
+}
+.manager-assistant-composer .composer-card {
+  margin: 0;
+  max-width: none;
+}
+.manager-assistant-composer .composer-input {
   min-height: 72px;
-  resize: vertical;
 }
 .manager-assistant-error {
   color: var(--danger);

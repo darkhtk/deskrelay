@@ -236,7 +236,9 @@ describe("App landing flow", () => {
 
     const input = await screen.findByPlaceholderText("DeskRelay 관리에 대해 물어보세요...");
     fireEvent.input(input, { target: { value: "서버 상태 알려줘" } });
-    const send = container.querySelector<HTMLButtonElement>(".manager-assistant-input button");
+    const send = container.querySelector<HTMLButtonElement>(
+      ".manager-assistant-composer .composer-send",
+    );
     if (!send) throw new Error("manager assistant send button missing");
     fireEvent.click(send);
 

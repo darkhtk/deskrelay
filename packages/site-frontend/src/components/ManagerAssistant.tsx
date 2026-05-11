@@ -1,6 +1,7 @@
 import type { ManagerAssistantChatMessage } from "@deskrelay/shared";
 import { type Component, For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { api } from "../api.ts";
+import { Composer } from "./Composer.tsx";
 
 const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
   id: "assistant-initial",
@@ -11,11 +12,9 @@ const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
 
 export const ManagerAssistant: Component = () => {
   const [messages, setMessages] = createSignal<ManagerAssistantChatMessage[]>([INITIAL_MESSAGE]);
-  const [input, setInput] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   let threadEl: HTMLDivElement | undefined;
-  let inputEl: HTMLTextAreaElement | undefined;
 
   createEffect(() => {
     messages();
@@ -26,15 +25,10 @@ export const ManagerAssistant: Component = () => {
 
   onCleanup(() => {
     threadEl = undefined;
-    inputEl = undefined;
   });
 
-  const appendMessage = (message: ManagerAssistantChatMessage) => {
-    setMessages((current) => [...current, message]);
-  };
-
-  const send = async () => {
-    const text = input().trim();
+  const send = async (value: string) => {
+    const text = value.trim();
     if (!text || busy()) return;
     const userMessage: ManagerAssistantChatMessage = {
       id: `user-${Date.now()}`,
@@ -42,21 +36,20 @@ export const ManagerAssistant: Component = () => {
       text,
       createdAt: new Date().toISOString(),
     };
-    setInput("");
+    const history = [...messages(), userMessage];
+    setMessages(history);
     setError(null);
-    appendMessage(userMessage);
     setBusy(true);
     try {
       const response = await api.managerAssistantChat({
         message: text,
-        history: messages(),
+        history,
       });
-      appendMessage(response.message);
+      setMessages((current) => [...current, response.message]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
-      inputEl?.focus();
     }
   };
 
@@ -81,7 +74,7 @@ export const ManagerAssistant: Component = () => {
         <Show when={busy()}>
           <article class="manager-message manager-message-assistant manager-message-pending">
             <span>AI</span>
-            <p>응답을 기다리는 중...</p>
+            <p>응답 대기 중...</p>
           </article>
         </Show>
       </div>
@@ -94,30 +87,13 @@ export const ManagerAssistant: Component = () => {
         )}
       </Show>
 
-      <div class="manager-assistant-input">
-        <textarea
-          ref={inputEl}
-          class="text-input"
-          rows={3}
-          value={input()}
-          onInput={(event) => setInput(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-          placeholder="DeskRelay 관리에 대해 물어보세요..."
+      <div class="manager-assistant-composer">
+        <Composer
+          onSend={send}
           disabled={busy()}
+          idPrefix="manager-assistant-composer"
+          placeholder="DeskRelay 관리에 대해 물어보세요..."
         />
-        <button
-          type="button"
-          class="primary-button"
-          onClick={() => void send()}
-          disabled={busy() || !input().trim()}
-        >
-          전송
-        </button>
       </div>
     </div>
   );

@@ -46,6 +46,12 @@ export interface ComposerProps {
   onAttachClick?: () => void;
   /** Remaining context percentage. `null` shows a pending text state. */
   contextRemainingPercent?: number | null | undefined;
+  /** Disable text entry and submit while the host is busy. */
+  disabled?: boolean;
+  /** Optional placeholder override for composer variants. */
+  placeholder?: string;
+  /** Prefix for DOM ids when multiple composers are mounted at once. */
+  idPrefix?: string;
 }
 
 export const Composer: Component<ComposerProps> = (props) => {
@@ -53,6 +59,7 @@ export const Composer: Component<ComposerProps> = (props) => {
   const [suggestions, setSuggestions] = createSignal<SlashCommand[]>([]);
   const [highlight, setHighlight] = createSignal<number>(-1);
   const commands = () => props.slashCommands ?? BUILTIN_SLASH_COMMANDS;
+  const idPrefix = () => props.idPrefix ?? "composer";
   const hasExtra = () => {
     try {
       return typeof props.hasExtraContent === "function" && !!props.hasExtraContent();
@@ -60,7 +67,7 @@ export const Composer: Component<ComposerProps> = (props) => {
       return false;
     }
   };
-  const canSend = () => value().trim().length > 0 || hasExtra();
+  const canSend = () => !props.disabled && (value().trim().length > 0 || hasExtra());
   const contextRemaining = () => {
     const value = props.contextRemainingPercent;
     if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -143,6 +150,7 @@ export const Composer: Component<ComposerProps> = (props) => {
   }
 
   async function submit() {
+    if (props.disabled) return;
     const text = value().trim();
     if (!text && !hasExtra()) return;
     const previous = value();
@@ -170,6 +178,7 @@ export const Composer: Component<ComposerProps> = (props) => {
 
   function handleKeyDown(event: KeyboardEvent) {
     if (!event) return;
+    if (props.disabled) return;
     // IME safety: don't fire submit on the Enter that commits a composing
     // syllable. Without this, Korean/Japanese/Chinese input double-submits.
     if (event.isComposing || event.keyCode === 229) return;
@@ -260,19 +269,20 @@ export const Composer: Component<ComposerProps> = (props) => {
 
       <form
         class="composer-card"
-        id="composer-form"
+        id={`${idPrefix()}-form`}
         onSubmit={(e) => {
           e.preventDefault();
         }}
       >
         <textarea
           ref={inputEl}
-          id="composer-input"
+          id={`${idPrefix()}-input`}
           class="composer-input"
           rows={2}
-          placeholder={t("composer.placeholder")}
+          placeholder={props.placeholder ?? t("composer.placeholder")}
           autocomplete="off"
           spellcheck={false}
+          disabled={props.disabled}
           value={value()}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
