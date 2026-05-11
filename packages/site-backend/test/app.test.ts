@@ -225,6 +225,64 @@ describe("manager logs and process APIs", () => {
     });
   });
 
+  test("GET /api/self/network/status, install/status, and security/boundary expose manager summaries", async () => {
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      selfHostUrl: "http://100.64.0.10:18193",
+      selfServerProcess: {
+        async status() {
+          return {
+            scope: "server",
+            kind: "site-server",
+            build: {
+              version: "0.0.0",
+              commit: "abc",
+              shortCommit: "abc",
+              dirty: false,
+              source: "env",
+            },
+            pid: 123,
+            startedAt: "2026-05-11T00:00:00.000Z",
+            uptimeMs: 1000,
+            platform: process.platform,
+            arch: process.arch,
+          };
+        },
+        async restart() {
+          return { supported: true, accepted: true, message: "restart accepted" };
+        },
+      },
+    });
+
+    const network = await app.fetch(authedRequest("GET", "/api/self/network/status"));
+    expect(network.status).toBe(200);
+    const networkBody = (await network.json()) as {
+      scope?: string;
+      preferredUrl?: string;
+      tailscale?: { addresses?: string[] };
+    };
+    expect(networkBody.scope).toBe("server");
+    expect(networkBody.preferredUrl).toBe("http://100.64.0.10:18193");
+    expect(Array.isArray(networkBody.tailscale?.addresses)).toBe(true);
+
+    const install = await app.fetch(authedRequest("GET", "/api/self/install/status"));
+    expect(install.status).toBe(200);
+    const installBody = (await install.json()) as { scope?: string; running?: boolean };
+    expect(installBody.scope).toBe("server");
+    expect(installBody.running).toBe(true);
+
+    const security = await app.fetch(authedRequest("GET", "/api/self/security/boundary"));
+    expect(security.status).toBe(200);
+    const securityBody = (await security.json()) as {
+      tokenBoundary?: { siteTokenConfigured?: boolean; browserReceivesDaemonToken?: boolean };
+      networkBoundary?: { kind?: string };
+    };
+    expect(securityBody.tokenBoundary?.siteTokenConfigured).toBe(true);
+    expect(securityBody.tokenBoundary?.browserReceivesDaemonToken).toBe(false);
+    expect(securityBody.networkBoundary?.kind).toBe("tailscale");
+  });
+
   test("device manager APIs proxy to the selected daemon", async () => {
     const device = setup.registry.register({
       daemonUrl: DAEMON_URL,
@@ -257,6 +315,87 @@ describe("manager logs and process APIs", () => {
     );
     expect(restart.status).toBe(200);
     expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/process/restart`);
+  });
+
+  test("device network/install/security manager APIs enrich daemon responses", async () => {
+    const device = setup.registry.register({
+      daemonUrl: "http://100.64.0.50:18091",
+      authToken: "daemon-token",
+      label: "remote",
+    });
+    setup.setMockResponse((req) => {
+      const path = new URL(req.url).pathname;
+      if (path === "/network/status") {
+        return Response.json({
+          scope: "device",
+          generatedAt: "2026-05-11T00:00:00.000Z",
+          tailscale: { detected: true, addresses: ["100.64.0.50"], interfaceNames: ["Tailscale"] },
+          addresses: [],
+          probes: [],
+          summary: { severity: "ok", message: "ok" },
+        });
+      }
+      if (path === "/install/status") {
+        return Response.json({
+          scope: "device",
+          generatedAt: "2026-05-11T00:00:00.000Z",
+          build: {
+            version: "0.0.0",
+            commit: "abc",
+            shortCommit: "abc",
+            dirty: false,
+            source: "env",
+          },
+          installed: true,
+          running: true,
+          summary: { severity: "ok", message: "ok" },
+        });
+      }
+      if (path === "/security/boundary") {
+        return Response.json({
+          scope: "device",
+          generatedAt: "2026-05-11T00:00:00.000Z",
+          tokenBoundary: { daemonTokenAvailable: true, browserReceivesDaemonToken: false },
+          networkBoundary: { kind: "tailscale", publicExposure: false },
+          workspaceBoundary: { mode: "restricted", roots: ["C:\\Projects"], unrestricted: false },
+          warnings: [],
+          summary: { severity: "ok", message: "ok" },
+        });
+      }
+      return Response.json({ ok: true });
+    });
+
+    const network = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${device.id}/network/status`),
+    );
+    expect(network.status).toBe(200);
+    const networkBody = (await network.json()) as {
+      targetId?: string;
+      registeredUrl?: string;
+      probes?: Array<{ id?: string }>;
+    };
+    expect(networkBody.targetId).toBe(device.id);
+    expect(networkBody.registeredUrl).toBe("http://100.64.0.50:18091");
+    expect(
+      networkBody.probes?.some((probe) => probe.id === "server-to-device.network-status"),
+    ).toBe(true);
+
+    const install = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${device.id}/install/status`),
+    );
+    expect(install.status).toBe(200);
+    expect(((await install.json()) as { targetLabel?: string }).targetLabel).toBe("remote");
+
+    const security = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${device.id}/security/boundary`),
+    );
+    expect(security.status).toBe(200);
+    const securityBody = (await security.json()) as {
+      networkBoundary?: { kind?: string };
+      tokenBoundary?: { browserReceivesDaemonToken?: boolean };
+    };
+    expect(securityBody.networkBoundary?.kind).toBe("tailscale");
+    expect(securityBody.tokenBoundary?.browserReceivesDaemonToken).toBe(false);
   });
 });
 

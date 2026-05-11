@@ -160,6 +160,61 @@ describe("Daemon HTTP API — basics", () => {
     expect(r.data).toEqual({ supported: true, accepted: true, message: "restart accepted" });
   });
 
+  test("GET /network/status reports addresses and listening state", async () => {
+    const r = await http("GET", "/network/status");
+    expect(r.status).toBe(200);
+    const d = r.data as {
+      scope?: string;
+      generatedAt?: string;
+      listening?: { port?: number; kind?: string };
+      tailscale?: { detected?: boolean; addresses?: string[] };
+      addresses?: unknown[];
+      probes?: Array<{ ok?: boolean }>;
+    };
+    expect(d.scope).toBe("device");
+    expect(typeof d.generatedAt).toBe("string");
+    expect(d.listening?.port).toBeGreaterThan(0);
+    expect(typeof d.listening?.kind).toBe("string");
+    expect(Array.isArray(d.tailscale?.addresses)).toBe(true);
+    expect(Array.isArray(d.addresses)).toBe(true);
+    expect(d.probes?.some((probe) => probe.ok === true)).toBe(true);
+  });
+
+  test("GET /install/status reports connector install and running state", async () => {
+    const r = await http("GET", "/install/status");
+    expect(r.status).toBe(200);
+    const d = r.data as {
+      scope?: string;
+      installed?: boolean;
+      running?: boolean;
+      build?: { version?: string };
+      summary?: { severity?: string };
+    };
+    expect(d.scope).toBe("device");
+    expect(typeof d.installed).toBe("boolean");
+    expect(d.running).toBe(true);
+    expect(d.build?.version).toBe("0.0.0");
+    expect(typeof d.summary?.severity).toBe("string");
+  });
+
+  test("GET /security/boundary reports token, network, and workspace boundaries", async () => {
+    const r = await http("GET", "/security/boundary");
+    expect(r.status).toBe(200);
+    const d = r.data as {
+      scope?: string;
+      tokenBoundary?: { daemonTokenAvailable?: boolean; browserReceivesDaemonToken?: boolean };
+      networkBoundary?: { kind?: string };
+      workspaceBoundary?: { mode?: string; roots?: string[] };
+      warnings?: string[];
+    };
+    expect(d.scope).toBe("device");
+    expect(d.tokenBoundary?.daemonTokenAvailable).toBe(true);
+    expect(d.tokenBoundary?.browserReceivesDaemonToken).toBe(false);
+    expect(typeof d.networkBoundary?.kind).toBe("string");
+    expect(d.workspaceBoundary?.mode).toBe("unrestricted");
+    expect(Array.isArray(d.warnings)).toBe(true);
+  });
+
   test("unknown route returns 404", async () => {
     const r = await http("GET", "/no-such-thing");
     expect(r.status).toBe(404);

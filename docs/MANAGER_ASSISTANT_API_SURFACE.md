@@ -53,6 +53,9 @@ Base URL for the browser/self-host page is usually the frontend URL, for example
 | `GET` | `/api/self/logs` | Read server stack logs. | query `source=server|frontend|daemon`, `tail`, optional `level` |
 | `GET` | `/api/self/process/status` | Read server process status and recorded stack components. | none |
 | `POST` | `/api/self/process/restart` | Request server stack restart when wired. | none |
+| `GET` | `/api/self/network/status` | Server network summary: local/LAN/Tailscale URLs and preferred remote URL. | none |
+| `GET` | `/api/self/install/status` | Server install/running/autostart/update/report summary. | none |
+| `GET` | `/api/self/security/boundary` | Server token and network exposure summary without exposing secrets. | none |
 | `GET` | `/api/self/autostart` | Server login-task/autostart status. | none |
 | `PUT` | `/api/self/autostart` | Enable/disable server autostart. | JSON `{ enabled: boolean }` |
 | `POST` | `/api/self/update` | Start self-server update. | none |
@@ -70,6 +73,9 @@ These routes resolve `:id` through the site device registry, attach the device d
 | `GET` | `/api/devices/:id/logs` | `GET /logs` | Read connector logs. |
 | `GET` | `/api/devices/:id/process/status` | `GET /process/status` | Read connector process status. |
 | `POST` | `/api/devices/:id/process/restart` | `POST /process/restart` | Request connector restart. |
+| `GET` | `/api/devices/:id/network/status` | `GET /network/status` | Read connector network/Tailscale/bind status, enriched with registry URL. |
+| `GET` | `/api/devices/:id/install/status` | `GET /install/status` | Read connector install/running/autostart/update queue summary. |
+| `GET` | `/api/devices/:id/security/boundary` | `GET /security/boundary` | Read connector token/network/workspace boundary summary without exposing secrets. |
 | `GET` | `/api/devices/:id/behaviors` | `GET /behaviors` | List loaded behaviors. |
 | `POST` | `/api/devices/:id/behaviors/load` | `POST /behaviors/load` | Load a behavior package. |
 | `DELETE` | `/api/devices/:id/behaviors/:instance` | `DELETE /behaviors/:instance` | Unload behavior. |
@@ -100,6 +106,9 @@ The connector daemon defaults to `http://127.0.0.1:18091` on local-only runs and
 | `GET` | `/logs` | Read connector log tail. | query `source=connector|daemon`, `tail`, optional `level` |
 | `GET` | `/process/status` | Read connector daemon process status, build, listening address, and login task state. | none |
 | `POST` | `/process/restart` | Request connector restart through the login task when wired. | none |
+| `GET` | `/network/status` | Connector network summary: addresses, Tailscale detection, listener bind, local probe. | none |
+| `GET` | `/install/status` | Connector install/running/login-task summary. | none |
+| `GET` | `/security/boundary` | Connector token, network, and workspace boundary summary. | none |
 | `GET` | `/status` | Service health, build, listening address, workspace roots, loaded behaviors, broker stats, pairing state, diagnostic flags. | none |
 | `GET` | `/behaviors` | Loaded behavior summaries. | none |
 | `POST` | `/behaviors/load` | Load behavior package. | JSON `{ packageDir, instanceId? }` |
@@ -296,5 +305,4 @@ These are not separate APIs today, so the assistant must compose existing calls:
 
 | Need | Current Composition |
 |---|---|
-| Validate Tailscale install/status | installer and diagnostics infer from addresses/reachability; no dedicated Tailscale API. |
 | Run arbitrary DeskRelay maintenance task | use Claude Code `chat` in repo cwd, or add a dedicated assistant behavior later. |

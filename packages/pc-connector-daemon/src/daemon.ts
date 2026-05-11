@@ -18,21 +18,29 @@
 // (see auth-token.ts). The CLI, the site-ws-client, and any self-host
 // site backend running on the same machine read that file. Browsers never see this token. A constructor without an authToken is rejected so we do not accidentally expose an unauthenticated daemon.
 
+import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { BehaviorHostError, type BehaviorHostLogRecord } from "@deskrelay/behavior-sdk";
 import { InProcessSubscriptionBroker } from "@deskrelay/core";
 import {
   MANAGER_API_VERSION,
   type ManagerCapabilities,
+  type ManagerInstallStatus,
   type ManagerLogResponse,
+  type ManagerNetworkAddress,
+  type ManagerNetworkKind,
+  type ManagerNetworkStatus,
   type ManagerProcessStatus,
   type ManagerRestartResult,
+  type ManagerSecurityBoundary,
 } from "@deskrelay/shared";
 import type { EventEnvelope } from "@deskrelay/shared/event";
 import { type SpaceId, isSpaceId } from "@deskrelay/shared/space";
 import { getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { ApprovalQueue } from "./approvals.ts";
+import { defaultAuthFilePath } from "./auth-token.ts";
 import { BehaviorFetcher, BehaviorFetcherError } from "./behavior-fetcher.ts";
 import { BehaviorRegistry, BehaviorRegistryError } from "./behavior-registry.ts";
 import { filePreviewErrorStatus, previewFile, safePreviewFilename } from "./file-preview.ts";
@@ -252,6 +260,15 @@ export class Daemon {
       if (req.method === "POST" && path === "/process/restart") {
         return await this.#handleProcessRestart();
       }
+      if (req.method === "GET" && path === "/network/status") {
+        return this.#handleNetworkStatus();
+      }
+      if (req.method === "GET" && path === "/install/status") {
+        return await this.#handleInstallStatus();
+      }
+      if (req.method === "GET" && path === "/security/boundary") {
+        return this.#handleSecurityBoundary();
+      }
       if (req.method === "GET" && path === "/behaviors") {
         return this.#handleListBehaviors();
       }
@@ -399,6 +416,18 @@ export class Daemon {
         error: (err as Error).message,
       } satisfies ManagerRestartResult);
     }
+  }
+
+  #handleNetworkStatus(): Response {
+    return jsonResponse(200, this.#networkStatus());
+  }
+
+  async #handleInstallStatus(): Promise<Response> {
+    return jsonResponse(200, await this.#installStatus());
+  }
+
+  #handleSecurityBoundary(): Response {
+    return jsonResponse(200, this.#securityBoundary());
   }
 
   #handlePublicPairingStatusOptions(req: Request): Response {
@@ -623,6 +652,9 @@ export class Daemon {
         "logs",
         "process.status",
         "process.restart",
+        "network.status",
+        "install.status",
+        "security.boundary",
         "behaviors",
         "events",
         "filesystem",
@@ -641,6 +673,13 @@ export class Daemon {
           method: "POST",
           path: "/process/restart",
           description: "Restart the connector process.",
+        },
+        { method: "GET", path: "/network/status", description: "Read connector network status." },
+        { method: "GET", path: "/install/status", description: "Read connector install status." },
+        {
+          method: "GET",
+          path: "/security/boundary",
+          description: "Read connector token, network, and workspace boundary summary.",
         },
         { method: "GET", path: "/status", description: "Read daemon health." },
         { method: "GET", path: "/behaviors", description: "List loaded behaviors." },
@@ -732,6 +771,136 @@ export class Daemon {
         ...("error" in loginTask && typeof loginTask.error === "string"
           ? { error: loginTask.error }
           : {}),
+      },
+    };
+  }
+
+  #networkStatus(): ManagerNetworkStatus {
+    const generatedAt = new Date().toISOString();
+    const addresses = collectNetworkAddresses(this.#listening?.port);
+    const tailscaleAddresses = addresses.filter((address) => address.kind === "tailscale");
+    const listening = this.#listening
+      ? {
+          host: this.#listening.host,
+          port: this.#listening.port,
+          kind: classifyNetworkHost(this.#listening.host),
+        }
+      : undefined;
+    const probes = this.#listening
+      ? [
+          {
+            id: "daemon.local-http",
+            label: "Local connector HTTP",
+            url: `http://127.0.0.1:${this.#listening.port}/status`,
+            ok: true,
+            status: 200,
+          },
+        ]
+      : [];
+    const summary =
+      listening && listening.kind === "local" && tailscaleAddresses.length > 0
+        ? {
+            severity: "warn" as const,
+            message:
+              "Connector is running local-only even though a Tailscale address is available.",
+          }
+        : {
+            severity: "ok" as const,
+            message: listening
+              ? `Connector is listening on ${listening.host}:${listening.port}.`
+              : "Connector network listener has not reported a bind address.",
+          };
+    return {
+      scope: "device",
+      generatedAt,
+      ...(listening ? { listening } : {}),
+      tailscale: {
+        detected: tailscaleAddresses.length > 0,
+        addresses: tailscaleAddresses.map((address) => address.address),
+        interfaceNames: [
+          ...new Set(
+            tailscaleAddresses
+              .map((address) => address.interfaceName)
+              .filter((name): name is string => Boolean(name)),
+          ),
+        ],
+      },
+      addresses,
+      probes,
+      summary,
+    };
+  }
+
+  async #installStatus(): Promise<ManagerInstallStatus> {
+    const generatedAt = new Date().toISOString();
+    const loginTask = await queryLoginTask().catch((err) => ({
+      supported: process.platform === "win32",
+      installed: false,
+      taskName: "DeskRelay Connector",
+      error: (err as Error).message,
+    }));
+    const authExists = existsSync(defaultAuthFilePath());
+    const warnAutostart = loginTask.supported && !loginTask.installed;
+    return {
+      scope: "device",
+      generatedAt,
+      build: getDeskRelayBuildInfo(),
+      installed: authExists,
+      running: true,
+      autostart: {
+        supported: loginTask.supported,
+        installed: loginTask.installed,
+        taskName: loginTask.taskName,
+        ...("error" in loginTask && typeof loginTask.error === "string"
+          ? { error: loginTask.error }
+          : {}),
+      },
+      summary: {
+        severity: warnAutostart ? "warn" : "ok",
+        message: warnAutostart
+          ? "Connector is running, but Windows login autostart is not installed."
+          : "Connector is installed and running.",
+      },
+    };
+  }
+
+  #securityBoundary(): ManagerSecurityBoundary {
+    const generatedAt = new Date().toISOString();
+    const networkUrl = this.#listening
+      ? `http://${formatHostForUrl(this.#listening.host)}:${this.#listening.port}`
+      : undefined;
+    const networkKind = this.#listening ? classifyNetworkHost(this.#listening.host) : "unknown";
+    const unrestricted = this.#workspaceRoots.mode === "unrestricted";
+    const warnings: string[] = [];
+    if (networkKind === "public") warnings.push("Connector is bound to a public-looking address.");
+    if (unrestricted) warnings.push("Workspace browsing is unrestricted for this connector.");
+    if (networkKind === "public" && unrestricted) {
+      warnings.push("Public network exposure and unrestricted workspace access are both enabled.");
+    }
+    return {
+      scope: "device",
+      generatedAt,
+      tokenBoundary: {
+        daemonTokenAvailable: true,
+        browserReceivesDaemonToken: false,
+      },
+      networkBoundary: {
+        ...(networkUrl ? { url: networkUrl } : {}),
+        kind: networkKind,
+        publicExposure: networkKind === "public",
+      },
+      workspaceBoundary: {
+        mode: this.#workspaceRoots.mode,
+        roots: this.#workspaceRoots.roots,
+        unrestricted,
+      },
+      warnings,
+      summary: {
+        severity: warnings.length > 0 ? "warn" : "ok",
+        message:
+          warnings.length > 0
+            ? `${warnings.length} security boundary warning(s).`
+            : "Connector security boundary is constrained.",
       },
     };
   }
@@ -1039,6 +1208,58 @@ function isTrustedPublicPairingStatusOrigin(origin: string): boolean {
 
 function defaultConnectorLogPath(): string {
   return join(defaultStateDir(), "logs", WINDOWS_LOGIN_TASK_LOG_NAME);
+}
+
+function collectNetworkAddresses(port?: number): ManagerNetworkAddress[] {
+  const rows: ManagerNetworkAddress[] = [];
+  for (const [interfaceName, entries] of Object.entries(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== "IPv4" && entry.family !== "IPv6") continue;
+      if (entry.address.startsWith("169.254.")) continue;
+      const kind = classifyNetworkHost(entry.address);
+      rows.push({
+        address: entry.address,
+        interfaceName,
+        family: entry.family,
+        kind,
+        internal: entry.internal,
+        ...(port && entry.family === "IPv4" ? { url: `http://${entry.address}:${port}` } : {}),
+      });
+    }
+  }
+  return rows.sort((left, right) => networkKindRank(left.kind) - networkKindRank(right.kind));
+}
+
+function classifyNetworkHost(host: string): ManagerNetworkKind {
+  const normalized = host.replace(/^\[|\]$/g, "");
+  if (normalized === "0.0.0.0") return "unknown";
+  if (normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1") {
+    return "local";
+  }
+  if (normalized.startsWith("100.")) return "tailscale";
+  if (
+    normalized.startsWith("10.") ||
+    normalized.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+  ) {
+    return "lan";
+  }
+  return "public";
+}
+
+function networkKindRank(kind: ManagerNetworkKind): number {
+  const ranks: Record<ManagerNetworkKind, number> = {
+    tailscale: 0,
+    lan: 1,
+    local: 2,
+    public: 3,
+    unknown: 4,
+  };
+  return ranks[kind];
+}
+
+function formatHostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
 function normalizeLogSource(value: string | null, allowed: string[]): string | undefined {

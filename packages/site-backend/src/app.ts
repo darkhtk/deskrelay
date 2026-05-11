@@ -7,7 +7,12 @@ import {
   type DiagnosticSeverity,
   MANAGER_API_VERSION,
   type ManagerCapabilities,
+  type ManagerInstallStatus,
   type ManagerLogResponse,
+  type ManagerNetworkAddress,
+  type ManagerNetworkKind,
+  type ManagerNetworkStatus,
+  type ManagerSecurityBoundary,
   type UpdateState,
   diagnosticStepFromCheck,
 } from "@deskrelay/shared";
@@ -200,6 +205,20 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         500,
       );
     }
+  });
+
+  app.get("/api/self/network/status", async (c) => {
+    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
+    return c.json(buildSelfNetworkStatus(urls));
+  });
+
+  app.get("/api/self/install/status", async (c) => {
+    return c.json(await buildSelfInstallStatus(options, build));
+  });
+
+  app.get("/api/self/security/boundary", (c) => {
+    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
+    return c.json(buildSelfSecurityBoundary(options, urls));
   });
 
   app.get("/api/self/autostart", async (c) => {
@@ -430,6 +449,35 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       `${device.daemonUrl}/process/restart`,
       await c.req.text(),
       daemonToken(device, localToken),
+    );
+  });
+
+  app.get("/api/devices/:id/network/status", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return c.json(
+      await buildDeviceNetworkStatus(fetchImpl, device, daemonToken(device, localToken)),
+    );
+  });
+
+  app.get("/api/devices/:id/install/status", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return c.json(
+      await buildDeviceInstallStatus(
+        fetchImpl,
+        device,
+        daemonToken(device, localToken),
+        options.deviceUpdateQueue,
+      ),
+    );
+  });
+
+  app.get("/api/devices/:id/security/boundary", async (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return c.json(
+      await buildDeviceSecurityBoundary(fetchImpl, device, daemonToken(device, localToken)),
     );
   });
 
@@ -862,6 +910,9 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "logs",
       "process.status",
       "process.restart",
+      "network.status",
+      "install.status",
+      "security.boundary",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -882,6 +933,21 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
         method: "POST",
         path: "/api/self/process/restart",
         description: "Restart the self-host server stack.",
+      },
+      {
+        method: "GET",
+        path: "/api/self/network/status",
+        description: "Read server network status.",
+      },
+      {
+        method: "GET",
+        path: "/api/self/install/status",
+        description: "Read server install status.",
+      },
+      {
+        method: "GET",
+        path: "/api/self/security/boundary",
+        description: "Read server token and network boundary summary.",
       },
       { method: "GET", path: "/api/devices", description: "List registered devices." },
       { method: "POST", path: "/api/devices", description: "Register a device." },
@@ -912,6 +978,21 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
         method: "POST",
         path: "/api/devices/:id/process/restart",
         description: "Restart the device connector.",
+      },
+      {
+        method: "GET",
+        path: "/api/devices/:id/network/status",
+        description: "Read device network status.",
+      },
+      {
+        method: "GET",
+        path: "/api/devices/:id/install/status",
+        description: "Read device install status.",
+      },
+      {
+        method: "GET",
+        path: "/api/devices/:id/security/boundary",
+        description: "Read device token, network, and workspace boundary summary.",
       },
       {
         method: "POST",
@@ -958,6 +1039,309 @@ function defaultSelfProcessStatus(build: DeskRelayBuildInfo) {
     uptimeMs: Math.max(0, Date.now() - Date.parse(SERVER_STARTED_AT)),
     platform: process.platform,
     arch: process.arch,
+  };
+}
+
+function buildSelfNetworkStatus(urls: AccessUrl[]): ManagerNetworkStatus {
+  const generatedAt = new Date().toISOString();
+  const preferredUrl = pickRemoteAccessUrl(urls);
+  const port = getUrlPort(preferredUrl);
+  const addresses = collectServerNetworkAddresses(port);
+  const tailscaleAddresses = addresses.filter((address) => address.kind === "tailscale");
+  const remoteUrls = urls.filter((row) => row.kind !== "This PC");
+  const summary =
+    remoteUrls.length === 0
+      ? {
+          severity: "warn" as const,
+          message: "Only local server access is available.",
+        }
+      : {
+          severity: "ok" as const,
+          message: `Preferred server URL is ${preferredUrl}.`,
+        };
+  return {
+    scope: "server",
+    generatedAt,
+    preferredUrl,
+    tailscale: {
+      detected: tailscaleAddresses.length > 0,
+      addresses: tailscaleAddresses.map((address) => address.address),
+      interfaceNames: [
+        ...new Set(
+          tailscaleAddresses
+            .map((address) => address.interfaceName)
+            .filter((name): name is string => Boolean(name)),
+        ),
+      ],
+    },
+    addresses,
+    probes: urls.map((row) => ({
+      id: `server.url.${row.kind.toLowerCase().replace(/\s+/g, "-")}`,
+      label: row.kind,
+      url: row.url,
+      ok: true,
+      hint:
+        row.kind === "This PC"
+          ? "Only this PC can use this URL."
+          : "Use this URL from another PC on the same LAN or Tailscale network.",
+    })),
+    summary,
+  };
+}
+
+async function buildSelfInstallStatus(
+  options: SiteAppOptions,
+  build: DeskRelayBuildInfo,
+): Promise<ManagerInstallStatus> {
+  const generatedAt = new Date().toISOString();
+  const processStatus = options.selfServerProcess
+    ? await options.selfServerProcess.status().catch(() => defaultSelfProcessStatus(build))
+    : defaultSelfProcessStatus(build);
+  const autostart = await readSelfServerAutostartStatus(options.selfServerAutostart);
+  const update = options.selfServerUpdater
+    ? await options.selfServerUpdater.status().catch((err) => ({
+        state: "failed",
+        error: (err as Error).message,
+      }))
+    : undefined;
+  const reports = options.installReportStore
+    ? await options.installReportStore.list(3).catch(() => [])
+    : [];
+  const updateSummary = update ? normalizeManagerUpdate(update) : undefined;
+  const warn = autostart.supported && !autostart.installed;
+  return {
+    scope: "server",
+    generatedAt,
+    build,
+    installed: true,
+    running: processStatus.pid > 0,
+    autostart,
+    ...(updateSummary ? { update: updateSummary } : {}),
+    ...(reports.length > 0
+      ? {
+          reports: reports.map((report) => ({
+            id: report.id,
+            receivedAt: report.receivedAt,
+            status: report.status,
+            ...(report.label ? { label: report.label } : {}),
+          })),
+        }
+      : {}),
+    summary: {
+      severity: warn ? "warn" : "ok",
+      message: warn
+        ? "Server is running, but login autostart is not installed."
+        : "Server is installed and running.",
+    },
+  };
+}
+
+function buildSelfSecurityBoundary(
+  options: SiteAppOptions,
+  urls: AccessUrl[],
+): ManagerSecurityBoundary {
+  const generatedAt = new Date().toISOString();
+  const preferredUrl = pickRemoteAccessUrl(urls);
+  const networkKind = daemonNetworkKind(preferredUrl);
+  const warnings: string[] = [];
+  if (!options.token) warnings.push("Site token is not configured.");
+  if (networkKind === "public") warnings.push("Server URL appears to be public.");
+  return {
+    scope: "server",
+    generatedAt,
+    tokenBoundary: {
+      siteTokenConfigured: Boolean(options.token),
+      daemonTokenAvailable: Boolean(options.localDaemonToken),
+      browserReceivesDaemonToken: false,
+    },
+    networkBoundary: {
+      url: preferredUrl,
+      kind: networkKind,
+      publicExposure: networkKind === "public",
+    },
+    warnings,
+    summary: {
+      severity: warnings.length > 0 ? "warn" : "ok",
+      message:
+        warnings.length > 0
+          ? `${warnings.length} security boundary warning(s).`
+          : "Server security boundary is constrained.",
+    },
+  };
+}
+
+async function buildDeviceNetworkStatus(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  authToken?: string,
+): Promise<ManagerNetworkStatus> {
+  const generatedAt = new Date().toISOString();
+  const started = Date.now();
+  const result = await fetchManagerJson<ManagerNetworkStatus>(
+    fetchImpl,
+    `${device.daemonUrl}/network/status`,
+    authToken,
+  );
+  if (!result.ok) {
+    return {
+      scope: "device",
+      targetId: device.id,
+      targetLabel: device.label,
+      generatedAt,
+      registeredUrl: device.daemonUrl,
+      tailscale: { detected: false, addresses: [], interfaceNames: [] },
+      addresses: [],
+      probes: [
+        {
+          id: "device.network-status",
+          label: "Device network status",
+          url: `${device.daemonUrl}/network/status`,
+          ok: false,
+          error: result.error,
+          hint: classifyReachabilityHint(device.daemonUrl),
+        },
+      ],
+      summary: {
+        severity: "error",
+        message: `Cannot read network status from ${device.label}.`,
+      },
+    };
+  }
+  return {
+    ...result.value,
+    targetId: device.id,
+    targetLabel: device.label,
+    registeredUrl: device.daemonUrl,
+    probes: [
+      ...result.value.probes,
+      {
+        id: "server-to-device.network-status",
+        label: "Server to connector API",
+        url: `${device.daemonUrl}/network/status`,
+        ok: true,
+        status: 200,
+        latencyMs: Date.now() - started,
+      },
+    ],
+  };
+}
+
+async function buildDeviceInstallStatus(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  authToken: string | undefined,
+  queue: DeviceUpdateQueueStore | undefined,
+): Promise<ManagerInstallStatus> {
+  const generatedAt = new Date().toISOString();
+  const [result, queueEntry] = await Promise.all([
+    fetchManagerJson<ManagerInstallStatus>(
+      fetchImpl,
+      `${device.daemonUrl}/install/status`,
+      authToken,
+    ),
+    queue?.get(device.id).catch(() => undefined),
+  ]);
+  if (!result.ok) {
+    return {
+      scope: "device",
+      targetId: device.id,
+      targetLabel: device.label,
+      generatedAt,
+      build: getDeskRelayBuildInfo(),
+      installed: false,
+      running: false,
+      ...(queueEntry
+        ? {
+            queue: {
+              state: queueEntry.state,
+              updatedAt: queueEntry.updatedAt,
+              ...(queueEntry.error ? { error: queueEntry.error } : {}),
+            },
+          }
+        : {}),
+      summary: {
+        severity: "error",
+        message: `Cannot read install status from ${device.label}: ${result.error}`,
+      },
+    };
+  }
+  return {
+    ...result.value,
+    targetId: device.id,
+    targetLabel: device.label,
+    ...(queueEntry
+      ? {
+          queue: {
+            state: queueEntry.state,
+            updatedAt: queueEntry.updatedAt,
+            ...(queueEntry.error ? { error: queueEntry.error } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+async function buildDeviceSecurityBoundary(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  authToken?: string,
+): Promise<ManagerSecurityBoundary> {
+  const generatedAt = new Date().toISOString();
+  const result = await fetchManagerJson<ManagerSecurityBoundary>(
+    fetchImpl,
+    `${device.daemonUrl}/security/boundary`,
+    authToken,
+  );
+  const registeredKind = daemonNetworkKind(device.daemonUrl);
+  if (!result.ok) {
+    return {
+      scope: "device",
+      targetId: device.id,
+      targetLabel: device.label,
+      generatedAt,
+      tokenBoundary: {
+        daemonTokenAvailable: Boolean(authToken),
+        browserReceivesDaemonToken: false,
+      },
+      networkBoundary: {
+        url: device.daemonUrl,
+        kind: registeredKind,
+        publicExposure: registeredKind === "public",
+      },
+      warnings: [result.error],
+      summary: {
+        severity: "error",
+        message: `Cannot read security boundary from ${device.label}.`,
+      },
+    };
+  }
+  const warnings = [...result.value.warnings];
+  if (registeredKind === "public" && !warnings.some((item) => item.includes("public"))) {
+    warnings.push("Registered connector URL appears to be public.");
+  }
+  return {
+    ...result.value,
+    targetId: device.id,
+    targetLabel: device.label,
+    tokenBoundary: {
+      ...result.value.tokenBoundary,
+      daemonTokenAvailable: Boolean(authToken),
+      browserReceivesDaemonToken: false,
+    },
+    networkBoundary: {
+      ...result.value.networkBoundary,
+      url: device.daemonUrl,
+      kind: registeredKind,
+      publicExposure: registeredKind === "public",
+    },
+    warnings,
+    summary: {
+      severity: warnings.length > 0 ? "warn" : result.value.summary.severity,
+      message:
+        warnings.length > 0
+          ? `${warnings.length} security boundary warning(s).`
+          : result.value.summary.message,
+    },
   };
 }
 
@@ -1361,6 +1745,111 @@ function daemonNetworkKind(rawUrl: string): "local" | "tailscale" | "lan" | "pub
   } catch {
     return "unknown";
   }
+}
+
+function collectServerNetworkAddresses(port: number): ManagerNetworkAddress[] {
+  const rows: ManagerNetworkAddress[] = [];
+  for (const [interfaceName, entries] of Object.entries(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== "IPv4" && entry.family !== "IPv6") continue;
+      if (entry.address.startsWith("169.254.")) continue;
+      const kind = classifyNetworkAddress(entry.address);
+      rows.push({
+        address: entry.address,
+        interfaceName,
+        family: entry.family,
+        kind,
+        internal: entry.internal,
+        ...(entry.family === "IPv4" ? { url: `http://${entry.address}:${port}` } : {}),
+      });
+    }
+  }
+  return rows.sort((left, right) => networkKindRank(left.kind) - networkKindRank(right.kind));
+}
+
+function classifyNetworkAddress(address: string): ManagerNetworkKind {
+  if (address === "localhost" || address === "127.0.0.1" || address === "::1") return "local";
+  if (address.startsWith("100.")) return "tailscale";
+  if (
+    address.startsWith("10.") ||
+    address.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
+  ) {
+    return "lan";
+  }
+  return "public";
+}
+
+function networkKindRank(kind: ManagerNetworkKind): number {
+  const ranks: Record<ManagerNetworkKind, number> = {
+    tailscale: 0,
+    lan: 1,
+    local: 2,
+    public: 3,
+    unknown: 4,
+  };
+  return ranks[kind];
+}
+
+function normalizeManagerUpdate(value: unknown): ManagerInstallStatus["update"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const state = typeof raw.state === "string" ? raw.state : "unknown";
+  return {
+    state,
+    ...(typeof raw.updateAvailable === "boolean" ? { updateAvailable: raw.updateAvailable } : {}),
+    ...(typeof raw.changed === "boolean" ? { changed: raw.changed } : {}),
+    ...(typeof raw.error === "string" ? { error: raw.error } : {}),
+  };
+}
+
+async function fetchManagerJson<T>(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  url: string,
+  authToken?: string,
+): Promise<{ ok: true; value: T } | { ok: false; status: number; error: string }> {
+  const headers: Record<string, string> = {};
+  if (authToken) headers.authorization = `Bearer ${authToken}`;
+  let res: Response;
+  try {
+    res = await fetchImpl(url, {
+      method: "GET",
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (err) {
+    return { ok: false, status: 502, error: (err as Error).message };
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return {
+      ok: false,
+      status: res.status,
+      error: text ? `HTTP ${res.status}: ${text.slice(0, 300)}` : `HTTP ${res.status}`,
+    };
+  }
+  try {
+    return { ok: true, value: (await res.json()) as T };
+  } catch (err) {
+    return { ok: false, status: 502, error: `non-JSON response: ${(err as Error).message}` };
+  }
+}
+
+function classifyReachabilityHint(daemonUrl: string): string {
+  const kind = daemonNetworkKind(daemonUrl);
+  if (kind === "tailscale") {
+    return "Check that Tailscale is running on both PCs and Windows Firewall allows the connector port.";
+  }
+  if (kind === "lan") {
+    return "Check that both PCs are on the same LAN/VPN and Windows Firewall allows the connector port.";
+  }
+  if (kind === "local") {
+    return "Localhost connector URLs only work from the same PC as the server.";
+  }
+  if (kind === "public") {
+    return "Avoid public connector exposure; prefer Tailscale or LAN and check inbound firewall policy.";
+  }
+  return "Check the connector URL, network route, and inbound firewall policy.";
 }
 
 function dedupeUrls(rows: AccessUrl[]): AccessUrl[] {

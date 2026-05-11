@@ -2,9 +2,12 @@ import type {
   DiagnosticReport,
   DiagnosticStep,
   ManagerCapabilities,
+  ManagerInstallStatus,
   ManagerLogResponse,
+  ManagerNetworkStatus,
   ManagerProcessStatus,
   ManagerRestartResult,
+  ManagerSecurityBoundary,
   UpdateState,
 } from "@deskrelay/shared";
 
@@ -440,6 +443,10 @@ export const api = {
   },
   selfProcessStatus: () => request<ManagerProcessStatus>("GET", "/api/self/process/status"),
   restartSelfProcess: () => request<ManagerRestartResult>("POST", "/api/self/process/restart"),
+  selfNetworkStatus: () => request<ManagerNetworkStatus>("GET", "/api/self/network/status"),
+  selfInstallStatus: () => request<ManagerInstallStatus>("GET", "/api/self/install/status"),
+  selfSecurityBoundary: () =>
+    request<ManagerSecurityBoundary>("GET", "/api/self/security/boundary"),
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerOtherPcCommand: () =>
     request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),
@@ -482,6 +489,12 @@ export const api = {
     request<ManagerProcessStatus>("GET", `/api/devices/${deviceId}/process/status`),
   restartDeviceProcess: (deviceId: string) =>
     request<ManagerRestartResult>("POST", `/api/devices/${deviceId}/process/restart`),
+  deviceNetworkStatus: (deviceId: string) =>
+    request<ManagerNetworkStatus>("GET", `/api/devices/${deviceId}/network/status`),
+  deviceInstallStatus: (deviceId: string) =>
+    request<ManagerInstallStatus>("GET", `/api/devices/${deviceId}/install/status`),
+  deviceSecurityBoundary: (deviceId: string) =>
+    request<ManagerSecurityBoundary>("GET", `/api/devices/${deviceId}/security/boundary`),
 
   listBehaviors: (deviceId: string) =>
     request<BehaviorSummary[]>("GET", `/api/devices/${deviceId}/behaviors`),
