@@ -54,6 +54,7 @@ import {
   type ConnectionStatusTone,
   deriveConnectionStatus,
 } from "../connection-status.ts";
+import type { ConversationExportSnapshot } from "../conversation-export.ts";
 import { deviceDisplayName } from "../device-display.ts";
 import {
   getDeviceClaudeModel,
@@ -958,6 +959,7 @@ export interface ChatViewProps {
   requestedDeviceSelection?: DeviceSelectionRequest;
   onContextUsageChange?: (usage: ContextUsageOverview) => void;
   onActiveWorkspaceChange?: (workspace: { deviceId: string | null; cwd: string }) => void;
+  onConversationExportChange?: (snapshot: ConversationExportSnapshot | null) => void;
   showContextUsageMeter?: boolean;
 }
 
@@ -1342,9 +1344,30 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     props.onActiveWorkspaceChange?.({ deviceId, cwd: activeCwd });
   });
 
+  createEffect(() => {
+    const events = transcript();
+    const deviceId = effectiveDeviceId();
+    if (!deviceId || events.length === 0) {
+      props.onConversationExportChange?.(null);
+      return;
+    }
+    const session = selectedSession();
+    const device = activeDevice();
+    props.onConversationExportChange?.({
+      deviceId,
+      deviceLabel: device ? deviceDisplayName(device) : null,
+      sessionId: session?.sessionId ?? null,
+      title: session?.fullTitle || session?.title || null,
+      cwd: cwd().trim() || session?.cwd || getDeviceDefaultCwd(deviceId) || "",
+      events: [...events],
+      generatedAt: new Date().toISOString(),
+    });
+  });
+
   onCleanup(() => {
     props.onContextUsageChange?.({ ctx: null, session: null, week: null });
     props.onActiveWorkspaceChange?.({ deviceId: null, cwd: "" });
+    props.onConversationExportChange?.(null);
   });
 
   function setTransientSessionNotice(message: string) {

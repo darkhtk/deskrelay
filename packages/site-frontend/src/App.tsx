@@ -47,6 +47,12 @@ import {
   SettingsScopeLabel,
   SettingsScopeLabels,
 } from "./components/SettingsScopeLabel.tsx";
+import {
+  type ConversationExportSnapshot,
+  downloadConversationMarkdown,
+  hasConversationExport,
+  openConversationPdfPrint,
+} from "./conversation-export.ts";
 import { deviceDisplayName } from "./device-display.ts";
 import { t } from "./i18n.ts";
 import {
@@ -135,6 +141,16 @@ const HELP_SECTIONS: Array<{
       "Site token, daemon token, Claude 계정 토큰 원문은 캐시 삭제/저장 대상에 포함하지 않습니다.",
       "앱을 열 때 캐시 비우기를 켜면 시작 시 이전 대화/이미지 캐시를 지우고 현재 탭에서만 새로 사용합니다.",
       "공용 PC나 분실 위험이 있는 모바일에서는 캐시 사용을 끄거나 매번 비우는 설정을 권장합니다.",
+    ],
+  },
+  {
+    title: "대화 내보내기",
+    scopes: ["current session", "browser"],
+    items: [
+      "설정 > 일반에서 현재 브라우저에 로드된 대화를 Markdown 파일로 저장할 수 있습니다.",
+      "PDF 저장은 브라우저 인쇄 창을 열어 PDF로 저장하는 방식입니다.",
+      "내보내기는 서버에 파일을 만들지 않고 지금 브라우저에서만 처리합니다.",
+      "선택한 세션을 바꾸면 내보내기 대상도 해당 세션으로 바뀝니다.",
     ],
   },
   {
@@ -451,6 +467,8 @@ export const App: Component = () => {
     deviceId: null,
     cwd: "",
   });
+  const [conversationExport, setConversationExport] =
+    createSignal<ConversationExportSnapshot | null>(null);
 
   createEffect(() => {
     const theme = appTheme();
@@ -573,6 +591,7 @@ export const App: Component = () => {
             requestedDeviceSelection={deviceSelectionRequest()}
             onContextUsageChange={setContextUsage}
             onActiveWorkspaceChange={setActiveWorkspace}
+            onConversationExportChange={setConversationExport}
             showContextUsageMeter={showCtxUsageMeter()}
           />
         </Show>
@@ -631,6 +650,7 @@ export const App: Component = () => {
                     onOpenLanding={reopenLanding}
                     initialSelectedDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
                     devicesRevision={devicesRevision()}
+                    conversationExport={conversationExport()}
                   />
                 </Show>
                 <Show when={settingsTab() === "updates"}>
@@ -734,9 +754,14 @@ const GeneralSettings: Component<{
   initialSelectedDeviceId?: string | null;
   devicesRevision?: number;
   section?: "general" | "updates";
+  conversationExport?: ConversationExportSnapshot | null;
 }> = (props) => {
   const [savingAutostart, setSavingAutostart] = createSignal(false);
   const [browserCacheStatus, setBrowserCacheStatus] = createSignal<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [conversationExportStatus, setConversationExportStatus] = createSignal<{
     kind: "success" | "error";
     message: string;
   } | null>(null);
@@ -787,6 +812,61 @@ const GeneralSettings: Component<{
       setBrowserCacheStatus({
         kind: "error",
         message: `브라우저 캐시 삭제 실패: ${(err as Error).message}`,
+      });
+    }
+  };
+  const currentConversationExport = () => props.conversationExport ?? null;
+  const conversationExportReady = () => hasConversationExport(currentConversationExport());
+  const handleMarkdownExport = () => {
+    const snapshot = currentConversationExport();
+    setConversationExportStatus(null);
+    if (!snapshot || !hasConversationExport(snapshot)) {
+      setConversationExportStatus({
+        kind: "error",
+        message: "내보낼 대화가 없습니다. 세션을 선택하거나 메시지를 보낸 뒤 다시 시도하세요.",
+      });
+      return;
+    }
+    try {
+      const filename = downloadConversationMarkdown(snapshot);
+      setConversationExportStatus({
+        kind: "success",
+        message: `Markdown 파일을 만들었습니다: ${filename}`,
+      });
+    } catch (err) {
+      setConversationExportStatus({
+        kind: "error",
+        message: `Markdown 내보내기 실패: ${(err as Error).message}`,
+      });
+    }
+  };
+  const handlePdfExport = () => {
+    const snapshot = currentConversationExport();
+    setConversationExportStatus(null);
+    if (!snapshot || !hasConversationExport(snapshot)) {
+      setConversationExportStatus({
+        kind: "error",
+        message: "내보낼 대화가 없습니다. 세션을 선택하거나 메시지를 보낸 뒤 다시 시도하세요.",
+      });
+      return;
+    }
+    try {
+      const opened = openConversationPdfPrint(snapshot);
+      setConversationExportStatus(
+        opened
+          ? {
+              kind: "success",
+              message: "인쇄 창이 열렸습니다. 브라우저 인쇄 대화상자에서 PDF로 저장하세요.",
+            }
+          : {
+              kind: "error",
+              message: "PDF 인쇄 창을 열지 못했습니다. 브라우저 팝업 차단 설정을 확인하세요.",
+            },
+      );
+    } catch (err) {
+      setConversationExportStatus({
+        kind: "error",
+        message: `PDF 내보내기 실패: ${(err as Error).message}`,
       });
     }
   };
@@ -1340,6 +1420,56 @@ const GeneralSettings: Component<{
           </button>
         </div>
         <Show when={browserCacheStatus()}>
+          {(status) => (
+            <p class={status().kind === "error" ? "settings-error" : "settings-success"}>
+              {status().message}
+            </p>
+          )}
+        </Show>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">대화 내보내기</h3>
+          <SettingsScopeLabels scopes={["current session", "browser"]} />
+        </div>
+        <p class="settings-card-help">
+          현재 브라우저에 로드된 대화를 파일로 저장합니다. 서버에는 내보내기 파일을 만들지 않습니다.
+        </p>
+        <Show
+          when={currentConversationExport()}
+          fallback={
+            <p class="settings-card-help">
+              내보낼 대화가 없습니다. 세션을 선택하거나 메시지를 보낸 뒤 사용할 수 있습니다.
+            </p>
+          }
+        >
+          {(snapshot) => (
+            <p class="settings-card-help">
+              대상: {snapshot().title || snapshot().sessionId || "새 채팅"} · 이벤트{" "}
+              {snapshot().events.length}개
+            </p>
+          )}
+        </Show>
+        <div class="settings-row">
+          <button
+            type="button"
+            class="secondary-button"
+            disabled={!conversationExportReady()}
+            onClick={handleMarkdownExport}
+          >
+            Markdown 저장
+          </button>
+          <button
+            type="button"
+            class="secondary-button"
+            disabled={!conversationExportReady()}
+            onClick={handlePdfExport}
+          >
+            PDF로 저장
+          </button>
+        </div>
+        <Show when={conversationExportStatus()}>
           {(status) => (
             <p class={status().kind === "error" ? "settings-error" : "settings-success"}>
               {status().message}
