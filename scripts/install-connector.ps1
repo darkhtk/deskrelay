@@ -98,6 +98,23 @@ function Save-InstallReport {
   $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -Path $script:InstallReportPath
 }
 
+function Submit-InstallReport {
+  if ([string]::IsNullOrWhiteSpace($script:InstallReportPath)) {
+    return
+  }
+  try {
+    $body = Get-Content -Raw -LiteralPath $script:InstallReportPath
+    Invoke-RestMethod `
+      -Method Post `
+      -Uri "$($Server.TrimEnd('/'))/api/self/install-reports" `
+      -Headers @{ Authorization = "Bearer $SiteToken"; "content-type" = "application/json" } `
+      -Body $body `
+      -TimeoutSec 5 | Out-Null
+  } catch {
+    Write-Warning "Could not submit installer report to DeskRelay server: $($_.Exception.Message)"
+  }
+}
+
 function Fail-Install {
   param(
     [string]$Id,
@@ -117,6 +134,7 @@ trap {
     Add-InstallStep -Id "installer-error" -Label "installer" -Status "failed" -Summary $message -Action "Fix the reported condition and run the same registration command again." -RetrySafe:$true
   }
   Save-InstallReport -Status "failed"
+  Submit-InstallReport
   Write-Host "installer report: $script:InstallReportPath"
   break
 }
@@ -592,5 +610,6 @@ if (Test-Path -LiteralPath $verifier) {
 Write-Host "External connector URL verified: http://$($endpoint.Host):$Port"
 Write-Host "Registered $Label with DeskRelay server: $serverUrl"
 Save-InstallReport -Status "succeeded"
+Submit-InstallReport
 Write-Host "installer report: $script:InstallReportPath"
 Open-DeskRelaySite -ServerUrl $serverUrl -Token $SiteToken

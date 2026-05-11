@@ -53,6 +53,7 @@ describe("diagnostics shared model", () => {
           command: "powershell -ExecutionPolicy Bypass -File install-connector.ps1",
           detail: "Rerun registration so the server stores the current daemon URL.",
         },
+        userVisible: true,
         lastCheckedAt: "2026-05-11T00:00:00.000Z",
       }),
     );
@@ -65,6 +66,7 @@ describe("diagnostics shared model", () => {
       fixCommand: "Rerun registration so the server stores the current daemon URL.",
       copyCommand: "powershell -ExecutionPolicy Bypass -File install-connector.ps1",
       lastCheckedAt: "2026-05-11T00:00:00.000Z",
+      userVisible: true,
     });
   });
 
@@ -78,6 +80,7 @@ describe("diagnostics shared model", () => {
         detail: "server abc; connector def",
         fixCommand: "Run full update.",
         lastCheckedAt: "2026-05-11T00:00:00.000Z",
+        userVisible: false,
       },
       "server",
     );
@@ -91,6 +94,7 @@ describe("diagnostics shared model", () => {
         kind: "manual",
         detail: "Run full update.",
       },
+      userVisible: false,
     });
   });
 

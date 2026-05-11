@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
+import { createJsonInstallReportStore } from "./install-report-store.ts";
 import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
 import { createPowerShellSelfServerUpdater } from "./self-server-update.ts";
 import { createGitUpdateNoticeSource } from "./update-notice.ts";
@@ -36,6 +37,7 @@ const updateNotice =
           : {}),
       });
 const deviceRegistryFile = process.env.CR_SITE_DEVICE_REGISTRY_FILE ?? defaultDeviceRegistryFile();
+const selfServerRoot = process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self-server");
 const registry = deviceRegistryFile
   ? new JsonFileDeviceRegistry(deviceRegistryFile)
   : new InMemoryDeviceRegistry();
@@ -53,13 +55,16 @@ const app = createSiteApp({
   ...(process.env.CR_DEV_FRONTEND_URL ? { selfHostUrl: process.env.CR_DEV_FRONTEND_URL } : {}),
   selfServerAutostart: createPowerShellSelfServerAutostartController({
     repoRoot: process.cwd(),
-    root: process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self-server"),
+    root: selfServerRoot,
   }),
   selfServerUpdater: createPowerShellSelfServerUpdater({
     repoRoot: process.cwd(),
-    root: process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self-server"),
+    root: selfServerRoot,
     branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
   }),
+  installReportStore: createJsonInstallReportStore(
+    join(selfServerRoot, "state", "install-reports.json"),
+  ),
 });
 
 const server = Bun.serve({

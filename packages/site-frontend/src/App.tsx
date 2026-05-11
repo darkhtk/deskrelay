@@ -149,6 +149,7 @@ const HELP_SECTIONS: Array<{
     open: true,
     items: [
       "Git, Bun, DeskRelay repo, workspace roots, Windows login task, local daemon, advertised daemon, server registry 순서로 확인합니다.",
+      "서버는 전체 report를 보관하지만, 사이트에는 사용자가 조치할 수 있는 실패/경고 항목만 표시합니다.",
       "ERROR 행은 실제로 막힌 단계입니다. 같은 행의 action 또는 hint를 먼저 처리합니다.",
       "local daemon은 해당 PC 안에서 127.0.0.1:18091이 응답하는지 확인합니다.",
       "advertised daemon은 서버가 Tailscale/LAN 주소의 18091 포트로 접근 가능한지 확인합니다.",

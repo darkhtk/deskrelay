@@ -307,6 +307,52 @@ describe("self-host command helper", () => {
     expect(status.status).toBe(200);
     expect(await status.json()).toEqual({ state: "running", logPath: "update.log" });
   });
+
+  test("install reports are accepted and listed through authenticated endpoints", async () => {
+    const reports: unknown[] = [];
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      installReportStore: {
+        async list() {
+          return reports as never;
+        },
+        async add(input) {
+          const report = {
+            id: "install_1",
+            receivedAt: "2026-05-11T00:00:00.000Z",
+            status: "failed",
+            steps: (input as { steps?: unknown[] }).steps ?? [],
+          };
+          reports.unshift(report);
+          return report as never;
+        },
+      },
+    });
+
+    const unauth = await app.fetch(new Request("http://site.local/api/self/install-reports"));
+    expect(unauth.status).toBe(401);
+
+    const posted = await app.fetch(
+      new Request("http://site.local/api/self/install-reports", {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          status: "failed",
+          steps: [{ id: "firewall", label: "Firewall", status: "failed", summary: "blocked" }],
+        }),
+      }),
+    );
+    expect(posted.status).toBe(201);
+
+    const listed = await app.fetch(
+      new Request("http://site.local/api/self/install-reports", {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(listed.status).toBe(200);
+    expect((await listed.json()).reports).toHaveLength(1);
+  });
 });
 
 describe("doctor endpoints", () => {
@@ -389,6 +435,42 @@ describe("doctor endpoints", () => {
       "restricted workspace access",
     );
     expect(findCheck(body.checks, "device.claude")?.summary).not.toContain("remote-claude");
+  });
+
+  test("GET /api/devices/:id/doctor flags a remote registration with a localhost-only connector", async () => {
+    setup.setMockResponse(() =>
+      Response.json({
+        ok: true,
+        startedAt: "2026-04-30T00:00:00.000Z",
+        listening: { host: "127.0.0.1", port: 18091 },
+        behaviors: [{ name: "remote-claude" }],
+        workspaceRoots: { mode: "restricted", roots: ["C:\\Users\\me\\Projects"] },
+        diagnostics: {
+          remoteClaudeLoaded: true,
+          approvalsHookEnabled: true,
+          pendingApprovals: 0,
+        },
+      }),
+    );
+
+    const regRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: "http://100.64.0.5:18091",
+        label: "Remote PC",
+        authToken: "saved-token",
+      }),
+    );
+    const device = (await regRes.json()) as { id: string };
+
+    const res = await setup.app.fetch(authedRequest("GET", `/api/devices/${device.id}/doctor`));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      checks: Array<{ id: string; severity: string; summary: string; userVisible?: boolean }>;
+    };
+    const check = findCheck(body.checks, "device.listen-bind");
+    expect(check?.severity).toBe("error");
+    expect(check?.summary).toContain("127.0.0.1");
+    expect(check?.userVisible).toBe(true);
   });
 });
 

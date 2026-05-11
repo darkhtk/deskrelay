@@ -62,6 +62,7 @@ export interface DiagnosticStep {
   retrySafe?: boolean;
   source?: DiagnosticSource;
   lastCheckedAt?: string;
+  userVisible?: boolean;
 }
 
 export interface DiagnosticCheck {
@@ -73,6 +74,7 @@ export interface DiagnosticCheck {
   fixCommand?: string;
   copyCommand?: string;
   lastCheckedAt: string;
+  userVisible?: boolean;
 }
 
 export interface DiagnosticReport {
@@ -131,6 +133,7 @@ export function diagnosticCheckFromStep(step: DiagnosticStep): DiagnosticCheck {
     ...(action ? { fixCommand: action } : {}),
     ...(command ? { copyCommand: command } : {}),
     lastCheckedAt: step.lastCheckedAt ?? new Date(0).toISOString(),
+    ...(step.userVisible !== undefined ? { userVisible: step.userVisible } : {}),
   };
 }
 
@@ -157,5 +160,6 @@ export function diagnosticStepFromCheck(
       : {}),
     ...(source ? { source } : {}),
     lastCheckedAt: check.lastCheckedAt,
+    ...(check.userVisible !== undefined ? { userVisible: check.userVisible } : {}),
   });
 }

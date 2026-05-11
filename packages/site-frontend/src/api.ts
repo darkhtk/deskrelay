@@ -251,6 +251,17 @@ export interface SelfServerUpdateStatus {
   error?: string;
 }
 
+export interface InstallReportRecord {
+  id: string;
+  receivedAt: string;
+  generatedAt?: string;
+  status: "succeeded" | "failed" | "unknown";
+  server?: string;
+  label?: string;
+  reportPath?: string;
+  steps: DiagnosticStep[];
+}
+
 export interface DeviceUpdateResponse {
   ok?: boolean;
   state?: UpdateState;
@@ -399,6 +410,8 @@ export const api = {
     request<SelfServerAutostartStatus>("PUT", "/api/self/autostart", { enabled }),
   selfUpdate: () => request<SelfServerUpdateResponse>("POST", "/api/self/update"),
   selfUpdateStatus: () => request<SelfServerUpdateStatus>("GET", "/api/self/update/status"),
+  installReports: () =>
+    request<{ reports: InstallReportRecord[] }>("GET", "/api/self/install-reports?limit=5"),
   updateDevice: (id: string) =>
     request<DeviceUpdateResponse>("POST", `/api/devices/${id}/system/update`),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>

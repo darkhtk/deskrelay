@@ -14,6 +14,7 @@ import {
   DeviceRegistryError,
   normalizeDaemonUrl,
 } from "./device-registry.ts";
+import type { InstallReportStore } from "./install-report-store.ts";
 import { loc } from "./i18n.ts";
 import type {
   SelfServerAutostartController,
@@ -36,6 +37,7 @@ export interface SiteAppOptions {
   selfHostUrl?: string;
   selfServerAutostart?: SelfServerAutostartController;
   selfServerUpdater?: SelfServerUpdater;
+  installReportStore?: InstallReportStore;
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -192,6 +194,25 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     } catch (err) {
       return c.json({ state: "failed", error: (err as Error).message }, 500);
     }
+  });
+
+  app.get("/api/self/install-reports", async (c) => {
+    if (!options.installReportStore) return c.json({ reports: [] });
+    const limit = Number(new URL(c.req.url).searchParams.get("limit") ?? "10");
+    return c.json({ reports: await options.installReportStore.list(limit) });
+  });
+
+  app.post("/api/self/install-reports", async (c) => {
+    if (!options.installReportStore) {
+      return c.json({ error: "install report store is not configured" }, 501);
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    return c.json(await options.installReportStore.add(body), 201);
   });
 
   app.post("/api/devices", async (c) => {
@@ -1027,6 +1048,7 @@ async function buildServerDiagnosticReport(
       summary: "site backend is responding",
       detail: `version ${input.build.version}`,
       generatedAt,
+      userVisible: false,
     }),
   );
   checks.push(
@@ -1039,6 +1061,7 @@ async function buildServerDiagnosticReport(
         ? "Browsers and connector registration commands can authenticate."
         : "Restart the server with a CR_SITE_TOKEN value.",
       generatedAt,
+      userVisible: !input.token,
     }),
   );
   checks.push(
@@ -1052,6 +1075,7 @@ async function buildServerDiagnosticReport(
       detail:
         "Connector daemon tokens are stored by the server and are not returned by public device APIs.",
       generatedAt,
+      userVisible: !input.token,
     }),
   );
   checks.push(
@@ -1069,6 +1093,7 @@ async function buildServerDiagnosticReport(
           ? "Use this URL from another PC on the same LAN/VPN."
           : "Install Tailscale or use a LAN address before registering another PC.",
       generatedAt,
+      userVisible: remoteUrls.length === 0 || isLocalHost(new URL(preferredUrl).hostname),
     }),
   );
   checks.push(
@@ -1082,6 +1107,7 @@ async function buildServerDiagnosticReport(
           ? "Registered devices are available to the browser."
           : "Run the generated registration command on at least one PC.",
       generatedAt,
+      userVisible: input.registry.list().length === 0,
     }),
   );
   checks.push(
@@ -1094,6 +1120,7 @@ async function buildServerDiagnosticReport(
         ? "The server was started from a dirty working tree. Restart after committing or pulling."
         : "The server build metadata is stable.",
       generatedAt,
+      userVisible: input.build.dirty,
     }),
   );
 
@@ -1106,6 +1133,7 @@ async function buildServerDiagnosticReport(
         summary: "local daemon token is not available to the site backend",
         detail: "This is acceptable if this PC is only acting as a server.",
         generatedAt,
+        userVisible: false,
       }),
     );
   } else {
@@ -1121,6 +1149,7 @@ async function buildServerDiagnosticReport(
           ? "This server PC can also be used as a controlled device."
           : status.detail,
         generatedAt,
+        userVisible: !status.ok,
       }),
     );
   }
@@ -1158,6 +1187,7 @@ async function buildDeviceDiagnosticReport(
       summary: `${input.device.label} is registered`,
       detail: input.device.daemonUrl,
       generatedAt,
+      userVisible: false,
     }),
   );
   checks.push(
@@ -1176,6 +1206,7 @@ async function buildDeviceDiagnosticReport(
             ? `Same label appears ${duplicateLabels.length + 1} times.`
             : "Registration dedupe is currently clean.",
       generatedAt,
+      userVisible: duplicateUrls.length > 0 || duplicateLabels.length > 0,
     }),
   );
   checks.push(
@@ -1188,6 +1219,7 @@ async function buildDeviceDiagnosticReport(
         ? "The site backend can authenticate to this connector."
         : "Re-register this device so its connector token is saved.",
       generatedAt,
+      userVisible: !token,
     }),
   );
 
@@ -1204,6 +1236,7 @@ async function buildDeviceDiagnosticReport(
           : "status endpoint is reachable"
         : status.detail,
       generatedAt,
+      userVisible: !status.ok,
     }),
   );
 
@@ -1215,6 +1248,7 @@ async function buildDeviceDiagnosticReport(
         severity: "unknown",
         summary: "not checked because daemon status failed",
         generatedAt,
+        userVisible: false,
       }),
       diagnosticCheck({
         id: "device.workspace",
@@ -1222,6 +1256,7 @@ async function buildDeviceDiagnosticReport(
         severity: "unknown",
         summary: "not checked because daemon status failed",
         generatedAt,
+        userVisible: false,
       }),
       diagnosticCheck({
         id: "device.version",
@@ -1229,6 +1264,7 @@ async function buildDeviceDiagnosticReport(
         severity: "unknown",
         summary: "not checked because daemon status failed",
         generatedAt,
+        userVisible: false,
       }),
     );
     return {
@@ -1242,6 +1278,33 @@ async function buildDeviceDiagnosticReport(
   }
 
   const payload = status.payload;
+  const listenHost = payload.listening?.host;
+  const listenPort = payload.listening?.port;
+  const registeredNetwork = daemonNetworkKind(input.device.daemonUrl);
+  const registeredAsRemote =
+    registeredNetwork === "tailscale" ||
+    registeredNetwork === "lan" ||
+    registeredNetwork === "public";
+  const localOnlyListen = listenHost ? isLocalHost(listenHost) : false;
+  const listenMismatch = Boolean(registeredAsRemote && localOnlyListen);
+  checks.push(
+    diagnosticCheck({
+      id: "device.listen-bind",
+      label: "Connector listen binding",
+      severity: listenMismatch ? "error" : listenHost ? "ok" : "unknown",
+      summary: listenHost
+        ? listenMismatch
+          ? `connector is bound to ${listenHost}:${listenPort ?? "?"}`
+          : `connector listens on ${listenHost}:${listenPort ?? "?"}`
+        : "connector did not report a bind address",
+      detail: listenMismatch
+        ? `This device is registered as ${input.device.daemonUrl}, but the connector is local-only. Re-register or restart it with listen host 0.0.0.0 so the server can reach it through LAN/Tailscale.`
+        : "The reported bind address matches the registered network boundary.",
+      generatedAt,
+      userVisible: listenMismatch,
+    }),
+  );
+
   const remoteClaudeLoaded = payload.diagnostics?.remoteClaudeLoaded;
   checks.push(
     diagnosticCheck({
@@ -1260,6 +1323,7 @@ async function buildDeviceDiagnosticReport(
           ? "Restart or update the connector before starting chat runs."
           : "Connector reports that command execution support is available.",
       generatedAt,
+      userVisible: remoteClaudeLoaded === false,
     }),
   );
 
@@ -1278,6 +1342,7 @@ async function buildDeviceDiagnosticReport(
             ? "No allowed workspace roots are configured."
             : "Unrestricted workspace access is enabled.",
       generatedAt,
+      userVisible: workspaceMode === "restricted" && roots.length === 0,
     }),
   );
   checks.push(
@@ -1296,6 +1361,8 @@ async function buildDeviceDiagnosticReport(
             ? `Allowed roots: ${roots.join("; ")}`
             : "No workspace roots are exposed beyond daemon policy.",
       generatedAt,
+      userVisible:
+        daemonNetworkKind(input.device.daemonUrl) === "public" || workspaceMode === "unrestricted",
     }),
   );
 
@@ -1313,6 +1380,7 @@ async function buildDeviceDiagnosticReport(
             : "build comparison unavailable",
       detail: `server ${buildSummary(input.serverBuild)}; connector ${buildSummary(payload.build)}`,
       generatedAt,
+      userVisible: same !== true,
     }),
   );
 
@@ -1329,6 +1397,7 @@ async function buildDeviceDiagnosticReport(
           ? "Tool approval UX may not work until the connector is restarted with approvals enabled."
           : undefined,
       generatedAt,
+      userVisible: payload.diagnostics?.approvalsHookEnabled === false,
     }),
   );
 
@@ -1351,6 +1420,7 @@ function diagnosticCheck(input: {
   detail?: string | undefined;
   fixCommand?: string | undefined;
   copyCommand?: string | undefined;
+  userVisible?: boolean | undefined;
 }): DiagnosticCheck {
   return {
     id: input.id,
@@ -1361,6 +1431,7 @@ function diagnosticCheck(input: {
     ...(input.fixCommand ? { fixCommand: input.fixCommand } : {}),
     ...(input.copyCommand ? { copyCommand: input.copyCommand } : {}),
     lastCheckedAt: input.generatedAt,
+    ...(input.userVisible !== undefined ? { userVisible: input.userVisible } : {}),
   };
 }
 

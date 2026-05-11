@@ -222,4 +222,75 @@ describe("ConnectionDiagnostics", () => {
       expect(diagnosticsCalls).toBeGreaterThan(1);
     });
   });
+
+  test("shows only actionable installer report steps", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify([SAMPLE_DEVICE]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${SAMPLE_DEVICE.id}/diagnostics`)) {
+        return diagnosticsResponse();
+      }
+      if (url.endsWith(`/api/devices/${SAMPLE_DEVICE.id}/doctor`)) {
+        return new Response(JSON.stringify({ checks: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/self/install-reports?limit=5")) {
+        return new Response(
+          JSON.stringify({
+            reports: [
+              {
+                id: "install_1",
+                receivedAt: "2026-05-11T00:00:00.000Z",
+                status: "failed",
+                label: "Remote PC",
+                steps: [
+                  {
+                    id: "repo",
+                    label: "DeskRelay repo",
+                    status: "ok",
+                    severity: "ok",
+                    summary: "repo is clean",
+                    userVisible: false,
+                  },
+                  {
+                    id: "firewall",
+                    label: "Windows Firewall",
+                    status: "failed",
+                    severity: "error",
+                    summary: "inbound port is blocked",
+                    userVisible: true,
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/healthz")) {
+        return new Response(
+          JSON.stringify({ ok: true, version: "0.0.0", devices: 1, build: SERVER_BUILD }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const { container } = render(() => (
+      <ConnectionDiagnostics initialSelectedDeviceId={SAMPLE_DEVICE.id} />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Windows Firewall");
+    });
+    expect(container.textContent).toContain("inbound port is blocked");
+    expect(container.textContent).not.toContain("repo is clean");
+  });
 });

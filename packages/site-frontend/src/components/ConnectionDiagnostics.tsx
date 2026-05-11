@@ -1,9 +1,11 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
+import type { DiagnosticStep } from "@deskrelay/shared";
 import {
   type DeskRelayBuildInfo,
   type Device,
   type DiagnosticCheck,
   type DiagnosticSeverity,
+  type InstallReportRecord,
   type SelfServerUpdateStatus,
   api,
 } from "../api.ts";
@@ -51,6 +53,14 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   const [serverUpdateStatus, { refetch: refetchServerUpdateStatus }] = createResource(
     () => props.devicesRevision ?? 0,
     () => api.selfUpdateStatus().catch(() => null),
+  );
+  const [installReports, { refetch: refetchInstallReports }] = createResource(
+    () => props.devicesRevision ?? 0,
+    () =>
+      api
+        .installReports()
+        .then((result) => result.reports ?? [])
+        .catch(() => []),
   );
 
   createEffect(() => {
@@ -113,6 +123,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   function refresh(): void {
     void refetchHealth();
     void refetchServerUpdateStatus();
+    void refetchInstallReports();
     void refetchDevices();
     if (selectedDevice()) void refetchDiagnostics();
     if (selectedDevice()) void refetchDoctor();
@@ -158,7 +169,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           : t("conn-diag.unknown");
 
     const workspaceMode = snapshot?.workspaceRoots?.mode ?? t("conn-diag.unknown");
-    return [
+    const baseRows: StatusRow[] = [
       {
         tone: device ? "ok" : "offline",
         label: t("conn-diag.row.installed"),
@@ -228,11 +239,12 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         }),
       },
     ];
+    return baseRows.filter(isUserVisibleStatusRow);
   };
 
   const doctorChecks = (): DiagnosticCheck[] => {
     const report = doctor();
-    return Array.isArray(report?.checks) ? report.checks : [];
+    return Array.isArray(report?.checks) ? report.checks.filter(isUserVisibleDiagnosticCheck) : [];
   };
 
   const doctorRows = (): StatusRow[] => {
@@ -254,33 +266,14 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       detail: check.detail ? `${check.summary} · ${check.detail}` : check.summary,
     }));
   };
-  const registrationVerificationRows = (): StatusRow[] => [
-    {
-      tone: "pending",
-      label: "Git / Bun",
-      detail: "설치 스크립트가 repo 갱신과 의존성 설치 가능 여부를 확인합니다.",
-    },
-    {
-      tone: "pending",
-      label: "Workspace roots",
-      detail: "등록 명령에 지정된 작업 루트가 실제로 존재하는지 확인합니다.",
-    },
-    {
-      tone: "pending",
-      label: "Windows login task",
-      detail: "부팅 후 connector가 자동 실행되도록 로그인 작업이 등록됐는지 확인합니다.",
-    },
-    {
-      tone: "pending",
-      label: "local / advertised daemon",
-      detail: "이 PC 내부와 서버가 접근하는 Tailscale/LAN 주소 양쪽에서 daemon 응답을 확인합니다.",
-    },
-    {
-      tone: "pending",
-      label: "server registry",
-      detail: "서버가 site token으로 디바이스 목록을 읽고 등록 결과를 확인합니다.",
-    },
-  ];
+  const visibleInstallReports = (): InstallReportRecord[] =>
+    (installReports() ?? []).filter((report) => report.steps.some(isUserVisibleDiagnosticStep));
+  const installReportRows = (report: InstallReportRecord): StatusRow[] =>
+    report.steps.filter(isUserVisibleDiagnosticStep).map((step) => ({
+      tone: diagnosticTone(step.severity),
+      label: step.label,
+      detail: step.detail ? `${step.summary} · ${step.detail}` : step.summary,
+    }));
 
   return (
     <div class="connection-diagnostics">
@@ -353,7 +346,12 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         />
       </div>
 
-      <StatusTable rows={rows()} label={t("conn-diag.summary")} />
+      <Show
+        when={rows().length > 0}
+        fallback={<p class="settings-card-help">표시할 조치 항목이 없습니다.</p>}
+      >
+        <StatusTable rows={rows()} label={t("conn-diag.summary")} />
+      </Show>
 
       <Show when={doctorRows().length > 0}>
         <div class="connection-diagnostics-list">
@@ -362,15 +360,22 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         </div>
       </Show>
 
-      <div class="connection-diagnostics-list">
-        <div class="connection-diagnostics-list-title">등록 검증 리포트 기준</div>
-        <StatusTable rows={registrationVerificationRows()} label="등록 검증 리포트 기준" />
-        <p class="settings-card-help">
-          다른 PC 등록 명령이 실패하면 대상 PC의{" "}
-          <code>%LOCALAPPDATA%\DeskRelay\reports\connector-verify-*.json</code> 파일에서 같은
-          단계명을 확인하세요.
-        </p>
-      </div>
+      <Show when={visibleInstallReports().length > 0}>
+        <div class="connection-diagnostics-list">
+          <div class="connection-diagnostics-list-title">최근 설치/등록 조치 항목</div>
+          <For each={visibleInstallReports()}>
+            {(report) => (
+              <div class="connection-diagnostics-report">
+                <div class="settings-card-help">
+                  {report.label ? `${report.label} · ` : ""}
+                  {formatTime(report.generatedAt ?? report.receivedAt)}
+                </div>
+                <StatusTable rows={installReportRows(report)} label="최근 설치/등록 조치 항목" />
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
 
       <Show when={(diagnostics()?.workspaceRoots?.roots ?? []).length > 0}>
         <div class="connection-diagnostics-list">
@@ -513,4 +518,27 @@ function updateStatusText(status: SelfServerUpdateStatus | null | undefined): st
     return `서버 업데이트 완료 · ${changed}${range}`;
   }
   return `서버 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+}
+
+function isUserVisibleStatusRow(row: StatusRow): boolean {
+  if (row.action || row.onAction) return true;
+  if (row.tone === "ok") return false;
+  if (row.tone === "pending" && row.label.includes("업데이트") && row.detail.includes("기록")) {
+    return false;
+  }
+  return true;
+}
+
+function isUserVisibleDiagnosticCheck(check: DiagnosticCheck): boolean {
+  if (check.userVisible === false) return false;
+  if (check.userVisible === true) return true;
+  if (check.fixCommand || check.copyCommand) return true;
+  return check.severity !== "ok";
+}
+
+function isUserVisibleDiagnosticStep(step: DiagnosticStep): boolean {
+  if (step.userVisible === false) return false;
+  if (step.userVisible === true) return true;
+  if (step.action) return true;
+  return step.severity !== "ok";
 }
