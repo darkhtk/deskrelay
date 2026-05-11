@@ -5181,37 +5181,57 @@ dialog.approval-modal-root,
   font-size: 13px;
   font-weight: 600;
 }
-.connection-diagnostics-rows {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 28px;
+.connection-diagnostics-table-wrap {
+  width: 100%;
+  overflow-x: auto;
 }
-.connection-diagnostics-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: start;
-  min-width: 0;
+.connection-diagnostics-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
 }
-.connection-diagnostics-row-main {
-  min-width: 0;
+.connection-diagnostics-table-status {
+  width: 42px;
 }
-.connection-diagnostics-row-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text);
-  font-size: 13px;
+.connection-diagnostics-table-name {
+  width: 150px;
+}
+.connection-diagnostics-table-action {
+  width: 116px;
+}
+.connection-diagnostics-table th,
+.connection-diagnostics-table td {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.connection-diagnostics-table thead th {
+  color: var(--text-faint);
+  font-size: 11px;
   font-weight: 500;
 }
-.connection-diagnostics-row-detail {
-  margin-top: 3px;
+.connection-diagnostics-status-cell {
+  text-align: center;
+}
+.connection-diagnostics-item-cell {
+  color: var(--text);
+  font-weight: 500;
+}
+.connection-diagnostics-detail-cell {
   color: var(--text-muted);
-  font-size: 12px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+.connection-diagnostics-action-cell {
+  color: var(--text-muted);
+}
+.connection-diagnostics-action-cell .text-button {
+  white-space: normal;
 }
 .connection-diagnostics-dot {
   width: 7px;
@@ -5238,10 +5258,14 @@ dialog.approval-modal-root,
   flex-wrap: wrap;
   gap: 7px 10px;
   align-items: baseline;
+  min-width: 0;
 }
 .connection-diagnostics-list code {
   color: var(--text-muted);
   font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
 }
 .connection-diagnostics-update {
   border-left: 3px solid var(--border-strong);
@@ -5277,8 +5301,7 @@ dialog.approval-modal-root,
   .connection-diagnostics-header .text-button {
     margin-left: 0;
   }
-  .connection-diagnostics-summary,
-  .connection-diagnostics-rows {
+  .connection-diagnostics-summary {
     grid-template-columns: 1fr;
   }
   .connection-diagnostics-device .text-input {

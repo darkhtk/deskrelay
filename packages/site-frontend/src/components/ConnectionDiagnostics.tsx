@@ -390,70 +390,18 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         />
       </div>
 
-      <div class="connection-diagnostics-rows">
-        <For each={rows()}>
-          {(row) => (
-            <div class="connection-diagnostics-row">
-              <div class="connection-diagnostics-row-main">
-                <div class="connection-diagnostics-row-title">
-                  <span class={`connection-diagnostics-dot tone-${row.tone}`} />
-                  {row.label}
-                </div>
-                <div class="connection-diagnostics-row-detail">{row.detail}</div>
-              </div>
-              <Show when={row.action && row.onAction}>
-                <button
-                  type="button"
-                  class="text-button"
-                  disabled={row.disabled}
-                  onClick={() => row.onAction?.()}
-                >
-                  {row.action}
-                </button>
-              </Show>
-            </div>
-          )}
-        </For>
-      </div>
+      <StatusTable rows={rows()} label={t("conn-diag.summary")} />
 
       <Show when={doctorRows().length > 0}>
         <div class="connection-diagnostics-list">
           <div class="connection-diagnostics-list-title">상세 진단</div>
-          <div class="connection-diagnostics-rows">
-            <For each={doctorRows()}>
-              {(row) => (
-                <div class="connection-diagnostics-row">
-                  <div class="connection-diagnostics-row-main">
-                    <div class="connection-diagnostics-row-title">
-                      <span class={`connection-diagnostics-dot tone-${row.tone}`} />
-                      {row.label}
-                    </div>
-                    <div class="connection-diagnostics-row-detail">{row.detail}</div>
-                  </div>
-                </div>
-              )}
-            </For>
-          </div>
+          <StatusTable rows={doctorRows()} label="상세 진단" />
         </div>
       </Show>
 
       <div class="connection-diagnostics-list">
         <div class="connection-diagnostics-list-title">등록 검증 리포트 기준</div>
-        <div class="connection-diagnostics-rows">
-          <For each={registrationVerificationRows()}>
-            {(row) => (
-              <div class="connection-diagnostics-row">
-                <div class="connection-diagnostics-row-main">
-                  <div class="connection-diagnostics-row-title">
-                    <span class={`connection-diagnostics-dot tone-${row.tone}`} />
-                    {row.label}
-                  </div>
-                  <div class="connection-diagnostics-row-detail">{row.detail}</div>
-                </div>
-              </div>
-            )}
-          </For>
-        </div>
+        <StatusTable rows={registrationVerificationRows()} label="등록 검증 리포트 기준" />
         <p class="settings-card-help">
           다른 PC 등록 명령이 실패하면 대상 PC의{" "}
           <code>%LOCALAPPDATA%\DeskRelay\reports\connector-verify-*.json</code> 파일에서 같은
@@ -494,6 +442,54 @@ const Metric: Component<{ label: string; value: string }> = (props) => (
   <div class="connection-diagnostics-metric">
     <div class="connection-diagnostics-metric-label">{props.label}</div>
     <div class="connection-diagnostics-metric-value">{props.value}</div>
+  </div>
+);
+
+const StatusTable: Component<{ rows: StatusRow[]; label: string }> = (props) => (
+  <div class="connection-diagnostics-table-wrap">
+    <table class="connection-diagnostics-table" aria-label={props.label}>
+      <colgroup>
+        <col class="connection-diagnostics-table-status" />
+        <col class="connection-diagnostics-table-name" />
+        <col class="connection-diagnostics-table-detail" />
+        <col class="connection-diagnostics-table-action" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th scope="col">상태</th>
+          <th scope="col">항목</th>
+          <th scope="col">내용</th>
+          <th scope="col">작업</th>
+        </tr>
+      </thead>
+      <tbody>
+        <For each={props.rows}>
+          {(row) => (
+            <tr>
+              <td class="connection-diagnostics-status-cell">
+                <span class={`connection-diagnostics-dot tone-${row.tone}`} />
+              </td>
+              <th scope="row" class="connection-diagnostics-item-cell">
+                {row.label}
+              </th>
+              <td class="connection-diagnostics-detail-cell">{row.detail}</td>
+              <td class="connection-diagnostics-action-cell">
+                <Show when={row.action && row.onAction}>
+                  <button
+                    type="button"
+                    class="text-button"
+                    disabled={row.disabled}
+                    onClick={() => row.onAction?.()}
+                  >
+                    {row.action}
+                  </button>
+                </Show>
+              </td>
+            </tr>
+          )}
+        </For>
+      </tbody>
+    </table>
   </div>
 );
 
