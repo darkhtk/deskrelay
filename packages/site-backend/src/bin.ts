@@ -8,6 +8,7 @@ import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
 import { createJsonDeviceUpdateQueueStore } from "./device-update-queue-store.ts";
 import { createJsonInstallReportStore } from "./install-report-store.ts";
+import { createJsonManagerTaskStore } from "./manager-task-store.ts";
 import { createPowerShellSelfServerAutostartController } from "./self-server-autostart.ts";
 import { createPowerShellSelfServerProcessController } from "./self-server-process.ts";
 import { createPowerShellSelfServerUpdater } from "./self-server-update.ts";
@@ -82,6 +83,7 @@ const app = createSiteApp({
   deviceUpdateQueue: createJsonDeviceUpdateQueueStore(
     join(selfServerRoot, "state", "device-update-queue.json"),
   ),
+  managerTaskStore: createJsonManagerTaskStore(join(selfServerRoot, "state", "manager-tasks.json")),
   logDir,
 });
 

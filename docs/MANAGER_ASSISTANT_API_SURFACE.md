@@ -56,6 +56,12 @@ Base URL for the browser/self-host page is usually the frontend URL, for example
 | `GET` | `/api/self/network/status` | Server network summary: local/LAN/Tailscale URLs and preferred remote URL. | none |
 | `GET` | `/api/self/install/status` | Server install/running/autostart/update/report summary. | none |
 | `GET` | `/api/self/security/boundary` | Server token and network exposure summary without exposing secrets. | none |
+| `GET` | `/api/manager/tasks` | List recent manager tasks. | query `limit` |
+| `POST` | `/api/manager/tasks` | Create a high-level manager task. Defaults to `dryRun=true` unless explicitly false. | JSON `{ kind, targetId?, dryRun?, requestedBy?, params? }` |
+| `GET` | `/api/manager/tasks/:id` | Read one manager task and its diagnostic steps/result. | none |
+| `GET` | `/api/manager/audit-log` | Read manager task history. | query `limit` |
+| `GET` | `/api/manager/update/plan` | Build a server/device update plan without starting updates. | none |
+| `GET` | `/api/manager/registration/last-failure` | Classify the most recent failed connector registration report. | none |
 | `GET` | `/api/self/autostart` | Server login-task/autostart status. | none |
 | `PUT` | `/api/self/autostart` | Enable/disable server autostart. | JSON `{ enabled: boolean }` |
 | `POST` | `/api/self/update` | Start self-server update. | none |
@@ -141,6 +147,28 @@ The connector daemon defaults to `http://127.0.0.1:18091` on local-only runs and
 | `managed` | Windows `C:\Program Files\ClaudeCode\CLAUDE.md`; macOS `/Library/Application Support/ClaudeCode/CLAUDE.md`; Linux `/etc/claude-code/CLAUDE.md` | no | OS/admin managed instruction. |
 
 ## remote-claude Behavior RPC
+
+## Manager Tasks
+
+`POST /api/manager/tasks` is the safe execution layer for a future DeskRelay management assistant. It does not expose raw shell execution. Each task records diagnostic steps and a final state.
+
+| Kind | Target | Side Effects When `dryRun=false` |
+|---|---|---|
+| `diagnose` | server + all devices | none; collects existing diagnostic reports. |
+| `update-server` | server | starts the self-server updater if configured and not already running. |
+| `update-device` | one device | calls connector update; offline devices can be queued. |
+| `update-all` | server + all devices | starts server update and requests each device update sequentially. |
+| `restart-server` | server | requests self-server stack restart when wired. |
+| `restart-device` | one device | requests connector restart through that device daemon. |
+| `repair-registration` | latest failed install report | currently analysis/manual-action only; automatic OS repair is blocked. |
+
+Task states:
+
+```text
+pending -> running -> succeeded | blocked | waiting_for_device | restart_required | failed
+```
+
+The default is `dryRun=true`; callers must pass `"dryRun": false` for update/restart side effects.
 
 Call through:
 

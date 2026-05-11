@@ -399,6 +399,104 @@ describe("manager logs and process APIs", () => {
   });
 });
 
+describe("manager task API", () => {
+  test("dry-run update-device creates an auditable task without touching daemon", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "test",
+    });
+    const res = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/tasks", {
+        kind: "update-device",
+        targetId: device.id,
+        requestedBy: "manager-assistant",
+      }),
+    );
+    expect(res.status).toBe(202);
+    const task = (await res.json()) as {
+      id?: string;
+      state?: string;
+      dryRun?: boolean;
+      targetLabel?: string;
+    };
+    expect(task.state).toBe("succeeded");
+    expect(task.dryRun).toBe(true);
+    expect(task.targetLabel).toBe("test");
+    expect(setup.calls).toHaveLength(0);
+
+    const listed = await setup.app.fetch(authedRequest("GET", "/api/manager/tasks"));
+    expect(listed.status).toBe(200);
+    expect(((await listed.json()) as { tasks?: unknown[] }).tasks).toHaveLength(1);
+
+    const audit = await setup.app.fetch(authedRequest("GET", "/api/manager/audit-log"));
+    expect(audit.status).toBe(200);
+    expect(((await audit.json()) as { entries?: unknown[] }).entries).toHaveLength(1);
+  });
+
+  test("unknown target device blocks device tasks", async () => {
+    const res = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/tasks", {
+        kind: "restart-device",
+        targetId: "missing-device",
+        dryRun: false,
+      }),
+    );
+    expect(res.status).toBe(409);
+    const task = (await res.json()) as { state?: string; error?: string };
+    expect(task.state).toBe("blocked");
+    expect(task.error).toContain("unknown device");
+  });
+
+  test("update plan and last registration failure APIs expose structured manager data", async () => {
+    const reports = [
+      {
+        id: "install_1",
+        receivedAt: "2026-05-11T00:00:00.000Z",
+        status: "failed" as const,
+        label: "remote",
+        steps: [
+          {
+            id: "advertised-daemon",
+            label: "server-to-connector probe",
+            status: "failed" as const,
+            severity: "error" as const,
+            summary: "timed out while checking Tailscale address",
+            retrySafe: true,
+          },
+        ],
+      },
+    ];
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      installReportStore: {
+        async list() {
+          return reports;
+        },
+        async add() {
+          return reports[0] as never;
+        },
+      },
+    });
+
+    const plan = await app.fetch(authedRequest("GET", "/api/manager/update/plan"));
+    expect(plan.status).toBe(200);
+    expect(((await plan.json()) as { items?: unknown[] }).items?.length).toBeGreaterThan(0);
+
+    const failure = await app.fetch(authedRequest("GET", "/api/manager/registration/last-failure"));
+    expect(failure.status).toBe(200);
+    const body = (await failure.json()) as {
+      found?: boolean;
+      classification?: string;
+      retrySafe?: boolean;
+    };
+    expect(body.found).toBe(true);
+    expect(body.classification).toBe("firewall-or-route-timeout");
+    expect(body.retrySafe).toBe(true);
+  });
+});
+
 describe("device filesystem proxy", () => {
   test("forwards unrestricted workspace browse scope to the daemon", async () => {
     const device = setup.registry.register({

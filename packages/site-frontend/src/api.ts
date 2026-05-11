@@ -6,8 +6,12 @@ import type {
   ManagerLogResponse,
   ManagerNetworkStatus,
   ManagerProcessStatus,
+  ManagerRegistrationFailureAnalysis,
   ManagerRestartResult,
   ManagerSecurityBoundary,
+  ManagerTask,
+  ManagerTaskRequest,
+  ManagerUpdatePlan,
   UpdateState,
 } from "@deskrelay/shared";
 
@@ -447,6 +451,22 @@ export const api = {
   selfInstallStatus: () => request<ManagerInstallStatus>("GET", "/api/self/install/status"),
   selfSecurityBoundary: () =>
     request<ManagerSecurityBoundary>("GET", "/api/self/security/boundary"),
+  managerTasks: (limit?: number) =>
+    request<{ tasks: ManagerTask[] }>(
+      "GET",
+      `/api/manager/tasks${typeof limit === "number" ? `?limit=${limit}` : ""}`,
+    ),
+  managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
+  createManagerTask: (input: ManagerTaskRequest) =>
+    request<ManagerTask>("POST", "/api/manager/tasks", input),
+  managerAuditLog: (limit?: number) =>
+    request<{ entries: ManagerTask[] }>(
+      "GET",
+      `/api/manager/audit-log${typeof limit === "number" ? `?limit=${limit}` : ""}`,
+    ),
+  managerUpdatePlan: () => request<ManagerUpdatePlan>("GET", "/api/manager/update/plan"),
+  managerRegistrationLastFailure: () =>
+    request<ManagerRegistrationFailureAnalysis>("GET", "/api/manager/registration/last-failure"),
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerOtherPcCommand: () =>
     request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),

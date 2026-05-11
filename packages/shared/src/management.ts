@@ -1,9 +1,28 @@
+import type { DiagnosticStep } from "./diagnostics.ts";
 import type { DeskRelayBuildInfo } from "./version.ts";
 
 export const MANAGER_API_VERSION = "2026-05-11";
 
 export type ManagerScope = "server" | "device";
 export type ManagerNetworkKind = "local" | "tailscale" | "lan" | "public" | "unknown";
+export type ManagerTaskKind =
+  | "diagnose"
+  | "update-server"
+  | "update-device"
+  | "update-all"
+  | "restart-server"
+  | "restart-device"
+  | "repair-registration";
+export type ManagerTaskState =
+  | "pending"
+  | "running"
+  | "blocked"
+  | "waiting_for_device"
+  | "restart_required"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+export type ManagerTaskRequestedBy = "browser" | "manager-assistant" | "system";
 
 export interface ManagerRouteCapability {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -174,4 +193,68 @@ export interface ManagerSecurityBoundary {
     severity: "ok" | "warn" | "error" | "unknown";
     message: string;
   };
+}
+
+export interface ManagerTaskRequest {
+  kind: ManagerTaskKind;
+  targetId?: string;
+  dryRun?: boolean;
+  requestedBy?: ManagerTaskRequestedBy;
+  params?: Record<string, unknown>;
+}
+
+export interface ManagerTask {
+  id: string;
+  kind: ManagerTaskKind;
+  targetId?: string;
+  targetLabel?: string;
+  state: ManagerTaskState;
+  dryRun: boolean;
+  requestedBy: ManagerTaskRequestedBy;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  steps: DiagnosticStep[];
+  result?: unknown;
+  error?: string;
+}
+
+export interface ManagerTaskListResponse {
+  tasks: ManagerTask[];
+}
+
+export interface ManagerAuditLogResponse {
+  entries: ManagerTask[];
+}
+
+export interface ManagerUpdatePlanItem {
+  scope: ManagerScope;
+  targetId?: string;
+  targetLabel?: string;
+  action: "none" | "update" | "queue" | "restart" | "blocked" | "unknown";
+  state?: string;
+  reason: string;
+}
+
+export interface ManagerUpdatePlan {
+  generatedAt: string;
+  items: ManagerUpdatePlanItem[];
+  summary: {
+    severity: "ok" | "warn" | "error" | "unknown";
+    message: string;
+  };
+}
+
+export interface ManagerRegistrationFailureAnalysis {
+  generatedAt: string;
+  found: boolean;
+  reportId?: string;
+  receivedAt?: string;
+  status?: string;
+  label?: string;
+  failureStep?: DiagnosticStep;
+  classification?: string;
+  retrySafe?: boolean;
+  action?: string;
 }

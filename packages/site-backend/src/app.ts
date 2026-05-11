@@ -13,8 +13,14 @@ import {
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
   type ManagerSecurityBoundary,
+  type ManagerTask,
+  type ManagerTaskKind,
+  type ManagerTaskRequest,
+  type ManagerTaskState,
+  type ManagerUpdatePlan,
   type UpdateState,
   diagnosticStepFromCheck,
+  normalizeDiagnosticStep,
 } from "@deskrelay/shared";
 import { type DeskRelayBuildInfo, getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { Hono } from "hono";
@@ -28,6 +34,7 @@ import {
 import type { DeviceUpdateQueueStore } from "./device-update-queue-store.ts";
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
+import { type ManagerTaskStore, createInMemoryManagerTaskStore } from "./manager-task-store.ts";
 import type {
   SelfServerAutostartController,
   SelfServerAutostartStatus,
@@ -53,6 +60,7 @@ export interface SiteAppOptions {
   selfServerUpdater?: SelfServerUpdater;
   installReportStore?: InstallReportStore;
   deviceUpdateQueue?: DeviceUpdateQueueStore;
+  managerTaskStore?: ManagerTaskStore;
   logDir?: string;
 }
 
@@ -67,6 +75,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const localToken = options.localDaemonToken;
   const announcements = createAnnouncementSource(options, fetchImpl);
   const build = options.build ?? getDeskRelayBuildInfo();
+  const managerTaskStore = options.managerTaskStore ?? createInMemoryManagerTaskStore();
 
   app.get("/healthz", (c) =>
     c.json({
@@ -92,6 +101,65 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   }
 
   app.get("/api/capabilities", (c) => c.json(serverCapabilities(options)));
+
+  app.get("/api/manager/tasks", async (c) => {
+    return c.json({ tasks: await managerTaskStore.list(clampListLimit(c.req.query("limit"))) });
+  });
+
+  app.post("/api/manager/tasks", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const request = parseManagerTaskRequest(body);
+    if (!request.ok) return c.json({ error: request.error }, 400);
+    const task = await managerTaskStore.create({
+      kind: request.value.kind,
+      ...(request.value.targetId ? { targetId: request.value.targetId } : {}),
+      dryRun: request.value.dryRun ?? true,
+      requestedBy: request.value.requestedBy ?? "browser",
+      steps: [
+        taskStep({
+          id: "task.created",
+          label: "Task accepted",
+          status: "pending",
+          summary: `${request.value.kind} task accepted`,
+        }),
+      ],
+    });
+    const completed = await runManagerTask({
+      task,
+      request: request.value,
+      store: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+  });
+
+  app.get("/api/manager/tasks/:id", async (c) => {
+    const task = await managerTaskStore.get(c.req.param("id"));
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    return c.json(task);
+  });
+
+  app.get("/api/manager/audit-log", async (c) => {
+    return c.json({ entries: await managerTaskStore.list(clampListLimit(c.req.query("limit"))) });
+  });
+
+  app.get("/api/manager/update/plan", async (c) => {
+    return c.json(await buildManagerUpdatePlan({ options, registry, build }));
+  });
+
+  app.get("/api/manager/registration/last-failure", async (c) => {
+    return c.json(await analyzeLastRegistrationFailure(options.installReportStore));
+  });
 
   app.get("/api/devices", (c) => c.json(registry.list().map(toPublicDevice)));
 
@@ -913,6 +981,9 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "network.status",
       "install.status",
       "security.boundary",
+      "manager.tasks",
+      "manager.update-plan",
+      "manager.registration-analysis",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -948,6 +1019,24 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
         method: "GET",
         path: "/api/self/security/boundary",
         description: "Read server token and network boundary summary.",
+      },
+      { method: "GET", path: "/api/manager/tasks", description: "List manager tasks." },
+      { method: "POST", path: "/api/manager/tasks", description: "Create a manager task." },
+      { method: "GET", path: "/api/manager/tasks/:id", description: "Read one manager task." },
+      {
+        method: "GET",
+        path: "/api/manager/audit-log",
+        description: "Read manager task audit log.",
+      },
+      {
+        method: "GET",
+        path: "/api/manager/update/plan",
+        description: "Read a server and device update plan.",
+      },
+      {
+        method: "GET",
+        path: "/api/manager/registration/last-failure",
+        description: "Analyze the last failed connector registration report.",
       },
       { method: "GET", path: "/api/devices", description: "List registered devices." },
       { method: "POST", path: "/api/devices", description: "Register a device." },
@@ -1040,6 +1129,716 @@ function defaultSelfProcessStatus(build: DeskRelayBuildInfo) {
     platform: process.platform,
     arch: process.arch,
   };
+}
+
+interface ManagerTaskRunInput {
+  task: ManagerTask;
+  request: ManagerTaskRequest;
+  store: ManagerTaskStore;
+  options: SiteAppOptions;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  localToken: string | undefined;
+  build: DeskRelayBuildInfo;
+  requestUrl: string;
+}
+
+interface ManagerTaskExecutionResult {
+  state: ManagerTaskState;
+  steps: ManagerTask["steps"];
+  result?: unknown;
+  targetLabel?: string;
+  error?: string;
+}
+
+async function runManagerTask(input: ManagerTaskRunInput): Promise<ManagerTask> {
+  const startedAt = new Date().toISOString();
+  const started = await input.store.update(input.task.id, {
+    state: "running",
+    startedAt,
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "task.running",
+        label: "Task running",
+        status: "running",
+        summary: "Task execution started.",
+      }),
+    ],
+  });
+  const task = started ?? input.task;
+  try {
+    const execution = await executeManagerTask({ ...input, task });
+    return (
+      (await input.store.update(task.id, {
+        state: execution.state,
+        ...(execution.targetLabel ? { targetLabel: execution.targetLabel } : {}),
+        ...(execution.state !== "running" ? { completedAt: new Date().toISOString() } : {}),
+        steps: execution.steps,
+        ...(execution.result !== undefined ? { result: execution.result } : {}),
+        ...(execution.error ? { error: execution.error } : {}),
+      })) ?? task
+    );
+  } catch (err) {
+    return (
+      (await input.store.update(task.id, {
+        state: "failed",
+        completedAt: new Date().toISOString(),
+        error: (err as Error).message,
+        steps: [
+          ...task.steps,
+          taskStep({
+            id: "task.failed",
+            label: "Task failed",
+            status: "failed",
+            summary: (err as Error).message,
+          }),
+        ],
+      })) ?? task
+    );
+  }
+}
+
+async function executeManagerTask(input: ManagerTaskRunInput): Promise<ManagerTaskExecutionResult> {
+  switch (input.request.kind) {
+    case "diagnose":
+      return await executeDiagnoseTask(input);
+    case "update-server":
+      return await executeUpdateServerTask(input);
+    case "update-device":
+      return await executeUpdateDeviceTask(input);
+    case "update-all":
+      return await executeUpdateAllTask(input);
+    case "restart-server":
+      return await executeRestartServerTask(input);
+    case "restart-device":
+      return await executeRestartDeviceTask(input);
+    case "repair-registration":
+      return await executeRepairRegistrationTask(input);
+  }
+}
+
+async function executeDiagnoseTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  const urls = getAccessUrls(input.options.selfHostUrl ?? input.requestUrl);
+  const reports = [
+    await buildServerDiagnosticReport({
+      fetchImpl: input.fetchImpl,
+      registry: input.registry,
+      token: input.options.token,
+      localToken: input.localToken,
+      build: input.build,
+      urls,
+    }),
+  ];
+  for (const device of input.registry.list()) {
+    reports.push(
+      await buildDeviceDiagnosticReport({
+        fetchImpl: input.fetchImpl,
+        registry: input.registry,
+        device,
+        localToken: input.localToken,
+        serverBuild: input.build,
+      }),
+    );
+  }
+  const diagnosticSteps = reports.flatMap((report) => report.steps ?? []);
+  return {
+    state: "succeeded",
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "diagnose.completed",
+        label: "Diagnostics completed",
+        status: "ok",
+        summary: `Collected diagnostics for server and ${Math.max(0, reports.length - 1)} device(s).`,
+      }),
+      ...diagnosticSteps,
+    ],
+    result: { reports },
+  };
+}
+
+async function executeUpdateServerTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  if (input.request.dryRun !== false) {
+    return dryRunTask(input, "server.update.plan", "Server update would be requested.");
+  }
+  if (!input.options.selfServerUpdater) {
+    return blockedTask(
+      input,
+      "server.update.unconfigured",
+      "Self server updater is not configured.",
+    );
+  }
+  const status = await input.options.selfServerUpdater.status().catch((err) => ({
+    state: "failed",
+    error: (err as Error).message,
+  }));
+  if (status.state === "running") {
+    return blockedTask(input, "server.update.already-running", "Server update is already running.");
+  }
+  const result = await input.options.selfServerUpdater.update();
+  const state = result.started
+    ? "running"
+    : result.status?.state === "failed"
+      ? "failed"
+      : result.supported
+        ? "failed"
+        : "blocked";
+  return {
+    state,
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "server.update.requested",
+        label: "Server update",
+        status: result.started ? "running" : result.supported ? "failed" : "failed",
+        summary: result.started
+          ? "Server update process started."
+          : result.error || "Server update could not be started.",
+      }),
+    ],
+    result,
+    ...(result.error ? { error: result.error } : {}),
+  };
+}
+
+async function executeUpdateDeviceTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  const device = resolveManagerTargetDevice(input);
+  if (!device.ok) return device.result;
+  if (input.request.dryRun !== false) {
+    return dryRunTask(
+      input,
+      "device.update.plan",
+      `Connector update would be requested for ${device.value.label}.`,
+      device.value.label,
+    );
+  }
+  const response = await requestDaemonSystemUpdate(
+    input.fetchImpl,
+    device.value,
+    daemonToken(device.value, input.localToken),
+    buildFallbackRegisterCommandForRequest(input.options, input.requestUrl),
+    input.options.deviceUpdateQueue,
+  );
+  const payload = await readJsonResponse(response);
+  const state = stateFromDeviceUpdateResponse(response.status, payload);
+  const summary =
+    updateSummaryFromPayload(payload) ?? `Device update returned HTTP ${response.status}.`;
+  return {
+    state,
+    targetLabel: device.value.label,
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "device.update.requested",
+        label: "Device update",
+        status:
+          state === "failed"
+            ? "failed"
+            : state === "waiting_for_device"
+              ? "pending"
+              : state === "running"
+                ? "running"
+                : "ok",
+        summary,
+      }),
+    ],
+    result: payload,
+    ...(state === "failed" ? { error: summary } : {}),
+  };
+}
+
+async function executeUpdateAllTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  if (input.request.dryRun !== false) {
+    const plan = await buildManagerUpdatePlan({
+      options: input.options,
+      registry: input.registry,
+      build: input.build,
+    });
+    return {
+      state: "succeeded",
+      steps: [
+        ...input.task.steps,
+        taskStep({
+          id: "update-all.plan",
+          label: "Update plan",
+          status: "ok",
+          summary: `Update plan contains ${plan.items.length} item(s).`,
+        }),
+      ],
+      result: plan,
+    };
+  }
+
+  const results: unknown[] = [];
+  const steps = [...input.task.steps];
+  const serverResult = await executeUpdateServerTask({
+    ...input,
+    request: { ...input.request, kind: "update-server", dryRun: false },
+  });
+  results.push(serverResult.result);
+  steps.push(...serverResult.steps.slice(input.task.steps.length));
+
+  for (const device of input.registry.list()) {
+    const deviceResult = await executeUpdateDeviceTask({
+      ...input,
+      request: { ...input.request, kind: "update-device", targetId: device.id, dryRun: false },
+    });
+    results.push(deviceResult.result);
+    steps.push(...deviceResult.steps.slice(input.task.steps.length));
+  }
+
+  const states = steps.map((step) => step.status);
+  const state: ManagerTaskState = states.includes("failed")
+    ? "failed"
+    : states.includes("pending")
+      ? "waiting_for_device"
+      : states.includes("running")
+        ? "running"
+        : "succeeded";
+  return {
+    state,
+    steps,
+    result: { results },
+    ...(state === "failed" ? { error: "One or more update steps failed." } : {}),
+  };
+}
+
+async function executeRestartServerTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  if (input.request.dryRun !== false) {
+    return dryRunTask(input, "server.restart.plan", "Server restart would be requested.");
+  }
+  if (!input.options.selfServerProcess) {
+    return blockedTask(
+      input,
+      "server.restart.unconfigured",
+      "Self server restart is not configured.",
+    );
+  }
+  const result = await input.options.selfServerProcess.restart();
+  return {
+    state: result.accepted ? "succeeded" : "blocked",
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "server.restart.requested",
+        label: "Server restart",
+        status: result.accepted ? "ok" : "failed",
+        summary: result.message,
+      }),
+    ],
+    result,
+    ...(result.error ? { error: result.error } : {}),
+  };
+}
+
+async function executeRestartDeviceTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  const device = resolveManagerTargetDevice(input);
+  if (!device.ok) return device.result;
+  if (input.request.dryRun !== false) {
+    return dryRunTask(
+      input,
+      "device.restart.plan",
+      `Connector restart would be requested for ${device.value.label}.`,
+      device.value.label,
+    );
+  }
+  const response = await proxyJson(
+    input.fetchImpl,
+    "POST",
+    `${device.value.daemonUrl}/process/restart`,
+    undefined,
+    daemonToken(device.value, input.localToken),
+  );
+  const payload = await readJsonResponse(response);
+  const accepted = response.status === 202 || (isRecord(payload) && payload.accepted === true);
+  const summary =
+    isRecord(payload) && typeof payload.message === "string"
+      ? payload.message
+      : `Restart returned HTTP ${response.status}.`;
+  return {
+    state: accepted ? "succeeded" : response.ok ? "blocked" : "failed",
+    targetLabel: device.value.label,
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "device.restart.requested",
+        label: "Device restart",
+        status: accepted ? "ok" : "failed",
+        summary,
+      }),
+    ],
+    result: payload,
+    ...(!accepted ? { error: summary } : {}),
+  };
+}
+
+async function executeRepairRegistrationTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  const analysis = await analyzeLastRegistrationFailure(input.options.installReportStore);
+  if (!analysis.found) {
+    return blockedTask(
+      input,
+      "registration.no-failure",
+      "No failed registration report was found.",
+    );
+  }
+  if (input.request.dryRun !== false) {
+    return {
+      state: "succeeded",
+      steps: [
+        ...input.task.steps,
+        taskStep({
+          id: "registration.analysis",
+          label: "Registration failure analysis",
+          status: analysis.retrySafe ? "warn" : "failed",
+          summary: analysis.classification ?? "Registration failure classified.",
+          ...(analysis.action ? { action: analysis.action } : {}),
+        }),
+      ],
+      result: analysis,
+    };
+  }
+  return {
+    state: "blocked",
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "registration.repair.blocked",
+        label: "Registration repair",
+        status: "failed",
+        summary:
+          "Automatic registration repair is not enabled yet. Use the suggested action from the analysis.",
+        ...(analysis.action ? { action: analysis.action } : {}),
+      }),
+    ],
+    result: analysis,
+    error: "automatic registration repair is not implemented",
+  };
+}
+
+function dryRunTask(
+  input: ManagerTaskRunInput,
+  id: string,
+  summary: string,
+  targetLabel?: string,
+): ManagerTaskExecutionResult {
+  return {
+    state: "succeeded",
+    ...(targetLabel ? { targetLabel } : {}),
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id,
+        label: "Dry run",
+        status: "ok",
+        summary,
+      }),
+    ],
+    result: { dryRun: true },
+  };
+}
+
+function blockedTask(
+  input: ManagerTaskRunInput,
+  id: string,
+  summary: string,
+): ManagerTaskExecutionResult {
+  return {
+    state: "blocked",
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id,
+        label: "Blocked",
+        status: "failed",
+        summary,
+      }),
+    ],
+    error: summary,
+  };
+}
+
+function resolveManagerTargetDevice(
+  input: ManagerTaskRunInput,
+): { ok: true; value: Device } | { ok: false; result: ManagerTaskExecutionResult } {
+  const targetId = input.request.targetId;
+  if (!targetId) {
+    return {
+      ok: false,
+      result: blockedTask(input, "device.target.missing", "targetId is required for this task."),
+    };
+  }
+  const device = input.registry.get(targetId);
+  if (!device) {
+    return {
+      ok: false,
+      result: blockedTask(input, "device.target.unknown", `unknown device: ${targetId}`),
+    };
+  }
+  return { ok: true, value: device };
+}
+
+async function buildManagerUpdatePlan(input: {
+  options: SiteAppOptions;
+  registry: DeviceRegistry;
+  build: DeskRelayBuildInfo;
+}): Promise<ManagerUpdatePlan> {
+  const generatedAt = new Date().toISOString();
+  const items: ManagerUpdatePlan["items"] = [];
+  const serverUpdate = input.options.selfServerUpdater
+    ? await input.options.selfServerUpdater.status().catch((err) => ({
+        state: "failed",
+        error: (err as Error).message,
+      }))
+    : undefined;
+  const serverUpdateAvailable =
+    isRecord(serverUpdate) &&
+    "updateAvailable" in serverUpdate &&
+    serverUpdate.updateAvailable === true;
+  const serverUpdateState =
+    isRecord(serverUpdate) && typeof serverUpdate.state === "string"
+      ? serverUpdate.state
+      : undefined;
+  items.push({
+    scope: "server",
+    targetLabel: "DeskRelay server",
+    action: serverUpdate
+      ? serverUpdateState === "running"
+        ? "blocked"
+        : serverUpdateAvailable
+          ? "update"
+          : "none"
+      : "unknown",
+    ...(serverUpdateState ? { state: serverUpdateState } : {}),
+    reason: serverUpdate
+      ? serverUpdateState === "running"
+        ? "Server update is already running."
+        : serverUpdateAvailable
+          ? "Remote update is available."
+          : "No server update is currently reported."
+      : "Server updater is not configured.",
+  });
+
+  const queueEntries = input.options.deviceUpdateQueue
+    ? await input.options.deviceUpdateQueue.list().catch(() => [])
+    : [];
+  for (const device of input.registry.list()) {
+    const queued = queueEntries.find((entry) => entry.deviceId === device.id);
+    items.push({
+      scope: "device",
+      targetId: device.id,
+      targetLabel: device.label,
+      action: queued
+        ? queued.state === "pending_until_device_online" || queued.state === "queued"
+          ? "queue"
+          : queued.state === "running"
+            ? "blocked"
+            : queued.state === "restart_required"
+              ? "restart"
+              : queued.state === "failed"
+                ? "update"
+                : "none"
+        : "unknown",
+      ...(queued?.state ? { state: queued.state } : {}),
+      reason: queued
+        ? queued.warning || queued.error || `Queued update state: ${queued.state}.`
+        : "No queued update state is known. Query device install status before deciding.",
+    });
+  }
+
+  const severity = items.some((item) => item.action === "blocked")
+    ? "warn"
+    : items.some((item) => item.action === "update" || item.action === "queue")
+      ? "warn"
+      : "ok";
+  return {
+    generatedAt,
+    items,
+    summary: {
+      severity,
+      message: `${items.length} update target(s) inspected.`,
+    },
+  };
+}
+
+async function analyzeLastRegistrationFailure(store: InstallReportStore | undefined): Promise<{
+  generatedAt: string;
+  found: boolean;
+  reportId?: string;
+  receivedAt?: string;
+  status?: string;
+  label?: string;
+  failureStep?: ManagerTask["steps"][number];
+  classification?: string;
+  retrySafe?: boolean;
+  action?: string;
+}> {
+  const generatedAt = new Date().toISOString();
+  if (!store) return { generatedAt, found: false };
+  const reports = await store.list(20).catch(() => []);
+  const report = reports.find((item) => item.status === "failed");
+  if (!report) return { generatedAt, found: false };
+  const failureStep =
+    report.steps.find((step) => step.severity === "error") ??
+    report.steps.find((step) => step.status !== "ok");
+  const classification = classifyRegistrationFailure(failureStep);
+  const action = actionFromRegistrationFailure(failureStep, classification);
+  return {
+    generatedAt,
+    found: true,
+    reportId: report.id,
+    receivedAt: report.receivedAt,
+    status: report.status,
+    ...(report.label ? { label: report.label } : {}),
+    ...(failureStep ? { failureStep } : {}),
+    classification,
+    retrySafe: failureStep?.retrySafe ?? isRetrySafeRegistrationClassification(classification),
+    ...(action ? { action } : {}),
+  };
+}
+
+function parseManagerTaskRequest(
+  input: unknown,
+): { ok: true; value: ManagerTaskRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "body must be an object" };
+  if (!isManagerTaskKind(input.kind)) return { ok: false, error: "unsupported task kind" };
+  const requestedBy =
+    input.requestedBy === "manager-assistant" || input.requestedBy === "system"
+      ? input.requestedBy
+      : "browser";
+  return {
+    ok: true,
+    value: {
+      kind: input.kind,
+      ...(typeof input.targetId === "string" && input.targetId.trim()
+        ? { targetId: input.targetId.trim() }
+        : {}),
+      dryRun: input.dryRun !== false,
+      requestedBy,
+      ...(isRecord(input.params) ? { params: input.params } : {}),
+    },
+  };
+}
+
+function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
+  return (
+    value === "diagnose" ||
+    value === "update-server" ||
+    value === "update-device" ||
+    value === "update-all" ||
+    value === "restart-server" ||
+    value === "restart-device" ||
+    value === "repair-registration"
+  );
+}
+
+function taskStep(input: Omit<ManagerTask["steps"][number], "severity" | "source">) {
+  return normalizeDiagnosticStep({
+    ...input,
+    source: "server",
+    lastCheckedAt: input.lastCheckedAt ?? new Date().toISOString(),
+  });
+}
+
+function clampListLimit(value: string | undefined): number {
+  const n = Number(value ?? "50");
+  if (!Number.isFinite(n)) return 50;
+  return Math.max(1, Math.min(500, Math.floor(n)));
+}
+
+async function readJsonResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function stateFromDeviceUpdateResponse(status: number, payload: unknown): ManagerTaskState {
+  if (isRecord(payload)) {
+    if (payload.state === "pending_until_device_online" || payload.state === "queued") {
+      return "waiting_for_device";
+    }
+    if (payload.state === "running") return "running";
+    if (payload.state === "restart_required") return "restart_required";
+    if (payload.state === "failed" || typeof payload.error === "string") return "failed";
+    if (payload.ok === true || payload.state === "succeeded") return "succeeded";
+  }
+  if (status >= 500) return "failed";
+  if (status === 202) return "waiting_for_device";
+  if (status >= 400) return "failed";
+  return "succeeded";
+}
+
+function updateSummaryFromPayload(payload: unknown): string | undefined {
+  if (!isRecord(payload)) return undefined;
+  if (typeof payload.warning === "string") return payload.warning;
+  if (typeof payload.error === "string") return payload.error;
+  if (typeof payload.state === "string") return `Device update state: ${payload.state}.`;
+  if (payload.ok === true) return "Device update request completed.";
+  return undefined;
+}
+
+function classifyRegistrationFailure(step: ManagerTask["steps"][number] | undefined): string {
+  const text = `${step?.id ?? ""} ${step?.summary ?? ""} ${step?.detail ?? ""}`.toLowerCase();
+  if (!step) return "unknown";
+  if (text.includes("site token") || text.includes("401") || text.includes("unauthorized")) {
+    return "site-token-rejected";
+  }
+  if (text.includes("firewall") || text.includes("timed out") || text.includes("timeout")) {
+    return "firewall-or-route-timeout";
+  }
+  if (text.includes("tailscale")) return "tailscale-unavailable";
+  if (text.includes("stale") || text.includes("different daemon token")) {
+    return "stale-connector-token";
+  }
+  if (text.includes("localhost") || text.includes("127.0.0.1")) return "localhost-registration";
+  if (text.includes("git") || text.includes("bun")) return "installer-dependency";
+  return step.id || "unknown";
+}
+
+function actionFromRegistrationFailure(
+  step: ManagerTask["steps"][number] | undefined,
+  classification: string,
+): string | undefined {
+  if (typeof step?.action === "string") return step.action;
+  if (typeof step?.action === "object" && step.action.detail) return step.action.detail;
+  if (classification === "site-token-rejected") {
+    return "Copy the current Site token from the server page and rerun the registration command.";
+  }
+  if (classification === "firewall-or-route-timeout") {
+    return "Allow the connector port through Windows Firewall or use Tailscale, then rerun registration.";
+  }
+  if (classification === "stale-connector-token") {
+    return "Stop the stale connector process or rerun PowerShell as Administrator, then rerun registration.";
+  }
+  return undefined;
+}
+
+function isRetrySafeRegistrationClassification(classification: string): boolean {
+  return (
+    classification === "site-token-rejected" ||
+    classification === "firewall-or-route-timeout" ||
+    classification === "tailscale-unavailable" ||
+    classification === "stale-connector-token" ||
+    classification === "localhost-registration"
+  );
 }
 
 function buildSelfNetworkStatus(urls: AccessUrl[]): ManagerNetworkStatus {
