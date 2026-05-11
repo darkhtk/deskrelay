@@ -71,6 +71,7 @@ tmp-*
 .local-dev/
 .self-server/
 .self-server-*/
+.deskrelay/
 
 # self-host generated quick-copy files; these contain local Site tokens.
 DESKRELAY-SERVER-CODE.txt

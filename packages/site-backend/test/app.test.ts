@@ -1052,6 +1052,62 @@ describe("manager task API", () => {
     expect(body.message?.text).toContain("history=1");
   });
 
+  test("manager assistant chat creates managed Claude instructions outside user-editable scopes", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-managed-"));
+    let captured:
+      | {
+          cwd: string;
+          repoRoot: string;
+          instructionsPath: string;
+          apiBaseUrl: string;
+        }
+      | undefined;
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        selfHostUrl: "http://deskrelay.test:18193",
+        managerAssistant: {
+          cwd,
+          runner: async (input) => {
+            captured = {
+              cwd: input.cwd,
+              repoRoot: input.repoRoot,
+              instructionsPath: input.instructionsPath,
+              apiBaseUrl: input.apiBaseUrl,
+            };
+            return {
+              command: "fake-claude -p",
+              text: "managed instructions loaded",
+            };
+          },
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat", {
+          message: "API 상태 확인",
+          history: [],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(captured?.cwd).toBe(cwd);
+      expect(captured?.repoRoot).toBe(cwd);
+      expect(captured?.apiBaseUrl).toBe("http://deskrelay.test:18193");
+      expect(
+        captured?.instructionsPath.endsWith(join(".deskrelay", "manager-assistant", "CLAUDE.md")),
+      ).toBe(true);
+      const instructions = readFileSync(captured?.instructionsPath ?? "", "utf8");
+      expect(instructions).toContain("DeskRelay Manager Assistant");
+      expect(instructions).toContain("GET /api/manager/system/summary");
+      expect(instructions).toContain("Authorization: Bearer $DESKRELAY_SITE_TOKEN");
+      expect(instructions).not.toContain(TOKEN);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("update plan and last registration failure APIs expose structured manager data", async () => {
     const reports = [
       {
