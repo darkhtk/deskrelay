@@ -122,27 +122,28 @@ describe("settings and chrome invariants", () => {
     expect(appSource).not.toContain("M12 2v3M12 19v3M2 12h3M19 12h3");
   });
 
-  test("chat header exposes the manager assistant on the right side", () => {
+  test("chat header exposes Chat/Split/AI view switching", () => {
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
 
-    expect(chatViewSource).toContain('class="chat-ai-assistant-button"');
-    expect(chatViewSource).toContain("toggleMainChatPanel");
-    expect(chatViewSource).toContain("assistant-dock-chat-toggle");
+    expect(chatViewSource).toContain('class="chat-view-switch"');
+    expect(chatViewSource).toContain('class="chat-view-switch assistant-dock-view-switch"');
+    expect(chatViewSource).toContain("setChatViewMode");
+    expect(chatViewSource).toContain("currentChatViewMode");
+    expect(chatViewSource).toContain('"split"');
     expect(chatViewSource).toContain('"main-chat-collapsed": chatPanelCollapsed()');
-    expect(chatViewSource).toContain("toggleManagerAssistant");
     expect(chatViewSource).toContain('class="chat-assistant-dock"');
     expect(chatViewSource).toContain('class="chat-assistant-mobile"');
     expect(chatViewSource).toContain('t("chat.manager-assistant.open")');
-    expect(styles).toContain(".chat-ai-assistant-button");
+    expect(styles).toContain(".chat-view-switch");
+    expect(styles).toContain(".chat-view-switch-button");
     expect(styles).toContain(".signed-in.assistant-panel-open");
     expect(styles).toContain(".chat-assistant-dock");
-    expect(styles).toContain(".assistant-dock-chat-toggle");
+    expect(styles).toContain(".assistant-dock-view-switch");
     expect(styles).toContain(".chat.chat-collapsed");
-    expect(styles).toContain(".chat-ai-assistant-button.active");
-    expect(styles).toContain('.chat-ai-assistant-button[aria-pressed="true"]');
+    expect(styles).toContain(".chat-view-switch-button.active");
+    expect(styles).toContain('.chat-view-switch-button[aria-pressed="true"]');
     expect(styles).toContain(".chat-assistant-mobile");
-    expect(styles).toMatch(/\.chat-ai-assistant-button\s*{[^}]*width:\s*32px;/s);
   });
 
   test("general settings, devices, diagnostics, instructions, and hard refresh live in unified settings", () => {

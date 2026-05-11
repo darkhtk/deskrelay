@@ -2214,7 +2214,7 @@ body.sidebar-collapsed .chat {
   position: relative;
 }
 
-.assistant-dock-chat-toggle {
+.assistant-dock-view-switch {
   position: absolute;
   top: 8px;
   left: 16px;
@@ -2339,33 +2339,37 @@ body.assistant-resizing * {
   flex: 1 1 auto;
   min-height: 0;
 }
-.chat-ai-assistant-button {
+.chat-view-switch {
   flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 32px;
+}
+.chat-view-switch-button {
+  flex: 0 0 auto;
+  min-width: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--text);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  color: var(--text-muted);
   padding: 0;
   cursor: pointer;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   letter-spacing: 0;
 }
-.chat-ai-assistant-button:hover {
+.chat-view-switch-button:hover {
   background: transparent;
+  color: var(--text);
+}
+.chat-view-switch-button.active,
+.chat-view-switch-button[aria-pressed="true"] {
   color: var(--accent-coral);
 }
-.chat-ai-assistant-button.active,
-.chat-ai-assistant-button[aria-pressed="true"] {
-  color: var(--accent-coral);
-}
-.chat-ai-assistant-button:focus-visible {
+.chat-view-switch-button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }

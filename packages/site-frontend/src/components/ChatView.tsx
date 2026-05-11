@@ -781,6 +781,8 @@ type SettingsOpenOptions = {
   deviceId?: string | null;
 };
 
+type ChatViewMode = "chat" | "split" | "assistant";
+
 type DeviceSelectionRequest = {
   id: string | null;
   seq: number;
@@ -2130,35 +2132,39 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const showAssistantDock = () => assistantOpen() && !mobileChatViewport();
   const chatPanelCollapsed = () =>
     !mainChatOpen() && showAssistantDock() && mainPanelMode() === "chat";
-  const mainChatHidden = () => chatPanelCollapsed() || showAssistantInChat();
 
-  function toggleMainChatPanel() {
-    if (mobileChatViewport()) {
-      const nextAssistantOpen = !assistantOpen();
-      setMainChatOpen(!nextAssistantOpen);
-      setAssistantOpen(nextAssistantOpen);
-      setMainPanelMode("chat");
-      if (nextAssistantOpen) setSidebarOpen(false);
-      return;
-    }
-    if (chatPanelCollapsed()) {
-      setMainChatOpen(true);
-      return;
-    }
-    setMainPanelMode("chat");
-    setMainChatOpen(false);
-    if (!assistantOpen()) setAssistantOpen(true);
+  const currentChatViewMode = (): ChatViewMode => {
+    if (!assistantOpen()) return "chat";
+    if (mobileChatViewport() || chatPanelCollapsed()) return "assistant";
+    return "split";
+  };
+
+  const availableChatViewModes = (): ChatViewMode[] =>
+    mobileChatViewport() ? ["chat", "assistant"] : ["chat", "split", "assistant"];
+
+  function chatViewModeLabel(mode: ChatViewMode): string {
+    if (mode === "chat") return "Chat";
+    if (mode === "split") return "Split";
+    return "AI";
   }
 
-  function toggleManagerAssistant() {
-    const next = !assistantOpen();
-    setAssistantOpen(next);
-    if (!next) {
+  function setChatViewMode(mode: ChatViewMode) {
+    setMainPanelMode("chat");
+    if (mode === "chat") {
       setMainChatOpen(true);
+      setAssistantOpen(false);
       return;
     }
-    setMainPanelMode("chat");
-    if (isMobileSidebarViewport()) setSidebarOpen(false);
+    if (mode === "split" && !mobileChatViewport()) {
+      setMainChatOpen(true);
+      setAssistantOpen(true);
+      return;
+    }
+    setMainChatOpen(false);
+    setAssistantOpen(true);
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(false);
+    }
   }
 
   createEffect(() => {
@@ -3963,38 +3969,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   </Show>
                   <span class="chat-header-current-status">{headerStatusText()}</span>
                 </output>
-                <button
-                  type="button"
-                  class="chat-ai-assistant-button"
-                  classList={{ active: mainChatHidden() }}
-                  onClick={toggleMainChatPanel}
-                  aria-pressed={mainChatHidden()}
-                  aria-label={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
-                  title={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  class="chat-ai-assistant-button"
-                  classList={{ active: assistantOpen() }}
-                  onClick={toggleManagerAssistant}
-                  aria-pressed={assistantOpen()}
-                  aria-label={t("chat.manager-assistant.open")}
-                  title={t("chat.manager-assistant.open")}
-                >
-                  AI
-                </button>
+                <div class="chat-view-switch" aria-label="Chat view mode">
+                  <For each={availableChatViewModes()}>
+                    {(mode) => (
+                      <button
+                        type="button"
+                        class="chat-view-switch-button"
+                        classList={{ active: currentChatViewMode() === mode }}
+                        aria-pressed={currentChatViewMode() === mode}
+                        title={chatViewModeLabel(mode)}
+                        onClick={() => setChatViewMode(mode)}
+                      >
+                        {chatViewModeLabel(mode)}
+                      </button>
+                    )}
+                  </For>
+                </div>
               </>
             }
           >
@@ -4222,27 +4212,22 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
       <Show when={showAssistantDock()}>
         <aside class="chat-assistant-dock" aria-label={t("chat.manager-assistant.open")}>
-          <button
-            type="button"
-            class="chat-ai-assistant-button assistant-dock-chat-toggle"
-            classList={{ active: mainChatHidden() }}
-            onClick={toggleMainChatPanel}
-            aria-pressed={mainChatHidden()}
-            aria-label={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
-            title={mainChatHidden() ? "기본 채팅창 열기" : "기본 채팅창 숨기기"}
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-            </svg>
-          </button>
+          <div class="chat-view-switch assistant-dock-view-switch" aria-label="Chat view mode">
+            <For each={availableChatViewModes()}>
+              {(mode) => (
+                <button
+                  type="button"
+                  class="chat-view-switch-button"
+                  classList={{ active: currentChatViewMode() === mode }}
+                  aria-pressed={currentChatViewMode() === mode}
+                  title={chatViewModeLabel(mode)}
+                  onClick={() => setChatViewMode(mode)}
+                >
+                  {chatViewModeLabel(mode)}
+                </button>
+              )}
+            </For>
+          </div>
           <div
             class="assistant-resize-handle"
             classList={{
