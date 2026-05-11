@@ -59,9 +59,19 @@ Base URL for the browser/self-host page is usually the frontend URL, for example
 | `GET` | `/api/manager/tasks` | List recent manager tasks. | query `limit` |
 | `POST` | `/api/manager/tasks` | Create a high-level manager task. Defaults to `dryRun=true` unless explicitly false. | JSON `{ kind, targetId?, dryRun?, requestedBy?, params? }` |
 | `GET` | `/api/manager/tasks/:id` | Read one manager task and its diagnostic steps/result. | none |
+| `GET` | `/api/manager/tasks/:id/logs` | Read task execution as log lines plus structured steps. | none |
+| `POST` | `/api/manager/tasks/:id/cancel` | Cancel a pending/running task, or a queued offline device update task. | none |
+| `POST` | `/api/manager/tasks/:id/retry` | Retry a failed, blocked, cancelled, or waiting task as a new task. | none |
 | `GET` | `/api/manager/audit-log` | Read manager task history. | query `limit` |
+| `GET` | `/api/manager/system/summary` | Assistant-oriented summary of server, devices, update state, latest registration failure, and recent tasks. | none |
+| `GET` | `/api/manager/devices/:id/actions` | List safe actions available for one registered device. | none |
 | `GET` | `/api/manager/update/plan` | Build a server/device update plan without starting updates. | none |
+| `GET` | `/api/manager/update/status` | Read server and device update state in one response. | none |
+| `POST` | `/api/manager/update/all` | Shortcut that creates an `update-all` manager task. Defaults to dry-run. | JSON `{ dryRun?, requestedBy? }` |
 | `GET` | `/api/manager/registration/last-failure` | Classify the most recent failed connector registration report. | none |
+| `GET` | `/api/manager/registration/diagnose` | Diagnose registration prerequisites and include the latest failure classification. | none |
+| `POST` | `/api/manager/registration/repair` | Shortcut that creates a `repair-registration` manager task. Automatic OS repair remains blocked. | JSON `{ dryRun?, requestedBy? }` |
+| `GET` | `/api/manager/security/boundary` | Aggregate server and device security boundary summaries without exposing daemon tokens. | none |
 | `GET` | `/api/self/autostart` | Server login-task/autostart status. | none |
 | `PUT` | `/api/self/autostart` | Enable/disable server autostart. | JSON `{ enabled: boolean }` |
 | `POST` | `/api/self/update` | Start self-server update. | none |
@@ -165,10 +175,30 @@ The connector daemon defaults to `http://127.0.0.1:18091` on local-only runs and
 Task states:
 
 ```text
-pending -> running -> succeeded | blocked | waiting_for_device | restart_required | failed
+pending -> running -> succeeded | blocked | waiting_for_device | restart_required | failed | cancelled
 ```
 
 The default is `dryRun=true`; callers must pass `"dryRun": false` for update/restart side effects.
+
+Control and shortcut routes:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/manager/tasks/:id/logs` | Convert the task record into readable log lines while preserving structured steps. |
+| `POST /api/manager/tasks/:id/cancel` | Marks cancellable tasks as `cancelled`; for `waiting_for_device` `update-device` tasks, also removes the queued device update entry when available. |
+| `POST /api/manager/tasks/:id/retry` | Creates a new task with the same kind/target/dry-run setting and runs it immediately. |
+| `POST /api/manager/update/all` | Shortcut for creating an `update-all` task. |
+| `POST /api/manager/registration/repair` | Shortcut for creating a `repair-registration` task. It is analysis/manual-action only until OS-level repair is explicitly implemented. |
+
+Assistant read APIs:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/manager/system/summary` | One-call overview for deciding what to do next. |
+| `GET /api/manager/devices/:id/actions` | Device-specific action discovery, including destructive flags. |
+| `GET /api/manager/update/status` | Current server/device update status plus the update plan. |
+| `GET /api/manager/registration/diagnose` | Site token, server URL, Tailscale, and latest failed registration analysis. |
+| `GET /api/manager/security/boundary` | Server/device token and network boundary summary without leaking secrets. |
 
 Call through:
 

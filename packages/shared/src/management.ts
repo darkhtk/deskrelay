@@ -228,6 +228,34 @@ export interface ManagerAuditLogResponse {
   entries: ManagerTask[];
 }
 
+export interface ManagerTaskLogResponse {
+  taskId: string;
+  source: "manager-task";
+  readAt: string;
+  lines: string[];
+  steps: DiagnosticStep[];
+  result?: unknown;
+  error?: string;
+}
+
+export interface ManagerActionDescriptor {
+  id: string;
+  label: string;
+  enabled: boolean;
+  method?: ManagerRouteCapability["method"];
+  path?: string;
+  taskKind?: ManagerTaskKind;
+  destructive?: boolean;
+  reason?: string;
+}
+
+export interface ManagerDeviceActions {
+  generatedAt: string;
+  deviceId: string;
+  label: string;
+  actions: ManagerActionDescriptor[];
+}
+
 export interface ManagerUpdatePlanItem {
   scope: ManagerScope;
   targetId?: string;
@@ -246,6 +274,31 @@ export interface ManagerUpdatePlan {
   };
 }
 
+export interface ManagerUpdateTargetStatus {
+  scope: ManagerScope;
+  targetId?: string;
+  targetLabel?: string;
+  state: string;
+  updateAvailable?: boolean;
+  changed?: boolean;
+  error?: string;
+  summary: {
+    severity: "ok" | "warn" | "error" | "unknown";
+    message: string;
+  };
+}
+
+export interface ManagerUpdateStatus {
+  generatedAt: string;
+  server: ManagerUpdateTargetStatus;
+  devices: ManagerUpdateTargetStatus[];
+  plan: ManagerUpdatePlan;
+  summary: {
+    severity: "ok" | "warn" | "error" | "unknown";
+    message: string;
+  };
+}
+
 export interface ManagerRegistrationFailureAnalysis {
   generatedAt: string;
   found: boolean;
@@ -257,4 +310,57 @@ export interface ManagerRegistrationFailureAnalysis {
   classification?: string;
   retrySafe?: boolean;
   action?: string;
+}
+
+export interface ManagerRegistrationDiagnosis {
+  generatedAt: string;
+  serverUrl?: string;
+  siteTokenConfigured: boolean;
+  tailscaleDetected: boolean;
+  steps: DiagnosticStep[];
+  lastFailure: ManagerRegistrationFailureAnalysis;
+  summary: {
+    severity: "ok" | "warn" | "error" | "unknown";
+    message: string;
+  };
+}
+
+export interface ManagerSecurityBoundarySummary {
+  generatedAt: string;
+  server: ManagerSecurityBoundary;
+  devices: ManagerSecurityBoundary[];
+  warnings: string[];
+  summary: {
+    severity: "ok" | "warn" | "error" | "unknown";
+    message: string;
+  };
+}
+
+export interface ManagerDeviceSummary {
+  id: string;
+  label: string;
+  daemonUrl: string;
+  registeredAt: string;
+  lastSeenAt?: string;
+  os?: string;
+  hostname?: string;
+  connectionState?: "online" | "offline";
+}
+
+export interface ManagerSystemSummary {
+  generatedAt: string;
+  build: DeskRelayBuildInfo;
+  devices: ManagerDeviceSummary[];
+  server: {
+    install: ManagerInstallStatus;
+    network: ManagerNetworkStatus;
+    security: ManagerSecurityBoundary;
+  };
+  update: ManagerUpdatePlan;
+  registration: ManagerRegistrationFailureAnalysis;
+  recentTasks: ManagerTask[];
+  summary: {
+    severity: "ok" | "warn" | "error" | "unknown";
+    message: string;
+  };
 }

@@ -2,16 +2,22 @@ import type {
   DiagnosticReport,
   DiagnosticStep,
   ManagerCapabilities,
+  ManagerDeviceActions,
   ManagerInstallStatus,
   ManagerLogResponse,
   ManagerNetworkStatus,
   ManagerProcessStatus,
+  ManagerRegistrationDiagnosis,
   ManagerRegistrationFailureAnalysis,
   ManagerRestartResult,
   ManagerSecurityBoundary,
+  ManagerSecurityBoundarySummary,
+  ManagerSystemSummary,
   ManagerTask,
+  ManagerTaskLogResponse,
   ManagerTaskRequest,
   ManagerUpdatePlan,
+  ManagerUpdateStatus,
   UpdateState,
 } from "@deskrelay/shared";
 
@@ -457,6 +463,11 @@ export const api = {
       `/api/manager/tasks${typeof limit === "number" ? `?limit=${limit}` : ""}`,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
+  managerTaskLogs: (id: string) =>
+    request<ManagerTaskLogResponse>("GET", `/api/manager/tasks/${id}/logs`),
+  cancelManagerTask: (id: string) =>
+    request<ManagerTask>("POST", `/api/manager/tasks/${id}/cancel`),
+  retryManagerTask: (id: string) => request<ManagerTask>("POST", `/api/manager/tasks/${id}/retry`),
   createManagerTask: (input: ManagerTaskRequest) =>
     request<ManagerTask>("POST", "/api/manager/tasks", input),
   managerAuditLog: (limit?: number) =>
@@ -464,9 +475,21 @@ export const api = {
       "GET",
       `/api/manager/audit-log${typeof limit === "number" ? `?limit=${limit}` : ""}`,
     ),
+  managerSystemSummary: () => request<ManagerSystemSummary>("GET", "/api/manager/system/summary"),
+  managerDeviceActions: (id: string) =>
+    request<ManagerDeviceActions>("GET", `/api/manager/devices/${id}/actions`),
   managerUpdatePlan: () => request<ManagerUpdatePlan>("GET", "/api/manager/update/plan"),
+  managerUpdateStatus: () => request<ManagerUpdateStatus>("GET", "/api/manager/update/status"),
+  managerUpdateAll: (input?: Pick<ManagerTaskRequest, "dryRun" | "requestedBy">) =>
+    request<ManagerTask>("POST", "/api/manager/update/all", input ?? {}),
   managerRegistrationLastFailure: () =>
     request<ManagerRegistrationFailureAnalysis>("GET", "/api/manager/registration/last-failure"),
+  managerRegistrationDiagnosis: () =>
+    request<ManagerRegistrationDiagnosis>("GET", "/api/manager/registration/diagnose"),
+  managerRegistrationRepair: (input?: Pick<ManagerTaskRequest, "dryRun" | "requestedBy">) =>
+    request<ManagerTask>("POST", "/api/manager/registration/repair", input ?? {}),
+  managerSecurityBoundary: () =>
+    request<ManagerSecurityBoundarySummary>("GET", "/api/manager/security/boundary"),
   listDevices: () => request<Device[]>("GET", "/api/devices"),
   registerOtherPcCommand: () =>
     request<RegisterOtherPcCommandResponse>("GET", "/api/self/register-other-pc-command"),

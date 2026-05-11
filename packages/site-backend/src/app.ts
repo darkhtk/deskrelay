@@ -7,17 +7,24 @@ import {
   type DiagnosticSeverity,
   MANAGER_API_VERSION,
   type ManagerCapabilities,
+  type ManagerDeviceActions,
   type ManagerInstallStatus,
   type ManagerLogResponse,
   type ManagerNetworkAddress,
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
+  type ManagerRegistrationDiagnosis,
   type ManagerSecurityBoundary,
+  type ManagerSecurityBoundarySummary,
+  type ManagerSystemSummary,
   type ManagerTask,
   type ManagerTaskKind,
+  type ManagerTaskLogResponse,
   type ManagerTaskRequest,
   type ManagerTaskState,
   type ManagerUpdatePlan,
+  type ManagerUpdateStatus,
+  type ManagerUpdateTargetStatus,
   type UpdateState,
   diagnosticStepFromCheck,
   normalizeDiagnosticStep,
@@ -115,23 +122,42 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
     const request = parseManagerTaskRequest(body);
     if (!request.ok) return c.json({ error: request.error }, 400);
-    const task = await managerTaskStore.create({
-      kind: request.value.kind,
-      ...(request.value.targetId ? { targetId: request.value.targetId } : {}),
-      dryRun: request.value.dryRun ?? true,
-      requestedBy: request.value.requestedBy ?? "browser",
-      steps: [
-        taskStep({
-          id: "task.created",
-          label: "Task accepted",
-          status: "pending",
-          summary: `${request.value.kind} task accepted`,
-        }),
-      ],
-    });
-    const completed = await runManagerTask({
-      task,
+    const completed = await createAndRunManagerTask({
       request: request.value,
+      store: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+  });
+
+  app.get("/api/manager/tasks/:id/logs", async (c) => {
+    const task = await managerTaskStore.get(c.req.param("id"));
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    return c.json(buildManagerTaskLogResponse(task));
+  });
+
+  app.post("/api/manager/tasks/:id/cancel", async (c) => {
+    const task = await managerTaskStore.get(c.req.param("id"));
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    const cancelled = await cancelManagerTask(task, managerTaskStore, options.deviceUpdateQueue);
+    if (!cancelled.ok) {
+      return c.json({ error: cancelled.error ?? "task cannot be cancelled", task }, 409);
+    }
+    return c.json(cancelled.task, 202);
+  });
+
+  app.post("/api/manager/tasks/:id/retry", async (c) => {
+    const task = await managerTaskStore.get(c.req.param("id"));
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    const retry = buildRetryManagerTaskRequest(task);
+    if (!retry.ok) return c.json({ error: retry.error, task }, 409);
+    const completed = await createAndRunManagerTask({
+      request: retry.value,
       store: managerTaskStore,
       options,
       fetchImpl,
@@ -153,12 +179,98 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     return c.json({ entries: await managerTaskStore.list(clampListLimit(c.req.query("limit"))) });
   });
 
+  app.get("/api/manager/system/summary", async (c) => {
+    return c.json(
+      await buildManagerSystemSummary({
+        options,
+        fetchImpl,
+        registry,
+        localToken,
+        build,
+        requestUrl: c.req.url,
+        store: managerTaskStore,
+      }),
+    );
+  });
+
+  app.get("/api/manager/devices/:id/actions", (c) => {
+    const device = resolveDevice(c.req.param("id"), registry);
+    if (!device) return c.json({ error: "unknown device" }, 404);
+    return c.json(buildManagerDeviceActions(device));
+  });
+
   app.get("/api/manager/update/plan", async (c) => {
     return c.json(await buildManagerUpdatePlan({ options, registry, build }));
   });
 
+  app.get("/api/manager/update/status", async (c) => {
+    return c.json(
+      await buildManagerUpdateStatus({
+        options,
+        fetchImpl,
+        registry,
+        localToken,
+        build,
+      }),
+    );
+  });
+
+  app.post("/api/manager/update/all", async (c) => {
+    const request = await parseManagerShortcutRequest(c.req, "update-all");
+    if (!request.ok) return c.json({ error: request.error }, 400);
+    const completed = await createAndRunManagerTask({
+      request: request.value,
+      store: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+  });
+
   app.get("/api/manager/registration/last-failure", async (c) => {
     return c.json(await analyzeLastRegistrationFailure(options.installReportStore));
+  });
+
+  app.get("/api/manager/registration/diagnose", async (c) => {
+    return c.json(
+      await buildManagerRegistrationDiagnosis({
+        options,
+        requestUrl: c.req.url,
+      }),
+    );
+  });
+
+  app.post("/api/manager/registration/repair", async (c) => {
+    const request = await parseManagerShortcutRequest(c.req, "repair-registration");
+    if (!request.ok) return c.json({ error: request.error }, 400);
+    const completed = await createAndRunManagerTask({
+      request: request.value,
+      store: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+  });
+
+  app.get("/api/manager/security/boundary", async (c) => {
+    const urls = getAccessUrls(options.selfHostUrl ?? c.req.url);
+    return c.json(
+      await buildManagerSecurityBoundarySummary({
+        options,
+        fetchImpl,
+        registry,
+        localToken,
+        urls,
+      }),
+    );
   });
 
   app.get("/api/devices", (c) => c.json(registry.list().map(toPublicDevice)));
@@ -983,7 +1095,12 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "security.boundary",
       "manager.tasks",
       "manager.update-plan",
+      "manager.update-status",
       "manager.registration-analysis",
+      "manager.system-summary",
+      "manager.task-control",
+      "manager.action-discovery",
+      "manager.security-summary",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -1025,8 +1142,33 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       { method: "GET", path: "/api/manager/tasks/:id", description: "Read one manager task." },
       {
         method: "GET",
+        path: "/api/manager/tasks/:id/logs",
+        description: "Read task execution log lines.",
+      },
+      {
+        method: "POST",
+        path: "/api/manager/tasks/:id/cancel",
+        description: "Cancel a cancellable manager task.",
+      },
+      {
+        method: "POST",
+        path: "/api/manager/tasks/:id/retry",
+        description: "Retry a failed, blocked, cancelled, or waiting manager task.",
+      },
+      {
+        method: "GET",
         path: "/api/manager/audit-log",
         description: "Read manager task audit log.",
+      },
+      {
+        method: "GET",
+        path: "/api/manager/system/summary",
+        description: "Read assistant-oriented system summary.",
+      },
+      {
+        method: "GET",
+        path: "/api/manager/devices/:id/actions",
+        description: "Read safe actions available for a device.",
       },
       {
         method: "GET",
@@ -1035,8 +1177,33 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       },
       {
         method: "GET",
+        path: "/api/manager/update/status",
+        description: "Read server and device update status.",
+      },
+      {
+        method: "POST",
+        path: "/api/manager/update/all",
+        description: "Create an update-all manager task.",
+      },
+      {
+        method: "GET",
         path: "/api/manager/registration/last-failure",
         description: "Analyze the last failed connector registration report.",
+      },
+      {
+        method: "GET",
+        path: "/api/manager/registration/diagnose",
+        description: "Diagnose current registration prerequisites and the latest failure.",
+      },
+      {
+        method: "POST",
+        path: "/api/manager/registration/repair",
+        description: "Create a registration repair manager task.",
+      },
+      {
+        method: "GET",
+        path: "/api/manager/security/boundary",
+        description: "Read server and device security boundary summary.",
       },
       { method: "GET", path: "/api/devices", description: "List registered devices." },
       { method: "POST", path: "/api/devices", description: "Register a device." },
@@ -1149,6 +1316,106 @@ interface ManagerTaskExecutionResult {
   result?: unknown;
   targetLabel?: string;
   error?: string;
+}
+
+type ManagerTaskCreateRunInput = Omit<ManagerTaskRunInput, "task">;
+
+async function createAndRunManagerTask(input: ManagerTaskCreateRunInput): Promise<ManagerTask> {
+  const task = await input.store.create({
+    kind: input.request.kind,
+    ...(input.request.targetId ? { targetId: input.request.targetId } : {}),
+    dryRun: input.request.dryRun ?? true,
+    requestedBy: input.request.requestedBy ?? "browser",
+    steps: [
+      taskStep({
+        id: "task.created",
+        label: "Task accepted",
+        status: "pending",
+        summary: `${input.request.kind} task accepted`,
+      }),
+    ],
+  });
+  return await runManagerTask({ ...input, task });
+}
+
+function buildManagerTaskLogResponse(task: ManagerTask): ManagerTaskLogResponse {
+  const lines = [
+    `[${task.createdAt}] ${task.kind} created by ${task.requestedBy}`,
+    ...(task.startedAt ? [`[${task.startedAt}] started`] : []),
+    ...task.steps.map(
+      (step) =>
+        `[${step.lastCheckedAt ?? task.updatedAt}] ${step.status} ${step.id}: ${step.summary}`,
+    ),
+    ...(task.completedAt ? [`[${task.completedAt}] completed: ${task.state}`] : []),
+    ...(task.error ? [`error: ${task.error}`] : []),
+  ];
+  return {
+    taskId: task.id,
+    source: "manager-task",
+    readAt: new Date().toISOString(),
+    lines,
+    steps: task.steps,
+    ...(task.result !== undefined ? { result: task.result } : {}),
+    ...(task.error ? { error: task.error } : {}),
+  };
+}
+
+async function cancelManagerTask(
+  task: ManagerTask,
+  store: ManagerTaskStore,
+  queue: DeviceUpdateQueueStore | undefined,
+): Promise<{ ok: true; task: ManagerTask } | { ok: false; task: ManagerTask; error: string }> {
+  const cancellable =
+    task.state === "pending" ||
+    task.state === "running" ||
+    (task.state === "waiting_for_device" &&
+      task.kind === "update-device" &&
+      Boolean(task.targetId));
+  if (!cancellable) {
+    return {
+      ok: false,
+      task,
+      error: `Task is already ${task.state}.`,
+    };
+  }
+  if (task.state === "waiting_for_device" && task.targetId) {
+    await queue?.remove(task.targetId).catch(() => undefined);
+  }
+  const updated =
+    (await store.update(task.id, {
+      state: "cancelled",
+      completedAt: new Date().toISOString(),
+      steps: [
+        ...task.steps,
+        taskStep({
+          id: "task.cancelled",
+          label: "Task cancelled",
+          status: "skipped",
+          summary: "Task was cancelled by request.",
+        }),
+      ],
+    })) ?? task;
+  return { ok: true, task: updated };
+}
+
+function buildRetryManagerTaskRequest(
+  task: ManagerTask,
+): { ok: true; value: ManagerTaskRequest } | { ok: false; error: string } {
+  if (task.state === "pending" || task.state === "running") {
+    return { ok: false, error: `cannot retry a ${task.state} task` };
+  }
+  if (task.state === "succeeded") {
+    return { ok: false, error: "cannot retry a succeeded task" };
+  }
+  return {
+    ok: true,
+    value: {
+      kind: task.kind,
+      ...(task.targetId ? { targetId: task.targetId } : {}),
+      dryRun: task.dryRun,
+      requestedBy: "manager-assistant",
+    },
+  };
 }
 
 async function runManagerTask(input: ManagerTaskRunInput): Promise<ManagerTask> {
@@ -1675,6 +1942,317 @@ async function buildManagerUpdatePlan(input: {
   };
 }
 
+async function buildManagerUpdateStatus(input: {
+  options: SiteAppOptions;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  localToken: string | undefined;
+  build: DeskRelayBuildInfo;
+}): Promise<ManagerUpdateStatus> {
+  const generatedAt = new Date().toISOString();
+  const [serverUpdate, plan] = await Promise.all([
+    input.options.selfServerUpdater
+      ? input.options.selfServerUpdater.status().catch((err) => ({
+          state: "failed",
+          error: (err as Error).message,
+        }))
+      : Promise.resolve({ state: "unconfigured" }),
+    buildManagerUpdatePlan({
+      options: input.options,
+      registry: input.registry,
+      build: input.build,
+    }),
+  ]);
+  const server = updateTargetFromRaw({
+    scope: "server",
+    targetLabel: "DeskRelay server",
+    raw: serverUpdate,
+  });
+  const devices: ManagerUpdateTargetStatus[] = [];
+  for (const device of input.registry.list()) {
+    const status = await buildDeviceInstallStatus(
+      input.fetchImpl,
+      device,
+      daemonToken(device, input.localToken),
+      input.options.deviceUpdateQueue,
+    );
+    devices.push(updateTargetFromInstallStatus(status));
+  }
+  const severity = maxManagerSeverity([
+    server.summary.severity,
+    ...devices.map((device) => device.summary.severity),
+    plan.summary.severity,
+  ]);
+  return {
+    generatedAt,
+    server,
+    devices,
+    plan,
+    summary: {
+      severity,
+      message: `Update status inspected for ${devices.length + 1} target(s).`,
+    },
+  };
+}
+
+function updateTargetFromRaw(input: {
+  scope: "server" | "device";
+  targetId?: string;
+  targetLabel: string;
+  raw: unknown;
+}): ManagerUpdateTargetStatus {
+  const state =
+    isRecord(input.raw) && typeof input.raw.state === "string" ? input.raw.state : "unknown";
+  const error = isRecord(input.raw) && typeof input.raw.error === "string" ? input.raw.error : "";
+  const updateAvailable =
+    isRecord(input.raw) && typeof input.raw.updateAvailable === "boolean"
+      ? input.raw.updateAvailable
+      : undefined;
+  const changed =
+    isRecord(input.raw) && typeof input.raw.changed === "boolean" ? input.raw.changed : undefined;
+  const severity =
+    state === "failed" || error ? "error" : updateAvailable || state === "running" ? "warn" : "ok";
+  return {
+    scope: input.scope,
+    ...(input.targetId ? { targetId: input.targetId } : {}),
+    targetLabel: input.targetLabel,
+    state,
+    ...(updateAvailable !== undefined ? { updateAvailable } : {}),
+    ...(changed !== undefined ? { changed } : {}),
+    ...(error ? { error } : {}),
+    summary: {
+      severity,
+      message: error || `Update state: ${state}.`,
+    },
+  };
+}
+
+function updateTargetFromInstallStatus(status: ManagerInstallStatus): ManagerUpdateTargetStatus {
+  const queueState = status.queue?.state;
+  const updateState = status.update?.state;
+  const state = queueState ?? updateState ?? (status.running ? "running" : "offline");
+  const updateAvailable = status.update?.updateAvailable;
+  const changed = status.update?.changed;
+  const error = status.queue?.error ?? status.update?.error;
+  const severity =
+    status.summary.severity === "error" || error
+      ? "error"
+      : status.summary.severity === "warn" || updateAvailable || Boolean(queueState)
+        ? "warn"
+        : "ok";
+  return {
+    scope: "device",
+    ...(status.targetId ? { targetId: status.targetId } : {}),
+    ...(status.targetLabel ? { targetLabel: status.targetLabel } : {}),
+    state,
+    ...(updateAvailable !== undefined ? { updateAvailable } : {}),
+    ...(changed !== undefined ? { changed } : {}),
+    ...(error ? { error } : {}),
+    summary: {
+      severity,
+      message: error || status.summary.message,
+    },
+  };
+}
+
+async function buildManagerSystemSummary(input: {
+  options: SiteAppOptions;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  localToken: string | undefined;
+  build: DeskRelayBuildInfo;
+  requestUrl: string;
+  store: ManagerTaskStore;
+}): Promise<ManagerSystemSummary> {
+  const generatedAt = new Date().toISOString();
+  const urls = getAccessUrls(input.options.selfHostUrl ?? input.requestUrl);
+  const [install, update, registration, recentTasks] = await Promise.all([
+    buildSelfInstallStatus(input.options, input.build),
+    buildManagerUpdatePlan({
+      options: input.options,
+      registry: input.registry,
+      build: input.build,
+    }),
+    analyzeLastRegistrationFailure(input.options.installReportStore),
+    input.store.list(5),
+  ]);
+  const network = buildSelfNetworkStatus(urls);
+  const security = buildSelfSecurityBoundary(input.options, urls);
+  const severity = maxManagerSeverity([
+    install.summary.severity,
+    network.summary.severity,
+    security.summary.severity,
+    update.summary.severity,
+    registration.found ? "warn" : "ok",
+  ]);
+  return {
+    generatedAt,
+    build: input.build,
+    devices: input.registry.list().map(toPublicDevice),
+    server: {
+      install,
+      network,
+      security,
+    },
+    update,
+    registration,
+    recentTasks,
+    summary: {
+      severity,
+      message: `Server and ${input.registry.list().length} device(s) summarized.`,
+    },
+  };
+}
+
+function buildManagerDeviceActions(device: Device): ManagerDeviceActions {
+  return {
+    generatedAt: new Date().toISOString(),
+    deviceId: device.id,
+    label: device.label,
+    actions: [
+      {
+        id: "diagnose",
+        label: "Run device diagnostics",
+        enabled: true,
+        method: "GET",
+        path: `/api/devices/${device.id}/doctor`,
+      },
+      {
+        id: "update",
+        label: "Update connector",
+        enabled: true,
+        method: "POST",
+        path: "/api/manager/tasks",
+        taskKind: "update-device",
+      },
+      {
+        id: "restart",
+        label: "Restart connector",
+        enabled: true,
+        method: "POST",
+        path: "/api/manager/tasks",
+        taskKind: "restart-device",
+      },
+      {
+        id: "logs",
+        label: "Read connector logs",
+        enabled: true,
+        method: "GET",
+        path: `/api/devices/${device.id}/logs`,
+      },
+      {
+        id: "remove",
+        label: "Remove device",
+        enabled: true,
+        method: "DELETE",
+        path: `/api/devices/${device.id}`,
+        destructive: true,
+      },
+    ],
+  };
+}
+
+async function buildManagerRegistrationDiagnosis(input: {
+  options: SiteAppOptions;
+  requestUrl: string;
+}): Promise<ManagerRegistrationDiagnosis> {
+  const generatedAt = new Date().toISOString();
+  const urls = getAccessUrls(input.options.selfHostUrl ?? input.requestUrl);
+  const network = buildSelfNetworkStatus(urls);
+  const lastFailure = await analyzeLastRegistrationFailure(input.options.installReportStore);
+  const preferredUrl = pickRemoteAccessUrl(urls);
+  const steps = [
+    taskStep({
+      id: "registration.site-token",
+      label: "Site token",
+      status: input.options.token ? "ok" : "failed",
+      summary: input.options.token ? "Site token is configured." : "Site token is not configured.",
+      retrySafe: false,
+    }),
+    taskStep({
+      id: "registration.server-url",
+      label: "Server URL",
+      status: network.summary.severity === "ok" ? "ok" : "warn",
+      summary: network.summary.message,
+      retrySafe: true,
+    }),
+    taskStep({
+      id: "registration.tailscale",
+      label: "Tailscale",
+      status: network.tailscale.detected ? "ok" : "warn",
+      summary: network.tailscale.detected
+        ? "Tailscale address is available."
+        : "No Tailscale address is currently detected on the server.",
+      retrySafe: true,
+    }),
+    ...(lastFailure.failureStep
+      ? [
+          taskStep({
+            id: "registration.last-failure",
+            label: "Last registration failure",
+            status: lastFailure.retrySafe ? "warn" : "failed",
+            summary: lastFailure.classification ?? lastFailure.failureStep.summary,
+            ...(lastFailure.action ? { action: lastFailure.action } : {}),
+            ...(lastFailure.retrySafe !== undefined ? { retrySafe: lastFailure.retrySafe } : {}),
+          }),
+        ]
+      : []),
+  ];
+  const severity = maxManagerSeverity([
+    ...steps.map((step) => step.severity),
+    lastFailure.found ? "warn" : "ok",
+  ]);
+  return {
+    generatedAt,
+    serverUrl: preferredUrl,
+    siteTokenConfigured: Boolean(input.options.token),
+    tailscaleDetected: network.tailscale.detected,
+    steps,
+    lastFailure,
+    summary: {
+      severity,
+      message: lastFailure.found
+        ? "Registration diagnosis includes the latest failed install report."
+        : "Registration prerequisites were inspected.",
+    },
+  };
+}
+
+async function buildManagerSecurityBoundarySummary(input: {
+  options: SiteAppOptions;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  localToken: string | undefined;
+  urls: AccessUrl[];
+}): Promise<ManagerSecurityBoundarySummary> {
+  const generatedAt = new Date().toISOString();
+  const server = buildSelfSecurityBoundary(input.options, input.urls);
+  const devices: ManagerSecurityBoundary[] = [];
+  for (const device of input.registry.list()) {
+    devices.push(
+      await buildDeviceSecurityBoundary(
+        input.fetchImpl,
+        device,
+        daemonToken(device, input.localToken),
+      ),
+    );
+  }
+  const warnings = [...server.warnings, ...devices.flatMap((device) => device.warnings)];
+  return {
+    generatedAt,
+    server,
+    devices,
+    warnings,
+    summary: {
+      severity: warnings.length > 0 ? "warn" : "ok",
+      message:
+        warnings.length > 0
+          ? `${warnings.length} security boundary warning(s).`
+          : "Server and device security boundaries are constrained.",
+    },
+  };
+}
+
 async function analyzeLastRegistrationFailure(store: InstallReportStore | undefined): Promise<{
   generatedAt: string;
   found: boolean;
@@ -1734,6 +2312,20 @@ function parseManagerTaskRequest(
   };
 }
 
+async function parseManagerShortcutRequest(
+  req: { json(): Promise<unknown> },
+  kind: ManagerTaskKind,
+): Promise<{ ok: true; value: ManagerTaskRequest } | { ok: false; error: string }> {
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+  if (!isRecord(body)) return { ok: false, error: "body must be an object" };
+  return parseManagerTaskRequest({ ...body, kind });
+}
+
 function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
   return (
     value === "diagnose" ||
@@ -1744,6 +2336,15 @@ function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
     value === "restart-device" ||
     value === "repair-registration"
   );
+}
+
+function maxManagerSeverity(
+  values: Array<DiagnosticSeverity | undefined>,
+): "ok" | "warn" | "error" | "unknown" {
+  if (values.includes("error")) return "error";
+  if (values.includes("warn")) return "warn";
+  if (values.includes("unknown")) return "unknown";
+  return "ok";
 }
 
 function taskStep(input: Omit<ManagerTask["steps"][number], "severity" | "source">) {

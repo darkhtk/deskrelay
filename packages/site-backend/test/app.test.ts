@@ -10,6 +10,7 @@ import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
 } from "../src/device-update-queue-store.ts";
+import { createInMemoryManagerTaskStore } from "../src/manager-task-store.ts";
 
 const TOKEN = "test-token";
 const DAEMON_URL = "http://daemon.test:18091";
@@ -153,9 +154,11 @@ describe("/api/* auth gate", () => {
     };
     expect(body.scope).toBe("server");
     expect(body.features).toContain("process.restart");
+    expect(body.features).toContain("manager.system-summary");
     expect(body.routes?.some((route) => route.path === "/api/devices/:id/process/restart")).toBe(
       true,
     );
+    expect(body.routes?.some((route) => route.path === "/api/manager/update/status")).toBe(true);
   });
 });
 
@@ -494,6 +497,139 @@ describe("manager task API", () => {
     expect(body.found).toBe(true);
     expect(body.classification).toBe("firewall-or-route-timeout");
     expect(body.retrySafe).toBe(true);
+  });
+
+  test("task logs, cancel, and retry APIs operate on stored manager tasks", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+    });
+    const pending = await managerTaskStore.create({
+      kind: "diagnose",
+      dryRun: true,
+      requestedBy: "browser",
+      steps: [],
+    });
+
+    const cancel = await app.fetch(
+      authedRequest("POST", `/api/manager/tasks/${pending.id}/cancel`),
+    );
+    expect(cancel.status).toBe(202);
+    expect(((await cancel.json()) as { state?: string }).state).toBe("cancelled");
+
+    const logs = await app.fetch(authedRequest("GET", `/api/manager/tasks/${pending.id}/logs`));
+    expect(logs.status).toBe(200);
+    const logBody = (await logs.json()) as { lines?: string[]; source?: string };
+    expect(logBody.source).toBe("manager-task");
+    expect(logBody.lines?.some((line) => line.includes("cancelled"))).toBe(true);
+
+    const failed = await managerTaskStore.create({
+      kind: "diagnose",
+      dryRun: true,
+      requestedBy: "browser",
+      steps: [],
+    });
+    await managerTaskStore.update(failed.id, {
+      state: "failed",
+      error: "synthetic failure",
+    });
+    const retry = await app.fetch(authedRequest("POST", `/api/manager/tasks/${failed.id}/retry`));
+    expect(retry.status).toBe(202);
+    expect(((await retry.json()) as { state?: string }).state).toBe("succeeded");
+    expect(((await managerTaskStore.list()) as unknown[]).length).toBe(3);
+  });
+
+  test("manager summary, action discovery, update status, registration diagnosis, and security summary APIs respond", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "remote",
+    });
+    setup.setMockResponse((req) => {
+      if (req.url.endsWith("/install/status")) {
+        return Response.json({
+          scope: "device",
+          generatedAt: "2026-05-11T00:00:00.000Z",
+          build: {
+            version: "0.0.0",
+            commit: "abc",
+            shortCommit: "abc",
+            dirty: false,
+            source: "git",
+          },
+          installed: true,
+          running: true,
+          update: { state: "idle", updateAvailable: false },
+          summary: { severity: "ok", message: "device ok" },
+        });
+      }
+      if (req.url.endsWith("/security/boundary")) {
+        return Response.json({
+          scope: "device",
+          generatedAt: "2026-05-11T00:00:00.000Z",
+          tokenBoundary: {
+            daemonTokenAvailable: true,
+            browserReceivesDaemonToken: false,
+          },
+          networkBoundary: {
+            url: DAEMON_URL,
+            kind: "tailscale",
+            publicExposure: false,
+          },
+          warnings: [],
+          summary: { severity: "ok", message: "secure" },
+        });
+      }
+      return Response.json({ ok: true });
+    });
+
+    const summary = await setup.app.fetch(authedRequest("GET", "/api/manager/system/summary"));
+    expect(summary.status).toBe(200);
+    expect(((await summary.json()) as { devices?: unknown[] }).devices).toHaveLength(1);
+
+    const actions = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/devices/${device.id}/actions`),
+    );
+    expect(actions.status).toBe(200);
+    expect(
+      ((await actions.json()) as { actions?: Array<{ id?: string }> }).actions?.some(
+        (action) => action.id === "update",
+      ),
+    ).toBe(true);
+
+    const updateStatus = await setup.app.fetch(authedRequest("GET", "/api/manager/update/status"));
+    expect(updateStatus.status).toBe(200);
+    expect(((await updateStatus.json()) as { devices?: unknown[] }).devices).toHaveLength(1);
+
+    const registration = await setup.app.fetch(
+      authedRequest("GET", "/api/manager/registration/diagnose"),
+    );
+    expect(registration.status).toBe(200);
+    expect(
+      ((await registration.json()) as { siteTokenConfigured?: boolean }).siteTokenConfigured,
+    ).toBe(true);
+
+    const security = await setup.app.fetch(authedRequest("GET", "/api/manager/security/boundary"));
+    expect(security.status).toBe(200);
+    expect(((await security.json()) as { devices?: unknown[] }).devices).toHaveLength(1);
+  });
+
+  test("shortcut APIs create manager tasks", async () => {
+    const update = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/update/all", { dryRun: true }),
+    );
+    expect(update.status).toBe(202);
+    expect(((await update.json()) as { kind?: string; state?: string }).kind).toBe("update-all");
+
+    const repair = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/registration/repair", { dryRun: true }),
+    );
+    expect(repair.status).toBe(409);
+    expect(((await repair.json()) as { kind?: string; state?: string }).kind).toBe(
+      "repair-registration",
+    );
   });
 });
 
