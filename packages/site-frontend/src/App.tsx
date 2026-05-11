@@ -70,9 +70,16 @@ import {
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
 
-type SettingsTab = "general" | "devices" | "diagnostics" | "instructions" | "help";
+type SettingsTab = "general" | "updates" | "devices" | "diagnostics" | "instructions" | "help";
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "devices", "diagnostics", "instructions", "help"];
+const SETTINGS_TABS: SettingsTab[] = [
+  "general",
+  "updates",
+  "devices",
+  "diagnostics",
+  "instructions",
+  "help",
+];
 
 type OpenSettingsOptions = {
   tab?: SettingsTab;
@@ -164,9 +171,9 @@ const HELP_SECTIONS: Array<{
       "연결됨은 서버가 선택한 디바이스의 daemon에 접근 가능하다는 뜻입니다.",
       "오프라인은 서버가 해당 daemon에 접근하지 못한다는 뜻입니다.",
       "Claude command bridge 준비 안 됨은 connector는 살아 있지만 Claude 실행 준비가 끝나지 않은 상태입니다.",
-      "업데이트 실행 버튼은 설정 > 일반 탭에 모여 있습니다.",
+      "업데이트 실행 버튼은 설정 > 업데이트 탭에 모여 있습니다.",
       "전체 업데이트는 등록된 connector를 먼저 갱신한 뒤 서버 PC의 git 저장소를 갱신하고 서버를 재시작합니다.",
-      "디바이스별 업데이트 상태는 일반 탭에서 확인합니다. 꺼진 디바이스는 실패가 아니라 온라인 대기로 표시합니다.",
+      "디바이스별 업데이트 상태는 업데이트 탭에서 확인합니다. 꺼진 디바이스는 실패가 아니라 온라인 대기로 표시합니다.",
       "connector 업데이트는 대상 PC의 Windows 로그인 작업을 다시 실행하도록 요청합니다. 요청 실패는 재시작 필요로 표시합니다.",
       "연결 진단 탭은 상태 확인과 새로고침 중심으로 사용합니다.",
     ],
@@ -624,7 +631,15 @@ export const App: Component = () => {
 
               <div class="settings-dialog-body">
                 <Show when={settingsTab() === "general"}>
-                  <LanguageSettings
+                  <GeneralSettings
+                    onClearAccess={handleSettingsClearAccess}
+                    initialSelectedDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
+                    devicesRevision={devicesRevision()}
+                  />
+                </Show>
+                <Show when={settingsTab() === "updates"}>
+                  <GeneralSettings
+                    section="updates"
                     onClearAccess={handleSettingsClearAccess}
                     initialSelectedDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
                     devicesRevision={devicesRevision()}
@@ -717,10 +732,11 @@ interface DeviceBuildSnapshot {
   error?: string;
 }
 
-const LanguageSettings: Component<{
+const GeneralSettings: Component<{
   onClearAccess: () => void;
   initialSelectedDeviceId?: string | null;
   devicesRevision?: number;
+  section?: "general" | "updates";
 }> = (props) => {
   const [savingAutostart, setSavingAutostart] = createSignal(false);
   const [autostart, { mutate: setAutostart }] = createResource(async () => {
@@ -1114,6 +1130,124 @@ const LanguageSettings: Component<{
       ? updateStatusText(serverUpdateStatus())
       : overallUpdate().message;
 
+  const updateSection = () => (
+    <section class="settings-card settings-update-section">
+      <div class="settings-card-heading">
+        <h3 class="settings-card-title">업데이트</h3>
+        <SettingsScopeLabels scopes={["server", "current device"]} />
+      </div>
+      <p class="settings-card-help">
+        서버와 등록된 connector를 git 기준으로 갱신합니다. 실행 상태와 디바이스별 결과를 여기에서
+        확인합니다.
+      </p>
+
+      <div class={`settings-update-overall update-phase-${overallPhase()}`}>
+        <div class="settings-update-overall-copy">
+          <strong>전체 업데이트</strong>
+          <span>{overallMessage()}</span>
+        </div>
+        <button
+          type="button"
+          class="primary-button"
+          disabled={!canUpdateAll()}
+          onClick={() => void updateAll()}
+        >
+          {overallPhase() === "running"
+            ? "진행 중"
+            : canUpdateAll()
+              ? "전체 업데이트"
+              : "업데이트 없음"}
+        </button>
+      </div>
+
+      <div class="settings-update-row">
+        <div class="settings-update-row-main">
+          <span
+            class={`settings-update-dot update-phase-${updateStatusPhase(serverUpdateStatus())}`}
+          />
+          <span class="settings-update-label">서버</span>
+          <span class="settings-update-detail">{updateStatusText(serverUpdateStatus())}</span>
+        </div>
+        <button
+          type="button"
+          class="secondary-button"
+          disabled={!canUpdateServer()}
+          onClick={() => void updateServer()}
+        >
+          {updating() === "server" || serverUpdateStatus()?.state === "running"
+            ? "진행 중"
+            : canUpdateServer()
+              ? "서버 업데이트"
+              : "최신"}
+        </button>
+      </div>
+
+      <div class="settings-update-device-list" aria-label="디바이스별 업데이트 상태">
+        <For each={devices() ?? []}>
+          {(device) => {
+            const state = () => deviceUpdateStates()[device.id] ?? null;
+            const snapshot = () => deviceBuildSnapshot(device.id);
+            const queueEntry = () => deviceUpdateQueueEntry(device.id);
+            const phase = () =>
+              deviceUpdatePhase(device, health()?.build, snapshot(), state(), queueEntry());
+            return (
+              <div class="settings-update-device">
+                <div class="settings-update-row">
+                  <div class="settings-update-row-main">
+                    <span class={`settings-update-dot update-phase-${phase()}`} />
+                    <span class="settings-update-label">{deviceDisplayName(device)}</span>
+                    <span class="settings-update-detail">
+                      {deviceUpdateStatusText(
+                        device,
+                        health()?.build,
+                        snapshot(),
+                        state(),
+                        queueEntry(),
+                      )}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="secondary-button"
+                    disabled={!canUpdateConnector(device, snapshot())}
+                    onClick={() => void updateConnector(device)}
+                  >
+                    {updating() === device.id
+                      ? "진행 중"
+                      : canUpdateConnector(device, snapshot())
+                        ? "connector 업데이트"
+                        : phase() === "pending"
+                          ? "대기"
+                          : phase() === "restart_required"
+                            ? "재시작 필요"
+                            : "최신"}
+                  </button>
+                </div>
+                <Show when={state()?.fallbackCommand}>
+                  {(command) => (
+                    <textarea
+                      class="settings-command-textarea"
+                      readOnly
+                      spellcheck={false}
+                      value={command()}
+                    />
+                  )}
+                </Show>
+              </div>
+            );
+          }}
+        </For>
+        <Show when={!devices.loading && (devices() ?? []).length === 0}>
+          <p class="settings-card-help">등록된 디바이스가 없습니다.</p>
+        </Show>
+      </div>
+    </section>
+  );
+
+  if (props.section === "updates") {
+    return <div class="settings-stack">{updateSection()}</div>;
+  }
+
   return (
     <div class="settings-stack">
       <section class="settings-card">
@@ -1165,118 +1299,6 @@ const LanguageSettings: Component<{
         <Show when={autostart()?.error}>
           {(message) => <p class="settings-error">{message()}</p>}
         </Show>
-      </section>
-
-      <section class="settings-card settings-update-section">
-        <div class="settings-card-heading">
-          <h3 class="settings-card-title">업데이트</h3>
-          <SettingsScopeLabels scopes={["server", "current device"]} />
-        </div>
-        <p class="settings-card-help">
-          서버와 등록된 connector를 git 기준으로 갱신합니다. 실행 상태와 디바이스별 결과를 여기에서
-          확인합니다.
-        </p>
-
-        <div class={`settings-update-overall update-phase-${overallPhase()}`}>
-          <div class="settings-update-overall-copy">
-            <strong>전체 업데이트</strong>
-            <span>{overallMessage()}</span>
-          </div>
-          <button
-            type="button"
-            class="primary-button"
-            disabled={!canUpdateAll()}
-            onClick={() => void updateAll()}
-          >
-            {overallPhase() === "running"
-              ? "진행 중"
-              : canUpdateAll()
-                ? "전체 업데이트"
-                : "업데이트 없음"}
-          </button>
-        </div>
-
-        <div class="settings-update-row">
-          <div class="settings-update-row-main">
-            <span
-              class={`settings-update-dot update-phase-${updateStatusPhase(serverUpdateStatus())}`}
-            />
-            <span class="settings-update-label">서버</span>
-            <span class="settings-update-detail">{updateStatusText(serverUpdateStatus())}</span>
-          </div>
-          <button
-            type="button"
-            class="secondary-button"
-            disabled={!canUpdateServer()}
-            onClick={() => void updateServer()}
-          >
-            {updating() === "server" || serverUpdateStatus()?.state === "running"
-              ? "진행 중"
-              : canUpdateServer()
-                ? "서버 업데이트"
-                : "최신"}
-          </button>
-        </div>
-
-        <div class="settings-update-device-list" aria-label="디바이스별 업데이트 상태">
-          <For each={devices() ?? []}>
-            {(device) => {
-              const state = () => deviceUpdateStates()[device.id] ?? null;
-              const snapshot = () => deviceBuildSnapshot(device.id);
-              const queueEntry = () => deviceUpdateQueueEntry(device.id);
-              const phase = () =>
-                deviceUpdatePhase(device, health()?.build, snapshot(), state(), queueEntry());
-              return (
-                <div class="settings-update-device">
-                  <div class="settings-update-row">
-                    <div class="settings-update-row-main">
-                      <span class={`settings-update-dot update-phase-${phase()}`} />
-                      <span class="settings-update-label">{deviceDisplayName(device)}</span>
-                      <span class="settings-update-detail">
-                        {deviceUpdateStatusText(
-                          device,
-                          health()?.build,
-                          snapshot(),
-                          state(),
-                          queueEntry(),
-                        )}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      class="secondary-button"
-                      disabled={!canUpdateConnector(device, snapshot())}
-                      onClick={() => void updateConnector(device)}
-                    >
-                      {updating() === device.id
-                        ? "진행 중"
-                        : canUpdateConnector(device, snapshot())
-                          ? "connector 업데이트"
-                          : phase() === "pending"
-                            ? "대기"
-                            : phase() === "restart_required"
-                              ? "재시작 필요"
-                              : "최신"}
-                    </button>
-                  </div>
-                  <Show when={state()?.fallbackCommand}>
-                    {(command) => (
-                      <textarea
-                        class="settings-command-textarea"
-                        readOnly
-                        spellcheck={false}
-                        value={command()}
-                      />
-                    )}
-                  </Show>
-                </div>
-              );
-            }}
-          </For>
-          <Show when={!devices.loading && (devices() ?? []).length === 0}>
-            <p class="settings-card-help">등록된 디바이스가 없습니다.</p>
-          </Show>
-        </div>
       </section>
 
       <section class="settings-card">
