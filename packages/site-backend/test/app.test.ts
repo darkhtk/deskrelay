@@ -1024,7 +1024,7 @@ describe("manager task API", () => {
         cwd,
         runner: async (input) => ({
           command: "fake-claude -p",
-          text: `cwd=${input.cwd}; message=${input.message}; history=${input.history.length}`,
+          text: `cwd=${input.cwd}; message=${input.message}; history=${input.history.length}; context=${input.context?.sessionId ?? "none"}`,
         }),
       },
     });
@@ -1032,6 +1032,14 @@ describe("manager task API", () => {
     const res = await app.fetch(
       authedRequest("POST", "/api/manager/assistant/chat", {
         message: "상태 알려줘",
+        context: {
+          deviceId: "dev_1",
+          deviceLabel: "HOMEDEV (Server)",
+          deviceConnectionState: "online",
+          sessionId: "session_1",
+          sessionTitle: "선택된 대화",
+          cwd: "C:\\repo",
+        },
         history: [
           {
             id: "m1",
@@ -1054,6 +1062,7 @@ describe("manager task API", () => {
     expect(body.message?.text).toContain("cwd=");
     expect(body.message?.text).toContain("message=상태 알려줘");
     expect(body.message?.text).toContain("history=1");
+    expect(body.message?.text).toContain("context=session_1");
   });
 
   test("manager assistant chat creates managed Claude instructions outside user-editable scopes", async () => {
@@ -1107,10 +1116,11 @@ describe("manager task API", () => {
       expect(instructions).toContain("administrator and supervisor");
       expect(instructions).toContain("## Intent First");
       expect(instructions).toContain("Understand Intent -> Choose Scope -> Read State");
+      expect(instructions).toContain("selected/current conversation");
+      expect(instructions).toContain("sessions.read");
       expect(instructions).toContain("GET /api/manager/system/summary");
       expect(instructions).toContain("POST /api/devices/:id/behaviors/:instance/request");
       expect(instructions).toContain("PUT /api/devices/:id/instructions/:scope");
-      expect(instructions).toContain("sessions.read");
       expect(instructions).toContain("Authorization: Bearer $DESKRELAY_SITE_TOKEN");
       expect(instructions).not.toContain(TOKEN);
     } finally {

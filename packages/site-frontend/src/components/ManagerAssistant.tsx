@@ -1,4 +1,4 @@
-import type { ManagerAssistantChatMessage } from "@deskrelay/shared";
+import type { ManagerAssistantChatContext, ManagerAssistantChatMessage } from "@deskrelay/shared";
 import { type Component, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { type ClaudeStreamEvent, api } from "../api.ts";
 import { Composer } from "./Composer.tsx";
@@ -11,7 +11,11 @@ const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
   createdAt: new Date().toISOString(),
 };
 
-export const ManagerAssistant: Component = () => {
+interface ManagerAssistantProps {
+  context?: ManagerAssistantChatContext | null;
+}
+
+export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [messages, setMessages] = createSignal<ManagerAssistantChatMessage[]>([INITIAL_MESSAGE]);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -73,6 +77,7 @@ export const ManagerAssistant: Component = () => {
       const response = await api.managerAssistantChat({
         message: text,
         history,
+        ...(props.context ? { context: props.context } : {}),
       });
       setMessages((current) => [...current, response.message]);
     } catch (err) {

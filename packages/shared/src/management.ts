@@ -245,9 +245,19 @@ export interface ManagerAssistantChatMessage {
   createdAt: string;
 }
 
+export interface ManagerAssistantChatContext {
+  deviceId?: string;
+  deviceLabel?: string;
+  deviceConnectionState?: "online" | "offline";
+  sessionId?: string;
+  sessionTitle?: string;
+  cwd?: string;
+}
+
 export interface ManagerAssistantChatRequest {
   message: string;
   history?: ManagerAssistantChatMessage[];
+  context?: ManagerAssistantChatContext;
 }
 
 export interface ManagerAssistantChatResponse {

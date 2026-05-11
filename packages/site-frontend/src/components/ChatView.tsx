@@ -5,6 +5,7 @@
 // from the original browser prototype so styles.css (also ported
 // from there) styles them correctly.
 
+import type { ManagerAssistantChatContext } from "@deskrelay/shared";
 import {
   type Component,
   For,
@@ -2220,6 +2221,24 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     return (devices() ?? []).find((d) => d.id === id) ?? null;
   };
 
+  const managerAssistantContext = createMemo<ManagerAssistantChatContext | null>(() => {
+    const context: ManagerAssistantChatContext = {};
+    const deviceId = effectiveDeviceId();
+    const device = activeDevice();
+    const session = selectedSession();
+    const currentCwd = selectedSessionCwd() || cwd().trim();
+    if (deviceId) context.deviceId = deviceId;
+    if (device) {
+      context.deviceLabel = deviceDisplayName(device);
+      if (device.connectionState) context.deviceConnectionState = device.connectionState;
+    }
+    if (session?.sessionId) context.sessionId = session.sessionId;
+    if (session?.fullTitle || session?.title)
+      context.sessionTitle = session.fullTitle || session.title;
+    if (currentCwd) context.cwd = currentCwd;
+    return Object.keys(context).length ? context : null;
+  });
+
   createEffect(() => {
     const device = activeDevice();
     if (!device || device.connectionState !== "offline" || devices.loading) return;
@@ -3991,7 +4010,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               }
             >
               <div class="chat-assistant-mobile">
-                <ManagerAssistant />
+                <ManagerAssistant context={managerAssistantContext()} />
               </div>
             </Show>
           }
@@ -4018,7 +4037,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
       <Show when={showAssistantDock()}>
         <aside class="chat-assistant-dock" aria-label={t("chat.manager-assistant.open")}>
-          <ManagerAssistant />
+          <ManagerAssistant context={managerAssistantContext()} />
         </aside>
       </Show>
 

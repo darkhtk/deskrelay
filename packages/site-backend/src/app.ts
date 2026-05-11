@@ -7,6 +7,7 @@ import {
   type DiagnosticReport,
   type DiagnosticSeverity,
   MANAGER_API_VERSION,
+  type ManagerAssistantChatContext,
   type ManagerAssistantChatMessage,
   type ManagerAssistantChatRequest,
   type ManagerAssistantChatResponse,
@@ -80,6 +81,7 @@ export interface SiteAppOptions {
 export interface ManagerAssistantRunInput {
   message: string;
   history: ManagerAssistantChatMessage[];
+  context: ManagerAssistantChatContext | undefined;
   cwd: string;
   repoRoot: string;
   instructionsPath: string;
@@ -1529,6 +1531,7 @@ async function runManagerAssistantChat(
   const result = await runner({
     message: request.message.trim(),
     history,
+    context: request.context,
     cwd,
     repoRoot,
     instructionsPath: workspace.instructionsPath,
@@ -1605,6 +1608,7 @@ function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
   const transcript = recent
     .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text}`)
     .join("\n\n");
+  const browserContext = formatManagerAssistantBrowserContext(input.context);
   return [
     "You are the DeskRelay manager assistant.",
     "You are running on the server PC in a managed DeskRelay assistant folder.",
@@ -1615,6 +1619,7 @@ function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
     "Before using APIs or commands, identify the user's intent and the affected scope.",
     "Answer in Korean unless the user asks for another language.",
     "If you did not actually run a command, do not claim that you did.",
+    browserContext ? `Current browser context:\n${browserContext}` : "",
     transcript ? `Previous conversation:\n${transcript}` : "",
     `User: ${input.message}`,
     "Assistant:",
@@ -1696,6 +1701,8 @@ function buildManagedManagerAssistantInstructions(input: {
     "```",
     "",
     "Affected scopes are: server, current device, selected device, selected session, browser, repository, or all devices.",
+    "If the user refers to the selected/current conversation, chat, or session, use the browser-provided selected device/session context first. Do not ask the user to paste text or provide IDs when selected session context is available.",
+    "To inspect a selected Claude session, list the selected device behaviors, then call the Claude behavior method `sessions.read` with the selected `sessionId` and `cwd` when present.",
     "If the intent or scope is ambiguous, ask one concise clarification question before mutating anything.",
     "",
     "## Local Context",
@@ -2756,13 +2763,55 @@ function parseManagerAssistantChatRequest(
     return { ok: false, error: "message is required" };
   }
   if (input.message.length > 20_000) return { ok: false, error: "message is too long" };
+  const context = normalizeAssistantContext(input.context);
   return {
     ok: true,
     value: {
       message: input.message.trim(),
       history: normalizeAssistantHistory(input.history),
+      ...(context ? { context } : {}),
     },
   };
+}
+
+function normalizeAssistantContext(input: unknown): ManagerAssistantChatContext | undefined {
+  if (!isRecord(input)) return undefined;
+  const context: ManagerAssistantChatContext = {};
+  if (typeof input.deviceId === "string" && input.deviceId.trim()) {
+    context.deviceId = input.deviceId.trim().slice(0, 200);
+  }
+  if (typeof input.deviceLabel === "string" && input.deviceLabel.trim()) {
+    context.deviceLabel = input.deviceLabel.trim().slice(0, 500);
+  }
+  if (input.deviceConnectionState === "online" || input.deviceConnectionState === "offline") {
+    context.deviceConnectionState = input.deviceConnectionState;
+  }
+  if (typeof input.sessionId === "string" && input.sessionId.trim()) {
+    context.sessionId = input.sessionId.trim().slice(0, 500);
+  }
+  if (typeof input.sessionTitle === "string" && input.sessionTitle.trim()) {
+    context.sessionTitle = input.sessionTitle.trim().slice(0, 1_000);
+  }
+  if (typeof input.cwd === "string" && input.cwd.trim()) {
+    context.cwd = input.cwd.trim().slice(0, 2_000);
+  }
+  return Object.keys(context).length ? context : undefined;
+}
+
+function formatManagerAssistantBrowserContext(
+  context: ManagerAssistantChatContext | undefined,
+): string {
+  if (!context) return "";
+  const lines: string[] = [];
+  if (context.deviceId) lines.push(`- selected device id: ${context.deviceId}`);
+  if (context.deviceLabel) lines.push(`- selected device label: ${context.deviceLabel}`);
+  if (context.deviceConnectionState) {
+    lines.push(`- selected device connection: ${context.deviceConnectionState}`);
+  }
+  if (context.sessionId) lines.push(`- selected session id: ${context.sessionId}`);
+  if (context.sessionTitle) lines.push(`- selected session title: ${context.sessionTitle}`);
+  if (context.cwd) lines.push(`- selected/current cwd: ${context.cwd}`);
+  return lines.join("\n");
 }
 
 function normalizeAssistantHistory(input: unknown): ManagerAssistantChatMessage[] {
