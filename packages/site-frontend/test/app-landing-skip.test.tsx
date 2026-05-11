@@ -259,10 +259,17 @@ describe("App landing flow", () => {
         (entry) =>
           entry.url.endsWith("/api/manager/assistant/chat/stream") && entry.method === "POST",
       );
-      const body = JSON.parse(request?.body ?? "{}") as { message?: string; history?: unknown[] };
+      const body = JSON.parse(request?.body ?? "{}") as {
+        message?: string;
+        history?: Array<{ role?: string; text?: string }>;
+      };
       expect(body.message).toBe("서버 상태 알려줘");
       expect(body.history?.length).toBeGreaterThan(0);
+      expect(body.history?.some((message) => message.text === "서버 상태 알려줘")).toBe(false);
       expect(container.textContent).toContain("서버 PC의 DeskRelay 폴더에서 확인했습니다.");
+      expect(window.localStorage.getItem("cr.manager-assistant.messages:v1")).toContain(
+        "서버 PC의 DeskRelay 폴더에서 확인했습니다.",
+      );
     });
   });
 

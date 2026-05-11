@@ -8,6 +8,9 @@ import { type ClaudeStreamEvent, api } from "../api.ts";
 import { Composer } from "./Composer.tsx";
 import { Transcript } from "./Transcript.tsx";
 
+const STORAGE_KEY = "cr.manager-assistant.messages:v1";
+const MAX_STORED_MESSAGES = 40;
+
 const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
   id: "assistant-initial",
   role: "assistant",
@@ -15,12 +18,46 @@ const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
   createdAt: new Date().toISOString(),
 };
 
+function loadStoredMessages(): ManagerAssistantChatMessage[] {
+  if (typeof window === "undefined") return [INITIAL_MESSAGE];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [INITIAL_MESSAGE];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [INITIAL_MESSAGE];
+    const messages = parsed.filter(isManagerAssistantMessage).slice(-MAX_STORED_MESSAGES);
+    return messages.length ? messages : [INITIAL_MESSAGE];
+  } catch {
+    return [INITIAL_MESSAGE];
+  }
+}
+
+function storeMessages(messages: ManagerAssistantChatMessage[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)));
+  } catch {
+    // Browser storage can be unavailable in private or restricted contexts.
+  }
+}
+
+function isManagerAssistantMessage(input: unknown): input is ManagerAssistantChatMessage {
+  if (!input || typeof input !== "object") return false;
+  const item = input as Record<string, unknown>;
+  return (
+    typeof item.id === "string" &&
+    (item.role === "user" || item.role === "assistant" || item.role === "system") &&
+    typeof item.text === "string" &&
+    typeof item.createdAt === "string"
+  );
+}
+
 interface ManagerAssistantProps {
   context?: ManagerAssistantChatContext | null;
 }
 
 export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
-  const [messages, setMessages] = createSignal<ManagerAssistantChatMessage[]>([INITIAL_MESSAGE]);
+  const [messages, setMessages] = createSignal<ManagerAssistantChatMessage[]>(loadStoredMessages());
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [status, setStatus] = createSignal<ManagerAssistantStreamStatus | null>(null);
@@ -38,7 +75,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   );
 
   createEffect(() => {
-    messages();
+    const currentMessages = messages();
+    storeMessages(currentMessages);
     busy();
     queueMicrotask(() => {
       if (transcriptScroller && transcriptAtBottom()) {
@@ -73,8 +111,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       text,
       createdAt: new Date().toISOString(),
     };
-    const history = [...messages(), userMessage];
-    setMessages(history);
+    const history = messages();
+    setMessages([...history, userMessage]);
     setTranscriptAtBottom(true);
     setError(null);
     setStatus({
@@ -85,6 +123,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     });
     setBusy(true);
     let streamError: string | null = null;
+    let receivedFinalMessage = false;
     try {
       await api.managerAssistantChatStream(
         {
@@ -98,6 +137,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             return;
           }
           if (event.type === "message") {
+            receivedFinalMessage = true;
             setMessages((current) => [...current, event.message]);
             return;
           }
@@ -124,7 +164,19 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       });
     } finally {
       setBusy(false);
-      if (!streamError) setStatus(null);
+      if (!streamError && !receivedFinalMessage) {
+        const incomplete =
+          "Assistant 응답이 완료되지 않았습니다. 마지막 요청을 다시 시도해 주세요.";
+        setError(incomplete);
+        setStatus({
+          phase: "error",
+          tone: "warning",
+          main: "Assistant 응답 미완료",
+          detail: "최종 응답 없음",
+        });
+      } else if (!streamError) {
+        setStatus(null);
+      }
     }
   };
 

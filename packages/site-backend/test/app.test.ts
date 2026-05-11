@@ -1151,8 +1151,15 @@ describe("manager task API", () => {
       expect(instructions).toContain("administrator and supervisor");
       expect(instructions).toContain("## Intent First");
       expect(instructions).toContain("Understand Intent -> Choose Scope -> Read State");
+      expect(instructions).toContain("Intent -> Scope -> Needed context");
+      expect(instructions).toContain("browser context is only a reference snapshot");
+      expect(instructions).toContain("Use lazy reads");
       expect(instructions).toContain("selected/current conversation");
       expect(instructions).toContain("sessions.read");
+      expect(instructions).toContain("Prefer PowerShell");
+      expect(instructions).toContain("Do not put PowerShell syntax inside Bash");
+      expect(instructions).toContain('"message": "..."');
+      expect(instructions).not.toContain('"prompt": "..."');
       expect(instructions).toContain("GET /api/manager/system/summary");
       expect(instructions).toContain("POST /api/devices/:id/behaviors/:instance/request");
       expect(instructions).toContain("PUT /api/devices/:id/instructions/:scope");
