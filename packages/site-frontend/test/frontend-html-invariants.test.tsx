@@ -122,9 +122,14 @@ describe("settings and chrome invariants", () => {
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
 
     expect(chatViewSource).toContain('class="chat-ai-assistant-button"');
-    expect(chatViewSource).toContain('openSettingsOverlay({ tab: "assistant"');
+    expect(chatViewSource).toContain("toggleManagerAssistant");
+    expect(chatViewSource).toContain('class="chat-assistant-dock"');
+    expect(chatViewSource).toContain('class="chat-assistant-mobile"');
     expect(chatViewSource).toContain('t("chat.manager-assistant.open")');
     expect(styles).toContain(".chat-ai-assistant-button");
+    expect(styles).toContain(".signed-in.assistant-panel-open");
+    expect(styles).toContain(".chat-assistant-dock");
+    expect(styles).toContain(".chat-assistant-mobile");
     expect(styles).toMatch(/\.chat-ai-assistant-button\s*{[^}]*width:\s*32px;/s);
   });
 
