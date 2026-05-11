@@ -9,10 +9,15 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  type DiagnosticSeverity,
+  type DiagnosticStatus,
+  normalizeDiagnosticStep,
+} from "@deskrelay/shared";
 import { defaultAuthFilePath } from "./auth-token.ts";
-import { defaultIdentityPath, type DeviceIdentity } from "./device-identity.ts";
-import { explainUpgradeStatus } from "./site-ws-client.ts";
+import { type DeviceIdentity, defaultIdentityPath } from "./device-identity.ts";
 import { queryLoginTask } from "./login-task.ts";
+import { explainUpgradeStatus } from "./site-ws-client.ts";
 
 /** State dir = the directory holding `auth.json` (and identity/ + logs/).
  *  Derive from defaultAuthFilePath so we don't drift if the layout
@@ -29,10 +34,15 @@ export interface CheckResult {
   /** Human-readable label shown to the operator. */
   label: string;
   status: CheckStatus;
+  severity: DiagnosticSeverity;
   /** One-line summary. */
   summary: string;
   /** Optional follow-up action the user should take. */
   hint?: string | undefined;
+  action?: string | undefined;
+  evidence?: string[] | undefined;
+  retrySafe?: boolean | undefined;
+  source: "doctor";
 }
 
 export interface DoctorOptions {
@@ -54,6 +64,9 @@ export interface DoctorOptions {
 }
 
 type FetchImpl = NonNullable<DoctorOptions["fetchImpl"]>;
+type CheckResultInput = Omit<CheckResult, "severity" | "source"> & {
+  severity?: DiagnosticSeverity;
+};
 
 export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]> {
   const fetchImpl: FetchImpl = opts.fetchImpl ?? defaultFetch;
@@ -63,7 +76,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]
   const daemonBase = opts.daemonBase ?? "http://127.0.0.1:18091";
   const timeoutMs = opts.timeoutMs ?? 4000;
 
-  const out: CheckResult[] = [];
+  const out: CheckResultInput[] = [];
 
   // 1. identity.json — the device's site-issued credentials.
   const identity = await readIdentitySafe(identityPath);
@@ -77,7 +90,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]
     });
     // Without identity, the rest of the network checks would all be
     // misleading — return early.
-    return out;
+    return out.map(check);
   }
   out.push({
     id: "identity",
@@ -109,14 +122,17 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]
         id: "auth-token",
         label: "daemon auth token",
         status: tokLen >= 32 ? "ok" : "warn",
-        summary: tokLen >= 32 ? `${tokLen}-char token present` : `token shorter than expected (${tokLen} chars)`,
+        summary:
+          tokLen >= 32
+            ? `${tokLen}-char token present`
+            : `token shorter than expected (${tokLen} chars)`,
       });
     } catch {
       out.push({
         id: "auth-token",
         label: "daemon auth token",
         status: "error",
-        summary: `auth.json present but unparseable`,
+        summary: "auth.json present but unparseable",
         hint: "delete auth.json and restart the daemon — it'll regenerate",
       });
     }
@@ -191,7 +207,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]
   }
 
   // 5. Site reachable.
-  const siteHealth = await probe(fetchImpl, `${identity.siteUrl.replace(/\/+$/, "")}/healthz`, timeoutMs);
+  const siteHealth = await probe(
+    fetchImpl,
+    `${identity.siteUrl.replace(/\/+$/, "")}/healthz`,
+    timeoutMs,
+  );
   if (siteHealth.status === 200) {
     out.push({
       id: "site-reachable",
@@ -279,10 +299,42 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<CheckResult[]
     summary: `${osHostname()} (${platform})`,
   });
 
-  return out;
+  return out.map(check);
 }
 
-export function formatDoctorOutput(results: CheckResult[]): string {
+function check(input: CheckResultInput): CheckResult {
+  const statusMap: Record<CheckStatus, DiagnosticStatus> = {
+    ok: "ok",
+    warn: "warn",
+    error: "failed",
+    skip: "skipped",
+  };
+  const normalized = normalizeDiagnosticStep({
+    id: input.id,
+    label: input.label,
+    status: statusMap[input.status],
+    ...(input.severity ? { severity: input.severity } : {}),
+    summary: input.summary,
+    ...(input.hint ? { action: input.hint } : {}),
+    ...(input.evidence ? { evidence: input.evidence } : {}),
+    ...(input.retrySafe !== undefined ? { retrySafe: input.retrySafe } : {}),
+    source: "doctor",
+  });
+  return {
+    id: input.id,
+    label: input.label,
+    status: input.status,
+    severity: normalized.severity,
+    summary: input.summary,
+    source: "doctor",
+    ...(input.hint ? { hint: input.hint } : {}),
+    ...(typeof normalized.action === "string" ? { action: normalized.action } : {}),
+    ...(input.evidence ? { evidence: input.evidence } : {}),
+    ...(input.retrySafe !== undefined ? { retrySafe: input.retrySafe } : {}),
+  };
+}
+
+export function formatDoctorOutput(results: Array<CheckResult | CheckResultInput>): string {
   const marker: Record<CheckStatus, string> = {
     ok: "  OK  ",
     warn: " WARN ",
@@ -347,4 +399,3 @@ const defaultFetch = async (
   const r = await fetch(input as string, init);
   return { status: r.status, ok: r.ok };
 };
-

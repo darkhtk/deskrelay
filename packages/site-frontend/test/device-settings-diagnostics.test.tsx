@@ -57,7 +57,7 @@ describe("ConnectionDiagnostics", () => {
     vi.unstubAllGlobals();
   });
 
-  test("renders behaviors, workspace mode, and approval flags from /diagnostics", async () => {
+  test("renders workspace mode and approval flags without legacy behavior listing", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/devices")) {
@@ -83,11 +83,9 @@ describe("ConnectionDiagnostics", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain(t("conn-diag.claude.loaded", { version: "0.0.1" }));
-      expect(container.textContent).toContain("일치");
+      expect(container.textContent).toContain("restricted");
     });
-    expect(container.textContent).toContain("remote-claude@0.0.1");
-    expect(container.textContent).toContain("restricted");
+    expect(container.textContent).not.toContain("remote-claude@0.0.1");
     expect(container.textContent).toContain("/home/me/proj");
   });
 
@@ -155,11 +153,10 @@ describe("ConnectionDiagnostics", () => {
     ));
 
     await waitFor(() => {
-      expect(container.textContent).toContain(t("conn-diag.claude.loaded", { version: "0.0.1" }));
-      expect(container.textContent).toContain("불일치");
+      expect(diagnosticsCalls).toBeGreaterThan(0);
     });
-    const refresh = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === t("conn-diag.action.refresh"),
+    const refresh = container.querySelector<HTMLButtonElement>(
+      ".connection-diagnostics-actions button",
     );
     expect(refresh).toBeTruthy();
     if (!refresh) throw new Error("refresh button missing");
@@ -213,17 +210,16 @@ describe("ConnectionDiagnostics", () => {
       );
     };
 
-    const { container, getByText } = render(() => <Harness />);
+    const { getByText } = render(() => <Harness />);
 
     await waitFor(() => {
-      expect(container.textContent).toContain("불일치");
+      expect(diagnosticsCalls).toBeGreaterThan(0);
     });
 
     fireEvent.click(getByText("bump revision"));
 
     await waitFor(() => {
       expect(diagnosticsCalls).toBeGreaterThan(1);
-      expect(container.textContent).toContain("일치");
     });
   });
 });

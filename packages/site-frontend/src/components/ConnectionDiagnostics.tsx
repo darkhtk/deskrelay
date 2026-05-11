@@ -134,15 +134,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     return diagnostics()?.ok ? "ok" : "warning";
   };
 
-  const claudeTone = (): Tone => {
-    if (diagnostics.loading) return "pending";
-    if (diagnosticsError()) return "bad";
-    const value = diagnostics()?.diagnostics?.remoteClaudeLoaded;
-    if (value === true) return "ok";
-    if (value === false) return "bad";
-    return "warning";
-  };
-
   const buildTone = (): Tone => {
     if (diagnostics.loading || health.loading) return "pending";
     const server = health()?.build;
@@ -167,9 +158,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           : t("conn-diag.unknown");
 
     const workspaceMode = snapshot?.workspaceRoots?.mode ?? t("conn-diag.unknown");
-    const behaviorList = snapshot?.behaviors ?? [];
-    const loadedBehavior = behaviorList.find((b) => b.instanceId === "remote-claude");
-
     return [
       {
         tone: device ? "ok" : "offline",
@@ -209,23 +197,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
             : t("conn-diag.site.online", { seen: formatOptionalTime(device?.lastSeenAt) }),
         action: device?.connectionState === "offline" ? t("connection.action.devices") : undefined,
         onAction: device?.connectionState === "offline" ? openDevices : undefined,
-      },
-      {
-        tone: claudeTone(),
-        label: t("conn-diag.row.claude"),
-        detail:
-          diagnosticsError() || !snapshot
-            ? t("conn-diag.not-read")
-            : snapshot.diagnostics?.remoteClaudeLoaded
-              ? t("conn-diag.claude.loaded", {
-                  version: loadedBehavior?.version ?? t("conn-diag.unknown"),
-                })
-              : t("conn-diag.claude.not-ready"),
-        action:
-          snapshot?.diagnostics?.remoteClaudeLoaded === false
-            ? t("conn-diag.action.refresh")
-            : undefined,
-        onAction: snapshot?.diagnostics?.remoteClaudeLoaded === false ? refresh : undefined,
       },
       {
         tone:
@@ -380,14 +351,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
                 : t("conn-diag.value.connected")
           }
         />
-        <Metric
-          label={t("conn-diag.summary.claude")}
-          value={
-            diagnostics()?.diagnostics?.remoteClaudeLoaded
-              ? t("conn-diag.value.ready")
-              : t("conn-diag.value.not-ready")
-          }
-        />
       </div>
 
       <StatusTable rows={rows()} label={t("conn-diag.summary")} />
@@ -416,21 +379,6 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
           </div>
           <For each={diagnostics()?.workspaceRoots?.roots ?? []}>
             {(root) => <code>{root}</code>}
-          </For>
-        </div>
-      </Show>
-
-      <Show when={(diagnostics()?.behaviors ?? []).length > 0}>
-        <div class="connection-diagnostics-list">
-          <div class="connection-diagnostics-list-title">
-            {t("dsd.diagnostics.loaded-behaviors")}
-          </div>
-          <For each={diagnostics()?.behaviors ?? []}>
-            {(behavior) => (
-              <code>
-                {behavior.name}@{behavior.version}
-              </code>
-            )}
           </For>
         </div>
       </Show>

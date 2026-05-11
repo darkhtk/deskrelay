@@ -1,5 +1,10 @@
 import { networkInterfaces } from "node:os";
-import type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
+import {
+  type DiagnosticCheck,
+  type DiagnosticReport,
+  type DiagnosticSeverity,
+  diagnosticStepFromCheck,
+} from "@deskrelay/shared";
 import { type DeskRelayBuildInfo, getDeskRelayBuildInfo } from "@deskrelay/shared/version";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
@@ -1096,6 +1101,7 @@ async function buildServerDiagnosticReport(
     scope: "server",
     generatedAt,
     checks,
+    steps: checks.map((check) => diagnosticStepFromCheck(check, "server")),
   };
 }
 
@@ -1203,6 +1209,7 @@ async function buildDeviceDiagnosticReport(
       targetLabel: input.device.label,
       generatedAt,
       checks,
+      steps: checks.map((check) => diagnosticStepFromCheck(check, "server")),
     };
   }
 
@@ -1285,6 +1292,7 @@ async function buildDeviceDiagnosticReport(
     targetLabel: input.device.label,
     generatedAt,
     checks,
+    steps: checks.map((check) => diagnosticStepFromCheck(check, "server")),
   };
 }
 

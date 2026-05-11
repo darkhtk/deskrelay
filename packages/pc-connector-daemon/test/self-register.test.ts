@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { InstallLoginTaskOptions } from "../src/login-task.ts";
-import { registerSelf } from "../src/self-register.ts";
+import { RegisterSelfError, registerSelf } from "../src/self-register.ts";
 
 describe("registerSelf", () => {
   test("starts a wildcard-bound login task, verifies daemon URLs, and registers with the server", async () => {
@@ -60,6 +60,8 @@ describe("registerSelf", () => {
     expect(result.daemonUrl).toBe(`http://100.64.1.2:${port}`);
     expect(result.report.status).toBe("succeeded");
     expect(result.report.steps.map((step) => step.id)).toContain("server-registration");
+    expect(result.report.steps.every((step) => step.source === "register-self")).toBe(true);
+    expect(result.report.steps.every((step) => typeof step.severity === "string")).toBe(true);
     expect(installOptions?.start).toBe(true);
     expect(installOptions?.launch?.env).toMatchObject({
       CR_CONNECTOR_HOST: "0.0.0.0",
@@ -321,6 +323,32 @@ describe("registerSelf", () => {
       `GET http://100.64.1.2:${port}/status`,
       "GET http://deskrelay.test:18193/api/devices",
     ]);
+  });
+
+  test("adds action and evidence when the advertised daemon cannot be reached", async () => {
+    const port = 19099;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === `http://127.0.0.1:${port}/status`) return Response.json({ ok: true });
+      if (url === `http://100.64.1.2:${port}/status`) throw new Error("The operation timed out");
+      throw new Error(`unexpected fetch: GET ${url}`);
+    }) as typeof fetch;
+
+    try {
+      await registerSelfForTest({ port, fetchImpl });
+      throw new Error("expected registerSelf to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegisterSelfError);
+      const failure = err as RegisterSelfError;
+      const step = failure.report.steps.find((step) => step.id === "advertised-daemon");
+      expect(step).toMatchObject({
+        status: "failed",
+        severity: "error",
+        source: "register-self",
+      });
+      expect(step?.evidence).toContain(`daemonUrl=http://100.64.1.2:${port}`);
+      expect(step?.action).toMatch(/inbound TCP/);
+    }
   });
 
   test("fails before posting when registered devices response is invalid", async () => {

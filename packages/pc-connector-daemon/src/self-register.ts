@@ -1,5 +1,11 @@
 import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
+import {
+  type DiagnosticSeverity,
+  type DiagnosticSource,
+  type DiagnosticStatus,
+  normalizeDiagnosticStep,
+} from "@deskrelay/shared";
 import { loadOrCreateAuthToken } from "./auth-token.ts";
 import { defaultLoginTaskLaunch, installLoginTask, removeLoginTask } from "./login-task.ts";
 import { readStateFile } from "./state-file.ts";
@@ -41,14 +47,22 @@ interface PublicDevice {
   daemonUrl: string;
 }
 
-export type RegisterSelfStepStatus = "ok" | "repaired" | "failed" | "skipped";
+export type RegisterSelfStepStatus = Extract<
+  DiagnosticStatus,
+  "ok" | "repaired" | "failed" | "skipped"
+>;
 
 export interface RegisterSelfStep {
   id: string;
   label: string;
   status: RegisterSelfStepStatus;
+  severity: DiagnosticSeverity;
   summary: string;
+  evidence?: string[];
+  action?: string;
   hint?: string;
+  retrySafe?: boolean;
+  source: "register-self";
 }
 
 export interface RegisterSelfReport {
@@ -72,6 +86,11 @@ interface ServerRegistrationResult {
   removedDeviceIds: string[];
   registeredDeviceId?: string;
 }
+
+type RegisterSelfStepInput = Omit<RegisterSelfStep, "severity" | "source"> & {
+  severity?: DiagnosticSeverity;
+  source?: DiagnosticSource;
+};
 
 export async function registerSelf(options: RegisterSelfOptions): Promise<RegisterSelfResult> {
   const report: RegisterSelfReport = { status: "failed", steps: [] };
@@ -251,6 +270,8 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
         label: "server-to-connector probe",
         status: "failed",
         summary: classified.summary,
+        evidence: classified.evidence,
+        action: classified.action,
         hint: classified.hint,
       },
       classified.message,
@@ -302,11 +323,16 @@ export async function registerSelf(options: RegisterSelfOptions): Promise<Regist
   };
 }
 
-function addStep(report: RegisterSelfReport, step: RegisterSelfStep): void {
-  report.steps.push(step);
+function addStep(report: RegisterSelfReport, step: RegisterSelfStepInput): void {
+  report.steps.push(
+    normalizeDiagnosticStep({
+      ...step,
+      source: "register-self",
+    }) as RegisterSelfStep,
+  );
 }
 
-function failStep(report: RegisterSelfReport, step: RegisterSelfStep, message: string): never {
+function failStep(report: RegisterSelfReport, step: RegisterSelfStepInput, message: string): never {
   addStep(report, step);
   report.status = "failed";
   throw new RegisterSelfError(message, step.id, report);
@@ -346,6 +372,10 @@ export function formatRegisterSelfReport(report: RegisterSelfReport): string {
   const lines = ["registration report:"];
   for (const step of report.steps) {
     lines.push(`${marker[step.status]} ${step.label}: ${step.summary}`);
+    if (step.evidence?.length) {
+      for (const item of step.evidence) lines.push(`       evidence: ${item}`);
+    }
+    if (step.action) lines.push(`       action: ${step.action}`);
     if (step.hint) lines.push(`       -> ${step.hint}`);
   }
   lines.push(`result: ${report.status}`);
@@ -371,11 +401,14 @@ function classifyAdvertisedProbeFailure(
   error: string,
   daemonUrl: string,
   port: number,
-): { summary: string; hint: string; message: string } {
+): { summary: string; hint: string; message: string; evidence: string[]; action: string } {
   if (error === "HTTP 401" || error === "HTTP 403") {
     return {
       summary: `server reached ${daemonUrl}, but daemon token was rejected (${error})`,
       hint: "Rerun the registration command so the server stores this PC's current daemon token.",
+      action:
+        "Rerun the same registration command so the server stores this PC's current daemon token.",
+      evidence: [`daemonUrl=${daemonUrl}`, `status=${error}`],
       message: `daemon token rejected at ${daemonUrl}: ${error}`,
     };
   }
@@ -383,12 +416,16 @@ function classifyAdvertisedProbeFailure(
     return {
       summary: `local daemon is ready, but ${daemonUrl} timed out from the advertised address`,
       hint: `Check Tailscale/LAN routing and Windows Firewall inbound TCP ${port}.`,
+      action: `Allow inbound TCP ${port} for the connector, confirm Tailscale/LAN reachability, then rerun registration.`,
+      evidence: [`daemonUrl=${daemonUrl}`, `port=${port}`, `error=${error}`],
       message: `cannot reach connector at ${daemonUrl}: timeout. Check Windows Firewall or Tailscale/LAN access for TCP ${port}.`,
     };
   }
   return {
     summary: `local daemon is ready, but ${daemonUrl} is not reachable (${error})`,
     hint: `Check Windows Firewall, Tailscale/LAN access, and whether this PC is advertising the correct IP for TCP ${port}.`,
+    action: `Check the advertised connector address and inbound TCP ${port}, then rerun registration.`,
+    evidence: [`daemonUrl=${daemonUrl}`, `port=${port}`, `error=${error}`],
     message: `cannot reach connector at ${daemonUrl}. Check Windows Firewall or Tailscale/LAN access for TCP ${port}.`,
   };
 }

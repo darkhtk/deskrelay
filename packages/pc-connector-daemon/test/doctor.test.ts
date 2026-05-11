@@ -3,7 +3,7 @@
 // actually pinging a real site or daemon.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CheckResult, formatDoctorOutput, runDoctor } from "../src/doctor.ts";
@@ -35,17 +35,19 @@ function fakeFetch(probes: Probe[]) {
   };
 }
 
-async function writeIdentity(overrides: Partial<{
-  deviceId: string;
-  siteUrl: string;
-  publicKey: string;
-  keyHandle: string;
-  pairedAt: string;
-  label: string;
-  os: string;
-  hostname: string;
-  connectionToken: string;
-}> = {}) {
+async function writeIdentity(
+  overrides: Partial<{
+    deviceId: string;
+    siteUrl: string;
+    publicKey: string;
+    keyHandle: string;
+    pairedAt: string;
+    label: string;
+    os: string;
+    hostname: string;
+    connectionToken: string;
+  }> = {},
+) {
   await writeFile(
     identityPath,
     JSON.stringify({
@@ -92,6 +94,8 @@ describe("runDoctor — happy path", () => {
     expect(find(results, "site-reachable").status).toBe("ok");
     expect(find(results, "site-recognizes-device").status).toBe("ok");
     expect(results.some((r) => r.status === "error")).toBe(false);
+    expect(results.every((r) => r.source === "doctor")).toBe(true);
+    expect(results.every((r) => typeof r.severity === "string")).toBe(true);
   });
 });
 
@@ -183,9 +187,7 @@ describe("formatDoctorOutput", () => {
   });
 
   test("all-OK summary says everything's healthy", () => {
-    const out = formatDoctorOutput([
-      { id: "x", label: "x", status: "ok", summary: "fine" },
-    ]);
+    const out = formatDoctorOutput([{ id: "x", label: "x", status: "ok", summary: "fine" }]);
     expect(out).toMatch(/everything looks healthy/);
   });
 });
