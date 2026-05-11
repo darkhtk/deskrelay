@@ -147,6 +147,8 @@
   "chat.sidebar.skills.empty": "Claude CLI가 보고한 스킬이 없습니다.",
   "chat.sidebar.resize": "사이드바 폭 조절",
   "chat.toggle-sidebar": "사이드바 토글",
+  "chat.queue.pending": "대기 중 {count}개",
+  "chat.queue.running": "메시지 대기열 처리 중",
   "cli.action.error": "Claude CLI 오류",
   "cli.action.finished": "Claude CLI 완료",
   "cli.action.finishing": "마무리 중",

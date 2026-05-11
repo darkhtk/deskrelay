@@ -28,7 +28,11 @@ import type { Dirent } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { type RunBehaviorOptions, runBehavior } from "@deskrelay/behavior-sdk/runtime";
+import {
+  type BehaviorContext,
+  type RunBehaviorOptions,
+  runBehavior,
+} from "@deskrelay/behavior-sdk/runtime";
 import manifest from "../manifest.json" with { type: "json" };
 import {
   ClaudeRunError,
@@ -59,6 +63,7 @@ interface ChatParams {
   message: string;
   attachments?: ChatAttachment[];
   sessionId?: string;
+  conversationId?: string;
   runId?: string;
   /** claude `--permission-mode` value. Unknown values are dropped (we
    *  fall back to claude's default rather than passing garbage to the
@@ -140,6 +145,18 @@ interface InterruptResult {
   ok: true;
   /** false when the runId wasn't found (already finished or never started) — not an error. */
   found: boolean;
+}
+
+type ChatQueueStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+interface ChatQueueItem {
+  params: ChatParams;
+  runId: string;
+  spaceId: ReturnType<BehaviorContext["makeSpace"]>;
+  abort: AbortController;
+  conversationKey: string;
+  status: ChatQueueStatus;
+  createdAt: string;
 }
 
 interface SlashCommandsParams {
@@ -258,6 +275,11 @@ interface SkillDeleteResult {
 // up and aborts. When the chat completes (success or error) we
 // deregister so a stale runId doesn't accumulate.
 const inflightRuns = new Map<string, AbortController>();
+const chatItemsByRunId = new Map<string, ChatQueueItem>();
+const chatQueue: ChatQueueItem[] = [];
+const sessionByConversation = new Map<string, string>();
+let activeChat: ChatQueueItem | null = null;
+let drainingChatQueue = false;
 
 function safeClaudeModel(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -265,6 +287,163 @@ function safeClaudeModel(value: unknown): string | undefined {
   if (!model || model.length > 120 || model.startsWith("-")) return undefined;
   if (!/^[A-Za-z0-9._:[\]-]+$/.test(model)) return undefined;
   return model;
+}
+
+function chatConversationKey(params: ChatParams): string {
+  if (typeof params.sessionId === "string" && params.sessionId.trim()) {
+    return `session:${params.sessionId.trim()}`;
+  }
+  if (typeof params.conversationId === "string" && params.conversationId.trim()) {
+    return `conversation:${params.conversationId.trim()}`;
+  }
+  return `cwd:${params.cwd}`;
+}
+
+function publishChatQueueSnapshot(
+  ctx: BehaviorContext,
+  item: ChatQueueItem,
+  status: ChatQueueStatus = item.status,
+): void {
+  const position =
+    status === "queued" ? chatQueue.findIndex((queued) => queued.runId === item.runId) + 1 : 0;
+  ctx.publish({
+    spaceId: item.spaceId,
+    kind: "queue.updated",
+    content: {
+      runId: item.runId,
+      status,
+      position: position > 0 ? position : null,
+      pendingCount: chatQueue.length,
+      activeRunId: activeChat?.runId ?? null,
+      updatedAt: new Date().toISOString(),
+    },
+  });
+}
+
+function publishAllChatQueueSnapshots(ctx: BehaviorContext): void {
+  if (activeChat) publishChatQueueSnapshot(ctx, activeChat);
+  for (const item of chatQueue) publishChatQueueSnapshot(ctx, item);
+}
+
+function cancelQueuedChats(ctx: BehaviorContext, reason: string): void {
+  const cancelled = chatQueue.splice(0);
+  for (const item of cancelled) {
+    item.status = "cancelled";
+    item.abort.abort();
+    inflightRuns.delete(item.runId);
+    chatItemsByRunId.delete(item.runId);
+    publishChatQueueSnapshot(ctx, item, "cancelled");
+    ctx.publish({
+      spaceId: item.spaceId,
+      kind: "run.cancelled",
+      content: { runId: item.runId, message: reason, cancelledAt: new Date().toISOString() },
+    });
+  }
+  publishAllChatQueueSnapshots(ctx);
+}
+
+function sessionIdFromClaudeEvent(event: ClaudeStreamEvent): string | null {
+  if (event.type !== "system" || (event as { subtype?: unknown }).subtype !== "init") return null;
+  const sessionId =
+    (event as { session_id?: unknown; sessionId?: unknown }).session_id ??
+    (event as { sessionId?: unknown }).sessionId;
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
+}
+
+async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Promise<void> {
+  const { params, runId, spaceId, abort } = item;
+  const startedAt = new Date().toISOString();
+  ctx.publish({
+    spaceId,
+    kind: "run.started",
+    content: { runId, cwd: params.cwd, message: params.message, startedAt },
+  });
+
+  let capturedSessionId: string | null = null;
+  try {
+    const permissionMode =
+      params.permissionMode && VALID_PERMISSION_MODES.has(params.permissionMode)
+        ? params.permissionMode
+        : undefined;
+    const securityProfile =
+      params.securityProfile && VALID_SECURITY_PROFILES.has(params.securityProfile)
+        ? params.securityProfile
+        : "relaxed";
+    const model = safeClaudeModel(params.model);
+    const resumeSessionId = params.sessionId ?? sessionByConversation.get(item.conversationKey);
+    const result = await runClaude({
+      cwd: params.cwd,
+      message: params.message,
+      ...(Array.isArray(params.attachments) ? { attachments: params.attachments } : {}),
+      signal: abort.signal,
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+      ...(permissionMode ? { permissionMode } : {}),
+      ...(model ? { model } : {}),
+      ...(params.command ? { command: params.command } : {}),
+      env: { CR_PRETOOLUSE_FAIL_POLICY: securityProfile },
+      onEvent: (event) => {
+        capturedSessionId = sessionIdFromClaudeEvent(event) ?? capturedSessionId;
+        ctx.publish({ spaceId, kind: "claude.event", content: event });
+      },
+      onStderrLine: (line) => {
+        ctx.publish({ spaceId, kind: "claude.stderr", content: { line } });
+      },
+      onMalformedStdout: (line, error) => {
+        ctx.logger.warn("malformed stdout line", { line, error: error.message });
+      },
+    });
+    if (capturedSessionId) sessionByConversation.set(item.conversationKey, capturedSessionId);
+    item.status = abort.signal.aborted ? "cancelled" : "done";
+    publishChatQueueSnapshot(ctx, item);
+    ctx.publish({
+      spaceId,
+      kind: "run.finished",
+      content: {
+        runId,
+        exitCode: result.exitCode,
+        eventCount: result.eventCount,
+        finishedAt: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    item.status = "failed";
+    publishChatQueueSnapshot(ctx, item);
+    const isClaudeErr = err instanceof ClaudeRunError;
+    ctx.publish({
+      spaceId,
+      kind: "run.error",
+      content: {
+        runId,
+        message: (err as Error).message,
+        ...(isClaudeErr ? { exitCode: err.exitCode, stderr: err.stderr } : {}),
+      },
+    });
+  }
+}
+
+async function drainChatQueue(ctx: BehaviorContext): Promise<void> {
+  if (drainingChatQueue || activeChat) return;
+  drainingChatQueue = true;
+  try {
+    while (!activeChat && chatQueue.length > 0) {
+      const item = chatQueue.shift();
+      if (!item || item.status === "cancelled" || item.abort.signal.aborted) continue;
+      activeChat = item;
+      item.status = "running";
+      publishAllChatQueueSnapshots(ctx);
+      try {
+        await runQueuedChatItem(ctx, item);
+      } finally {
+        activeChat = null;
+        inflightRuns.delete(item.runId);
+        chatItemsByRunId.delete(item.runId);
+        publishAllChatQueueSnapshots(ctx);
+      }
+    }
+  } finally {
+    drainingChatQueue = false;
+    if (!activeChat && chatQueue.length > 0) void drainChatQueue(ctx);
+  }
 }
 
 /** Behavior definition exported as a value so the daemon can load
@@ -520,78 +699,22 @@ export const behaviorDef: RunBehaviorOptions = {
         }
         const runId = params.runId ?? `run_${randomBytes(8).toString("hex")}`;
         const space = ctx.makeSpace("run", runId);
-        const startedAt = new Date().toISOString();
 
         const abort = new AbortController();
-        inflightRuns.set(runId, abort);
-
-        ctx.publish({
+        const item: ChatQueueItem = {
+          params,
+          runId,
           spaceId: space,
-          kind: "run.started",
-          content: { runId, cwd: params.cwd, message: params.message, startedAt },
-        });
-
-        const run = async () => {
-          try {
-            const permissionMode =
-              params.permissionMode && VALID_PERMISSION_MODES.has(params.permissionMode)
-                ? params.permissionMode
-                : undefined;
-            const securityProfile =
-              params.securityProfile && VALID_SECURITY_PROFILES.has(params.securityProfile)
-                ? params.securityProfile
-                : "relaxed";
-            const model = safeClaudeModel(params.model);
-            const result = await runClaude({
-              cwd: params.cwd,
-              message: params.message,
-              ...(Array.isArray(params.attachments) ? { attachments: params.attachments } : {}),
-              signal: abort.signal,
-              ...(params.sessionId ? { resumeSessionId: params.sessionId } : {}),
-              ...(permissionMode ? { permissionMode } : {}),
-              ...(model ? { model } : {}),
-              ...(params.command ? { command: params.command } : {}),
-              // Threaded into the spawned claude CLI's env so the hook
-              // script picks the right fail-policy (see hooks/pretooluse.ts).
-              env: { CR_PRETOOLUSE_FAIL_POLICY: securityProfile },
-              onEvent: (event) => {
-                ctx.publish({ spaceId: space, kind: "claude.event", content: event });
-              },
-              onStderrLine: (line) => {
-                ctx.publish({ spaceId: space, kind: "claude.stderr", content: { line } });
-              },
-              onMalformedStdout: (line, error) => {
-                ctx.logger.warn("malformed stdout line", { line, error: error.message });
-              },
-            });
-
-            ctx.publish({
-              spaceId: space,
-              kind: "run.finished",
-              content: {
-                runId,
-                exitCode: result.exitCode,
-                eventCount: result.eventCount,
-                finishedAt: new Date().toISOString(),
-              },
-            });
-          } catch (err) {
-            const isClaudeErr = err instanceof ClaudeRunError;
-            ctx.publish({
-              spaceId: space,
-              kind: "run.error",
-              content: {
-                runId,
-                message: (err as Error).message,
-                ...(isClaudeErr ? { exitCode: err.exitCode, stderr: err.stderr } : {}),
-              },
-            });
-          } finally {
-            inflightRuns.delete(runId);
-          }
+          abort,
+          conversationKey: chatConversationKey(params),
+          status: "queued",
+          createdAt: new Date().toISOString(),
         };
-
-        void run();
+        inflightRuns.set(runId, abort);
+        chatItemsByRunId.set(runId, item);
+        chatQueue.push(item);
+        publishAllChatQueueSnapshots(ctx);
+        void drainChatQueue(ctx);
         return { ok: true as const, runId, accepted: true as const, eventCount: 0 };
       },
     );
@@ -600,6 +723,27 @@ export const behaviorDef: RunBehaviorOptions = {
       if (!params || typeof params.runId !== "string") {
         throw new Error("interrupt: runId is required");
       }
+      const queuedItem = chatItemsByRunId.get(params.runId);
+      if (queuedItem?.status === "queued") {
+        const index = chatQueue.findIndex((item) => item.runId === params.runId);
+        if (index >= 0) chatQueue.splice(index, 1);
+        queuedItem.status = "cancelled";
+        queuedItem.abort.abort();
+        inflightRuns.delete(params.runId);
+        chatItemsByRunId.delete(params.runId);
+        publishChatQueueSnapshot(ctx, queuedItem, "cancelled");
+        ctx.publish({
+          spaceId: queuedItem.spaceId,
+          kind: "run.cancelled",
+          content: {
+            runId: queuedItem.runId,
+            message: "cancelled before start",
+            cancelledAt: new Date().toISOString(),
+          },
+        });
+        publishAllChatQueueSnapshots(ctx);
+        return { ok: true as const, found: true };
+      }
       const controller = inflightRuns.get(params.runId);
       if (!controller) {
         // Not found = either the run already finished, or never started.
@@ -607,15 +751,19 @@ export const behaviorDef: RunBehaviorOptions = {
         // found:false so the caller can decide whether to surface UI feedback.
         return { ok: true as const, found: false };
       }
+      cancelQueuedChats(ctx, "cancelled because the active run was stopped");
       controller.abort();
       return { ok: true as const, found: true };
     });
   },
   async stop(ctx) {
-    for (const controller of inflightRuns.values()) {
-      controller.abort();
-    }
+    cancelQueuedChats(ctx, "remote-claude stopping");
+    for (const controller of inflightRuns.values()) controller.abort();
     inflightRuns.clear();
+    chatItemsByRunId.clear();
+    chatQueue.splice(0);
+    activeChat = null;
+    drainingChatQueue = false;
     ctx.logger.info("remote-claude stopping");
   },
 };

@@ -3,8 +3,8 @@
 // Ported from the original browser prototype/composer.js (production-validated). Key
 // behaviors preserved:
 //   - Multi-turn never blocks input. Send stays enabled while a previous
-//     turn is in flight; the "Stop" affordance lives on the send button
-//     itself (becomes "Stop" when inFlight, calls onInterrupt).
+//     turn is in flight; the daemon queues follow-up messages. Stop is a
+//     separate affordance so sending and interrupting stay unambiguous.
 //   - Slash picker pops on "/" at the start of the first line. Closes once
 //     the user types a space (moved past command name into args).
 //   - Picker keyboard: ArrowDown / ArrowUp move highlight, Tab or Enter
@@ -30,15 +30,14 @@ const COMPOSER_INPUT_MAX_HEIGHT = 240;
 export interface ComposerProps {
   /** Called with the trimmed text when the user submits. */
   onSend: (value: string) => Promise<void> | void;
-  /** Called when the send button is clicked while inFlight (Stop mode). */
+  /** Called by the dedicated stop button while a turn is in flight. */
   onInterrupt?: () => void;
   /** Lets attachments keep send enabled when text is empty. */
   hasExtraContent?: () => boolean;
   /** Override the slash-command list (tests / future per-user filtering). */
   slashCommands?: ReadonlyArray<SlashCommand>;
   /** External "is the previous turn still running?" signal. The composer
-   *  doesn't try to enforce one-at-a-time — claude is multi-turn — but
-   *  the send button does swap to a "Stop" affordance when this is true. */
+   *  keeps accepting input; the daemon serializes queued messages. */
   inFlight?: boolean;
   /** Optional initial value (uncontrolled — change once at mount). */
   initialValue?: string;
@@ -166,10 +165,6 @@ export const Composer: Component<ComposerProps> = (props) => {
   }
 
   function handleSendClick() {
-    if (props.inFlight && props.onInterrupt) {
-      props.onInterrupt();
-      return;
-    }
     void submit();
   }
 
@@ -327,7 +322,7 @@ export const Composer: Component<ComposerProps> = (props) => {
               aria-label={t("composer.send.aria")}
               title={t("composer.send.title")}
               onClick={handleSendClick}
-              disabled={props.inFlight || !canSend()}
+              disabled={!canSend()}
             >
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path

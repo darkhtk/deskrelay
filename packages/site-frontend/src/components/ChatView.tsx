@@ -987,6 +987,17 @@ interface ComposerGuidance {
   action?: ConnectionStatusAction;
 }
 
+interface QueueUpdatedEnvelope {
+  runId?: unknown;
+  status?: unknown;
+  pendingCount?: unknown;
+  activeRunId?: unknown;
+}
+
+function createDraftConversationId(): string {
+  return `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export const ChatView: Component<ChatViewProps> = (props) => {
   const [devices, { refetch: refetchDevices }] = createResource(async () => {
     try {
@@ -1334,6 +1345,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const confirmedPermissionMode = () => permissionModeState().confirmed;
   const [running, setRunning] = createSignal(false);
   const [cliAction, setCliAction] = createSignal<string | null>(null);
+  const [queuedRunCount, setQueuedRunCount] = createSignal(0);
+  const clientRunIds = new Set<string>();
   const [error, setError] = createSignal<string | null>(null);
   const [sessionNotice, setSessionNotice] = createSignal<string | null>(null);
   let sessionNoticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1766,6 +1779,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   const [showNewChat, setShowNewChat] = createSignal(false);
   const [activeRunId, setActiveRunId] = createSignal<string | null>(null);
+  const [draftConversationId, setDraftConversationId] = createSignal(createDraftConversationId());
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = createSignal(false);
   const [sidebarWidth, setSidebarWidth] = createSignal(readSidebarWidth());
@@ -1777,6 +1791,42 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   let sidebarResizeCleanup: (() => void) | undefined;
   let lastSelectedSessionDeviceId: string | null = effectiveDeviceId();
 
+  function markClientRunStarted(runId: string) {
+    clientRunIds.add(runId);
+    setRunning(true);
+  }
+
+  function markClientRunFinished(runId: string) {
+    clientRunIds.delete(runId);
+    const stillRunning = clientRunIds.size > 0;
+    setRunning(stillRunning);
+    if (!stillRunning) {
+      setCliAction(null);
+      setQueuedRunCount(0);
+    }
+  }
+
+  function oldestClientRunId(): string | null {
+    for (const runId of clientRunIds) return runId;
+    return null;
+  }
+
+  function applyQueueUpdated(content: unknown, localRunId: string) {
+    if (!content || typeof content !== "object") return;
+    const queue = content as QueueUpdatedEnvelope;
+    const count =
+      typeof queue.pendingCount === "number" && Number.isFinite(queue.pendingCount)
+        ? Math.max(0, Math.floor(queue.pendingCount))
+        : 0;
+    setQueuedRunCount(count);
+    if (
+      queue.status === "running" &&
+      (queue.runId === localRunId || queue.activeRunId === localRunId)
+    ) {
+      setActiveRunId(localRunId);
+    }
+  }
+
   function clearStoredSessionForActiveDevice() {
     writeStoredChatSessionSelection(effectiveDeviceId(), null);
   }
@@ -1787,6 +1837,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setTranscript([]);
     setCwd("");
     resetConfirmedPermissionMode();
+    setDraftConversationId(createDraftConversationId());
   }
 
   createEffect(() => {
@@ -2219,6 +2270,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   const composerGuidance = createMemo<ComposerGuidance | null>(() => {
     const status = connectionStatus();
+    const queued = queuedRunCount();
+    const queuedDetail = queued > 0 ? t("chat.queue.pending", { count: queued }) : undefined;
     if (status.kind === "approval_waiting") {
       return {
         tone: status.tone,
@@ -2231,7 +2284,14 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       return {
         tone: status.tone,
         main: status.detailOverride ?? t(status.mainKey),
-        detail: "Esc 중지",
+        detail: queuedDetail ? `${queuedDetail} · Esc 중지` : "Esc 중지",
+      };
+    }
+    if (queuedDetail) {
+      return {
+        tone: "pending",
+        main: t("chat.queue.running"),
+        detail: queuedDetail,
       };
     }
     if (
@@ -2502,6 +2562,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   ) {
     const summary = (sessions() ?? []).find((s) => s.sessionId === id) ?? null;
     setSelectedSession(summary);
+    setDraftConversationId(createDraftConversationId());
     setError(null);
     setShowNewChat(false);
     setSidebarOpen(false);
@@ -2591,6 +2652,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     clearContextUsage();
     setError(null);
     resetConfirmedPermissionMode();
+    setDraftConversationId(createDraftConversationId());
   }
 
   /** Opening Settings while the mobile drawer is open leaves the drawer
@@ -2619,6 +2681,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     setError(null);
     setSelectedSession(null);
     resetConfirmedPermissionMode();
+    setDraftConversationId(createDraftConversationId());
     // User has committed to a chat ??collapse the drawer so the
     // composer + transcript take the full mobile viewport.
     setSidebarOpen(false);
@@ -2748,6 +2811,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         `Confirmed permission mode: ${confirmedPermissionMode() ?? "not confirmed"}`,
         `Next run permission mode: ${requestedPermissionMode()}`,
         `Run state: ${running() ? (cliAction() ?? "running") : "idle"}`,
+        `Queued messages: ${queuedRunCount()}`,
       ];
       appendLocalAssistantMessage(lines.join("\n"));
       return true;
@@ -2794,17 +2858,17 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     appendTranscriptEvent(userEvent, { forceScroll: scrollToBottomOnSend() });
     attachmentsApi?.clear();
 
-    setRunning(true);
-    setCliAction(t("cli.action.starting"));
-
     const runId = `r${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    markClientRunStarted(runId);
+    setCliAction(t("cli.action.starting"));
     const requestedModeForRun = requestedPermissionMode();
     const cwdForRun = cwd();
     const modelForRun = selectedClaudeModel();
     const messageForRun = applyTemporaryInstructionsToMessage(message);
+    const selectedSessionForRun = selectedSession();
+    const conversationIdForRun = selectedSessionForRun?.sessionId ? null : draftConversationId();
     const space = `remote-claude.run:${runId}`;
     const abort = new AbortController();
-    setActiveRunId(runId);
     markRunPermissionModePending(requestedModeForRun);
 
     let markStreamReady = () => {};
@@ -2822,18 +2886,25 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           onOpen: markStreamReady,
         })) {
           const e = env as { kind?: string; content?: unknown };
+          if (e.kind === "queue.updated") {
+            applyQueueUpdated(e.content, runId);
+          }
           const action = describeCliActionFromEnvelope(e.kind, e.content);
           if (action) setCliAction(action);
+          if (e.kind === "run.started") {
+            setActiveRunId(runId);
+          }
           if (
             e.kind === "run.started" ||
             e.kind === "claude.event" ||
             e.kind === "run.finished" ||
-            e.kind === "run.error"
+            e.kind === "run.error" ||
+            e.kind === "run.cancelled"
           ) {
             streamSawRun = true;
           }
           if (e.kind === "claude.event" && e.content) {
-            if (activeRunId() === runId && isClaudeSystemInit(e.content)) {
+            if (isClaudeSystemInit(e.content)) {
               streamSawSystemInit = true;
               const actualMode = permissionModeFromSystemInit(e.content);
               if (actualMode) {
@@ -2846,6 +2917,9 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             if (transcriptEvent) appendTranscriptEvent(transcriptEvent);
           } else if (e.kind === "run.error") {
             setError(runErrorMessage(e.content) ?? t("cli.action.error"));
+            abort.abort();
+            return;
+          } else if (e.kind === "run.cancelled") {
             abort.abort();
             return;
           } else if (e.kind === "run.finished") {
@@ -2879,7 +2953,10 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           // Per-device fail-policy hint for the PreToolUse hook. Persisted
           // in localStorage via Settings ??Devices ??device-prefs.
           securityProfile: getDeviceSecurityProfile(dev),
-          ...(selectedSession()?.sessionId ? { sessionId: selectedSession()?.sessionId } : {}),
+          ...(selectedSessionForRun?.sessionId
+            ? { sessionId: selectedSessionForRun.sessionId }
+            : {}),
+          ...(conversationIdForRun ? { conversationId: conversationIdForRun } : {}),
         },
       );
       if (res.error) {
@@ -2914,9 +2991,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         void refreshUsageLimits(dev, inst, { force: true });
       }
       abort.abort();
-      setRunning(false);
-      setCliAction(null);
-      setActiveRunId(null);
+      if (activeRunId() === runId) setActiveRunId(null);
+      markClientRunFinished(runId);
       attachmentsApi?.clear();
       void refetchSessions();
     }
@@ -2925,9 +3001,8 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   async function interrupt() {
     const dev = effectiveDeviceId();
     const inst = remoteClaudeInstance();
-    const runId = activeRunId();
+    const runId = activeRunId() ?? oldestClientRunId();
     if (!dev || !inst || !runId) {
-      setRunning(false);
       return;
     }
     try {

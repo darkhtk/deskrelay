@@ -79,6 +79,105 @@ describe("remote-claude behavior chat request", () => {
     await waitFor(() => events.some((event) => event.kind === "run.finished"));
   });
 
+  test("serializes queued chat requests and resumes a new-chat session", async () => {
+    const { ctx, handlers, events } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const chat = handlers.get("chat");
+    if (!chat) throw new Error("chat handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-queue-"));
+    tempDirs.push(cwd);
+    const fixture = fileURLToPath(new URL("./fixtures/fake-claude-queue.ts", import.meta.url));
+
+    const first = await chat({
+      cwd,
+      message: "slow first",
+      runId: "q_first",
+      conversationId: "draft-a",
+      command: ["bun", fixture],
+    });
+    const second = await chat({
+      cwd,
+      message: "second",
+      runId: "q_second",
+      conversationId: "draft-a",
+      command: ["bun", fixture],
+    });
+
+    expect(first).toEqual({ ok: true, runId: "q_first", accepted: true, eventCount: 0 });
+    expect(second).toEqual({ ok: true, runId: "q_second", accepted: true, eventCount: 0 });
+
+    await waitFor(
+      () =>
+        events.some(
+          (event) => event.kind === "run.finished" && event.spaceId?.endsWith(":q_second"),
+        ),
+      2000,
+    );
+
+    const firstFinished = events.findIndex(
+      (event) => event.kind === "run.finished" && event.spaceId?.endsWith(":q_first"),
+    );
+    const secondStarted = events.findIndex(
+      (event) => event.kind === "run.started" && event.spaceId?.endsWith(":q_second"),
+    );
+    expect(firstFinished).toBeGreaterThan(-1);
+    expect(secondStarted).toBeGreaterThan(firstFinished);
+    expect(
+      events.some(
+        (event) =>
+          event.kind === "claude.event" &&
+          event.spaceId?.endsWith(":q_second") &&
+          JSON.stringify(event.content).includes("resume:queue-session-001"),
+      ),
+    ).toBe(true);
+  });
+
+  test("interrupting the active run cancels queued follow-ups", async () => {
+    const { ctx, handlers, events } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const chat = handlers.get("chat");
+    const interrupt = handlers.get("interrupt");
+    if (!chat || !interrupt) throw new Error("chat/interrupt handlers missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-queue-cancel-"));
+    tempDirs.push(cwd);
+    const hang = fileURLToPath(new URL("./fixtures/fake-claude-hang.ts", import.meta.url));
+    const ok = fileURLToPath(new URL("./fixtures/fake-claude-ok.ts", import.meta.url));
+
+    await chat({ cwd, message: "hang", runId: "q_hang", command: ["bun", hang] });
+    await waitFor(() =>
+      events.some((event) => event.kind === "run.started" && event.spaceId?.endsWith(":q_hang")),
+    );
+    await chat({ cwd, message: "queued", runId: "q_cancelled", command: ["bun", ok] });
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.kind === "queue.updated" &&
+          event.spaceId?.endsWith(":q_cancelled") &&
+          JSON.stringify(event.content).includes('"status":"queued"'),
+      ),
+    );
+
+    await interrupt({ runId: "q_hang" });
+    await waitFor(() =>
+      events.some(
+        (event) => event.kind === "run.cancelled" && event.spaceId?.endsWith(":q_cancelled"),
+      ),
+    );
+    await waitFor(() =>
+      events.some((event) => event.kind === "run.finished" && event.spaceId?.endsWith(":q_hang")),
+    );
+
+    expect(
+      events.some(
+        (event) => event.kind === "run.started" && event.spaceId?.endsWith(":q_cancelled"),
+      ),
+    ).toBe(false);
+  });
+
   test("updates a known Claude settings allow list without dropping other fields", async () => {
     const { ctx, handlers } = makeCtx();
     await behaviorDef.start(ctx);
@@ -344,7 +443,7 @@ describe("remote-claude behavior chat request", () => {
     const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
     const originalToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     process.env.CLAUDE_CONFIG_DIR = configDir;
-    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    Reflect.deleteProperty(process.env, "CLAUDE_CODE_OAUTH_TOKEN");
     try {
       const result = (await accountInfo({})) as {
         status: string;
@@ -364,12 +463,12 @@ describe("remote-claude behavior chat request", () => {
       expect(result.refreshToken).toBeUndefined();
     } finally {
       if (originalConfigDir === undefined) {
-        delete process.env.CLAUDE_CONFIG_DIR;
+        Reflect.deleteProperty(process.env, "CLAUDE_CONFIG_DIR");
       } else {
         process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
       }
       if (originalToken === undefined) {
-        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+        Reflect.deleteProperty(process.env, "CLAUDE_CODE_OAUTH_TOKEN");
       } else {
         process.env.CLAUDE_CODE_OAUTH_TOKEN = originalToken;
       }

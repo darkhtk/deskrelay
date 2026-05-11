@@ -49,7 +49,7 @@ describe("Composer — basic typing + send", () => {
       if (descriptor) {
         Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", descriptor);
       } else {
-        delete (HTMLTextAreaElement.prototype as { scrollHeight?: number }).scrollHeight;
+        Reflect.deleteProperty(HTMLTextAreaElement.prototype, "scrollHeight");
       }
     }
   });
@@ -164,14 +164,19 @@ describe("Composer — slash picker", () => {
 });
 
 describe("Composer — Stop / inFlight mode", () => {
-  test("inFlight=true reveals the stop button (separate from send)", () => {
-    const { sendBtn, stopBtn } = setup({ onSend: vi.fn(), inFlight: true });
+  test("inFlight=true reveals the stop button while keeping send available for queued text", () => {
+    const onSend = vi.fn();
+    const { textarea, sendBtn, stopBtn } = setup({ onSend, inFlight: true });
     expect(stopBtn).toBeTruthy();
     expect(stopBtn.hidden).toBe(false);
     expect(sendBtn.getAttribute("aria-label")).toBe(t("composer.send.aria"));
-    // While in flight the send button is greyed; the stop button is the
-    // active affordance.
+    // Empty input is still disabled, but typed text can be queued while
+    // the current run continues.
     expect(sendBtn).toBeDisabled();
+    fireEvent.input(textarea, { target: { value: "follow up" } });
+    expect(sendBtn).not.toBeDisabled();
+    fireEvent.click(sendBtn);
+    expect(onSend).toHaveBeenCalledWith("follow up");
   });
 
   test("inFlight=false hides the stop button", () => {
