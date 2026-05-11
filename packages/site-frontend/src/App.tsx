@@ -1126,14 +1126,13 @@ const LanguageSettings: Component<{
             <span class="settings-toggle-title">{t("settings.theme.title")}</span>
             <span class="settings-toggle-help">{t("settings.theme.help")}</span>
           </div>
-          <div class="settings-segmented" role="radiogroup" aria-label={t("settings.theme.title")}>
+          <div class="settings-segmented" aria-label={t("settings.theme.title")}>
             <For each={["light", "dark"] as AppTheme[]}>
               {(value) => (
                 <button
                   type="button"
                   class={`settings-segment${appTheme() === value ? " active" : ""}`}
-                  role="radio"
-                  aria-checked={appTheme() === value ? "true" : "false"}
+                  aria-pressed={appTheme() === value ? "true" : "false"}
                   onClick={() => setAppTheme(value)}
                 >
                   {t(`settings.theme.${value}`)}
@@ -1363,18 +1362,13 @@ const LanguageSettings: Component<{
             <span class="settings-toggle-title">{t("settings.new-chat-cwd-browse.title")}</span>
             <span class="settings-toggle-help">{t("settings.new-chat-cwd-browse.help")}</span>
           </div>
-          <div
-            class="settings-segmented"
-            role="radiogroup"
-            aria-label={t("settings.new-chat-cwd-browse.title")}
-          >
+          <div class="settings-segmented" aria-label={t("settings.new-chat-cwd-browse.title")}>
             <For each={["allowed-roots", "unrestricted"] as NewChatCwdBrowseMode[]}>
               {(value) => (
                 <button
                   type="button"
                   class={`settings-segment${newChatCwdBrowseMode() === value ? " active" : ""}`}
-                  role="radio"
-                  aria-checked={newChatCwdBrowseMode() === value ? "true" : "false"}
+                  aria-pressed={newChatCwdBrowseMode() === value ? "true" : "false"}
                   onClick={() => setNewChatCwdBrowseMode(value)}
                 >
                   {t(`settings.new-chat-cwd-browse.${value}`)}

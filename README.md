@@ -107,7 +107,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-status.ps1
 
 ## 업데이트
 
-앱 안에서는 `설정 -> 일반 -> 전체 업데이트`를 사용합니다.
+앱 안에서는 `설정 -> 일반 -> 전체 업데이트`를 사용합니다. 서버와 등록된 connector를 함께 갱신하며, 꺼져 있거나 닿지 않는 디바이스는 업데이트 대기 상태로 기록됩니다. 해당 디바이스가 다시 온라인이 되어 진단에 응답하면 서버가 대기 중인 connector 업데이트를 자동으로 재시도합니다.
 
 서버만 터미널에서 업데이트하려면:
 
@@ -116,7 +116,7 @@ Set-Location -LiteralPath (Join-Path $HOME 'deskrelay')
 powershell -ExecutionPolicy Bypass -File .\scripts\self-pc-server-update.ps1
 ```
 
-다른 PC의 connector가 오래되었으면 해당 PC에서 등록 명령을 다시 실행하는 것이 가장 확실합니다.
+connector 업데이트 API가 없는 아주 오래된 디바이스는 등록 명령을 다시 실행해야 합니다.
 
 ## 중지와 제거
 

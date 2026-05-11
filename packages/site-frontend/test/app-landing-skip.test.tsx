@@ -231,7 +231,7 @@ describe("App landing flow", () => {
     expect(document.body.textContent).toContain(t("settings.chat-font-size.preview"));
 
     fireEvent.click(
-      screen.getByRole("radio", {
+      screen.getByRole("button", {
         name: t("settings.new-chat-cwd-browse.unrestricted"),
       }),
     );
