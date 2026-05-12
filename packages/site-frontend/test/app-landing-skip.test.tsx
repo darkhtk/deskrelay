@@ -267,7 +267,7 @@ describe("App landing flow", () => {
       expect(body.history?.length).toBeGreaterThan(0);
       expect(body.history?.some((message) => message.text === "서버 상태 알려줘")).toBe(false);
       expect(container.textContent).toContain("서버 PC의 DeskRelay 폴더에서 확인했습니다.");
-      expect(window.localStorage.getItem("cr.manager-assistant.messages:v1")).toContain(
+      expect(window.localStorage.getItem("cr.manager-assistant.messages:v2")).toContain(
         "서버 PC의 DeskRelay 폴더에서 확인했습니다.",
       );
     });

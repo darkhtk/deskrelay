@@ -52,7 +52,10 @@ import {
   DeviceRegistryError,
   normalizeDaemonUrl,
 } from "./device-registry.ts";
-import type { DeviceUpdateQueueStore } from "./device-update-queue-store.ts";
+import type {
+  DeviceUpdateQueueStore,
+  StoredDeviceUpdateEntry,
+} from "./device-update-queue-store.ts";
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
 import { type ManagerTaskStore, createInMemoryManagerTaskStore } from "./manager-task-store.ts";
@@ -409,8 +412,10 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.get("/api/devices", (c) => c.json(registry.list().map(toPublicDevice)));
 
   app.get("/api/devices/update-queue", async (c) => {
+    const entries = options.deviceUpdateQueue ? await options.deviceUpdateQueue.list() : [];
+    const fallbackCommand = buildFallbackRegisterCommandForRequest(options, c.req.url);
     return c.json({
-      entries: options.deviceUpdateQueue ? await options.deviceUpdateQueue.list() : [],
+      entries: entries.map((entry) => enrichDeviceUpdateQueueEntry(entry, fallbackCommand)),
     });
   });
 
@@ -651,6 +656,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         ...(authToken ? { authToken } : {}),
         ...(typeof input.deviceKey === "string" ? { deviceKey: input.deviceKey } : {}),
       });
+      await options.deviceUpdateQueue?.remove(device.id).catch(() => undefined);
       return c.json(toPublicDevice(device), 201);
     } catch (err) {
       if (err instanceof DeviceRegistryError) {
@@ -4688,7 +4694,9 @@ function normalizeLogLevel(value: string | undefined): string | undefined {
 }
 
 function parseQueryBoolean(value: string | undefined): boolean {
-  const normalized = String(value ?? "").trim().toLowerCase();
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
@@ -4851,6 +4859,28 @@ async function requestDaemonUninstall(
   }
 }
 
+function enrichDeviceUpdateQueueEntry(
+  entry: StoredDeviceUpdateEntry,
+  fallbackCommand: string,
+): StoredDeviceUpdateEntry {
+  if (!fallbackCommand || entry.fallbackCommand || !requiresRegistrationRecovery(entry)) {
+    return entry;
+  }
+  return { ...entry, fallbackCommand };
+}
+
+function requiresRegistrationRecovery(entry: StoredDeviceUpdateEntry): boolean {
+  if (entry.recoveryKind === "branch_mismatch" || entry.recoveryKind === "registration_required") {
+    return true;
+  }
+  const error = entry.error?.toLowerCase() ?? "";
+  return (
+    error.includes("re-run the registration command") ||
+    error.includes("registration command") ||
+    error.includes("branch switch required")
+  );
+}
+
 async function requestDaemonSystemUpdate(
   fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
   device: Device,
@@ -4922,6 +4952,7 @@ async function requestDaemonSystemUpdate(
       requestedAt,
       completedAt: new Date().toISOString(),
       error: finalError,
+      ...(unavailable ? { recoveryKind: "registration_required" as const, retryable: false } : {}),
       daemonStatus: res.status,
       fallbackCommand,
     });
@@ -4931,6 +4962,9 @@ async function requestDaemonSystemUpdate(
         state: "failed",
         error: finalError,
         daemonStatus: res.status,
+        ...(unavailable
+          ? { recoveryKind: "registration_required" as const, retryable: false }
+          : {}),
         fallbackCommand,
       },
       { status: unavailable ? 424 : res.status },
@@ -4941,6 +4975,10 @@ async function requestDaemonSystemUpdate(
   const actualBranch =
     typeof rawResponsePayload.branch === "string" ? rawResponsePayload.branch : undefined;
   const branchMismatch = Boolean(branch && actualBranch && actualBranch !== branch);
+  const branchMismatchError =
+    branchMismatch && branch
+      ? `connector branch switch required: this legacy connector updated ${actualBranch} instead of ${branch}. Run the registration command shown below on that PC.`
+      : undefined;
   const responsePayload = branchMismatch
     ? {
         ...rawResponsePayload,
@@ -4948,7 +4986,9 @@ async function requestDaemonSystemUpdate(
         state: "failed",
         expectedBranch: branch,
         actualBranch,
-        error: `connector updated ${actualBranch} instead of ${branch}. Re-run the registration command for this server branch.`,
+        recoveryKind: "branch_mismatch",
+        retryable: false,
+        error: branchMismatchError,
         fallbackCommand,
       }
     : rawResponsePayload;
@@ -4964,6 +5004,19 @@ async function requestDaemonSystemUpdate(
     completedAt: new Date().toISOString(),
     ...(typeof responsePayload.error === "string" ? { error: responsePayload.error } : {}),
     ...(typeof responsePayload.warning === "string" ? { warning: responsePayload.warning } : {}),
+    ...(responsePayload.recoveryKind === "branch_mismatch" ||
+    responsePayload.recoveryKind === "registration_required"
+      ? { recoveryKind: responsePayload.recoveryKind }
+      : {}),
+    ...(typeof responsePayload.retryable === "boolean"
+      ? { retryable: responsePayload.retryable }
+      : {}),
+    ...(typeof responsePayload.expectedBranch === "string"
+      ? { expectedBranch: responsePayload.expectedBranch }
+      : {}),
+    ...(typeof responsePayload.actualBranch === "string"
+      ? { actualBranch: responsePayload.actualBranch }
+      : {}),
     ...(isRecord(responsePayload.before)
       ? { before: responsePayload.before as Partial<DeskRelayBuildInfo> }
       : {}),

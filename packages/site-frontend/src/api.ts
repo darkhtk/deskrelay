@@ -299,6 +299,10 @@ export interface DeviceUpdateResponse {
   warning?: string;
   error?: string;
   fallbackCommand?: string;
+  recoveryKind?: "branch_mismatch" | "registration_required";
+  retryable?: boolean;
+  expectedBranch?: string;
+  actualBranch?: string;
   daemonStatus?: number;
   steps?: DiagnosticStep[];
   before?: { shortCommit?: string };
@@ -317,6 +321,10 @@ export interface DeviceUpdateQueueEntry {
   error?: string;
   warning?: string;
   fallbackCommand?: string;
+  recoveryKind?: "branch_mismatch" | "registration_required";
+  retryable?: boolean;
+  expectedBranch?: string;
+  actualBranch?: string;
   daemonStatus?: number;
   before?: { shortCommit?: string };
   after?: { shortCommit?: string };

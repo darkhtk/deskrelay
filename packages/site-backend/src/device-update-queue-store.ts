@@ -15,6 +15,10 @@ export interface StoredDeviceUpdateEntry {
   error?: string;
   warning?: string;
   fallbackCommand?: string;
+  recoveryKind?: "branch_mismatch" | "registration_required";
+  retryable?: boolean;
+  expectedBranch?: string;
+  actualBranch?: string;
   daemonStatus?: number;
   before?: Partial<DeskRelayBuildInfo>;
   after?: Partial<DeskRelayBuildInfo>;
@@ -113,6 +117,10 @@ function normalizeInput(input: DeviceUpdateEntryInput, now: Date): StoredDeviceU
     ...(input.error ? { error: input.error } : {}),
     ...(input.warning ? { warning: input.warning } : {}),
     ...(input.fallbackCommand ? { fallbackCommand: input.fallbackCommand } : {}),
+    ...(input.recoveryKind ? { recoveryKind: input.recoveryKind } : {}),
+    ...(typeof input.retryable === "boolean" ? { retryable: input.retryable } : {}),
+    ...(input.expectedBranch ? { expectedBranch: input.expectedBranch } : {}),
+    ...(input.actualBranch ? { actualBranch: input.actualBranch } : {}),
     ...(typeof input.daemonStatus === "number" ? { daemonStatus: input.daemonStatus } : {}),
     ...(input.before ? { before: input.before } : {}),
     ...(input.after ? { after: input.after } : {}),
@@ -154,6 +162,12 @@ function normalizeStoredEntry(input: unknown): StoredDeviceUpdateEntry | null {
     ...(typeof input.fallbackCommand === "string"
       ? { fallbackCommand: input.fallbackCommand }
       : {}),
+    ...(input.recoveryKind === "branch_mismatch" || input.recoveryKind === "registration_required"
+      ? { recoveryKind: input.recoveryKind }
+      : {}),
+    ...(typeof input.retryable === "boolean" ? { retryable: input.retryable } : {}),
+    ...(typeof input.expectedBranch === "string" ? { expectedBranch: input.expectedBranch } : {}),
+    ...(typeof input.actualBranch === "string" ? { actualBranch: input.actualBranch } : {}),
     ...(typeof input.daemonStatus === "number" ? { daemonStatus: input.daemonStatus } : {}),
     ...(isRecord(input.before) ? { before: input.before as Partial<DeskRelayBuildInfo> } : {}),
     ...(isRecord(input.after) ? { after: input.after as Partial<DeskRelayBuildInfo> } : {}),

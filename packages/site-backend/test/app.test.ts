@@ -3,11 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Hono } from "hono";
-import {
-  buildManagerAssistantPrompt,
-  createSiteApp,
-  type SiteAppOptions,
-} from "../src/app.ts";
+import { buildManagerAssistantPrompt, createSiteApp, type SiteAppOptions } from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
 import type {
   DeviceUpdateEntryInput,
@@ -2498,6 +2494,42 @@ describe("device connector update queue", () => {
     expect(updateCalls).toBe(1);
     expect((await queue.get(device.id))?.state).toBe("succeeded");
   });
+
+  test("adds a fallback command to legacy branch-mismatch queue entries", async () => {
+    const registry = new InMemoryDeviceRegistry();
+    const queue = createMemoryUpdateQueueStore();
+    const app = createSiteApp({
+      registry,
+      token: TOKEN,
+      deviceUpdateQueue: queue,
+      selfHostUrl: "http://100.64.1.2:18193",
+    });
+    const device = registry.register({
+      daemonUrl: DAEMON_URL,
+      label: "Office",
+      authToken: "daemon-token",
+    });
+    await queue.upsert({
+      deviceId: device.id,
+      label: device.label,
+      daemonUrl: device.daemonUrl,
+      state: "failed",
+      requestedAt: "2026-05-11T00:00:00.000Z",
+      error:
+        "connector updated main instead of api-ai-assistant. Re-run the registration command for this server branch.",
+    });
+
+    const res = await app.fetch(
+      new Request("http://site.local/api/devices/update-queue", {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as { entries: StoredDeviceUpdateEntry[] };
+    expect(payload.entries[0]?.fallbackCommand).toContain("deskrelay-install-connector.ps1");
+    expect(payload.entries[0]?.fallbackCommand).toContain(`-SiteToken '${TOKEN}'`);
+  });
 });
 
 describe("doctor endpoints", () => {
@@ -2871,10 +2903,14 @@ describe("device update proxy", () => {
       ok: boolean;
       error: string;
       daemonStatus: number;
+      recoveryKind: string;
+      retryable: boolean;
       fallbackCommand: string;
     };
     expect(body.ok).toBe(false);
     expect(body.daemonStatus).toBe(404);
+    expect(body.recoveryKind).toBe("registration_required");
+    expect(body.retryable).toBe(false);
     expect(body.error).toContain("registration command");
     expect(body.fallbackCommand).toContain("deskrelay-install-connector.ps1");
     expect(body.fallbackCommand).toContain(`-SiteToken '${TOKEN}'`);
@@ -2905,12 +2941,18 @@ describe("device update proxy", () => {
       state: string;
       expectedBranch: string;
       actualBranch: string;
+      recoveryKind: string;
+      retryable: boolean;
+      error: string;
       fallbackCommand: string;
     };
     expect(body.ok).toBe(false);
     expect(body.state).toBe("failed");
     expect(body.expectedBranch).toBe("api-ai-assistant");
     expect(body.actualBranch).toBe("main");
+    expect(body.recoveryKind).toBe("branch_mismatch");
+    expect(body.retryable).toBe(false);
+    expect(body.error).toContain("branch switch required");
     expect(body.fallbackCommand).toContain("-Branch 'api-ai-assistant'");
   });
 });

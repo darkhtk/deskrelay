@@ -941,6 +941,11 @@ interface UpdateRunState {
   phase: UpdatePhase;
   message: string;
   fallbackCommand?: string;
+  recoveryKind?: DeviceUpdateResponse["recoveryKind"];
+  retryable?: boolean;
+  expectedBranch?: string;
+  actualBranch?: string;
+  error?: string;
 }
 
 interface DeviceBuildSnapshot {
@@ -1186,6 +1191,11 @@ const GeneralSettings: Component<{
         phase: connectorUpdatePhase(result),
         message: connectorUpdateMessage(result),
         ...(result.fallbackCommand ? { fallbackCommand: result.fallbackCommand } : {}),
+        ...(result.recoveryKind ? { recoveryKind: result.recoveryKind } : {}),
+        ...(typeof result.retryable === "boolean" ? { retryable: result.retryable } : {}),
+        ...(result.expectedBranch ? { expectedBranch: result.expectedBranch } : {}),
+        ...(result.actualBranch ? { actualBranch: result.actualBranch } : {}),
+        ...(result.error ? { error: result.error } : {}),
       } satisfies UpdateRunState;
       setDeviceUpdateState(device.id, state);
       void refetchDeviceUpdateQueue();
@@ -1194,11 +1204,16 @@ const GeneralSettings: Component<{
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as DeviceUpdateResponse | undefined) : null;
       const state = {
-        phase: "failed",
-        message: body?.error
-          ? `connector 업데이트 실패: ${body.error}`
+        phase: body ? connectorUpdatePhase(body) : "failed",
+        message: body
+          ? connectorUpdateMessage(body)
           : `connector 업데이트 실패: ${(err as Error).message}`,
         ...(body?.fallbackCommand ? { fallbackCommand: body.fallbackCommand } : {}),
+        ...(body?.recoveryKind ? { recoveryKind: body.recoveryKind } : {}),
+        ...(typeof body?.retryable === "boolean" ? { retryable: body.retryable } : {}),
+        ...(body?.expectedBranch ? { expectedBranch: body.expectedBranch } : {}),
+        ...(body?.actualBranch ? { actualBranch: body.actualBranch } : {}),
+        ...(body?.error ? { error: body.error } : {}),
       } satisfies UpdateRunState;
       setDeviceUpdateState(device.id, state);
       void refetchDeviceUpdateQueue();
@@ -1389,6 +1404,7 @@ const GeneralSettings: Component<{
     queueEntry: DeviceUpdateQueueEntry | null,
   ): boolean => {
     if (isActiveDeviceUpdateQueue(queueEntry)) return false;
+    if (connectorRequiresManualRegistration(queueEntry)) return false;
     if (device.connectionState === "offline" || snapshot?.error) return Boolean(health()?.build);
     return sameBuild(health()?.build, snapshot?.build) === false;
   };
@@ -1487,6 +1503,7 @@ const GeneralSettings: Component<{
             const state = () => deviceUpdateStates()[device.id] ?? null;
             const snapshot = () => deviceBuildSnapshot(device.id);
             const queueEntry = () => deviceUpdateQueueEntry(device.id);
+            const fallbackCommand = () => deviceUpdateFallbackCommand(state(), queueEntry());
             const phase = () =>
               deviceUpdatePhase(device, health()?.build, snapshot(), state(), queueEntry());
             return (
@@ -1519,10 +1536,14 @@ const GeneralSettings: Component<{
                           ? "대기"
                           : phase() === "restart_required"
                             ? "재시작 필요"
-                            : "최신"}
+                            : connectorRequiresManualRegistration(state() ?? queueEntry())
+                              ? "명령 필요"
+                              : phase() === "failed"
+                                ? "조치 필요"
+                                : "최신"}
                   </button>
                 </div>
-                <Show when={state()?.fallbackCommand}>
+                <Show when={fallbackCommand()}>
                   {(command) => (
                     <textarea
                       class="settings-command-textarea"
@@ -1864,7 +1885,54 @@ function buildLabel(build: DeskRelayBuildInfo | undefined): string {
   return `${build.shortCommit || build.version || "unknown"}${dirty}`;
 }
 
+type ConnectorRecoveryCarrier = {
+  recoveryKind?: DeviceUpdateResponse["recoveryKind"];
+  retryable?: boolean;
+  fallbackCommand?: string;
+  error?: string;
+  expectedBranch?: string;
+  actualBranch?: string;
+};
+
+function connectorRequiresManualRegistration(
+  value: ConnectorRecoveryCarrier | null | undefined,
+): boolean {
+  if (!value) return false;
+  if (value.recoveryKind === "branch_mismatch" || value.recoveryKind === "registration_required") {
+    return true;
+  }
+  const error = value.error?.toLowerCase() ?? "";
+  return (
+    error.includes("re-run the registration command") ||
+    error.includes("registration command") ||
+    error.includes("branch switch required")
+  );
+}
+
+function connectorManualRecoveryMessage(
+  value: ConnectorRecoveryCarrier | null | undefined,
+): string | null {
+  if (!connectorRequiresManualRegistration(value)) return null;
+  if (value?.recoveryKind === "branch_mismatch") {
+    const branch =
+      value.actualBranch && value.expectedBranch
+        ? ` · 현재 ${value.actualBranch}, 필요 ${value.expectedBranch}`
+        : "";
+    return `connector 브랜치 재등록 필요${branch}: 해당 PC에서 등록 명령을 실행하세요.`;
+  }
+  return "connector 재등록 필요: 해당 PC에서 등록 명령을 실행하세요.";
+}
+
+function deviceUpdateFallbackCommand(
+  runState: UpdateRunState | null,
+  queueEntry: DeviceUpdateQueueEntry | null,
+): string | undefined {
+  return runState?.fallbackCommand ?? queueEntry?.fallbackCommand;
+}
+
 function connectorUpdateMessage(result: DeviceUpdateResponse): string {
+  const manualRecovery = connectorManualRecoveryMessage(result);
+  if (manualRecovery) return manualRecovery;
   if (result.state === "pending_until_device_online") {
     return result.warning ?? "대기 중 · 디바이스가 온라인이 되면 자동 업데이트";
   }
@@ -2018,6 +2086,8 @@ function deviceUpdateQueuePhase(entry: DeviceUpdateQueueEntry): UpdatePhase {
 }
 
 function deviceUpdateQueueStatusText(entry: DeviceUpdateQueueEntry): string {
+  const manualRecovery = connectorManualRecoveryMessage(entry);
+  if (manualRecovery) return manualRecovery;
   const range =
     entry.before?.shortCommit && entry.after?.shortCommit
       ? ` · ${entry.before.shortCommit} -> ${entry.after.shortCommit}`
