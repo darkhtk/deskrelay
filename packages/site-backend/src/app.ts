@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { networkInterfaces } from "node:os";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { networkInterfaces, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   type DiagnosticCheck,
@@ -1904,14 +1904,14 @@ async function runDefaultManagerAssistantCli(
   );
   const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
-  const argv = managerAssistantStructuredInputArgs(args);
+  const invocation = await prepareManagerAssistantInvocation(command, args, prompt, input);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   try {
-    proc = Bun.spawn([command, ...argv], {
+    proc = Bun.spawn([invocation.command, ...invocation.argv], {
       cwd: input.cwd,
       stdout: "pipe",
       stderr: "pipe",
-      stdin: "pipe",
+      stdin: invocation.stdin,
       env: {
         ...process.env,
         ...(options.token ? { DESKRELAY_SITE_TOKEN: options.token } : {}),
@@ -1925,24 +1925,28 @@ async function runDefaultManagerAssistantCli(
     throw new Error(`Could not start manager assistant CLI (${command}): ${errorMessage(error)}`);
   }
 
-  writeClaudeStructuredPrompt(proc, prompt);
-  const stdout = readManagerAssistantStdout(proc.stdout, () => undefined);
-  const stderr = readManagerAssistantStderr(proc.stderr, () => undefined);
-  const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
-    proc.kill();
-  });
-  const [stdoutResult, err] = await Promise.all([stdout, stderr]);
-  if (exitCode !== 0) {
-    throw new Error(
-      `Manager assistant CLI exited with code ${exitCode}${err.trim() ? `: ${err.trim()}` : ""}`,
-    );
+  try {
+    invocation.writeInput?.(proc);
+    const stdout = readManagerAssistantStdout(proc.stdout, () => undefined);
+    const stderr = readManagerAssistantStderr(proc.stderr, () => undefined);
+    const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
+      proc.kill();
+    });
+    const [stdoutResult, err] = await Promise.all([stdout, stderr]);
+    if (exitCode !== 0) {
+      throw new Error(
+        `Manager assistant CLI exited with code ${exitCode}${err.trim() ? `: ${err.trim()}` : ""}`,
+      );
+    }
+    const finalText = chooseManagerAssistantFinalText(stdoutResult, err);
+    if (!finalText.ok) throw new Error(finalText.error);
+    return {
+      text: finalText.text,
+      command: invocation.displayCommand,
+    };
+  } finally {
+    await invocation.cleanup?.();
   }
-  const finalText = chooseManagerAssistantFinalText(stdoutResult, err);
-  if (!finalText.ok) throw new Error(finalText.error);
-  return {
-    text: finalText.text,
-    command: `${command} ${args.join(" ")}`.trim(),
-  };
 }
 
 async function runDefaultManagerAssistantCliStream(
@@ -1959,7 +1963,7 @@ async function runDefaultManagerAssistantCliStream(
   const args = managerAssistantStreamArgs(baseArgs);
   const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
-  const argv = managerAssistantStructuredInputArgs(args);
+  const invocation = await prepareManagerAssistantInvocation(command, args, prompt, input);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   emit(
     managerAssistantStatusEvent({
@@ -1970,11 +1974,11 @@ async function runDefaultManagerAssistantCliStream(
     }),
   );
   try {
-    proc = Bun.spawn([command, ...argv], {
+    proc = Bun.spawn([invocation.command, ...invocation.argv], {
       cwd: input.cwd,
       stdout: "pipe",
       stderr: "pipe",
-      stdin: "pipe",
+      stdin: invocation.stdin,
       env: {
         ...process.env,
         ...(options.token ? { DESKRELAY_SITE_TOKEN: options.token } : {}),
@@ -1988,33 +1992,102 @@ async function runDefaultManagerAssistantCliStream(
     throw new Error(`Could not start manager assistant CLI (${command}): ${errorMessage(error)}`);
   }
 
-  writeClaudeStructuredPrompt(proc, prompt);
-  const stdout = readManagerAssistantStdout(proc.stdout, emit);
-  const stderr = readManagerAssistantStderr(proc.stderr, emit);
-  const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
-    proc.kill();
-  });
-  const [stdoutResult, stderrText] = await Promise.all([stdout, stderr]);
-  if (exitCode !== 0) {
-    throw new Error(
-      `Manager assistant CLI exited with code ${exitCode}${
-        stderrText.trim() ? `: ${stderrText.trim()}` : ""
-      }`,
+  try {
+    invocation.writeInput?.(proc);
+    const stdout = readManagerAssistantStdout(proc.stdout, emit);
+    const stderr = readManagerAssistantStderr(proc.stderr, emit);
+    const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
+      proc.kill();
+    });
+    const [stdoutResult, stderrText] = await Promise.all([stdout, stderr]);
+    if (exitCode !== 0) {
+      throw new Error(
+        `Manager assistant CLI exited with code ${exitCode}${
+          stderrText.trim() ? `: ${stderrText.trim()}` : ""
+        }`,
+      );
+    }
+    const finalText = chooseManagerAssistantFinalText(stdoutResult, stderrText);
+    if (!finalText.ok) throw new Error(finalText.error);
+    emit(
+      managerAssistantStatusEvent({
+        phase: "finalizing",
+        tone: "thinking",
+        main: "결과 정리 중",
+      }),
     );
+    return {
+      text: finalText.text,
+      command: invocation.displayCommand,
+    };
+  } finally {
+    await invocation.cleanup?.();
   }
-  const finalText = chooseManagerAssistantFinalText(stdoutResult, stderrText);
-  if (!finalText.ok) throw new Error(finalText.error);
-  emit(
-    managerAssistantStatusEvent({
-      phase: "finalizing",
-      tone: "thinking",
-      main: "결과 정리 중",
-    }),
-  );
+}
+
+interface ManagerAssistantCliInvocation {
+  command: string;
+  argv: string[];
+  stdin: "pipe" | "ignore";
+  displayCommand: string;
+  writeInput?: (proc: Bun.Subprocess<"pipe", "pipe", "pipe">) => void;
+  cleanup?: () => Promise<void>;
+}
+
+async function prepareManagerAssistantInvocation(
+  command: string,
+  args: string[],
+  prompt: string,
+  input: ManagerAssistantRunInput,
+): Promise<ManagerAssistantCliInvocation> {
+  if (process.platform === "win32" && isDefaultClaudeCommand(command)) {
+    const promptPath = join(
+      tmpdir(),
+      `deskrelay-manager-prompt-${Date.now()}-${randomBytes(6).toString("hex")}.txt`,
+    );
+    const argsPath = join(
+      tmpdir(),
+      `deskrelay-manager-args-${Date.now()}-${randomBytes(6).toString("hex")}.json`,
+    );
+    await writeFile(promptPath, prompt, "utf8");
+    await writeFile(argsPath, JSON.stringify(args), "utf8");
+    const wrapperPath = join(input.repoRoot, "scripts", "run-manager-claude.ps1");
+    return {
+      command: "powershell.exe",
+      argv: [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        wrapperPath,
+        "-PromptPath",
+        promptPath,
+        "-Command",
+        command,
+        "-ArgsPath",
+        argsPath,
+      ],
+      stdin: "ignore",
+      displayCommand: `${command} ${args.join(" ")}`.trim(),
+      cleanup: async () => {
+        await Promise.all([rm(promptPath, { force: true }), rm(argsPath, { force: true })]);
+      },
+    };
+  }
+
+  const argv = managerAssistantStructuredInputArgs(args);
   return {
-    text: finalText.text,
-    command: `${command} ${args.join(" ")}`.trim(),
+    command,
+    argv,
+    stdin: "pipe",
+    displayCommand: `${command} ${args.join(" ")}`.trim(),
+    writeInput: (proc) => writeClaudeStructuredPrompt(proc, prompt),
   };
+}
+
+function isDefaultClaudeCommand(command: string): boolean {
+  const normalized = command.trim().replaceAll("\\", "/").toLowerCase();
+  return normalized === "claude" || normalized.endsWith("/claude") || normalized.endsWith("/claude.cmd");
 }
 
 function managerAssistantStreamArgs(args: string[]): string[] {
