@@ -319,6 +319,7 @@ export interface ManagerAssistantTaskMemory {
 }
 
 export interface ManagerAssistantStructuredState {
+  sessionId?: string;
   lastAssistantText?: string;
   pendingDecision?: ManagerAssistantPendingDecision;
   task?: ManagerAssistantTaskMemory;
@@ -339,6 +340,7 @@ export interface ManagerAssistantChatResponse {
   cwd: string;
   command: string;
   durationMs: number;
+  sessionId?: string;
 }
 
 export type ManagerAssistantStreamTone = "context" | "thinking" | "warning";
@@ -367,6 +369,7 @@ export type ManagerAssistantStreamEvent =
       cwd: string;
       command: string;
       durationMs: number;
+      sessionId?: string;
     }
   | { type: "error"; error: string };
 

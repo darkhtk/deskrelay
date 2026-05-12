@@ -97,6 +97,7 @@ export interface ManagerAssistantRunInput {
   history: ManagerAssistantChatMessage[];
   context: ManagerAssistantChatContext | undefined;
   assistantState?: ManagerAssistantStructuredState;
+  managerSessionId?: string;
   cwd: string;
   repoRoot: string;
   instructionsPath: string;
@@ -106,6 +107,7 @@ export interface ManagerAssistantRunInput {
 export interface ManagerAssistantRunResult {
   text: string;
   command: string;
+  sessionId?: string;
 }
 
 export interface ManagerAssistantOptions {
@@ -1764,6 +1766,7 @@ async function runManagerAssistantChat(
     instructionsPath: workspace.instructionsPath,
     apiBaseUrl,
   };
+  if (request.assistantState?.sessionId) input.managerSessionId = request.assistantState.sessionId;
   if (request.assistantState) input.assistantState = request.assistantState;
   const result = await runner(input);
   return {
@@ -1776,6 +1779,7 @@ async function runManagerAssistantChat(
       text: result.text,
       createdAt: new Date().toISOString(),
     },
+    ...(result.sessionId ? { sessionId: result.sessionId } : {}),
   };
 }
 
@@ -1822,6 +1826,9 @@ function streamManagerAssistantChat(
             instructionsPath: workspace.instructionsPath,
             apiBaseUrl,
           };
+          if (request.assistantState?.sessionId) {
+            input.managerSessionId = request.assistantState.sessionId;
+          }
           if (request.assistantState) input.assistantState = request.assistantState;
           const runner = options.managerAssistant?.runner;
           const result = runner
@@ -1832,6 +1839,7 @@ function streamManagerAssistantChat(
             cwd,
             command: result.command,
             durationMs: Date.now() - started,
+            ...(result.sessionId ? { sessionId: result.sessionId } : {}),
             message: {
               id: `assistant_${randomBytes(10).toString("base64url")}`,
               role: "assistant",
@@ -1898,13 +1906,16 @@ async function runDefaultManagerAssistantCli(
   const assistantOptions = options.managerAssistant;
   const command =
     assistantOptions?.command ?? process.env.DESKRELAY_MANAGER_ASSISTANT_CLI ?? "claude";
-  const args = managerAssistantStreamArgs(
-    assistantOptions?.args ??
-      parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS),
+  const args = managerAssistantSessionArgs(
+    managerAssistantStreamArgs(
+      assistantOptions?.args ??
+        parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS),
+    ),
+    input.managerSessionId,
   );
   const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
-  const invocation = await prepareManagerAssistantInvocation(command, args, prompt, input);
+  const invocation = await prepareManagerAssistantInvocation(command, args, prompt);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   try {
     proc = Bun.spawn([invocation.command, ...invocation.argv], {
@@ -1943,6 +1954,7 @@ async function runDefaultManagerAssistantCli(
     return {
       text: finalText.text,
       command: invocation.displayCommand,
+      ...(stdoutResult.sessionId ? { sessionId: stdoutResult.sessionId } : {}),
     };
   } finally {
     await invocation.cleanup?.();
@@ -1960,10 +1972,10 @@ async function runDefaultManagerAssistantCliStream(
   const baseArgs =
     assistantOptions?.args ??
     parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
-  const args = managerAssistantStreamArgs(baseArgs);
+  const args = managerAssistantSessionArgs(managerAssistantStreamArgs(baseArgs), input.managerSessionId);
   const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
-  const invocation = await prepareManagerAssistantInvocation(command, args, prompt, input);
+  const invocation = await prepareManagerAssistantInvocation(command, args, prompt);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   emit(
     managerAssistantStatusEvent({
@@ -2019,6 +2031,7 @@ async function runDefaultManagerAssistantCliStream(
     return {
       text: finalText.text,
       command: invocation.displayCommand,
+      ...(stdoutResult.sessionId ? { sessionId: stdoutResult.sessionId } : {}),
     };
   } finally {
     await invocation.cleanup?.();
@@ -2038,39 +2051,36 @@ async function prepareManagerAssistantInvocation(
   command: string,
   args: string[],
   prompt: string,
-  input: ManagerAssistantRunInput,
 ): Promise<ManagerAssistantCliInvocation> {
   if (process.platform === "win32" && isDefaultClaudeCommand(command)) {
-    const promptPath = join(
+    const payloadPath = join(
       tmpdir(),
-      `deskrelay-manager-prompt-${Date.now()}-${randomBytes(6).toString("hex")}.txt`,
+      `deskrelay-manager-payload-${Date.now()}-${randomBytes(6).toString("hex")}.jsonl`,
     );
-    const argsPath = join(
+    const cmdPath = join(
       tmpdir(),
-      `deskrelay-manager-args-${Date.now()}-${randomBytes(6).toString("hex")}.json`,
+      `deskrelay-manager-${Date.now()}-${randomBytes(6).toString("hex")}.cmd`,
     );
-    await writeFile(promptPath, prompt, "utf8");
-    await writeFile(argsPath, JSON.stringify(args), "utf8");
-    const wrapperPath = join(input.repoRoot, "scripts", "run-manager-claude.ps1");
+    const argv = managerAssistantStructuredInputArgs(args);
+    await writeFile(payloadPath, `${claudeStructuredPromptPayload(prompt)}\n`, "utf8");
+    await writeFile(
+      cmdPath,
+      [
+        "@echo off",
+        "chcp 65001 >NUL",
+        `${[command, ...argv].map(cmdQuote).join(" ")} < ${cmdQuote(payloadPath)}`,
+        "exit /b %ERRORLEVEL%",
+        "",
+      ].join("\r\n"),
+      "utf8",
+    );
     return {
-      command: "powershell.exe",
-      argv: [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        wrapperPath,
-        "-PromptPath",
-        promptPath,
-        "-Command",
-        command,
-        "-ArgsPath",
-        argsPath,
-      ],
+      command: "cmd.exe",
+      argv: ["/d", "/s", "/c", cmdPath],
       stdin: "ignore",
       displayCommand: `${command} ${args.join(" ")}`.trim(),
       cleanup: async () => {
-        await Promise.all([rm(promptPath, { force: true }), rm(argsPath, { force: true })]);
+        await Promise.all([rm(payloadPath, { force: true }), rm(cmdPath, { force: true })]);
       },
     };
   }
@@ -2088,6 +2098,33 @@ async function prepareManagerAssistantInvocation(
 function isDefaultClaudeCommand(command: string): boolean {
   const normalized = command.trim().replaceAll("\\", "/").toLowerCase();
   return normalized === "claude" || normalized.endsWith("/claude") || normalized.endsWith("/claude.cmd");
+}
+
+function managerAssistantSessionArgs(args: string[], sessionId: string | undefined): string[] {
+  const normalized: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) continue;
+    if (arg === "--resume" || arg === "-r" || arg === "--session-id") {
+      index += 1;
+      continue;
+    }
+    if (arg === "--continue" || arg === "-c" || arg === "--fork-session") continue;
+    if (
+      arg.startsWith("--resume=") ||
+      arg.startsWith("--session-id=") ||
+      arg.startsWith("-r=")
+    ) {
+      continue;
+    }
+    normalized.push(arg);
+  }
+  if (sessionId?.trim()) normalized.push("--resume", sessionId.trim());
+  return normalized;
+}
+
+function cmdQuote(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function managerAssistantStreamArgs(args: string[]): string[] {
@@ -2172,6 +2209,7 @@ interface ManagerAssistantStdoutResult {
   assistantText: string;
   assistantTextAfterToolResult: string;
   rawText: string;
+  sessionId: string;
   sawToolUse: boolean;
   sawToolResult: boolean;
   sawSyntheticToolArtifact: boolean;
@@ -2188,6 +2226,7 @@ async function readManagerAssistantStdout(
   let assistantText = "";
   let assistantTextAfterToolResult = "";
   let rawText = "";
+  let sessionId = "";
   let sawToolUse = false;
   let sawToolResult = false;
   let sawSyntheticToolArtifact = false;
@@ -2211,6 +2250,9 @@ async function readManagerAssistantStdout(
         sawSyntheticToolArtifact = true;
       }
       return;
+    }
+    if (typeof parsed.session_id === "string" && parsed.session_id.trim()) {
+      sessionId = parsed.session_id.trim();
     }
     emit({ type: "claude_event", event: parsed });
     const status = managerAssistantStatusFromClaudeEvent(parsed);
@@ -2258,6 +2300,7 @@ async function readManagerAssistantStdout(
     assistantText,
     assistantTextAfterToolResult,
     rawText,
+    sessionId,
     sawToolUse,
     sawToolResult,
     sawSyntheticToolArtifact,
@@ -2445,53 +2488,26 @@ function truncateForStatus(value: string): string {
 }
 
 export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
-  const recent = input.history.slice(-8);
-  const memory = recent
-    .map((message) => `- ${message.role}: ${singleLineManagerAssistantMemory(message.text)}`)
-    .join("\n");
   const browserContext = formatManagerAssistantBrowserContext(input.context);
-  const structuredState = formatManagerAssistantStructuredState(input.assistantState);
-  const lastReply = formatManagerAssistantLastReply(input.assistantState?.lastAssistantText);
-  const shortReplyHint = isShortManagerAssistantReply(input.message)
+  const pendingDecision = isShortManagerAssistantReply(input.message)
+    ? formatManagerAssistantPendingDecision(input.assistantState?.pendingDecision)
+    : "";
+  const shortReplyHint = pendingDecision
     ? [
         "## Short Reply Resolution",
-        "The current user request is short or ambiguous. If `Structured Manager State` has a pending decision, resolve the user's reply against that decision before asking for clarification.",
+        "The current user request is short or ambiguous. Resolve it against the active Claude session first.",
+        pendingDecision,
         "Accept numeric, lettered, ordinal, and affirmative replies when they clearly map to the pending decision or the last assistant reply.",
       ].join("\n")
     : "";
   return [
-    "You are the DeskRelay manager assistant.",
-    "You are running on the server PC in a managed DeskRelay assistant folder.",
-    `Repository root: ${input.repoRoot}`,
-    `Managed instruction file: ${input.instructionsPath}`,
-    `DeskRelay manager API base URL: ${input.apiBaseUrl}`,
-    "Talk with the user as a practical DeskRelay administrator and supervisor.",
-    "Before using APIs or commands, identify the user's intent and the affected scope.",
-    "Answer in Korean unless the user asks for another language.",
-    "If you did not actually run a command, do not claim that you did.",
-    "Do not treat registry `connectionState: online` as proof of connector reachability; verify with doctor/process/specific APIs before operational claims.",
-    "Never print full Site tokens, daemon tokens, or token-bearing registration commands. Redact token values as `[redacted]` and point to the UI or command file when the user needs the full command.",
-    "This prompt is an instruction packet, not a dialogue transcript to continue.",
-    "Do not output transcript labels such as `User:`, `Assistant:`, `A:`, or `B:` unless the user explicitly asks for that format.",
-    "If you list planned checks, label them as planned. Only report a check as observed after you actually used an API or command.",
     browserContext ? `## Current Browser Context\n${browserContext}` : "",
-    structuredState ? `## Structured Manager State\n${structuredState}` : "",
-    lastReply ? `## Last Assistant Reply\n${lastReply}` : "",
     shortReplyHint,
-    memory
-      ? `## Recent Conversation Log\nReference only. This is lossy context, not a transcript to continue. Prefer Structured Manager State for decisions and task state.\n${memory}`
-      : "",
     `## Current User Request\n${input.message}`,
-    "## Response Requirements\nAnswer only the current user request. Use observed facts for claims. Keep the response concise unless the user asks for detail.",
+    "## Response Requirements\nAnswer only the current user request. Use the active Claude session for conversation memory. Use observed facts for operational claims.",
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-function singleLineManagerAssistantMemory(value: string): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  if (compact.length <= 300) return compact;
-  return `${compact.slice(0, 297)}...`;
 }
 
 function isShortManagerAssistantReply(value: string): boolean {
@@ -2501,38 +2517,17 @@ function isShortManagerAssistantReply(value: string): boolean {
   return /^(응|네|그래|좋아|진행|그걸로|첫|두|세|1번|2번|3번|a|b|c)$/i.test(compact);
 }
 
-function formatManagerAssistantLastReply(value: string | undefined): string {
-  if (!value?.trim()) return "";
-  return value.trim().slice(0, 6_000);
-}
-
-function formatManagerAssistantStructuredState(
-  state: ManagerAssistantStructuredState | undefined,
+function formatManagerAssistantPendingDecision(
+  pendingDecision: ManagerAssistantStructuredState["pendingDecision"] | undefined,
 ): string {
-  if (!state) return "";
+  if (!pendingDecision?.options.length) return "";
   const lines: string[] = [];
-  if (state.task) {
-    lines.push(`- task state: ${state.task.state}`);
-    if (state.task.title) lines.push(`- task title: ${state.task.title}`);
-    if (state.task.updatedAt) lines.push(`- task updated at: ${state.task.updatedAt}`);
+  lines.push("- pending decision:");
+  if (pendingDecision.prompt) lines.push(`  prompt: ${pendingDecision.prompt}`);
+  for (const option of pendingDecision.options) {
+    lines.push(`  ${option.key}. ${option.label}${option.detail ? ` - ${option.detail}` : ""}`);
   }
-  if (state.pendingDecision?.options.length) {
-    lines.push("- pending decision:");
-    if (state.pendingDecision.prompt) lines.push(`  prompt: ${state.pendingDecision.prompt}`);
-    for (const option of state.pendingDecision.options) {
-      lines.push(`  ${option.key}. ${option.label}${option.detail ? ` - ${option.detail}` : ""}`);
-    }
-  }
-  appendManagerAssistantList(lines, "facts", state.facts);
-  appendManagerAssistantList(lines, "decisions", state.decisions);
-  appendManagerAssistantList(lines, "open questions", state.openQuestions);
   return lines.join("\n");
-}
-
-function appendManagerAssistantList(lines: string[], label: string, values: string[] | undefined) {
-  if (!values?.length) return;
-  lines.push(`- ${label}:`);
-  for (const value of values.slice(0, 8)) lines.push(`  - ${value}`);
 }
 
 interface ManagerAssistantWorkspace {
@@ -4214,6 +4209,9 @@ function formatManagerAssistantBrowserContext(
 function normalizeAssistantState(input: unknown): ManagerAssistantStructuredState | undefined {
   if (!isRecord(input)) return undefined;
   const state: ManagerAssistantStructuredState = {};
+  if (typeof input.sessionId === "string" && input.sessionId.trim()) {
+    state.sessionId = input.sessionId.trim().slice(0, 500);
+  }
   if (typeof input.lastAssistantText === "string" && input.lastAssistantText.trim()) {
     state.lastAssistantText = sanitizeManagerAssistantText(input.lastAssistantText).slice(0, 8_000);
   }

@@ -1161,6 +1161,95 @@ process.stdin.on("end", () => {
     }
   });
 
+  test("manager assistant returns and resumes a persistent Claude session", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-session-"));
+    const scriptPath = join(cwd, "fake-claude-session.js");
+    writeFileSync(
+      scriptPath,
+      `
+const chunks = [];
+process.stdin.on("data", (chunk) => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const observed = {
+    argv: process.argv.slice(2),
+    stdin: Buffer.concat(chunks).toString("utf8")
+  };
+  console.log(JSON.stringify({
+    type: "result",
+    session_id: "manager-session-1",
+    result: JSON.stringify(observed)
+  }));
+});
+`,
+      "utf8",
+    );
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          command: process.execPath,
+          args: [scriptPath],
+          timeoutMs: 10_000,
+        },
+      });
+
+      const first = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat", {
+          message: "remember-session-token",
+          history: [
+            {
+              id: "old",
+              role: "assistant",
+              text: "old assistant text that must not be replayed",
+              createdAt: "2026-05-12T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as {
+        sessionId?: string;
+        message?: { text?: string };
+      };
+      expect(firstBody.sessionId).toBe("manager-session-1");
+      const firstObserved = JSON.parse(firstBody.message?.text ?? "{}") as {
+        argv?: string[];
+        stdin?: string;
+      };
+      expect(firstObserved.argv).not.toContain("--resume");
+      expect(firstObserved.stdin).toContain("remember-session-token");
+      expect(firstObserved.stdin).not.toContain("old assistant text that must not be replayed");
+
+      const second = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat", {
+          message: "recall-session-token",
+          assistantState: {
+            sessionId: "manager-session-1",
+            lastAssistantText: "large stale assistant text that must not be replayed",
+          },
+        }),
+      );
+      expect(second.status).toBe(200);
+      const secondBody = (await second.json()) as {
+        sessionId?: string;
+        message?: { text?: string };
+      };
+      expect(secondBody.sessionId).toBe("manager-session-1");
+      const secondObserved = JSON.parse(secondBody.message?.text ?? "{}") as {
+        argv?: string[];
+        stdin?: string;
+      };
+      expect(secondObserved.argv).toContain("--resume");
+      expect(secondObserved.argv).toContain("manager-session-1");
+      expect(secondObserved.stdin).toContain("recall-session-token");
+      expect(secondObserved.stdin).not.toContain("large stale assistant text that must not be replayed");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager assistant stream reports status before final response", async () => {
     const cwd = join(tmpdir(), "deskrelay-assistant-stream-test");
     const app = createSiteApp({
@@ -1972,8 +2061,11 @@ process.stdin.on("end", () => {
 
     expect(prompt).toContain("## Current User Request");
     expect(prompt).toContain("deskrelay 에 대해 알려줘");
-    expect(prompt).toContain("## Recent Conversation Log");
-    expect(prompt).toContain("not a dialogue transcript to continue");
+    expect(prompt).toContain("## Current Browser Context");
+    expect(prompt).not.toContain("## Recent Conversation Log");
+    expect(prompt).not.toContain("## Structured Manager State");
+    expect(prompt).not.toContain("## Last Assistant Reply");
+    expect(prompt).not.toContain("history=1");
     expect(prompt).not.toContain("\nUser: deskrelay");
     expect(prompt).not.toContain("\nAssistant:");
     expect(prompt.trim().endsWith("Assistant:")).toBe(false);
@@ -2028,12 +2120,12 @@ process.stdin.on("end", () => {
       apiBaseUrl: "http://127.0.0.1:18193",
     });
 
-    expect(prompt).toContain("## Structured Manager State");
-    expect(prompt).toContain("task state: waiting_user_choice");
+    expect(prompt).not.toContain("## Structured Manager State");
+    expect(prompt).not.toContain("task state: waiting_user_choice");
     expect(prompt).toContain("1. remote-claude chat을 1회 스캐폴딩 호출");
-    expect(prompt).toContain("## Last Assistant Reply");
+    expect(prompt).not.toContain("## Last Assistant Reply");
     expect(prompt).toContain("## Short Reply Resolution");
-    expect(prompt).toContain("resolve the user's reply against that decision");
+    expect(prompt).toContain("Resolve it against the active Claude session first");
   });
 
   test("shortcut APIs create manager tasks", async () => {
