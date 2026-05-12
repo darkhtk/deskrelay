@@ -4841,6 +4841,72 @@ dialog.approval-modal-root,
 .settings-update-dot.update-phase-restart_required {
   background: var(--warning);
 }
+.settings-worker-section {
+  gap: 12px;
+}
+.settings-worker-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.settings-worker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-worker-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-worker-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.settings-worker-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.settings-worker-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+.settings-worker-title-row,
+.settings-worker-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-worker-buttons {
+  justify-content: flex-end;
+}
+.settings-worker-command,
+.settings-worker-roles,
+.settings-worker-risk {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.settings-worker-command {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+.settings-worker-risk {
+  color: var(--text-muted);
+}
+.settings-worker-risk.worker-risk-system,
+.settings-worker-risk.worker-risk-destructive {
+  color: var(--warning);
+}
 .settings-command-copy {
   display: flex;
   align-items: center;

@@ -246,9 +246,29 @@ export interface ManagerWorkerProfile {
   description: string;
   command: string;
   args: string[];
+  checkCommand: string;
+  checkArgs: string[];
   available: boolean;
   destructive: boolean;
   defaultTimeoutMs: number;
+  runMode: "argument" | "stdin";
+  roles: string[];
+  risk: "read" | "write" | "destructive" | "system";
+}
+
+export interface ManagerWorkerCheckResult {
+  profile: string;
+  command: string;
+  args: string[];
+  available: boolean;
+  exitCode?: number;
+  timedOut: boolean;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  error?: string;
 }
 
 export interface ManagerWorkerListResponse {

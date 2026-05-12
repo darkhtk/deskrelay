@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Hono } from "hono";
 import { buildManagerAssistantPrompt, createSiteApp } from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
@@ -516,6 +516,11 @@ describe("API route inventory", () => {
           [400],
         ],
         ["GET /api/manager/workers", authedRequest("GET", "/api/manager/workers")],
+        ["GET /api/manager/workers/:id", authedRequest("GET", "/api/manager/workers/claude-code")],
+        [
+          "POST /api/manager/workers/:id/check",
+          authedRequest("POST", "/api/manager/workers/claude-code/check"),
+        ],
         [
           "POST /api/manager/workers/run",
           authedRequest("POST", "/api/manager/workers/run", {
@@ -1374,6 +1379,16 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       const listBody = (await list.json()) as { profiles?: Array<{ id?: string }> };
       expect(listBody.profiles?.some((profile) => profile.id === "echo")).toBe(true);
 
+      const profile = await app.fetch(authedRequest("GET", "/api/manager/workers/echo"));
+      expect(profile.status).toBe(200);
+      expect(((await profile.json()) as { id?: string; checkArgs?: string[] }).id).toBe("echo");
+
+      const check = await app.fetch(authedRequest("POST", "/api/manager/workers/echo/check"));
+      expect(check.status).toBe(200);
+      const checkBody = (await check.json()) as { available?: boolean; command?: string };
+      expect(checkBody.available).toBe(true);
+      expect(checkBody.command).toBe(process.execPath);
+
       const dryRun = await app.fetch(
         authedRequest("POST", "/api/manager/workers/run", {
           profile: "echo",
@@ -1405,6 +1420,69 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(body.params?.prompt).toBe("hello worker");
       expect(body.result?.stdout).toContain("hello worker");
       expect(body.result?.command).toContain("<prompt>");
+
+      const unknown = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "missing",
+          prompt: "hello worker",
+          dryRun: false,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(unknown.status).toBe(409);
+      expect(((await unknown.json()) as { state?: string; error?: string }).state).toBe("blocked");
+
+      const outside = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "echo",
+          prompt: "hello worker",
+          cwd: dirname(cwd),
+          dryRun: false,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(outside.status).toBe(409);
+      expect(((await outside.json()) as { error?: string }).error).toContain(
+        "worker cwd must stay inside",
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager worker run blocks when the worker command is unavailable", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-missing-"));
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerWorkers: [
+        {
+          id: "missing",
+          label: "Missing worker",
+          description: "Missing command",
+          command: "deskrelay-definitely-missing-worker-command",
+        },
+      ],
+    });
+
+    try {
+      const check = await app.fetch(authedRequest("POST", "/api/manager/workers/missing/check"));
+      expect(check.status).toBe(200);
+      expect(((await check.json()) as { available?: boolean }).available).toBe(false);
+
+      const run = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "missing",
+          prompt: "hello worker",
+          dryRun: false,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(run.status).toBe(409);
+      const body = (await run.json()) as { state?: string; error?: string };
+      expect(body.state).toBe("blocked");
+      expect(body.error).toBeTruthy();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

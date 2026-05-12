@@ -17,6 +17,8 @@ import {
   type DeviceCleanupEntry,
   type DeviceUpdateQueueEntry,
   type DeviceUpdateResponse,
+  type ManagerWorkerCheckResult,
+  type ManagerWorkerProfile,
   type SelfServerUpdateStatus,
   api,
   clearBaseUrl,
@@ -90,6 +92,7 @@ type SettingsTab =
   | "updates"
   | "devices"
   | "assistant"
+  | "workers"
   | "diagnostics"
   | "instructions"
   | "help";
@@ -99,6 +102,7 @@ const SETTINGS_TABS: SettingsTab[] = [
   "updates",
   "devices",
   "assistant",
+  "workers",
   "diagnostics",
   "instructions",
   "help",
@@ -283,6 +287,7 @@ const HELP_SECTIONS: Array<{
 
 function settingsTabLabel(value: SettingsTab): string {
   if (value === "assistant") return "관리 Assistant";
+  if (value === "workers") return "작업자";
   return value === "help" ? "도움말" : t(`app.settings.tab.${value}`);
 }
 
@@ -719,6 +724,9 @@ export const App: Component = () => {
                 <Show when={settingsTab() === "assistant"}>
                   <ManagerAssistant />
                 </Show>
+                <Show when={settingsTab() === "workers"}>
+                  <ManagerWorkersSettings />
+                </Show>
                 <Show when={settingsTab() === "diagnostics"}>
                   <ConnectionDiagnostics
                     initialSelectedDeviceId={settingsDeviceId()}
@@ -776,6 +784,149 @@ const HelpSettings: Component = () => (
     </div>
   </section>
 );
+
+interface WorkerCheckUiState {
+  phase: UpdatePhase;
+  message: string;
+  result?: ManagerWorkerCheckResult;
+}
+
+const ManagerWorkersSettings: Component = () => {
+  const [workers, { refetch }] = createResource(() => api.managerWorkers());
+  const [checks, setChecks] = createSignal<Record<string, WorkerCheckUiState>>({});
+  const [running, setRunning] = createSignal<string | null>(null);
+
+  const setWorkerState = (id: string, state: WorkerCheckUiState) => {
+    setChecks((current) => ({ ...current, [id]: state }));
+  };
+
+  async function checkWorker(profile: ManagerWorkerProfile) {
+    setWorkerState(profile.id, { phase: "running", message: "상태 확인 중" });
+    try {
+      const result = await api.checkManagerWorker(profile.id);
+      setWorkerState(profile.id, {
+        phase: result.available ? "succeeded" : "failed",
+        message: workerCheckMessage(result),
+        result,
+      });
+    } catch (err) {
+      setWorkerState(profile.id, {
+        phase: "failed",
+        message: `상태 확인 실패: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  async function dryRunWorker(profile: ManagerWorkerProfile) {
+    setRunning(profile.id);
+    setWorkerState(profile.id, { phase: "running", message: "실행 계획 확인 중" });
+    try {
+      const task = await api.runManagerWorker({
+        profile: profile.id,
+        prompt:
+          "Dry-run only. Verify that this worker profile can be planned. Do not edit files or run destructive commands.",
+        dryRun: true,
+        requestedBy: "browser",
+      });
+      setWorkerState(profile.id, {
+        phase: task.state === "succeeded" ? "succeeded" : "failed",
+        message:
+          task.state === "succeeded"
+            ? "실행 계획 확인됨"
+            : task.error
+              ? `실행 계획 실패: ${task.error}`
+              : `실행 계획 상태: ${task.state}`,
+      });
+    } catch (err) {
+      setWorkerState(profile.id, {
+        phase: "failed",
+        message: `실행 계획 실패: ${(err as Error).message}`,
+      });
+    } finally {
+      setRunning(null);
+    }
+  }
+
+  return (
+    <section class="settings-card settings-worker-section">
+      <div class="settings-card-heading">
+        <h3 class="settings-card-title">작업자 CLI</h3>
+        <SettingsScopeLabel scope="server" />
+      </div>
+      <p class="settings-card-help">
+        Manager Assistant가 구현, 점검, 복구 작업을 맡길 수 있는 서버 PC의 로컬 CLI입니다. 실제 실행
+        전에 상태 확인으로 설치 여부와 시작 가능 여부를 확인합니다.
+      </p>
+
+      <div class="settings-worker-actions">
+        <button type="button" class="secondary-button" onClick={() => void refetch()}>
+          새로고침
+        </button>
+      </div>
+
+      <div class="settings-worker-list">
+        <Show
+          when={!workers.loading}
+          fallback={<p class="settings-card-help">작업자 목록 확인 중</p>}
+        >
+          <For each={workers()?.profiles ?? []}>
+            {(profile) => {
+              const check = () => checks()[profile.id];
+              const phase = () =>
+                check()?.phase ?? (profile.available ? "idle" : ("failed" as UpdatePhase));
+              return (
+                <div class="settings-worker-row">
+                  <div class="settings-worker-main">
+                    <span class={`settings-update-dot update-phase-${phase()}`} />
+                    <div class="settings-worker-copy">
+                      <div class="settings-worker-title-row">
+                        <span class="settings-update-label">{profile.label}</span>
+                        <span class={`settings-worker-risk worker-risk-${profile.risk}`}>
+                          {workerRiskText(profile)}
+                        </span>
+                      </div>
+                      <span class="settings-update-detail">{profile.description}</span>
+                      <span class="settings-worker-command">
+                        {profile.command} {profile.args.join(" ")}
+                      </span>
+                      <Show when={profile.roles.length > 0}>
+                        <span class="settings-worker-roles">{profile.roles.join(" · ")}</span>
+                      </Show>
+                      <Show when={check()?.message}>
+                        {(message) => <span class="settings-update-detail">{message()}</span>}
+                      </Show>
+                    </div>
+                  </div>
+                  <div class="settings-worker-buttons">
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      disabled={!profile.available || check()?.phase === "running"}
+                      onClick={() => void checkWorker(profile)}
+                    >
+                      {check()?.phase === "running" ? "확인 중" : "상태 확인"}
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      disabled={!profile.available || running() !== null}
+                      onClick={() => void dryRunWorker(profile)}
+                    >
+                      {running() === profile.id ? "확인 중" : "계획 확인"}
+                    </button>
+                  </div>
+                </div>
+              );
+            }}
+          </For>
+          <Show when={(workers()?.profiles ?? []).length === 0}>
+            <p class="settings-card-help">등록된 작업자 CLI가 없습니다.</p>
+          </Show>
+        </Show>
+      </div>
+    </section>
+  );
+};
 
 type UpdatePhase =
   | "idle"
@@ -1733,6 +1884,26 @@ function connectorUpdateMessage(result: DeviceUpdateResponse): string {
       : `connector가 이미 최신 상태, 재시작 요청됨${range}`;
   }
   return result.warning ?? `connector 업데이트 완료${range}`;
+}
+
+function workerCheckMessage(result: ManagerWorkerCheckResult): string {
+  if (result.available) {
+    const version = result.stdout.trim().split(/\r?\n/).find(Boolean);
+    return version ? `사용 가능 · ${version}` : "사용 가능";
+  }
+  if (result.timedOut) return "사용 불가 · 상태 확인 시간 초과";
+  if (result.error) return `사용 불가 · ${result.error}`;
+  const stderr = result.stderr.trim().split(/\r?\n/).find(Boolean);
+  return stderr
+    ? `사용 불가 · ${stderr}`
+    : `사용 불가 · 종료 코드 ${result.exitCode ?? "알 수 없음"}`;
+}
+
+function workerRiskText(profile: ManagerWorkerProfile): string {
+  if (profile.risk === "system") return "시스템";
+  if (profile.risk === "destructive") return "쓰기/실행";
+  if (profile.risk === "write") return "쓰기";
+  return "읽기";
 }
 
 function connectorUpdatePhase(result: DeviceUpdateResponse): UpdatePhase {

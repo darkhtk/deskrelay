@@ -21,7 +21,9 @@ import type {
   ManagerTaskRequest,
   ManagerUpdatePlan,
   ManagerUpdateStatus,
+  ManagerWorkerCheckResult,
   ManagerWorkerListResponse,
+  ManagerWorkerProfile,
   UpdateState,
 } from "@deskrelay/shared";
 
@@ -330,6 +332,7 @@ export interface BrowserClientContext {
 }
 
 export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
+export type { ManagerWorkerCheckResult, ManagerWorkerProfile };
 
 export interface DeskRelayBuildInfo {
   version: string;
@@ -536,6 +539,13 @@ export const api = {
   createManagerTask: (input: ManagerTaskRequest) =>
     request<ManagerTask>("POST", "/api/manager/tasks", input),
   managerWorkers: () => request<ManagerWorkerListResponse>("GET", "/api/manager/workers"),
+  managerWorker: (id: string) =>
+    request<ManagerWorkerProfile>("GET", `/api/manager/workers/${encodeURIComponent(id)}`),
+  checkManagerWorker: (id: string) =>
+    request<ManagerWorkerCheckResult>(
+      "POST",
+      `/api/manager/workers/${encodeURIComponent(id)}/check`,
+    ),
   runManagerWorker: (input: {
     profile?: string;
     prompt: string;

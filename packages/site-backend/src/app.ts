@@ -33,6 +33,7 @@ import {
   type ManagerUpdatePlan,
   type ManagerUpdateStatus,
   type ManagerUpdateTargetStatus,
+  type ManagerWorkerCheckResult,
   type ManagerWorkerListResponse,
   type ManagerWorkerProfile,
   type UpdateState,
@@ -112,9 +113,14 @@ export interface ManagerWorkerProfileConfig {
   description: string;
   command: string;
   args?: string[];
+  checkCommand?: string;
+  checkArgs?: string[];
   destructive?: boolean;
   defaultTimeoutMs?: number;
   available?: boolean;
+  runMode?: "argument" | "stdin";
+  roles?: string[];
+  risk?: ManagerWorkerProfile["risk"];
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -255,6 +261,18 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     return c.json(buildManagerWorkerList(options));
   });
 
+  app.get("/api/manager/workers/:id", (c) => {
+    const profile = findManagerWorkerProfile(options, c.req.param("id"));
+    if (!profile) return c.json({ error: "unknown worker profile" }, 404);
+    return c.json(profile);
+  });
+
+  app.post("/api/manager/workers/:id/check", async (c) => {
+    const profile = findManagerWorkerProfile(options, c.req.param("id"));
+    if (!profile) return c.json({ error: "unknown worker profile" }, 404);
+    return c.json(await checkManagerWorkerProfile(profile));
+  });
+
   app.post("/api/manager/workers/run", async (c) => {
     const request = await parseManagerWorkerRunRequest(c.req);
     if (!request.ok) return c.json({ error: request.error }, 400);
@@ -268,7 +286,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       build,
       requestUrl: c.req.url,
     });
-    return c.json(completed, 202);
+    return c.json(completed, completed.state === "blocked" ? 409 : 202);
   });
 
   app.get("/api/manager/audit-log", async (c) => {
@@ -1209,6 +1227,16 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "GET",
     path: "/api/manager/workers",
     description: "List server-local worker CLI profiles available to the manager assistant.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/workers/:id",
+    description: "Read one server-local worker CLI profile.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/workers/:id/check",
+    description: "Check whether a server-local worker CLI profile can start.",
   },
   {
     method: "POST",
@@ -2228,7 +2256,7 @@ function buildManagerWorkerList(options: SiteAppOptions): ManagerWorkerListRespo
 
 function buildManagerWorkerProfiles(options: SiteAppOptions): ManagerWorkerProfile[] {
   const configured = options.managerWorkers?.length ? options.managerWorkers : undefined;
-  const profiles = configured ?? [
+  const profiles: ManagerWorkerProfileConfig[] = configured ?? [
     {
       id: "claude-code",
       label: "Claude Code worker",
@@ -2238,9 +2266,28 @@ function buildManagerWorkerProfiles(options: SiteAppOptions): ManagerWorkerProfi
       args: managerAssistantPermissionArgs(
         parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_ARGS),
       ),
+      checkArgs: ["--version"],
       destructive: true,
       defaultTimeoutMs: 600_000,
       available: true,
+      runMode: "argument" as const,
+      roles: ["implementation", "verification", "repo"],
+      risk: "destructive" as const,
+    },
+    {
+      id: "powershell",
+      label: "PowerShell worker",
+      description:
+        "Runs server-local PowerShell commands for inspection, repair scripts, and maintenance.",
+      command: process.env.DESKRELAY_MANAGER_WORKER_POWERSHELL_CLI ?? "powershell",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"],
+      checkArgs: ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"],
+      destructive: true,
+      defaultTimeoutMs: 300_000,
+      available: true,
+      runMode: "argument" as const,
+      roles: ["inspection", "maintenance", "scripts"],
+      risk: "system" as const,
     },
   ];
   return profiles.map((profile) => ({
@@ -2249,10 +2296,30 @@ function buildManagerWorkerProfiles(options: SiteAppOptions): ManagerWorkerProfi
     description: profile.description,
     command: profile.command,
     args: profile.args ?? [],
+    checkCommand: profile.checkCommand ?? profile.command,
+    checkArgs: profile.checkArgs ?? defaultManagerWorkerCheckArgs(profile.command),
     available: profile.available !== false,
     destructive: profile.destructive !== false,
     defaultTimeoutMs: clampWorkerTimeoutMs(profile.defaultTimeoutMs ?? 600_000),
+    runMode: profile.runMode ?? "argument",
+    roles: profile.roles ?? [],
+    risk: profile.risk ?? (profile.destructive === false ? "read" : "destructive"),
   }));
+}
+
+function findManagerWorkerProfile(
+  options: SiteAppOptions,
+  id: string,
+): ManagerWorkerProfile | undefined {
+  return buildManagerWorkerProfiles(options).find((profile) => profile.id === id);
+}
+
+function defaultManagerWorkerCheckArgs(command: string): string[] {
+  const lower = command.toLowerCase();
+  if (lower.endsWith("powershell") || lower.endsWith("powershell.exe") || lower.endsWith("pwsh")) {
+    return ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"];
+  }
+  return ["--version"];
 }
 
 interface ManagerWorkerParams {
@@ -2326,7 +2393,10 @@ async function runManagerWorkerCli(
   input: ManagerWorkerCliRunInput,
 ): Promise<ManagerWorkerCliRunResult> {
   const started = Date.now();
-  const argv = [...input.profile.args, input.prompt];
+  const argv =
+    input.profile.runMode === "stdin"
+      ? [...input.profile.args]
+      : [...input.profile.args, input.prompt];
   const proc = Bun.spawn([input.profile.command, ...argv], {
     cwd: input.cwd,
     stdout: "pipe",
@@ -2340,6 +2410,9 @@ async function runManagerWorkerCli(
       DESKRELAY_REPOSITORY_ROOT: input.repoRoot,
     },
   });
+  if (input.profile.runMode === "stdin") {
+    proc.stdin.write(input.prompt);
+  }
   proc.stdin.end();
   const stdout = readLimitedText(proc.stdout, 2_000_000);
   const stderr = readLimitedText(proc.stderr, 500_000);
@@ -2351,7 +2424,7 @@ async function runManagerWorkerCli(
   const [stdoutResult, stderrResult] = await Promise.all([stdout, stderr]);
   return {
     profile: input.profile.id,
-    command: `${input.profile.command} ${[...input.profile.args, "<prompt>"].join(" ")}`.trim(),
+    command: managerWorkerCommandPreview(input.profile),
     cwd: input.cwd,
     exitCode,
     timedOut,
@@ -2361,6 +2434,64 @@ async function runManagerWorkerCli(
     stdoutTruncated: stdoutResult.truncated,
     stderrTruncated: stderrResult.truncated,
   };
+}
+
+async function checkManagerWorkerProfile(
+  profile: ManagerWorkerProfile,
+): Promise<ManagerWorkerCheckResult> {
+  const started = Date.now();
+  const command = profile.checkCommand || profile.command;
+  const args = profile.checkArgs.length
+    ? profile.checkArgs
+    : defaultManagerWorkerCheckArgs(command);
+  try {
+    const proc = Bun.spawn([command, ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: process.env,
+    });
+    const stdout = readLimitedText(proc.stdout, 100_000);
+    const stderr = readLimitedText(proc.stderr, 100_000);
+    let timedOut = false;
+    const exitCode = await withTimeout(proc.exited, 5_000, () => {
+      timedOut = true;
+      proc.kill();
+    });
+    const [stdoutResult, stderrResult] = await Promise.all([stdout, stderr]);
+    return {
+      profile: profile.id,
+      command,
+      args,
+      available: exitCode === 0 && !timedOut,
+      exitCode,
+      timedOut,
+      durationMs: Date.now() - started,
+      stdout: sanitizeManagerAssistantText(stdoutResult.text),
+      stderr: sanitizeManagerAssistantText(stderrResult.text),
+      stdoutTruncated: stdoutResult.truncated,
+      stderrTruncated: stderrResult.truncated,
+    };
+  } catch (error) {
+    return {
+      profile: profile.id,
+      command,
+      args,
+      available: false,
+      timedOut: false,
+      durationMs: Date.now() - started,
+      stdout: "",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function managerWorkerCommandPreview(profile: ManagerWorkerProfile): string {
+  const promptMarker = profile.runMode === "stdin" ? "<prompt via stdin>" : "<prompt>";
+  return `${profile.command} ${[...profile.args, promptMarker].join(" ")}`.trim();
 }
 
 async function readLimitedText(
@@ -2490,6 +2621,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- You are the supervisor. Answer questions, choose scope, inspect state, decide whether work is needed, and verify results yourself.",
     "- Delegate substantial implementation, repo edits, test runs, documentation edits, and multi-step repair work to a worker CLI instead of pretending you performed the work inline.",
     "- Use `GET /api/manager/workers` to discover worker profiles.",
+    "- Use `POST /api/manager/workers/:id/check` before non-dry-run delegation unless that worker was checked recently in the same task.",
     '- Use `POST /api/manager/workers/run` or `POST /api/manager/tasks` with `kind: "run-worker"` to launch a worker task.',
     "- Worker prompts must include the exact objective, allowed scope, files/modules to touch, forbidden actions, verification commands, and the expected final report.",
     "- Use `dryRun: true` first when you are deciding whether delegation is appropriate. Use `dryRun: false` only after the user asked to proceed or the requested operation clearly implies execution.",
@@ -3074,7 +3206,7 @@ async function executeRunWorkerTask(
   );
   if (!cwd.ok) return blockedTask(input, "worker.cwd.invalid", cwd.error);
 
-  const commandPreview = `${profile.command} ${[...profile.args, "<prompt>"].join(" ")}`.trim();
+  const commandPreview = managerWorkerCommandPreview(profile);
   if (input.request.dryRun !== false) {
     return {
       state: "succeeded",
@@ -3096,6 +3228,37 @@ async function executeRunWorkerTask(
         command: commandPreview,
         promptPreview: truncateText(params.value.prompt, 500),
       },
+    };
+  }
+
+  const check = await checkManagerWorkerProfile(profile);
+  if (!check.available) {
+    return {
+      state: "blocked",
+      targetLabel: profile.label,
+      steps: [
+        ...input.task.steps,
+        taskStep({
+          id: "worker.check.failed",
+          label: "Worker unavailable",
+          status: "failed",
+          summary:
+            check.error ??
+            (check.timedOut
+              ? `${profile.label} did not respond to its check command.`
+              : `${profile.label} check exited with code ${check.exitCode ?? "unknown"}.`),
+          evidence: [
+            `${check.command} ${check.args.join(" ")}`.trim(),
+            ...(check.stderr ? [truncateText(check.stderr, 500)] : []),
+          ],
+        }),
+      ],
+      result: check,
+      error:
+        check.error ??
+        (check.timedOut
+          ? `${profile.label} check timed out.`
+          : `${profile.label} is not available.`),
     };
   }
 
