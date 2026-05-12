@@ -1526,6 +1526,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     const managerTaskStore = createInMemoryManagerTaskStore();
     const deviceUpdateQueue = createMemoryUpdateQueueStore();
     const calls: MockDaemonCall[] = [];
+    const updateOrder: string[] = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       const headers: Record<string, string> = {};
@@ -1545,6 +1546,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
         return Response.json({ ok: true, version: "0.0.0" });
       }
       if (path === "/system/update") {
+        updateOrder.push("device");
         return Response.json({ ok: true, state: "running", message: "update queued" });
       }
       if (path === "/system/uninstall") {
@@ -1571,6 +1573,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
           return { state: "idle", updateAvailable: true };
         },
         async update() {
+          updateOrder.push("server");
           return { supported: true, started: true, pid: 1234, status: { state: "running" } };
         },
       },
@@ -1628,6 +1631,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(updateTask.kind).toBe("update-all");
     expect(updateTask.state).toBe("running");
     expect(calls.some((call) => call.url === `${DAEMON_URL}/system/update`)).toBe(true);
+    expect(updateOrder).toEqual(["device", "server"]);
 
     const restartRes = await app.fetch(
       authedRequest("POST", "/api/manager/tasks", {

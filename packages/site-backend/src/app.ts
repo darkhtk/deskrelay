@@ -2620,13 +2620,6 @@ async function executeUpdateAllTask(
 
   const results: unknown[] = [];
   const steps = [...input.task.steps];
-  const serverResult = await executeUpdateServerTask({
-    ...input,
-    request: { ...input.request, kind: "update-server", dryRun: false },
-  });
-  results.push(serverResult.result);
-  steps.push(...serverResult.steps.slice(input.task.steps.length));
-
   for (const device of input.registry.list()) {
     const deviceResult = await executeUpdateDeviceTask({
       ...input,
@@ -2635,6 +2628,13 @@ async function executeUpdateAllTask(
     results.push(deviceResult.result);
     steps.push(...deviceResult.steps.slice(input.task.steps.length));
   }
+
+  const serverResult = await executeUpdateServerTask({
+    ...input,
+    request: { ...input.request, kind: "update-server", dryRun: false },
+  });
+  results.push(serverResult.result);
+  steps.push(...serverResult.steps.slice(input.task.steps.length));
 
   const states = steps.filter((step) => step.id !== "task.created").map((step) => step.status);
   const state: ManagerTaskState = states.includes("failed")
