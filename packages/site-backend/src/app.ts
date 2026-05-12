@@ -137,6 +137,13 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const announcements = createAnnouncementSource(options, fetchImpl);
   const build = options.build ?? getDeskRelayBuildInfo();
   const managerTaskStore = options.managerTaskStore ?? createInMemoryManagerTaskStore();
+  const managerTaskStoreRecovery = recoverStaleManagerTasks(managerTaskStore, build).catch(
+    () => undefined,
+  );
+
+  async function ensureManagerTaskStoreRecovered(): Promise<void> {
+    await managerTaskStoreRecovery;
+  }
 
   app.get("/healthz", (c) =>
     c.json({
@@ -162,6 +169,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   }
 
   app.get("/api/capabilities", (c) => c.json(serverCapabilities(options)));
+
+  app.use("/api/manager/*", async (_c, next) => {
+    await ensureManagerTaskStoreRecovered();
+    await next();
+  });
 
   app.get("/api/manager/tasks", async (c) => {
     return c.json({ tasks: await managerTaskStore.list(clampListLimit(c.req.query("limit"))) });
@@ -1564,6 +1576,37 @@ interface ManagerTaskExecutionResult {
 }
 
 type ManagerTaskCreateRunInput = Omit<ManagerTaskRunInput, "task">;
+
+async function recoverStaleManagerTasks(
+  store: ManagerTaskStore,
+  build: DeskRelayBuildInfo,
+): Promise<number> {
+  const tasks = await store.list(500);
+  const stale = tasks.filter((task) => task.state === "pending" || task.state === "running");
+  if (stale.length === 0) return 0;
+  let recovered = 0;
+  for (const task of stale) {
+    const summary = `Task was left ${task.state} by a previous server process and cannot be resumed.`;
+    const updated = await store.update(task.id, {
+      state: "cancelled",
+      completedAt: new Date().toISOString(),
+      error: `${summary} Retry the task if it is still needed.`,
+      steps: [
+        ...task.steps,
+        taskStep({
+          id: "task.recovered-after-restart",
+          label: "Task recovered after restart",
+          status: "warn",
+          summary,
+          detail: `Recovered when server ${build.shortCommit} started at ${SERVER_STARTED_AT}.`,
+          retrySafe: true,
+        }),
+      ],
+    });
+    if (updated) recovered += 1;
+  }
+  return recovered;
+}
 
 async function createAndRunManagerTask(input: ManagerTaskCreateRunInput): Promise<ManagerTask> {
   const task = await input.store.create({

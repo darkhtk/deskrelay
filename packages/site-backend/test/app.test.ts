@@ -1536,6 +1536,70 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(body.retrySafe).toBe(true);
   });
 
+  test("server startup recovers stale running manager tasks without clearing queued device work", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const running = await managerTaskStore.create({
+      kind: "update-all",
+      dryRun: false,
+      requestedBy: "browser",
+      steps: [],
+    });
+    await managerTaskStore.update(running.id, {
+      state: "running",
+      startedAt: "2026-05-11T00:00:00.000Z",
+    });
+    const waiting = await managerTaskStore.create({
+      kind: "update-device",
+      targetId: "dev_waiting",
+      dryRun: false,
+      requestedBy: "browser",
+      steps: [],
+    });
+    await managerTaskStore.update(waiting.id, {
+      state: "waiting_for_device",
+      startedAt: "2026-05-11T00:00:00.000Z",
+    });
+
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+      build: {
+        version: "0.0.0",
+        commit: "recovery-test",
+        shortCommit: "recovery",
+        dirty: false,
+        source: "env",
+      },
+    });
+
+    const res = await app.fetch(authedRequest("GET", "/api/manager/tasks?limit=10"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tasks?: Array<{
+        id?: string;
+        state?: string;
+        completedAt?: string;
+        error?: string;
+        steps?: Array<{ id?: string; status?: string; retrySafe?: boolean }>;
+      }>;
+    };
+    const recovered = body.tasks?.find((task) => task.id === running.id);
+    expect(recovered?.state).toBe("cancelled");
+    expect(recovered?.completedAt).toBeTruthy();
+    expect(recovered?.error).toContain("previous server process");
+    expect(
+      recovered?.steps?.some(
+        (step) =>
+          step.id === "task.recovered-after-restart" &&
+          step.status === "warn" &&
+          step.retrySafe === true,
+      ),
+    ).toBe(true);
+    const stillQueued = body.tasks?.find((task) => task.id === waiting.id);
+    expect(stillQueued?.state).toBe("waiting_for_device");
+  });
+
   test("task logs, cancel, and retry APIs operate on stored manager tasks", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const app = createSiteApp({
