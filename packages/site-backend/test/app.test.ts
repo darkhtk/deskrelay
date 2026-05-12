@@ -1466,6 +1466,45 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(((await security.json()) as { devices?: unknown[] }).devices).toHaveLength(1);
   });
 
+  test("manager update status falls back to legacy daemon status when install status is missing", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "legacy",
+    });
+    setup.setMockResponse((req) => {
+      if (req.url.endsWith("/install/status")) {
+        return Response.json({ error: "not found" }, { status: 404 });
+      }
+      if (req.url.endsWith("/status")) {
+        return Response.json({
+          ok: true,
+          build: {
+            version: "0.0.0",
+            commit: "abc",
+            shortCommit: "abc",
+            dirty: false,
+            source: "git",
+          },
+        });
+      }
+      return Response.json({ ok: true });
+    });
+
+    const updateStatus = await setup.app.fetch(authedRequest("GET", "/api/manager/update/status"));
+    expect(updateStatus.status).toBe(200);
+    const body = (await updateStatus.json()) as {
+      devices?: Array<{ targetId?: string; state?: string; summary?: { severity?: string } }>;
+      summary?: { severity?: string };
+    };
+    expect(body.summary?.severity).toBe("warn");
+    expect(body.devices?.[0]).toMatchObject({
+      targetId: device.id,
+      state: "running",
+      summary: { severity: "warn" },
+    });
+  });
+
   test("shortcut APIs create manager tasks", async () => {
     const update = await setup.app.fetch(
       authedRequest("POST", "/api/manager/update/all", { dryRun: true }),

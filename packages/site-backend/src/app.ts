@@ -3696,6 +3696,36 @@ async function buildDeviceInstallStatus(
     queue?.get(device.id).catch(() => undefined),
   ]);
   if (!result.ok) {
+    const legacyStatus = await fetchManagerJson<DaemonStatusPayload>(
+      fetchImpl,
+      `${device.daemonUrl}/status`,
+      authToken,
+    );
+    if (legacyStatus.ok) {
+      return {
+        scope: "device",
+        targetId: device.id,
+        targetLabel: device.label,
+        generatedAt,
+        build: legacyStatus.value.build ?? getDeskRelayBuildInfo(),
+        installed: true,
+        running: true,
+        ...(queueEntry
+          ? {
+              queue: {
+                state: queueEntry.state,
+                updatedAt: queueEntry.updatedAt,
+                ...(queueEntry.error ? { error: queueEntry.error } : {}),
+              },
+            }
+          : {}),
+        summary: {
+          severity: "warn",
+          message:
+            "Connector is running, but its install status API is unavailable. Update the connector if this device looks stale.",
+        },
+      };
+    }
     return {
       scope: "device",
       targetId: device.id,
