@@ -130,6 +130,8 @@ export interface ManagerWorkerProfileConfig {
 
 const DEFAULT_CONNECTOR_PORT = 18091;
 const CONNECTOR_CLEANUP_TIMEOUT_MS = 5_000;
+const DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS = 600_000;
+const MAX_MANAGER_ASSISTANT_TIMEOUT_MS = 1_800_000;
 const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 
@@ -1825,7 +1827,7 @@ async function runDefaultManagerAssistantCli(
     assistantOptions?.args ??
       parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS),
   );
-  const timeoutMs = Math.max(5_000, assistantOptions?.timeoutMs ?? 120_000);
+  const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
   const argv = managerAssistantStructuredInputArgs(args);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
@@ -1880,7 +1882,7 @@ async function runDefaultManagerAssistantCliStream(
     assistantOptions?.args ??
     parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
   const args = managerAssistantStreamArgs(baseArgs);
-  const timeoutMs = Math.max(5_000, assistantOptions?.timeoutMs ?? 120_000);
+  const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
   const argv = managerAssistantStructuredInputArgs(args);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
@@ -2005,6 +2007,16 @@ function managerAssistantPermissionArgs(args: string[]): string[] {
   }
   normalized.push("--permission-mode", "bypassPermissions");
   return normalized;
+}
+
+function managerAssistantTimeoutMs(options: ManagerAssistantOptions | undefined): number {
+  const configured =
+    options?.timeoutMs ??
+    Number(
+      process.env.DESKRELAY_MANAGER_ASSISTANT_TIMEOUT_MS ?? DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS,
+    );
+  if (!Number.isFinite(configured)) return DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS;
+  return Math.max(5_000, Math.min(MAX_MANAGER_ASSISTANT_TIMEOUT_MS, Math.floor(configured)));
 }
 
 interface ManagerAssistantStdoutResult {
