@@ -65,6 +65,20 @@ function Get-PreferredUrl {
   return [string]$Urls[0].Url
 }
 
+function Get-CurrentGitBranch {
+  param([string]$Repo)
+  Push-Location -LiteralPath $Repo
+  try {
+    $branch = (& git rev-parse --abbrev-ref HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($branch) -and $branch.Trim() -ne "HEAD") {
+      return $branch.Trim()
+    }
+  } finally {
+    Pop-Location
+  }
+  return "main"
+}
+
 function Get-LoginUrl {
   param([string]$Url, [string]$Token)
   return "$($Url.TrimEnd('/'))/#site-token=$([System.Uri]::EscapeDataString($Token))"
@@ -103,6 +117,9 @@ $preferredUrl = Get-PreferredUrl -Urls $urls
 $preferredLoginUrl = Get-LoginUrl -Url $preferredUrl -Token $env:CR_SITE_TOKEN
 $commandsDir = Join-Path $root "commands"
 New-Item -ItemType Directory -Force -Path $commandsDir | Out-Null
+$branch = Get-CurrentGitBranch -Repo $repo
+$installerUrl = "https://raw.githubusercontent.com/darkhtk/deskrelay/$branch/scripts/install-connector.ps1"
+$removerUrl = "https://raw.githubusercontent.com/darkhtk/deskrelay/$branch/scripts/remove-connector.ps1"
 
 $repoQ = Quote-PsString $repo
 $rootQ = Quote-PsString $root
@@ -110,16 +127,19 @@ $preferredUrlQ = Quote-PsString $preferredUrl
 $siteTokenQ = Quote-PsString $env:CR_SITE_TOKEN
 $envFileQ = Quote-PsString $envFile
 $frontendUrlQ = Quote-PsString $env:CR_DEV_FRONTEND_URL
+$branchQ = Quote-PsString $branch
+$installerUrlQ = Quote-PsString $installerUrl
+$removerUrlQ = Quote-PsString $removerUrl
 
 $urlsText = ($urls | ForEach-Object { "$($_.Kind): $($_.Url)" }) -join "`r`n"
 
 $registerOtherPc = @"
 `$ErrorActionPreference = 'Stop'
 `$installer = Join-Path `$env:TEMP 'deskrelay-install-connector.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1' -OutFile `$installer
+Invoke-WebRequest -UseBasicParsing -Uri $installerUrlQ -OutFile `$installer
 
 `$workspaceRoots = Join-Path `$HOME 'Projects'
-powershell -ExecutionPolicy Bypass -File `$installer -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME -Port 18091
+powershell -ExecutionPolicy Bypass -File `$installer -Server $preferredUrlQ -SiteToken $siteTokenQ -WorkspaceRoots `$workspaceRoots -Label `$env:COMPUTERNAME -Port 18091 -Branch $branchQ
 "@
 
 $removeOtherPc = @"
@@ -134,7 +154,7 @@ $removeOtherPc = @"
 
 `$ErrorActionPreference = 'Stop'
 `$remover = Join-Path `$env:TEMP 'deskrelay-remove-connector.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/remove-connector.ps1' -OutFile `$remover
+Invoke-WebRequest -UseBasicParsing -Uri $removerUrlQ -OutFile `$remover
 
 powershell -ExecutionPolicy Bypass -File `$remover -Server $preferredUrlQ -SiteToken $siteTokenQ -Port 18091
 "@
@@ -249,6 +269,9 @@ $($env:CR_SITE_TOKEN)
 
 Full command folder:
 $commandsDir
+
+Git branch:
+$branch
 
 This server installs a Windows login task named "DeskRelay Self Server".
 It restarts the self-host server on login without opening the browser.
