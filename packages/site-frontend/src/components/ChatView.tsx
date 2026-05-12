@@ -4181,7 +4181,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                   }
                 >
                   <div class="chat-assistant-mobile">
-                    <ManagerAssistant context={managerAssistantContext()} />
+                    <ManagerAssistant context={managerAssistantContext()} devices={devices() ?? []} />
                   </div>
                 </Show>
               }
@@ -4244,7 +4244,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             onPointerDown={beginAssistantResize}
             onKeyDown={handleAssistantResizeKeyDown}
           />
-          <ManagerAssistant context={managerAssistantContext()} />
+          <ManagerAssistant context={managerAssistantContext()} devices={devices() ?? []} />
         </aside>
       </Show>
 

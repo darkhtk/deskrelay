@@ -508,6 +508,10 @@ describe("API route inventory", () => {
         ["GET /api/manager/audit-log", authedRequest("GET", "/api/manager/audit-log?limit=5")],
         ["GET /api/manager/system/summary", authedRequest("GET", "/api/manager/system/summary")],
         [
+          "GET /api/manager/assistant/workspace",
+          authedRequest("GET", "/api/manager/assistant/workspace"),
+        ],
+        [
           "POST /api/manager/assistant/chat",
           authedRequest("POST", "/api/manager/assistant/chat", {}),
           [400],

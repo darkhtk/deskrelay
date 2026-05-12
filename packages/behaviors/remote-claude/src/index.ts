@@ -80,6 +80,14 @@ interface ChatParams {
   securityProfile?: string;
   /** Optional claude `--model` value selected by the browser. */
   model?: string;
+  /** Internal DeskRelay manager mode. The site backend injects the trusted
+   *  fields; browser-supplied secrets are ignored by the backend. */
+  managerMode?: boolean;
+  managerApiBaseUrl?: string;
+  managerRepoRoot?: string;
+  managerInstructionsPath?: string;
+  managerSiteToken?: string;
+  managerBrowserContext?: unknown;
   /** For tests/dev — substitute the executable. */
   command?: string[];
 }
@@ -350,6 +358,35 @@ function sessionIdFromClaudeEvent(event: ClaudeStreamEvent): string | null {
   return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
 }
 
+function managerSystemPrompt(params: ChatParams): string {
+  const lines = [
+    "DeskRelay manager mode is active for this turn.",
+    "Use the managed CLAUDE.md in the current working directory as the primary operating contract.",
+    "You may call DeskRelay manager APIs with DESKRELAY_MANAGER_API_BASE and DESKRELAY_SITE_TOKEN from the process environment.",
+    "When the browser supplies current UI context, treat it as navigation state only; inspect API data before making changes.",
+  ];
+  const context = managerBrowserContextLines(params.managerBrowserContext);
+  if (context.length > 0) {
+    lines.push("", "Current DeskRelay browser context:", ...context);
+  }
+  return lines.join("\n");
+}
+
+function managerBrowserContextLines(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const input = value as Record<string, unknown>;
+  const fields: Array<[string, unknown]> = [
+    ["selected device id", input.deviceId],
+    ["selected device label", input.deviceLabel],
+    ["selected cwd", input.cwd],
+    ["selected session id", input.sessionId],
+    ["selected session title", input.sessionTitle],
+  ];
+  return fields
+    .filter(([, field]) => typeof field === "string" && field.trim().length > 0)
+    .map(([label, field]) => `- ${label}: ${(field as string).trim().slice(0, 500)}`);
+}
+
 async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Promise<void> {
   const { params, runId, spaceId, abort } = item;
   const startedAt = new Date().toISOString();
@@ -361,8 +398,10 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
 
   let capturedSessionId: string | null = null;
   try {
-    const permissionMode =
-      params.permissionMode && VALID_PERMISSION_MODES.has(params.permissionMode)
+    const managerMode = params.managerMode === true;
+    const permissionMode = managerMode
+      ? "bypassPermissions"
+      : params.permissionMode && VALID_PERMISSION_MODES.has(params.permissionMode)
         ? params.permissionMode
         : undefined;
     const securityProfile =
@@ -371,6 +410,17 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
         : "relaxed";
     const model = safeClaudeModel(params.model);
     const resumeSessionId = params.sessionId ?? sessionByConversation.get(item.conversationKey);
+    const env: Record<string, string> = { CR_PRETOOLUSE_FAIL_POLICY: securityProfile };
+    const managerPrompt = managerMode ? managerSystemPrompt(params) : null;
+    if (managerMode) {
+      env.DESKRELAY_MANAGER_ASSISTANT = "1";
+      if (params.managerApiBaseUrl) env.DESKRELAY_MANAGER_API_BASE = params.managerApiBaseUrl;
+      if (params.managerRepoRoot) env.DESKRELAY_REPOSITORY_ROOT = params.managerRepoRoot;
+      if (params.managerInstructionsPath) {
+        env.DESKRELAY_MANAGER_ASSISTANT_INSTRUCTIONS = params.managerInstructionsPath;
+      }
+      if (params.managerSiteToken) env.DESKRELAY_SITE_TOKEN = params.managerSiteToken;
+    }
     const result = await runClaude({
       cwd: params.cwd,
       message: params.message,
@@ -380,7 +430,8 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
       ...(permissionMode ? { permissionMode } : {}),
       ...(model ? { model } : {}),
       ...(params.command ? { command: params.command } : {}),
-      env: { CR_PRETOOLUSE_FAIL_POLICY: securityProfile },
+      env,
+      ...(managerPrompt ? { appendSystemPrompt: managerPrompt } : {}),
       onEvent: (event) => {
         capturedSessionId = sessionIdFromClaudeEvent(event) ?? capturedSessionId;
         ctx.publish({ spaceId, kind: "claude.event", content: event });

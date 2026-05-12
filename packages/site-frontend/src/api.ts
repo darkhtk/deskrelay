@@ -116,6 +116,14 @@ export interface Device {
   connectionState?: "online" | "offline";
 }
 
+export interface ManagerAssistantWorkspaceInfo {
+  cwd: string;
+  instructionsPath: string;
+  repoRoot: string;
+  deviceId?: string;
+  deviceLabel?: string;
+}
+
 export interface BehaviorSummary {
   instanceId: string;
   name: string;
@@ -530,6 +538,8 @@ export const api = {
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
   managerTaskLogs: (id: string) =>
     request<ManagerTaskLogResponse>("GET", `/api/manager/tasks/${id}/logs`),
+  managerAssistantWorkspace: () =>
+    request<ManagerAssistantWorkspaceInfo>("GET", "/api/manager/assistant/workspace"),
   managerAssistantChat: (input: ManagerAssistantChatRequest) =>
     request<ManagerAssistantChatResponse>("POST", "/api/manager/assistant/chat", input),
   managerAssistantChatStream: (

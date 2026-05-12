@@ -55,6 +55,8 @@ export interface ClaudeRunOptions {
   command?: readonly string[];
   /** Extra flags appended after our defaults. */
   extraArgs?: readonly string[];
+  /** Extra system prompt text appended to this Claude run. */
+  appendSystemPrompt?: string | readonly string[];
   /** Process env overrides (merged onto process.env). */
   env?: Record<string, string>;
   /** Called once per emitted JSONL event. */
@@ -184,6 +186,9 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
   if (options.model) {
     args.push("--model", options.model);
   }
+  for (const prompt of normalizeAppendSystemPrompt(options.appendSystemPrompt)) {
+    args.push("--append-system-prompt", prompt);
+  }
   if (options.extraArgs) args.push(...options.extraArgs);
   if (materialized) {
     args.push("--add-dir", materialized.dir);
@@ -289,6 +294,12 @@ export async function runClaude(options: ClaudeRunOptions): Promise<ClaudeRunRes
       await rm(materialized.dir, { recursive: true, force: true });
     }
   }
+}
+
+function normalizeAppendSystemPrompt(input: ClaudeRunOptions["appendSystemPrompt"]): string[] {
+  if (typeof input === "string") return input.trim() ? [input] : [];
+  if (!Array.isArray(input)) return [];
+  return input.map((item) => item.trim()).filter(Boolean);
 }
 
 export async function probeClaudeSlashCommands(

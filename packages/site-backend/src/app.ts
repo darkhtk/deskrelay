@@ -118,6 +118,14 @@ export interface ManagerAssistantOptions {
   runner?: (input: ManagerAssistantRunInput) => Promise<ManagerAssistantRunResult>;
 }
 
+export interface ManagerAssistantWorkspaceResponse {
+  cwd: string;
+  instructionsPath: string;
+  repoRoot: string;
+  deviceId?: string;
+  deviceLabel?: string;
+}
+
 export interface ManagerWorkerProfileConfig {
   id: string;
   label: string;
@@ -186,6 +194,24 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.use("/api/manager/*", async (_c, next) => {
     await ensureManagerTaskStoreRecovered();
     await next();
+  });
+
+  app.get("/api/manager/assistant/workspace", async (c) => {
+    try {
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      const apiBaseUrl = managerAssistantApiBaseUrl(options, c.req.url);
+      const workspace = await ensureManagerAssistantWorkspace(repoRoot, apiBaseUrl);
+      const device = registry.list().find(isServerDevice);
+      const response: ManagerAssistantWorkspaceResponse = {
+        cwd: workspace.cwd,
+        instructionsPath: workspace.instructionsPath,
+        repoRoot,
+        ...(device ? { deviceId: device.id, deviceLabel: device.label } : {}),
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
   });
 
   app.get("/api/manager/tasks", async (c) => {
@@ -862,11 +888,18 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.post("/api/devices/:id/behaviors/:instance/request", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
+    const body = await c.req.text();
+    const prepared = await prepareBehaviorRequestBodyForProxy(body, {
+      device,
+      options,
+      requestUrl: c.req.url,
+    });
+    if (!prepared.ok) return c.json({ error: prepared.error }, prepared.status as never);
     return proxyJson(
       fetchImpl,
       "POST",
       `${device.daemonUrl}/behaviors/${encodeURIComponent(c.req.param("instance"))}/request`,
-      await c.req.text(),
+      prepared.body,
       daemonToken(device, localToken),
     );
   });
@@ -1287,6 +1320,12 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "POST",
     path: "/api/manager/assistant/chat/stream",
     description: "Stream server-local DeskRelay assistant CLI status and final response.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/assistant/workspace",
+    description:
+      "Prepare and return the managed server-local Claude workspace used by the DeskRelay assistant.",
   },
   {
     method: "GET",
@@ -5260,6 +5299,49 @@ function isServerDevice(device: Device): boolean {
   } catch {
     return false;
   }
+}
+
+async function prepareBehaviorRequestBodyForProxy(
+  body: string,
+  input: { device: Device; options: SiteAppOptions; requestUrl: string },
+): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
+  if (!body.trim()) return { ok: true, body };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { ok: true, body };
+  }
+  if (!isRecord(parsed) || parsed.method !== "chat" || !isRecord(parsed.params)) {
+    return { ok: true, body };
+  }
+  if (parsed.params.managerMode !== true) return { ok: true, body };
+  if (!isServerDevice(input.device)) {
+    return {
+      ok: false,
+      status: 400,
+      error: "manager assistant chat must run on the server PC connector",
+    };
+  }
+  const repoRoot = input.options.managerAssistant?.cwd ?? process.cwd();
+  const apiBaseUrl = managerAssistantApiBaseUrl(input.options, input.requestUrl);
+  const workspace = await ensureManagerAssistantWorkspace(repoRoot, apiBaseUrl);
+  const params = {
+    ...parsed.params,
+    cwd: workspace.cwd,
+    managerMode: true,
+    managerApiBaseUrl: apiBaseUrl,
+    managerRepoRoot: repoRoot,
+    managerInstructionsPath: workspace.instructionsPath,
+    managerSiteToken: input.options.token ?? "",
+    permissionMode: "bypassPermissions",
+    securityProfile: "relaxed",
+    conversationId:
+      typeof parsed.params.conversationId === "string" && parsed.params.conversationId.trim()
+        ? parsed.params.conversationId
+        : "deskrelay-manager-assistant",
+  };
+  return { ok: true, body: JSON.stringify({ ...parsed, params }) };
 }
 
 function toPublicDevice(

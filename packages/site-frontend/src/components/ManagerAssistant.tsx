@@ -1,149 +1,171 @@
-import type {
-  ManagerAssistantChatContext,
-  ManagerAssistantChatMessage,
-  ManagerAssistantStreamStatus,
-  ManagerAssistantStructuredState,
-} from "@deskrelay/shared";
-import { type Component, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { type ClaudeStreamEvent, api } from "../api.ts";
+import type { ManagerAssistantChatContext } from "@deskrelay/shared";
+import {
+  type Component,
+  Show,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  onCleanup,
+} from "solid-js";
+import {
+  type ClaudeSessionSummary,
+  type ClaudeSessionTranscript,
+  type ClaudeStreamEvent,
+  type Device,
+  api,
+} from "../api.ts";
+import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { Composer } from "./Composer.tsx";
 import { Transcript } from "./Transcript.tsx";
 
-const STORAGE_KEY = "cr.manager-assistant.messages:v2";
-const STATE_STORAGE_KEY = "cr.manager-assistant.state:v1";
-const MAX_STORED_MESSAGES = 40;
-const MAX_ASSISTANT_STATE_TEXT = 8_000;
+const MANAGER_CONVERSATION_ID = "deskrelay-manager-assistant";
+const MANAGER_SESSION_LIMIT = 10;
+const MANAGER_SESSION_EVENT_LIMIT = 400;
+const MANAGER_SESSION_MAX_BYTES = 8 * 1024 * 1024;
+const STREAM_OPEN_GRACE_MS = 350;
 
-const INITIAL_MESSAGE: ManagerAssistantChatMessage = {
-  id: "assistant-initial",
-  role: "assistant",
-  text: "DeskRelay 상태 점검, 업데이트, 복구를 도와드릴게요.",
-  createdAt: new Date().toISOString(),
+const INITIAL_EVENT: ClaudeStreamEvent = {
+  type: "assistant",
+  message: {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "DeskRelay 관리, 진단, 업데이트, 복구를 도와드릴게요.",
+      },
+    ],
+  },
 };
-
-function loadStoredMessages(): ManagerAssistantChatMessage[] {
-  if (typeof window === "undefined") return [INITIAL_MESSAGE];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [INITIAL_MESSAGE];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [INITIAL_MESSAGE];
-    const messages = parsed.filter(isManagerAssistantMessage).slice(-MAX_STORED_MESSAGES);
-    return messages.length ? messages : [INITIAL_MESSAGE];
-  } catch {
-    return [INITIAL_MESSAGE];
-  }
-}
-
-function storeMessages(messages: ManagerAssistantChatMessage[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)));
-  } catch {
-    // Browser storage can be unavailable in private or restricted contexts.
-  }
-}
-
-function loadStoredAssistantState(): ManagerAssistantStructuredState {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(STATE_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return normalizeAssistantState(parsed);
-  } catch {
-    return {};
-  }
-}
-
-function storeAssistantState(state: ManagerAssistantStructuredState) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(normalizeAssistantState(state)));
-  } catch {
-    // Browser storage can be unavailable in private or restricted contexts.
-  }
-}
-
-function normalizeAssistantState(input: unknown): ManagerAssistantStructuredState {
-  if (!input || typeof input !== "object") return {};
-  const item = input as Record<string, unknown>;
-  const state: ManagerAssistantStructuredState = {};
-  if (typeof item.sessionId === "string" && item.sessionId.trim()) {
-    state.sessionId = item.sessionId.trim().slice(0, 500);
-  }
-  if (typeof item.lastAssistantText === "string" && item.lastAssistantText.trim()) {
-    state.lastAssistantText = item.lastAssistantText.trim().slice(0, MAX_ASSISTANT_STATE_TEXT);
-  }
-  return state;
-}
-function extractAssistantStateFromReply(
-  text: string,
-  previous: ManagerAssistantStructuredState,
-  sessionId?: string,
-): ManagerAssistantStructuredState {
-  const compactText = text.trim().slice(0, MAX_ASSISTANT_STATE_TEXT);
-  const state: ManagerAssistantStructuredState = {
-    lastAssistantText: compactText,
-  };
-  const nextSessionId = sessionId?.trim() || previous.sessionId;
-  if (nextSessionId) state.sessionId = nextSessionId;
-  return state;
-}
-
-function isManagerAssistantMessage(input: unknown): input is ManagerAssistantChatMessage {
-  if (!input || typeof input !== "object") return false;
-  const item = input as Record<string, unknown>;
-  return (
-    typeof item.id === "string" &&
-    (item.role === "user" || item.role === "assistant" || item.role === "system") &&
-    typeof item.text === "string" &&
-    typeof item.createdAt === "string"
-  );
-}
 
 interface ManagerAssistantProps {
   context?: ManagerAssistantChatContext | null;
+  devices?: Device[];
+}
+
+interface ManagerRuntime {
+  deviceId: string;
+  instanceId: string;
+  cwd: string;
 }
 
 export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
-  const [messages, setMessages] = createSignal<ManagerAssistantChatMessage[]>(loadStoredMessages());
-  const [assistantState, setAssistantState] = createSignal<ManagerAssistantStructuredState>(
-    loadStoredAssistantState(),
-  );
-  const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-  const [status, setStatus] = createSignal<ManagerAssistantStreamStatus | null>(null);
+  const [reloadSeq, setReloadSeq] = createSignal(0);
+  const [events, setEvents] = createSignal<ClaudeStreamEvent[]>([]);
+  const [runIds, setRunIds] = createSignal<string[]>([]);
+  const [sessionId, setSessionId] = createSignal<string | null>(null);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+  const [status, setStatus] = createSignal<{ tone: "thinking" | "warning"; main: string; detail?: string } | null>(
+    null,
+  );
   let transcriptScroller: HTMLDivElement | undefined;
 
-  const transcriptEvents = createMemo<ClaudeStreamEvent[]>(() =>
-    messages().map((message) => ({
-      type: message.role,
-      message: {
-        role: message.role,
-        content: [{ type: "text", text: message.text }],
-      },
-    })),
+  const serverDevice = createMemo(() => {
+    const devices = props.devices ?? [];
+    return (
+      devices.find((device) => deviceDisplayRole(device) === "Server") ??
+      devices.find((device) => device.connectionState === "online") ??
+      null
+    );
+  });
+
+  const [workspace] = createResource(() => reloadSeq(), () => api.managerAssistantWorkspace());
+
+  const [behaviors] = createResource(
+    () => serverDevice()?.id ?? null,
+    async (deviceId) => {
+      if (!deviceId) return [];
+      try {
+        return await api.listBehaviors(deviceId);
+      } catch {
+        return [];
+      }
+    },
+  );
+
+  const runtime = createMemo<ManagerRuntime | null>(() => {
+    const device = serverDevice();
+    const info = workspace();
+    if (!device || !info?.cwd) return null;
+    const instanceId = (behaviors() ?? []).find((behavior) => behavior.name === "remote-claude")?.instanceId;
+    if (!instanceId) return null;
+    return { deviceId: device.id, instanceId, cwd: info.cwd };
+  });
+
+  const [loadedTranscript] = createResource(
+    () => {
+      const current = runtime();
+      const seq = reloadSeq();
+      return current ? { ...current, seq } : null;
+    },
+    async (current) => {
+      if (!current) return null;
+      const list = await api.callBehavior<ClaudeSessionSummary[]>(
+        current.deviceId,
+        current.instanceId,
+        "sessions.list",
+        {
+          cwd: current.cwd,
+          limit: MANAGER_SESSION_LIMIT,
+          dedupeSessionIds: true,
+        },
+      );
+      if (list.error) throw new Error(list.error.message);
+      const summary = chooseManagerSession(list.result ?? [], sessionId());
+      if (!summary) {
+        setSessionId(null);
+        return null;
+      }
+      setSessionId(summary.sessionId);
+      const transcript = await api.callBehavior<ClaudeSessionTranscript>(
+        current.deviceId,
+        current.instanceId,
+        "sessions.read",
+        {
+          cwd: summary.cwd,
+          sessionId: summary.sessionId,
+          maxBytes: MANAGER_SESSION_MAX_BYTES,
+          eventLimit: MANAGER_SESSION_EVENT_LIMIT,
+        },
+      );
+      if (transcript.error) throw new Error(transcript.error.message);
+      return transcript.result ?? null;
+    },
   );
 
   createEffect(() => {
-    const currentMessages = messages();
-    storeMessages(currentMessages);
-    busy();
-    queueMicrotask(() => {
-      if (transcriptScroller && transcriptAtBottom()) {
-        transcriptScroller.scrollTop = transcriptScroller.scrollHeight;
-      }
-    });
+    const transcript = loadedTranscript();
+    if (runIds().length > 0) return;
+    setEvents(transcript?.events ?? []);
+    queueMicrotask(scrollToBottomIfPinned);
   });
 
   createEffect(() => {
-    storeAssistantState(assistantState());
+    workspace.error;
+    loadedTranscript.error;
+    const err = workspace.error ?? loadedTranscript.error;
+    if (err) setError(err instanceof Error ? err.message : String(err));
+  });
+
+  createEffect(() => {
+    events();
+    runIds();
+    queueMicrotask(scrollToBottomIfPinned);
   });
 
   onCleanup(() => {
     transcriptScroller = undefined;
+  });
+
+  const visibleEvents = createMemo(() => (events().length > 0 ? events() : [INITIAL_EVENT]));
+  const busy = createMemo(() => runIds().length > 0);
+  const readyError = createMemo(() => {
+    if (!serverDevice()) return "서버 PC connector를 찾을 수 없습니다.";
+    if (workspace.loading || behaviors.loading) return null;
+    if (!workspace()) return "관리자 작업 폴더를 준비하지 못했습니다.";
+    if (!runtime()) return "서버 PC의 remote-claude가 준비되지 않았습니다.";
+    return null;
   });
 
   const updateTranscriptBottomState = () => {
@@ -159,84 +181,139 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     setTranscriptAtBottom(true);
   };
 
+  function scrollToBottomIfPinned() {
+    if (!transcriptScroller || !transcriptAtBottom()) return;
+    transcriptScroller.scrollTop = transcriptScroller.scrollHeight;
+  }
+
+  const appendEvent = (event: ClaudeStreamEvent) => {
+    setEvents((current) => [...current, event]);
+  };
+
+  const removeRun = (runId: string) => {
+    setRunIds((current) => current.filter((id) => id !== runId));
+  };
+
   const send = async (value: string) => {
     const text = value.trim();
-    if (!text || busy()) return;
-    const userMessage: ManagerAssistantChatMessage = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      text,
-      createdAt: new Date().toISOString(),
-    };
-    const history = messages();
-    setMessages([...history, userMessage]);
-    setTranscriptAtBottom(true);
+    if (!text) return;
+    const current = runtime();
+    const notReady = readyError();
+    if (!current || notReady) {
+      setError(notReady ?? "Manager assistant is not ready.");
+      return;
+    }
+
     setError(null);
-    setStatus({
-      phase: "preparing",
-      tone: "thinking",
-      main: "요청 준비 중",
-      detail: "선택 컨텍스트 전달",
-    });
-    setBusy(true);
-    let streamError: string | null = null;
-    let receivedFinalMessage = false;
+    setStatus({ tone: "thinking", main: "요청 접수" });
+    const userEvent = userTranscriptEvent(text);
+    appendEvent(userEvent);
+    setTranscriptAtBottom(true);
+
+    const runId = `manager_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    setRunIds((currentIds) => [...currentIds, runId]);
+    const space = `remote-claude.run:${runId}`;
+    const abort = new AbortController();
+    let streamSawRun = false;
+    let chatAccepted = false;
+    let capturedSessionId: string | null = null;
+
+    const streamPromise = (async () => {
+      try {
+        for await (const env of api.streamEvents(current.deviceId, space, {
+          signal: abort.signal,
+          onOpen: () => undefined,
+        })) {
+          const envelope = env as { kind?: string; content?: unknown };
+          const nextStatus = managerStatusFromEnvelope(envelope.kind, envelope.content);
+          if (nextStatus) setStatus(nextStatus);
+          if (
+            envelope.kind === "run.started" ||
+            envelope.kind === "claude.event" ||
+            envelope.kind === "run.finished" ||
+            envelope.kind === "run.error" ||
+            envelope.kind === "run.cancelled"
+          ) {
+            streamSawRun = true;
+          }
+          if (envelope.kind === "claude.event") {
+            const transcriptEvent = claudeEventForTranscript(envelope.content);
+            capturedSessionId = sessionIdFromClaudeEvent(transcriptEvent) ?? capturedSessionId;
+            if (transcriptEvent) appendEvent(transcriptEvent);
+          } else if (envelope.kind === "run.error") {
+            const message = runErrorMessage(envelope.content);
+            setError(message);
+            setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
+            abort.abort();
+            return;
+          } else if (envelope.kind === "run.cancelled") {
+            setStatus(null);
+            abort.abort();
+            return;
+          } else if (envelope.kind === "run.finished") {
+            abort.abort();
+            return;
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          const message = err instanceof Error ? err.message : String(err);
+          setError(message);
+          setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
+        }
+      }
+    })();
+
     try {
-      await api.managerAssistantChatStream(
+      await Promise.race([
+        new Promise<void>((resolve) => setTimeout(resolve, STREAM_OPEN_GRACE_MS)),
+      ]);
+      const response = await api.callBehavior<{ ok: true; runId: string; accepted: true; eventCount: number }>(
+        current.deviceId,
+        current.instanceId,
+        "chat",
         {
+          cwd: current.cwd,
           message: text,
-          assistantState: assistantState(),
-          ...(props.context ? { context: props.context } : {}),
-        },
-        (event) => {
-          if (event.type === "status") {
-            setStatus(event.status);
-            return;
-          }
-          if (event.type === "message") {
-            receivedFinalMessage = true;
-            setMessages((current) => [...current, event.message]);
-            setAssistantState((current) =>
-              extractAssistantStateFromReply(event.message.text, current, event.sessionId),
-            );
-            return;
-          }
-          if (event.type === "error") {
-            streamError = event.error;
-            setError(event.error);
-            setStatus({
-              phase: "error",
-              tone: "warning",
-              main: "Assistant 오류",
-              detail: event.error,
-            });
-          }
+          runId,
+          managerMode: true,
+          managerBrowserContext: props.context ?? null,
+          permissionMode: "bypassPermissions",
+          conversationId: MANAGER_CONVERSATION_ID,
+          ...(sessionId() ? { sessionId: sessionId() } : {}),
         },
       );
-    } catch (err) {
-      streamError = err instanceof Error ? err.message : String(err);
-      setError(streamError);
-      setStatus({
-        phase: "error",
-        tone: "warning",
-        main: "Assistant 오류",
-        detail: streamError,
-      });
-    } finally {
-      setBusy(false);
-      if (!streamError && !receivedFinalMessage) {
-        const incomplete =
-          "Assistant 응답이 완료되지 않았습니다. 마지막 요청을 다시 시도해 주세요.";
-        setError(incomplete);
-        setStatus({
-          phase: "error",
-          tone: "warning",
-          main: "Assistant 응답 미완료",
-          detail: "최종 응답 없음",
-        });
-      } else if (!streamError) {
-        setStatus(null);
+      if (response.error) {
+        throw new Error(response.error.message);
       }
+      chatAccepted = true;
+    } catch (err) {
+      if (!streamSawRun) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
+      } else {
+        chatAccepted = true;
+      }
+    } finally {
+      if (!chatAccepted && !streamSawRun) abort.abort();
+      await streamPromise;
+      removeRun(runId);
+      if (capturedSessionId) setSessionId(capturedSessionId);
+      setStatus((currentStatus) => (currentStatus?.tone === "warning" ? currentStatus : null));
+      setReloadSeq((seq) => seq + 1);
+    }
+  };
+
+  const interrupt = async () => {
+    const current = runtime();
+    const runId = runIds()[0];
+    if (!current || !runId) return;
+    try {
+      await api.callBehavior(current.deviceId, current.instanceId, "interrupt", { runId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
     }
   };
 
@@ -248,11 +325,15 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         onScroll={updateTranscriptBottomState}
       >
         <div class="transcript-inner">
-          <Transcript events={transcriptEvents()} />
+          <Transcript
+            events={visibleEvents()}
+            deviceId={serverDevice()?.id ?? null}
+            cwd={workspace()?.cwd ?? null}
+          />
         </div>
       </div>
 
-      <Show when={error()}>
+      <Show when={error() || readyError()}>
         {(message) => (
           <div class="upstream-banner manager-assistant-error" role="alert">
             <span class="upstream-banner-message">{message()}</span>
@@ -261,7 +342,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       </Show>
 
       <div class="composer-shell manager-assistant-composer">
-        <Show when={!transcriptAtBottom() && messages().length > 0}>
+        <Show when={!transcriptAtBottom() && visibleEvents().length > 0}>
           <button
             type="button"
             class="scroll-to-bottom-button"
@@ -294,11 +375,105 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         </Show>
         <Composer
           onSend={send}
-          disabled={busy()}
+          onInterrupt={() => void interrupt()}
+          inFlight={busy()}
+          disabled={Boolean(readyError())}
           idPrefix="manager-assistant-composer"
-          placeholder="DeskRelay 관리에 대해 물어보세요..."
+          placeholder={`${serverDevice() ? deviceDisplayName(serverDevice() as Device) : "DeskRelay"} 관리자에게 보내기...`}
         />
       </div>
     </div>
   );
 };
+
+function chooseManagerSession(
+  sessions: ClaudeSessionSummary[],
+  currentSessionId: string | null,
+): ClaudeSessionSummary | null {
+  if (currentSessionId) {
+    const current = sessions.find((session) => session.sessionId === currentSessionId);
+    if (current) return current;
+  }
+  return sessions[0] ?? null;
+}
+
+function userTranscriptEvent(text: string): ClaudeStreamEvent {
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
+function claudeEventForTranscript(input: unknown): ClaudeStreamEvent | null {
+  if (!input || typeof input !== "object") return null;
+  const event = input as ClaudeStreamEvent;
+  return typeof event.type === "string" ? event : null;
+}
+
+function sessionIdFromClaudeEvent(event: ClaudeStreamEvent | null): string | null {
+  if (!event || event.type !== "system" || (event as { subtype?: unknown }).subtype !== "init") {
+    return null;
+  }
+  const sessionId =
+    (event as { session_id?: unknown; sessionId?: unknown }).session_id ??
+    (event as { sessionId?: unknown }).sessionId;
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
+}
+
+function managerStatusFromEnvelope(
+  kind: string | undefined,
+  content: unknown,
+): { tone: "thinking" | "warning"; main: string; detail?: string } | null {
+  if (kind === "queue.updated") {
+    const status = typeof (content as { status?: unknown })?.status === "string"
+      ? ((content as { status: string }).status)
+      : "";
+    const position =
+      typeof (content as { position?: unknown })?.position === "number"
+        ? (content as { position: number }).position
+        : null;
+    if (status === "queued") {
+      return {
+        tone: "thinking",
+        main: "대기 중",
+        ...(position ? { detail: `큐 ${position}번째` } : {}),
+      };
+    }
+    if (status === "running") return { tone: "thinking", main: "Assistant 실행 중" };
+  }
+  if (kind === "run.started") return { tone: "thinking", main: "Assistant 실행 중" };
+  if (kind === "claude.event") {
+    const event = claudeEventForTranscript(content);
+    if (containsToolUse(event)) return { tone: "thinking", main: "도구 실행 중" };
+    return { tone: "thinking", main: "응답 수신 중" };
+  }
+  if (kind === "claude.stderr") {
+    const line = typeof (content as { line?: unknown })?.line === "string" ? (content as { line: string }).line : "";
+    if (line) return { tone: "thinking", main: "Claude CLI 메시지", detail: line.slice(0, 160) };
+  }
+  return null;
+}
+
+function containsToolUse(event: ClaudeStreamEvent | null): boolean {
+  if (!event || event.type !== "assistant") return false;
+  const message = (event as { message?: unknown }).message;
+  if (!message || typeof message !== "object") return false;
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return false;
+  return content.some(
+    (block) => block && typeof block === "object" && (block as { type?: unknown }).type === "tool_use",
+  );
+}
+
+function runErrorMessage(content: unknown): string {
+  if (content && typeof content === "object") {
+    const message = (content as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message.trim();
+    const stderr = (content as { stderr?: unknown }).stderr;
+    if (typeof stderr === "string" && stderr.trim()) return stderr.trim();
+  }
+  return "Assistant run failed.";
+}
