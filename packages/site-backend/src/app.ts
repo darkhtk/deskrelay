@@ -1898,7 +1898,7 @@ async function runDefaultManagerAssistantCli(
   const assistantOptions = options.managerAssistant;
   const command =
     assistantOptions?.command ?? process.env.DESKRELAY_MANAGER_ASSISTANT_CLI ?? "claude";
-  const args = managerAssistantPermissionArgs(
+  const args = managerAssistantStreamArgs(
     assistantOptions?.args ??
       parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS),
   );
@@ -1926,21 +1926,21 @@ async function runDefaultManagerAssistantCli(
   }
 
   writeClaudeStructuredPrompt(proc, prompt);
-  const stdout = new Response(proc.stdout).text();
-  const stderr = new Response(proc.stderr).text();
+  const stdout = readManagerAssistantStdout(proc.stdout, () => undefined);
+  const stderr = readManagerAssistantStderr(proc.stderr, () => undefined);
   const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
     proc.kill();
   });
-  const [out, err] = await Promise.all([stdout, stderr]);
+  const [stdoutResult, err] = await Promise.all([stdout, stderr]);
   if (exitCode !== 0) {
     throw new Error(
       `Manager assistant CLI exited with code ${exitCode}${err.trim() ? `: ${err.trim()}` : ""}`,
     );
   }
-  const text = sanitizeManagerAssistantText(out) || sanitizeManagerAssistantText(err);
-  if (!text) throw new Error("Manager assistant CLI returned no output.");
+  const finalText = chooseManagerAssistantFinalText(stdoutResult, err);
+  if (!finalText.ok) throw new Error(finalText.error);
   return {
-    text,
+    text: finalText.text,
     command: `${command} ${args.join(" ")}`.trim(),
   };
 }

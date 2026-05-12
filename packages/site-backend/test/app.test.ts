@@ -1147,6 +1147,7 @@ process.stdin.on("end", () => {
       };
       expect(observed.argv).not.toContain("관리자 타이핑 인코딩 확인");
       expect(observed.argv).toContain("--input-format");
+      expect(observed.argv).toContain("--output-format");
       expect(observed.argv).toContain("stream-json");
       expect(observed.stdin).toContain("관리자 타이핑 인코딩 확인");
       const payload = JSON.parse((observed.stdin ?? "").trim()) as {
