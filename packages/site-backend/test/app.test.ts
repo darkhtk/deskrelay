@@ -1107,6 +1107,63 @@ describe("manager task API", () => {
     expect(body.message?.text).toContain("context=session_1");
   });
 
+  test("manager assistant sends Korean prompt through structured stdin instead of argv", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-stdin-"));
+    const scriptPath = join(cwd, "fake-claude-stdin.js");
+    writeFileSync(
+      scriptPath,
+      `
+const chunks = [];
+process.stdin.on("data", (chunk) => chunks.push(chunk));
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({
+    argv: process.argv.slice(2),
+    stdin: Buffer.concat(chunks).toString("utf8")
+  }));
+});
+`,
+      "utf8",
+    );
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          command: process.execPath,
+          args: [scriptPath, "-p"],
+          timeoutMs: 10_000,
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat", {
+          message: "관리자 타이핑 인코딩 확인",
+          history: [],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { message?: { text?: string } };
+      const observed = JSON.parse(body.message?.text ?? "{}") as {
+        argv?: string[];
+        stdin?: string;
+      };
+      expect(observed.argv).not.toContain("관리자 타이핑 인코딩 확인");
+      expect(observed.argv).toContain("--input-format");
+      expect(observed.argv).toContain("stream-json");
+      expect(observed.stdin).toContain("관리자 타이핑 인코딩 확인");
+      const payload = JSON.parse((observed.stdin ?? "").trim()) as {
+        type?: string;
+        message?: { content?: Array<{ text?: string }> };
+      };
+      expect(payload.type).toBe("user");
+      expect(payload.message?.content?.[0]?.text).toContain("관리자 타이핑 인코딩 확인");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager assistant stream reports status before final response", async () => {
     const cwd = join(tmpdir(), "deskrelay-assistant-stream-test");
     const app = createSiteApp({
@@ -1455,6 +1512,71 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(((await outside.json()) as { error?: string }).error).toContain(
         "worker cwd must stay inside",
       );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager worker stdin mode can use Claude structured input for Korean prompts", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-stdin-"));
+    const scriptPath = join(cwd, "fake-worker-stdin.js");
+    writeFileSync(
+      scriptPath,
+      `
+const chunks = [];
+process.stdin.on("data", (chunk) => chunks.push(chunk));
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({
+    argv: process.argv.slice(2),
+    stdin: Buffer.concat(chunks).toString("utf8")
+  }));
+});
+`,
+      "utf8",
+    );
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerWorkers: [
+        {
+          id: "structured",
+          label: "Structured worker",
+          description: "Test structured stdin worker",
+          command: process.execPath,
+          args: [scriptPath, "-p", "--input-format", "stream-json"],
+          runMode: "stdin",
+          defaultTimeoutMs: 30_000,
+        },
+      ],
+    });
+
+    try {
+      const run = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "structured",
+          prompt: "원격 작업자 한글 프롬프트",
+          dryRun: false,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(run.status).toBe(202);
+      const body = (await run.json()) as {
+        state?: string;
+        result?: { stdout?: string; command?: string };
+      };
+      expect(body.state).toBe("succeeded");
+      expect(body.result?.command).toContain("<prompt via stdin>");
+      const observed = JSON.parse(body.result?.stdout ?? "{}") as {
+        argv?: string[];
+        stdin?: string;
+      };
+      expect(observed.argv).not.toContain("원격 작업자 한글 프롬프트");
+      expect(observed.stdin).toContain("원격 작업자 한글 프롬프트");
+      const payload = JSON.parse((observed.stdin ?? "").trim()) as {
+        message?: { content?: Array<{ text?: string }> };
+      };
+      expect(payload.message?.content?.[0]?.text).toBe("원격 작업자 한글 프롬프트");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

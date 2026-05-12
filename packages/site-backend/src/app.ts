@@ -1827,7 +1827,7 @@ async function runDefaultManagerAssistantCli(
   );
   const timeoutMs = Math.max(5_000, assistantOptions?.timeoutMs ?? 120_000);
   const prompt = buildManagerAssistantPrompt(input);
-  const argv = [...args, prompt];
+  const argv = managerAssistantStructuredInputArgs(args);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   try {
     proc = Bun.spawn([command, ...argv], {
@@ -1848,7 +1848,7 @@ async function runDefaultManagerAssistantCli(
     throw new Error(`Could not start manager assistant CLI (${command}): ${errorMessage(error)}`);
   }
 
-  proc.stdin.end();
+  writeClaudeStructuredPrompt(proc, prompt);
   const stdout = new Response(proc.stdout).text();
   const stderr = new Response(proc.stderr).text();
   const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
@@ -1882,7 +1882,7 @@ async function runDefaultManagerAssistantCliStream(
   const args = managerAssistantStreamArgs(baseArgs);
   const timeoutMs = Math.max(5_000, assistantOptions?.timeoutMs ?? 120_000);
   const prompt = buildManagerAssistantPrompt(input);
-  const argv = [...args, prompt];
+  const argv = managerAssistantStructuredInputArgs(args);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   emit(
     managerAssistantStatusEvent({
@@ -1911,7 +1911,7 @@ async function runDefaultManagerAssistantCliStream(
     throw new Error(`Could not start manager assistant CLI (${command}): ${errorMessage(error)}`);
   }
 
-  proc.stdin.end();
+  writeClaudeStructuredPrompt(proc, prompt);
   const stdout = readManagerAssistantStdout(proc.stdout, emit);
   const stderr = readManagerAssistantStderr(proc.stderr, emit);
   const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
@@ -1955,6 +1955,40 @@ function managerAssistantStreamArgs(args: string[]): string[] {
   if (!normalized.includes("--verbose")) normalized.push("--verbose");
   normalized.push("--output-format", "stream-json");
   return managerAssistantPermissionArgs(normalized);
+}
+
+function managerAssistantStructuredInputArgs(args: string[]): string[] {
+  const normalized: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) continue;
+    if (arg === "--input-format") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--input-format=")) continue;
+    normalized.push(arg);
+  }
+  normalized.push("--input-format", "stream-json");
+  return normalized;
+}
+
+function writeClaudeStructuredPrompt(
+  proc: Bun.Subprocess<"pipe", "pipe", "pipe">,
+  prompt: string,
+): void {
+  proc.stdin.write(`${claudeStructuredPromptPayload(prompt)}\n`);
+  proc.stdin.end();
+}
+
+function claudeStructuredPromptPayload(prompt: string): string {
+  return JSON.stringify({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "text", text: prompt }],
+    },
+  });
 }
 
 function managerAssistantPermissionArgs(args: string[]): string[] {
@@ -2377,14 +2411,16 @@ function buildManagerWorkerProfiles(options: SiteAppOptions): ManagerWorkerProfi
       description:
         "Runs a separate Claude CLI process for implementation, verification, and repo work.",
       command: process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_CLI ?? "claude",
-      args: managerAssistantPermissionArgs(
-        parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_ARGS),
+      args: managerAssistantStructuredInputArgs(
+        managerAssistantPermissionArgs(
+          parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_ARGS),
+        ),
       ),
       checkArgs: ["--version"],
       destructive: true,
       defaultTimeoutMs: 600_000,
       available: true,
-      runMode: "argument" as const,
+      runMode: "stdin" as const,
       roles: ["implementation", "verification", "repo"],
       risk: "destructive" as const,
     },
@@ -2525,7 +2561,7 @@ async function runManagerWorkerCli(
     },
   });
   if (input.profile.runMode === "stdin") {
-    proc.stdin.write(input.prompt);
+    proc.stdin.write(managerWorkerStdinPayload(input.profile, input.prompt));
   }
   proc.stdin.end();
   const stdout = readLimitedText(proc.stdout, 2_000_000);
@@ -2606,6 +2642,21 @@ async function checkManagerWorkerProfile(
 function managerWorkerCommandPreview(profile: ManagerWorkerProfile): string {
   const promptMarker = profile.runMode === "stdin" ? "<prompt via stdin>" : "<prompt>";
   return `${profile.command} ${[...profile.args, promptMarker].join(" ")}`.trim();
+}
+
+function managerWorkerStdinPayload(profile: ManagerWorkerProfile, prompt: string): string {
+  return profileUsesClaudeStructuredInput(profile)
+    ? `${claudeStructuredPromptPayload(prompt)}\n`
+    : prompt;
+}
+
+function profileUsesClaudeStructuredInput(profile: Pick<ManagerWorkerProfile, "args">): boolean {
+  for (let index = 0; index < profile.args.length; index += 1) {
+    const arg = profile.args[index];
+    if (arg === "--input-format" && profile.args[index + 1] === "stream-json") return true;
+    if (arg === "--input-format=stream-json") return true;
+  }
+  return false;
 }
 
 async function readLimitedText(
