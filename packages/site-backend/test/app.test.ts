@@ -1338,6 +1338,10 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(instructions).toContain("Use lazy reads");
       expect(instructions).toContain("selected/current conversation");
       expect(instructions).toContain("sessions.read");
+      expect(instructions).toContain("includeFiles=1");
+      expect(instructions).toContain("UTF-8 text/Markdown previews");
+      expect(instructions).toContain("Do not ask again after a short reply");
+      expect(instructions).toContain("ASCII-only operational prompts");
       expect(instructions).toContain("## Worker Delegation");
       expect(instructions).toContain("GET /api/manager/workers");
       expect(instructions).toContain("run-worker");
@@ -2027,6 +2031,22 @@ describe("device filesystem proxy", () => {
       `${DAEMON_URL}/fs/list?path=C%3A%5CUsers&workspaceScope=unrestricted`,
     );
     expect(setup.calls[0]?.headers.authorization).toBe("Bearer daemon-token");
+  });
+
+  test("forwards includeFiles only when requested for manager verification", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "test",
+    });
+    const res = await setup.app.fetch(
+      authedRequest(
+        "GET",
+        `/api/devices/${device.id}/fs/list?path=${encodeURIComponent("C:\\repo")}&includeFiles=true`,
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(setup.calls[0]?.url).toBe(`${DAEMON_URL}/fs/list?path=C%3A%5Crepo&includeFiles=1`);
   });
 });
 

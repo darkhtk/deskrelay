@@ -79,6 +79,23 @@ describe("previewFile", () => {
     await expectPreviewCode({ path: file }, "EUNSUPPORTED");
   });
 
+  test("returns guarded text previews for markdown files", async () => {
+    const file = join(root, "README.md");
+    await writeFile(file, "# DeskRelay\n\nhello\n", "utf8");
+
+    const result = await previewFile({ path: file }, roots);
+
+    expect(result.contentType).toBe("text/plain; charset=utf-8");
+    expect(new TextDecoder().decode(result.bytes)).toContain("# DeskRelay");
+  });
+
+  test("rejects text extensions when content is not utf-8 text", async () => {
+    const file = join(root, "notes.md");
+    await writeFile(file, new Uint8Array([0xff, 0xfe, 0x00, 0x00]));
+
+    await expectPreviewCode({ path: file }, "EUNSUPPORTED");
+  });
+
   test("rejects oversized files before reading them as previews", async () => {
     const file = join(root, "huge.png");
     const huge = new Uint8Array(FILE_PREVIEW_MAX_BYTES + 1);
@@ -107,6 +124,26 @@ describe("previewFile", () => {
       expect(res.headers.get("content-type")).toBe("image/png");
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG_BYTES);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  test("daemon route returns text preview bytes behind Bearer auth", async () => {
+    const file = join(root, "notes.md");
+    await writeFile(file, "hello from markdown\n", "utf8");
+    const daemon = new Daemon({ port: 0, authToken: TEST_AUTH_TOKEN, workspaceRoots: roots });
+    const listening = daemon.start();
+    const url = `http://${listening.host}:${listening.port}/files/preview?path=${encodeURIComponent(
+      file,
+    )}`;
+    try {
+      const res = await fetch(url, {
+        headers: { authorization: `Bearer ${TEST_AUTH_TOKEN}` },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+      expect(await res.text()).toBe("hello from markdown\n");
     } finally {
       await daemon.stop();
     }

@@ -1,11 +1,11 @@
-// file-preview.ts - guarded read-only image preview surface for the browser.
+// file-preview.ts - guarded read-only image/text preview surface for the browser.
 //
 // The browser never gets file:// access. It asks the daemon for a small
 // preview blob, and the daemon enforces workspace roots, symlink escape
 // checks, size limits, and magic-byte MIME detection before reading.
 
 import { readFile, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, extname, isAbsolute, resolve } from "node:path";
 import { type WorkspaceRoots, isInsideRoot } from "./workspaces.ts";
 
 export const FILE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
@@ -37,7 +37,12 @@ export interface FilePreviewInput {
 export interface FilePreviewResult {
   path: string;
   filename: string;
-  contentType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  contentType:
+    | "image/png"
+    | "image/jpeg"
+    | "image/webp"
+    | "image/gif"
+    | "text/plain; charset=utf-8";
   size: number;
   bytes: Uint8Array;
 }
@@ -45,6 +50,33 @@ export interface FilePreviewResult {
 const UNRESTRICTED: WorkspaceRoots = { mode: "unrestricted", roots: [] };
 const CONTROL_CHARS = /[\0-\x1f]/;
 const RESERVED_WINDOWS_BASENAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  ".bat",
+  ".cmd",
+  ".css",
+  ".csv",
+  ".env",
+  ".gitignore",
+  ".html",
+  ".js",
+  ".json",
+  ".jsonl",
+  ".jsx",
+  ".log",
+  ".md",
+  ".mjs",
+  ".ps1",
+  ".py",
+  ".sh",
+  ".text",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
 
 export async function previewFile(
   input: FilePreviewInput,
@@ -109,13 +141,13 @@ export async function previewFile(
     }
     throw err;
   }
-  const contentType = sniffImageContentType(bytes);
+  const contentType = sniffImageContentType(bytes) ?? sniffTextContentType(resolvedReal, bytes);
   if (!contentType) {
     throw new FilePreviewError("unsupported preview file type", "EUNSUPPORTED");
   }
   return {
     path: resolvedReal,
-    filename: basename(resolvedReal) || "image",
+    filename: basename(resolvedReal) || "file",
     contentType,
     size: bytes.byteLength,
     bytes,
@@ -194,6 +226,33 @@ function sniffImageContentType(bytes: Uint8Array): FilePreviewResult["contentTyp
     return "image/webp";
   }
   return null;
+}
+
+function sniffTextContentType(path: string, bytes: Uint8Array): FilePreviewResult["contentType"] | null {
+  const ext = extname(path).toLowerCase();
+  const name = basename(path).toLowerCase();
+  if (!TEXT_PREVIEW_EXTENSIONS.has(ext) && !TEXT_PREVIEW_EXTENSIONS.has(name)) return null;
+  if (bytes.includes(0)) return null;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  if (hasTooManyControlChars(text)) return null;
+  return "text/plain; charset=utf-8";
+}
+
+function hasTooManyControlChars(text: string): boolean {
+  let checked = 0;
+  let controls = 0;
+  for (let i = 0; i < text.length && checked < 4096; i++) {
+    const code = text.charCodeAt(i);
+    checked++;
+    if (code === 0x09 || code === 0x0a || code === 0x0d) continue;
+    if (code < 0x20) controls++;
+  }
+  return checked > 0 && controls / checked > 0.02;
 }
 
 function ascii(bytes: Uint8Array, start: number, end: number): string {

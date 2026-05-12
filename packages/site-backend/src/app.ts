@@ -874,6 +874,9 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     if (c.req.query("workspaceScope") === "unrestricted") {
       qs.set("workspaceScope", "unrestricted");
     }
+    if (parseQueryBoolean(c.req.query("includeFiles") ?? "")) {
+      qs.set("includeFiles", "1");
+    }
     return proxyJson(
       fetchImpl,
       "GET",
@@ -1440,7 +1443,11 @@ const SITE_ROUTE_CAPABILITIES = [
     path: "/api/devices/:id/events/spaces/:spaceId/stream",
     description: "Stream behavior events over SSE.",
   },
-  { method: "GET", path: "/api/devices/:id/fs/list", description: "List files and directories." },
+  {
+    method: "GET",
+    path: "/api/devices/:id/fs/list",
+    description: "List directories. Add includeFiles=1 to include files for verification.",
+  },
   { method: "POST", path: "/api/devices/:id/fs/mkdir", description: "Create a directory." },
   { method: "GET", path: "/api/devices/:id/fs/roots", description: "Read workspace root policy." },
   {
@@ -2713,8 +2720,10 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Status inquiry: use summary/status/diagnostic read APIs and avoid session reads.",
     "- Selected session work: require selected device id and session id; read behaviors first, then `sessions.read`; summarize or analyze from observed events.",
     "- Remote Claude work: inspect target device state and cwd; call the `chat` behavior with `message`, `cwd`, and optional `sessionId` only when the user asked to send work.",
+    "- For remote worker prompts where exact generated filenames or commands matter, prefer ASCII-only operational prompts. Answer the DeskRelay user in Korean afterward.",
     "- Configuration change: read current config first, mutate only the requested scope, then re-read.",
     "- Repair/update/restart: diagnose first, run the smallest matching task/API, then verify task and resulting state.",
+    "- Non-destructive scaffolding, file listing, file preview, status reads, and creation of requested project files inside the selected allowed workspace do not need another confirmation after the user says to proceed.",
     "- Destructive work: ask for confirmation unless the user explicitly requested the exact deletion/removal target.",
     "- Planning/explanation: do not mutate state unless the user clearly asks you to proceed.",
     "",
@@ -2745,6 +2754,8 @@ function buildManagedManagerAssistantInstructions(input: {
     "For authenticated `/api/*` calls, send `Authorization: Bearer $DESKRELAY_SITE_TOKEN` when the token exists.",
     "`GET /api/capabilities` is the live source of truth for route and behavior-method discovery.",
     "When behavior methods or route shapes are uncertain, discover capabilities before calling them.",
+    "When verifying generated files, call `/api/devices/:id/fs/list?includeFiles=1` for the target directory. The default list is directory-only for the cwd picker.",
+    "Use `/api/devices/:id/files/preview` for guarded image or UTF-8 text/Markdown previews. If a file type is unsupported, report that limitation rather than claiming the file was read.",
     "Avoid calling `POST /api/manager/assistant/chat` or `POST /api/manager/assistant/chat/stream` from inside the assistant unless you are deliberately testing the assistant endpoint.",
     "",
     "## Tool and Shell Policy",
@@ -2791,6 +2802,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "",
     "- Prefer `dryRun: true` first for manager task shortcuts when available.",
     "- Ask the user before destructive or disruptive actions unless the user already gave explicit instruction.",
+    "- Do not ask again after a short reply that clearly resolves a pending decision, such as `go`, `진행`, `해`, `1`, `A`, or a named option.",
     "- If the user explicitly requested the exact mutating action, perform the smallest matching API call and verify afterward.",
     '- Manager task body: `{ "kind": "diagnose|update-server|update-device|update-all|restart-server|restart-device|repair-registration|run-worker", "targetId": "optional-device-id", "dryRun": true, "requestedBy": "manager-assistant", "params": {} }`.',
     '- Shortcut task bodies accept `{ "dryRun": true, "requestedBy": "manager-assistant" }` when supported.',
@@ -4604,6 +4616,11 @@ function clampTail(value: string | undefined): number {
 function normalizeLogLevel(value: string | undefined): string | undefined {
   const level = (value ?? "").trim().toLowerCase();
   return level ? level : undefined;
+}
+
+function parseQueryBoolean(value: string | undefined): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 async function readLogResponse(input: {

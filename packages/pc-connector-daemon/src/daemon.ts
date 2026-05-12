@@ -700,7 +700,11 @@ export class Daemon {
           path: "/events/spaces/:spaceId/stream",
           description: "Stream behavior events over SSE.",
         },
-        { method: "GET", path: "/fs/list", description: "List files and directories." },
+        {
+          method: "GET",
+          path: "/fs/list",
+          description: "List directories. Add includeFiles=1 to include files.",
+        },
         { method: "GET", path: "/fs/roots", description: "Read workspace root policy." },
         { method: "POST", path: "/fs/mkdir", description: "Create a directory." },
         { method: "GET", path: "/files/preview", description: "Preview a guarded local file." },
@@ -907,12 +911,13 @@ export class Daemon {
 
   async #handleFsList(url: URL): Promise<Response> {
     const path = url.searchParams.get("path") ?? "";
+    const includeFiles = parseQueryBoolean(url.searchParams.get("includeFiles"));
     const roots = fsWorkspaceRootsForScope(
       this.#workspaceRoots,
       url.searchParams.get("workspaceScope"),
     );
     try {
-      const result = await listDir(path, roots);
+      const result = await listDir(path, roots, { includeFiles });
       return jsonResponse(200, result);
     } catch (err) {
       return jsonResponse(fsErrorStatus(err), { error: (err as Error).message });
@@ -1336,4 +1341,9 @@ function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   return buffer;
+}
+
+function parseQueryBoolean(value: string | null): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }

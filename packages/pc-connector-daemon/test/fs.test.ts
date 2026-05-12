@@ -29,6 +29,15 @@ describe("fs workspace guards", () => {
     expect(listed.entries.map((entry) => entry.name)).toEqual(["visible-dir"]);
   });
 
+  test("can include files for manager verification", async () => {
+    const listed = await listDir(root, roots, { includeFiles: true });
+    expect(listed.entries.map((entry) => [entry.name, entry.kind])).toEqual([
+      ["visible-dir", "directory"],
+      ["hidden-file.txt", "file"],
+    ]);
+    expect(listed.entries.find((entry) => entry.name === "hidden-file.txt")?.isDir).toBe(false);
+  });
+
   test("rejects listing a file path as not a directory", async () => {
     await expect(listDir(join(root, "hidden-file.txt"), roots)).rejects.toMatchObject({
       code: "ENOTDIR",

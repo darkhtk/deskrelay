@@ -22,7 +22,10 @@ const UNRESTRICTED: WorkspaceRoots = { mode: "unrestricted", roots: [] };
 export interface FsListEntry {
   name: string;
   fullPath: string;
-  isDir: true;
+  isDir: boolean;
+  kind: "directory" | "file";
+  size?: number;
+  modifiedAt?: string;
 }
 
 export interface FsListResult {
@@ -45,6 +48,10 @@ export interface MakeDirResult {
   name: string;
 }
 
+export interface FsListOptions {
+  includeFiles?: boolean;
+}
+
 export class FsError extends Error {
   constructor(
     message: string,
@@ -62,21 +69,23 @@ function forbidden(absPath: string): FsError {
   );
 }
 
-/** List the immediate subdirectories of `rawPath`. Empty / "/" / "\"
+/** List the immediate subdirectories of `rawPath`, optionally including files
+ *  for manager verification. Empty / "/" / "\"
  *  triggers the Windows drive-roots view (or POSIX root) when running
  *  unrestricted, or a synthetic listing of the configured workspace
  *  roots when restricted. Hidden entries (dotfiles) and non-directories
- *  are filtered out. Symlinks are followed but their realpath must
+ *  are filtered out unless files are requested. Symlinks are followed but their realpath must
  *  remain inside an allowed root. */
 export async function listDir(
   rawPath: string,
   roots: WorkspaceRoots = UNRESTRICTED,
+  options: FsListOptions = {},
 ): Promise<FsListResult> {
   const trimmed = String(rawPath || "").trim();
   if (!trimmed || trimmed === "/" || trimmed === "\\") {
     if (roots.mode === "restricted") return listRoots(roots);
     if (isWindows) return listDrives();
-    return listChildren("/", roots);
+    return listChildren("/", roots, options);
   }
 
   let resolved = trimmed;
@@ -85,10 +94,14 @@ export async function listDir(
   }
   resolved = resolve(resolved);
   if (!isInsideRoot(resolved, roots)) throw forbidden(resolved);
-  return listChildren(resolved, roots);
+  return listChildren(resolved, roots, options);
 }
 
-async function listChildren(absPath: string, roots: WorkspaceRoots): Promise<FsListResult> {
+async function listChildren(
+  absPath: string,
+  roots: WorkspaceRoots,
+  options: FsListOptions,
+): Promise<FsListResult> {
   let s: Awaited<ReturnType<typeof stat>>;
   try {
     s = await stat(absPath);
@@ -120,16 +133,20 @@ async function listChildren(absPath: string, roots: WorkspaceRoots): Promise<FsL
     if (name.startsWith(".")) continue;
     const fullPath = join(absPath, name);
     let isDir = dirent.isDirectory();
+    let isFile = dirent.isFile();
     const isSymlink = dirent.isSymbolicLink();
-    if (!isDir && isSymlink) {
+    let childStat: Awaited<ReturnType<typeof stat>> | undefined;
+    if ((!isDir && !isFile && isSymlink) || (options.includeFiles && !isDir)) {
       try {
-        const sub = await stat(fullPath);
-        isDir = sub.isDirectory();
+        childStat = await stat(fullPath);
+        isDir = childStat.isDirectory();
+        isFile = childStat.isFile();
       } catch {
         isDir = false;
+        isFile = false;
       }
     }
-    if (!isDir) continue;
+    if (!isDir && !(options.includeFiles && isFile)) continue;
     // For symlinks under a restricted config, also check the real
     // target — a link inside the root that points outside it would
     // otherwise let a client navigate to a forbidden path on the next
@@ -144,14 +161,26 @@ async function listChildren(absPath: string, roots: WorkspaceRoots): Promise<FsL
       }
       if (!isInsideRoot(real, roots)) continue;
     }
-    entries.push({
+    const entry: FsListEntry = {
       name,
       fullPath,
-      isDir: true,
-    });
+      isDir,
+      kind: isDir ? "directory" : "file",
+    };
+    if (!isDir && options.includeFiles) {
+      childStat ??= await stat(fullPath).catch(() => undefined);
+      if (childStat) {
+        entry.size = Number(childStat.size);
+        entry.modifiedAt = childStat.mtime.toISOString();
+      }
+    }
+    entries.push(entry);
   }
 
-  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  entries.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
   return {
     path: absPath,
     parent: parentOf(absPath),
@@ -167,6 +196,7 @@ function listRoots(roots: WorkspaceRoots): FsListResult {
     name: basename(root) || root,
     fullPath: root,
     isDir: true,
+    kind: "directory",
   }));
   return {
     path: "",
@@ -266,6 +296,7 @@ function listDrives(): FsListResult {
     name: `${letter}\\`,
     fullPath: `${letter}\\`,
     isDir: true,
+    kind: "directory",
   }));
   return {
     path: "",
