@@ -251,6 +251,10 @@ async function runScenario(ctx: TestContext): Promise<void> {
     verifyReport.steps?.some((step) => step.id === "server-registry" && step.status === "ok"),
     "verification report did not confirm server registry",
   );
+  assert(
+    verifyReport.steps?.some((step) => step.id === "server-to-daemon" && step.status === "ok"),
+    "verification report did not confirm server-to-connector reachability",
+  );
   pass("connector verification report confirms server registry");
 
   step("remote use");

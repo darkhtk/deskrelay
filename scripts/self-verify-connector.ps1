@@ -109,6 +109,21 @@ function Invoke-JsonGet {
   }
 }
 
+function Convert-ToArray {
+  param($Value)
+  if ($null -eq $Value) {
+    return @()
+  }
+  if ($Value -is [System.Array]) {
+    return @($Value)
+  }
+  $props = @($Value.PSObject.Properties.Name)
+  if ($props -contains "value" -and $props -contains "Count") {
+    return @($Value.value)
+  }
+  return @($Value)
+}
+
 function Resolve-Repo {
   param([string]$Path)
   if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -282,14 +297,16 @@ if ($serverHealth.ok) {
 
 $deviceHeaders = @{ Authorization = "Bearer $SiteToken" }
 $devices = Invoke-JsonGet -Url (Join-UrlPath -Base $serverUrl -Path "api/devices") -Headers $deviceHeaders -TimeoutSec 12
+$matchedDevice = $null
 if ($devices.ok) {
-  $rows = @($devices.body)
+  $rows = Convert-ToArray $devices.body
   $daemonMatches = @($rows | Where-Object { $_.daemonUrl -eq $DaemonUrl })
   $labelMatches = @()
   if (-not [string]::IsNullOrWhiteSpace($Label)) {
     $labelMatches = @($rows | Where-Object { $_.label -eq $Label })
   }
   if ($daemonMatches.Count -eq 1) {
+    $matchedDevice = $daemonMatches[0]
     Add-Step -Id "server-registry" -Label "server registry" -Status "ok" -Summary "device is visible in server registry" -Evidence @("id=$($daemonMatches[0].id)", "label=$($daemonMatches[0].label)", "daemonUrl=$($daemonMatches[0].daemonUrl)")
   } elseif ($daemonMatches.Count -gt 1) {
     Add-Step -Id "server-registry" -Label "server registry" -Status "failed" -Summary "duplicate device rows exist for this daemon URL" -Evidence @($daemonMatches | ForEach-Object { "$($_.id) $($_.label) $($_.daemonUrl)" }) -Action "Remove duplicate devices from Settings -> Devices, then rerun registration."
@@ -300,6 +317,25 @@ if ($devices.ok) {
   }
 } else {
   Add-Step -Id "server-registry" -Label "server registry" -Status "failed" -Summary "could not read server device list" -Evidence @("status=$($devices.status)", $devices.error) -Action "Check the Site token and server URL."
+}
+
+if ($matchedDevice -and $matchedDevice.id) {
+  $doctor = Invoke-JsonGet -Url (Join-UrlPath -Base $serverUrl -Path "api/devices/$($matchedDevice.id)/doctor") -Headers $deviceHeaders -TimeoutSec 20
+  if ($doctor.ok) {
+    $checks = Convert-ToArray $doctor.body.checks
+    $daemonCheck = $checks | Where-Object { $_.id -eq "device.daemon" } | Select-Object -First 1
+    if ($daemonCheck -and ($daemonCheck.severity -eq "ok" -or $daemonCheck.status -eq "ok")) {
+      Add-Step -Id "server-to-daemon" -Label "server-to-connector" -Status "ok" -Summary "server can reach the connector daemon"
+    } else {
+      $summary = if ($daemonCheck -and $daemonCheck.summary) { [string]$daemonCheck.summary } else { "server could not verify the connector daemon" }
+      $detail = if ($daemonCheck -and $daemonCheck.detail) { [string]$daemonCheck.detail } else { "" }
+      Add-Step -Id "server-to-daemon" -Label "server-to-connector" -Status "failed" -Summary $summary -Evidence @($detail) -Action "Allow incoming Tailscale connections and inbound TCP $Port on this PC, then rerun registration."
+    }
+  } else {
+    Add-Step -Id "server-to-daemon" -Label "server-to-connector" -Status "failed" -Summary "could not run server-side connector diagnosis" -Evidence @("status=$($doctor.status)", $doctor.error) -Action "Check the Site token, server URL, and server logs."
+  }
+} else {
+  Add-Step -Id "server-to-daemon" -Label "server-to-connector" -Status "skipped" -Summary "skipped because no single matching device row was found"
 }
 
 $failedCount = @($script:Steps | Where-Object { $_.status -eq "failed" }).Count

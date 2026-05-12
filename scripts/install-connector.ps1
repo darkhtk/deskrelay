@@ -117,6 +117,49 @@ function Submit-InstallReport {
   }
 }
 
+function Get-DefaultVerifyReportPath {
+  $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+  $base = if ($env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA "DeskRelay\reports"
+  } else {
+    Join-Path $HOME ".deskrelay\reports"
+  }
+  New-Item -ItemType Directory -Force -Path $base | Out-Null
+  return Join-Path $base "connector-verify-$stamp.json"
+}
+
+function Import-VerifyReportSteps {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+  try {
+    $report = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    foreach ($step in @($report.steps)) {
+      $status = [string]$step.status
+      if (@("ok", "warn", "failed", "skipped") -notcontains $status) {
+        continue
+      }
+      $evidence = @()
+      if ($step.evidence) {
+        $evidence = @($step.evidence | ForEach-Object { [string]$_ })
+      }
+      Add-InstallStep `
+        -Id "verify-$($step.id)" `
+        -Label "verify: $($step.label)" `
+        -Status $status `
+        -Summary ([string]$step.summary) `
+        -Evidence $evidence `
+        -Action ([string]$step.action) `
+        -Severity ([string]$step.severity) `
+        -Source "verifier" `
+        -RetrySafe:$true
+    }
+  } catch {
+    Add-InstallStep -Id "verification-report" -Label "connector verification" -Status "warn" -Summary "could not import verifier report" -Evidence @($_.Exception.Message) -Source "verifier" -RetrySafe:$true
+  }
+}
+
 function Fail-Install {
   param(
     [string]$Id,
@@ -347,6 +390,24 @@ function Ensure-ConnectorFirewallRule {
   }
 }
 
+function Ensure-TailscaleIncomingAllowed {
+  param([string]$EndpointKind)
+  if ($EndpointKind -ne "Tailscale") {
+    return
+  }
+  $tailscale = Get-Command tailscale -ErrorAction SilentlyContinue
+  if (-not $tailscale) {
+    Add-InstallStep -Id "tailscale-incoming" -Label "Tailscale incoming" -Status "warn" -Summary "tailscale command not found" -Action "If server-to-connector verification fails, install Tailscale and log in to the same tailnet as the server." -RetrySafe:$true
+    return
+  }
+  $output = & $tailscale.Source set --shields-up=false 2>&1 | Out-String
+  if ($LASTEXITCODE -eq 0) {
+    Add-InstallStep -Id "tailscale-incoming" -Label "Tailscale incoming" -Status "ok" -Summary "incoming Tailscale connections are allowed" -Evidence @("shields-up=false")
+    return
+  }
+  Add-InstallStep -Id "tailscale-incoming" -Label "Tailscale incoming" -Status "warn" -Summary "could not update Tailscale incoming preference" -Evidence @($output.Trim()) -Action "Run 'tailscale set --shields-up=false', then run this registration command again." -RetrySafe:$true
+}
+
 function Stop-ProcessTree {
   param([int]$ProcessId)
   if (-not $ProcessId -or $ProcessId -eq $PID) {
@@ -575,6 +636,7 @@ $endpoint = Select-AdvertiseEndpoint -ServerUrl $serverUrl
 Write-Host "DeskRelay server: $serverUrl"
 Write-Host "This PC connector will listen on 0.0.0.0:$Port"
 Write-Host "This PC will be registered as $($endpoint.Kind): http://$($endpoint.Host):$Port"
+Ensure-TailscaleIncomingAllowed -EndpointKind $endpoint.Kind
 Ensure-ConnectorFirewallRule -Port $Port
 Stop-StaleConnector -Port $Port
 
@@ -609,26 +671,34 @@ Add-InstallStep -Id "register-self" -Label "connector registration" -Status "ok"
 
 $verifier = Join-Path $Repo "scripts\self-verify-connector.ps1"
 if (Test-Path -LiteralPath $verifier) {
-  Invoke-Native "powershell" @(
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    $verifier,
-    "-Server",
-    $serverUrl,
-    "-SiteToken",
-    $SiteToken,
-    "-Repo",
-    $Repo,
-    "-Port",
-    [string]$Port,
-    "-DaemonUrl",
-    "http://$($endpoint.Host):$Port",
-    "-WorkspaceRoots",
-    $WorkspaceRoots,
-    "-Label",
-    $Label
-  )
+  $verifyReportPath = Get-DefaultVerifyReportPath
+  try {
+    Invoke-Native "powershell" @(
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      $verifier,
+      "-Server",
+      $serverUrl,
+      "-SiteToken",
+      $SiteToken,
+      "-Repo",
+      $Repo,
+      "-Port",
+      [string]$Port,
+      "-DaemonUrl",
+      "http://$($endpoint.Host):$Port",
+      "-WorkspaceRoots",
+      $WorkspaceRoots,
+      "-Label",
+      $Label,
+      "-ReportPath",
+      $verifyReportPath
+    )
+  } catch {
+    Import-VerifyReportSteps -Path $verifyReportPath
+    throw
+  }
   Add-InstallStep -Id "verification" -Label "connector verification" -Status "ok" -Summary "self-verify-connector completed"
 } else {
   Write-Warning "Connector verifier not found: $verifier"
