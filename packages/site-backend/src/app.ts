@@ -1575,10 +1575,16 @@ function streamManagerAssistantChat(
   requestUrl: string,
 ): Response {
   const encoder = new TextEncoder();
+  let closed = false;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const emit = (event: ManagerAssistantStreamEvent) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          closed = true;
+        }
       };
 
       void (async () => {
@@ -1625,9 +1631,19 @@ function streamManagerAssistantChat(
         } catch (error) {
           emit({ type: "error", error: errorMessage(error) });
         } finally {
-          controller.close();
+          if (!closed) {
+            closed = true;
+            try {
+              controller.close();
+            } catch {
+              // The client may already have closed the SSE connection.
+            }
+          }
         }
       })();
+    },
+    cancel() {
+      closed = true;
     },
   });
 

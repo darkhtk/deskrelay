@@ -1115,6 +1115,41 @@ describe("manager task API", () => {
     expect(text).toContain("streamed 업데이트 상태 확인");
   });
 
+  test("manager assistant stream tolerates client cancellation", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-cancel-"));
+    let runnerCompleted = false;
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: {
+        cwd,
+        runner: async (input) => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          runnerCompleted = true;
+          return {
+            command: "fake-claude -p",
+            text: `streamed ${input.message}`,
+          };
+        },
+      },
+    });
+
+    const res = await app.fetch(
+      authedRequest("POST", "/api/manager/assistant/chat/stream", {
+        message: "업데이트 상태 확인",
+        history: [],
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+    await reader?.read();
+    await reader?.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(runnerCompleted).toBe(true);
+  });
+
   test("manager assistant history drops synthetic tool transcript artifacts", async () => {
     const cwd = join(tmpdir(), "deskrelay-assistant-history-test");
     const app = createSiteApp({
