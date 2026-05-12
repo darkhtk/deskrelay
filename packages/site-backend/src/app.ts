@@ -2100,11 +2100,11 @@ function truncateForStatus(value: string): string {
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 
-function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
+export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
   const recent = input.history.slice(-12);
-  const transcript = recent
-    .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text}`)
-    .join("\n\n");
+  const memory = recent
+    .map((message) => `- ${message.role}: ${singleLineManagerAssistantMemory(message.text)}`)
+    .join("\n");
   const browserContext = formatManagerAssistantBrowserContext(input.context);
   return [
     "You are the DeskRelay manager assistant.",
@@ -2116,13 +2116,24 @@ function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
     "Before using APIs or commands, identify the user's intent and the affected scope.",
     "Answer in Korean unless the user asks for another language.",
     "If you did not actually run a command, do not claim that you did.",
-    browserContext ? `Current browser context reference:\n${browserContext}` : "",
-    transcript ? `Recent assistant conversation, for continuity only:\n${transcript}` : "",
-    `User: ${input.message}`,
-    "Assistant:",
+    "This prompt is an instruction packet, not a dialogue transcript to continue.",
+    "Do not output transcript labels such as `User:`, `Assistant:`, `A:`, or `B:` unless the user explicitly asks for that format.",
+    "If you list planned checks, label them as planned. Only report a check as observed after you actually used an API or command.",
+    browserContext ? `## Current Browser Context\n${browserContext}` : "",
+    memory
+      ? `## Conversation Memory\nReference only. Do not continue or complete this memory as a transcript.\n${memory}`
+      : "",
+    `## Current User Request\n${input.message}`,
+    "## Response Requirements\nAnswer only the current user request. Use observed facts for claims. Keep the response concise unless the user asks for detail.",
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function singleLineManagerAssistantMemory(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= 500) return compact;
+  return `${compact.slice(0, 497)}...`;
 }
 
 interface ManagerAssistantWorkspace {
@@ -2179,6 +2190,9 @@ function buildManagedManagerAssistantInstructions(input: {
     "- You run on the server PC. Treat this as a local developer tool, not a hosted SaaS product.",
     "- Answer in Korean unless the user explicitly asks for another language.",
     "- Do not claim that you ran an API call, command, update, restart, or repair unless you actually did.",
+    "- Treat browser-provided history as memory only, not as a transcript to continue.",
+    "- Do not output artificial conversation labels such as `User:`, `Assistant:`, `A:`, or `B:` unless the user explicitly asks for that format.",
+    "- Separate planned checks from observed facts. A bracketed checklist is not evidence that the check ran.",
     "",
     "## Intent First",
     "",

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
-import { createSiteApp } from "../src/app.ts";
+import { buildManagerAssistantPrompt, createSiteApp } from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
 import type {
   DeviceUpdateEntryInput,
@@ -1503,6 +1503,51 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       state: "running",
       summary: { severity: "warn" },
     });
+  });
+
+  test("manager assistant prompt is an instruction packet, not a transcript continuation", () => {
+    const prompt = buildManagerAssistantPrompt({
+      message: "deskrelay 에 대해 알려줘",
+      history: [
+        {
+          id: "a0",
+          role: "assistant",
+          text: "DeskRelay 상태 점검, 업데이트, 복구를 도와드릴게요.",
+          createdAt: "2026-05-12T00:00:00.000Z",
+        },
+        {
+          id: "u1",
+          role: "user",
+          text: "deskrelay 에 대해 조사해봐",
+          createdAt: "2026-05-12T00:00:01.000Z",
+        },
+        {
+          id: "a1",
+          role: "assistant",
+          text: "조사해드릴게요.\n[server summary 조회]\nA:",
+          createdAt: "2026-05-12T00:00:02.000Z",
+        },
+      ],
+      context: {
+        deviceId: "dev_test",
+        deviceLabel: "test device",
+        deviceConnectionState: "online",
+        sessionId: "session_test",
+        cwd: "C:\\work",
+      },
+      cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+      repoRoot: "C:\\repo",
+      instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+      apiBaseUrl: "http://127.0.0.1:18193",
+    });
+
+    expect(prompt).toContain("## Current User Request");
+    expect(prompt).toContain("deskrelay 에 대해 알려줘");
+    expect(prompt).toContain("## Conversation Memory");
+    expect(prompt).toContain("not a dialogue transcript to continue");
+    expect(prompt).not.toContain("\nUser: deskrelay");
+    expect(prompt).not.toContain("\nAssistant:");
+    expect(prompt.trim().endsWith("Assistant:")).toBe(false);
   });
 
   test("shortcut APIs create manager tasks", async () => {
