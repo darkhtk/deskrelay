@@ -1,0 +1,134 @@
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ManagerAssistant } from "../src/components/ManagerAssistant.tsx";
+
+const SERVER_DEVICE = {
+  id: "dev_server",
+  label: "Local dev (HOMEDEV)",
+  daemonUrl: "http://127.0.0.1:18191",
+  registeredAt: "2026-05-13T00:00:00.000Z",
+  connectionState: "online" as const,
+};
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.localStorage.clear();
+});
+
+describe("ManagerAssistant", () => {
+  test("uses the normal remote-claude behavior session path instead of browser chat storage", async () => {
+    const behaviorCalls: Array<{ method?: string; params?: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (url.includes("/events/spaces/remote-claude.run%3A")) {
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              kind: "run.started",
+              content: { runId: "r1" },
+            })}`,
+            `data: ${JSON.stringify({
+              kind: "claude.event",
+              content: { type: "system", subtype: "init", session_id: "manager-session-1" },
+            })}`,
+            `data: ${JSON.stringify({
+              kind: "claude.event",
+              content: {
+                type: "assistant",
+                message: { content: [{ type: "text", text: "관리자 응답" }] },
+              },
+            })}`,
+            `data: ${JSON.stringify({ kind: "run.finished", content: { exitCode: 0 } })}`,
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          method?: string;
+          params?: Record<string, unknown>;
+        };
+        behaviorCalls.push(body);
+        if (body.method === "sessions.list") return Response.json({ result: [] });
+        if (body.method === "chat") {
+          return Response.json({ result: { ok: true, runId: body.params?.runId, accepted: true } });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => (
+      <ManagerAssistant
+        devices={[SERVER_DEVICE]}
+        context={{
+          deviceId: "dev_selected",
+          deviceLabel: "Remote PC",
+          sessionId: "selected-session",
+          cwd: "C:\\work",
+        }}
+      />
+    ));
+
+    const input = await screen.findByPlaceholderText(/관리자에게 보내기/);
+    await waitFor(() => {
+      expect(behaviorCalls.some((call) => call.method === "sessions.list")).toBe(true);
+    });
+    fireEvent.input(input, { target: { value: "현재 상태 확인" } });
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "전송" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("관리자 응답");
+    });
+
+    await waitFor(() => {
+      expect(
+        behaviorCalls.some((call) => call.method === "chat" && call.params?.managerMode === true),
+      ).toBe(true);
+    });
+    const chatCall = behaviorCalls.find(
+      (call) => call.method === "chat" && call.params?.managerMode === true,
+    );
+    expect(chatCall?.params?.managerMode).toBe(true);
+    expect(chatCall?.params?.permissionMode).toBe("bypassPermissions");
+    expect(chatCall?.params?.conversationId).toBe("deskrelay-manager-assistant");
+    expect(chatCall?.params?.cwd).toBe("C:\\repo\\.deskrelay\\manager-assistant");
+    expect(chatCall?.params?.managerBrowserContext).toMatchObject({
+      deviceId: "dev_selected",
+      sessionId: "selected-session",
+    });
+    expect(window.localStorage.getItem("cr.manager-assistant.messages:v2")).toBeNull();
+  });
+});

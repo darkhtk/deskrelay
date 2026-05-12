@@ -134,6 +134,54 @@ describe("remote-claude behavior chat request", () => {
     ).toBe(true);
   });
 
+  test("manager mode injects the manager environment and highest permission mode", async () => {
+    const { ctx, handlers, events } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const chat = handlers.get("chat");
+    if (!chat) throw new Error("chat handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-manager-"));
+    tempDirs.push(cwd);
+    const fixture = fileURLToPath(new URL("./fixtures/fake-claude-manager.ts", import.meta.url));
+
+    await chat({
+      cwd,
+      message: "status",
+      runId: "manager_run",
+      managerMode: true,
+      managerApiBaseUrl: "http://site.local",
+      managerRepoRoot: "C:\\repo",
+      managerSiteToken: "site-token",
+      managerBrowserContext: { deviceId: "dev_1", sessionId: "session_1" },
+      permissionMode: "default",
+      command: ["bun", fixture],
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) => event.kind === "run.finished" && event.spaceId?.endsWith(":manager_run"),
+      ),
+    );
+    const assistant = events.find(
+      (event) =>
+        event.kind === "claude.event" &&
+        JSON.stringify(event.content).includes("manager-session-001") === false,
+    )?.content as { message?: { content?: Array<{ text?: string }> } } | undefined;
+    const observed = JSON.parse(assistant?.message?.content?.[0]?.text ?? "{}") as {
+      permissionMode?: string;
+      hasManagerPrompt?: boolean;
+      apiBase?: string;
+      token?: string;
+      repoRoot?: string;
+    };
+    expect(observed.permissionMode).toBe("bypassPermissions");
+    expect(observed.hasManagerPrompt).toBe(true);
+    expect(observed.apiBase).toBe("http://site.local");
+    expect(observed.token).toBe("site-token");
+    expect(observed.repoRoot).toBe("C:\\repo");
+  });
+
   test("interrupting the active run cancels queued follow-ups", async () => {
     const { ctx, handlers, events } = makeCtx();
     await behaviorDef.start(ctx);

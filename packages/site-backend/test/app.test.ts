@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Hono } from "hono";
-import { buildManagerAssistantPrompt, createSiteApp, type SiteAppOptions } from "../src/app.ts";
+import { type SiteAppOptions, buildManagerAssistantPrompt, createSiteApp } from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
 import type {
   DeviceUpdateEntryInput,
@@ -1248,7 +1248,9 @@ process.stdin.on("end", () => {
       expect(secondObserved.argv).toContain("--resume");
       expect(secondObserved.argv).toContain("manager-session-1");
       expect(secondObserved.stdin).toContain("recall-session-token");
-      expect(secondObserved.stdin).not.toContain("large stale assistant text that must not be replayed");
+      expect(secondObserved.stdin).not.toContain(
+        "large stale assistant text that must not be replayed",
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -3158,6 +3160,74 @@ describe("daemon proxy", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ result: { ok: true, length: 2 } });
+  });
+
+  test("manager-mode behavior requests are forced onto the server connector workspace", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-behavior-"));
+    try {
+      const serverSetup = makeApp({ managerAssistant: { cwd } });
+      const device = serverSetup.registry.register({
+        daemonUrl: "http://127.0.0.1:18191",
+        authToken: "daemon-token",
+        label: "Local dev (HOMEDEV)",
+      });
+      serverSetup.setMockResponse(() => Response.json({ result: { ok: true } }, { status: 200 }));
+
+      const res = await serverSetup.app.fetch(
+        authedRequest("POST", `/api/devices/${device.id}/behaviors/remote-claude/request`, {
+          method: "chat",
+          params: {
+            cwd: "C:\\wrong",
+            message: "관리자 작업",
+            managerMode: true,
+            permissionMode: "default",
+            conversationId: "browser-value",
+          },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const forwarded = JSON.parse(serverSetup.calls.at(-1)?.body ?? "{}") as {
+        method?: string;
+        params?: Record<string, unknown>;
+      };
+      expect(forwarded.method).toBe("chat");
+      expect(forwarded.params?.cwd).toBe(join(cwd, ".deskrelay", "manager-assistant"));
+      expect(forwarded.params?.permissionMode).toBe("bypassPermissions");
+      expect(forwarded.params?.securityProfile).toBe("relaxed");
+      expect(forwarded.params?.managerSiteToken).toBe(TOKEN);
+      expect(forwarded.params?.managerApiBaseUrl).toBe("http://site.local");
+      expect(forwarded.params?.managerRepoRoot).toBe(cwd);
+      expect(forwarded.params?.managerInstructionsPath).toBe(
+        join(cwd, ".deskrelay", "manager-assistant", "CLAUDE.md"),
+      );
+      expect(forwarded.params?.conversationId).toBe("browser-value");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager-mode behavior requests are rejected for non-server devices", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-behavior-block-"));
+    try {
+      const serverSetup = makeApp({ managerAssistant: { cwd } });
+      const device = serverSetup.registry.register({
+        daemonUrl: "http://100.64.1.44:18091",
+        authToken: "daemon-token",
+        label: "Remote PC",
+      });
+      const res = await serverSetup.app.fetch(
+        authedRequest("POST", `/api/devices/${device.id}/behaviors/remote-claude/request`, {
+          method: "chat",
+          params: { cwd: "C:\\repo", message: "x", managerMode: true },
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect(serverSetup.calls).toHaveLength(0);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("DELETE .../behaviors/:instance proxies", async () => {
