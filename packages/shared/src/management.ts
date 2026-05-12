@@ -292,10 +292,46 @@ export interface ManagerAssistantChatContext {
   cwd?: string;
 }
 
+export interface ManagerAssistantDecisionOption {
+  key: string;
+  label: string;
+  detail?: string;
+}
+
+export interface ManagerAssistantPendingDecision {
+  id: string;
+  prompt?: string;
+  options: ManagerAssistantDecisionOption[];
+  createdAt?: string;
+}
+
+export interface ManagerAssistantTaskMemory {
+  state:
+    | "idle"
+    | "planning"
+    | "waiting_user_choice"
+    | "executing"
+    | "verifying"
+    | "blocked"
+    | "done";
+  title?: string;
+  updatedAt?: string;
+}
+
+export interface ManagerAssistantStructuredState {
+  lastAssistantText?: string;
+  pendingDecision?: ManagerAssistantPendingDecision;
+  task?: ManagerAssistantTaskMemory;
+  facts?: string[];
+  decisions?: string[];
+  openQuestions?: string[];
+}
+
 export interface ManagerAssistantChatRequest {
   message: string;
   history?: ManagerAssistantChatMessage[];
   context?: ManagerAssistantChatContext;
+  assistantState?: ManagerAssistantStructuredState;
 }
 
 export interface ManagerAssistantChatResponse {

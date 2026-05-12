@@ -11,8 +11,10 @@ import {
   type ManagerAssistantChatMessage,
   type ManagerAssistantChatRequest,
   type ManagerAssistantChatResponse,
+  type ManagerAssistantDecisionOption,
   type ManagerAssistantStreamEvent,
   type ManagerAssistantStreamStatus,
+  type ManagerAssistantStructuredState,
   type ManagerCapabilities,
   type ManagerDeviceActions,
   type ManagerInstallStatus,
@@ -88,6 +90,7 @@ export interface ManagerAssistantRunInput {
   message: string;
   history: ManagerAssistantChatMessage[];
   context: ManagerAssistantChatContext | undefined;
+  assistantState?: ManagerAssistantStructuredState;
   cwd: string;
   repoRoot: string;
   instructionsPath: string;
@@ -1663,7 +1666,7 @@ async function runManagerAssistantChat(
   const runner =
     options.managerAssistant?.runner ??
     ((input: ManagerAssistantRunInput) => runDefaultManagerAssistantCli(input, options));
-  const result = await runner({
+  const input: ManagerAssistantRunInput = {
     message: request.message.trim(),
     history,
     context: request.context,
@@ -1671,7 +1674,9 @@ async function runManagerAssistantChat(
     repoRoot,
     instructionsPath: workspace.instructionsPath,
     apiBaseUrl,
-  });
+  };
+  if (request.assistantState) input.assistantState = request.assistantState;
+  const result = await runner(input);
   return {
     cwd,
     command: result.command,
@@ -1728,6 +1733,7 @@ function streamManagerAssistantChat(
             instructionsPath: workspace.instructionsPath,
             apiBaseUrl,
           };
+          if (request.assistantState) input.assistantState = request.assistantState;
           const runner = options.managerAssistant?.runner;
           const result = runner
             ? await runCustomManagerAssistantRunner(input, runner, emit)
@@ -2233,11 +2239,20 @@ function truncateForStatus(value: string): string {
 }
 
 export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
-  const recent = input.history.slice(-12);
+  const recent = input.history.slice(-8);
   const memory = recent
     .map((message) => `- ${message.role}: ${singleLineManagerAssistantMemory(message.text)}`)
     .join("\n");
   const browserContext = formatManagerAssistantBrowserContext(input.context);
+  const structuredState = formatManagerAssistantStructuredState(input.assistantState);
+  const lastReply = formatManagerAssistantLastReply(input.assistantState?.lastAssistantText);
+  const shortReplyHint = isShortManagerAssistantReply(input.message)
+    ? [
+        "## Short Reply Resolution",
+        "The current user request is short or ambiguous. If `Structured Manager State` has a pending decision, resolve the user's reply against that decision before asking for clarification.",
+        "Accept numeric, lettered, ordinal, and affirmative replies when they clearly map to the pending decision or the last assistant reply.",
+      ].join("\n")
+    : "";
   return [
     "You are the DeskRelay manager assistant.",
     "You are running on the server PC in a managed DeskRelay assistant folder.",
@@ -2252,8 +2267,11 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     "Do not output transcript labels such as `User:`, `Assistant:`, `A:`, or `B:` unless the user explicitly asks for that format.",
     "If you list planned checks, label them as planned. Only report a check as observed after you actually used an API or command.",
     browserContext ? `## Current Browser Context\n${browserContext}` : "",
+    structuredState ? `## Structured Manager State\n${structuredState}` : "",
+    lastReply ? `## Last Assistant Reply\n${lastReply}` : "",
+    shortReplyHint,
     memory
-      ? `## Conversation Memory\nReference only. Do not continue or complete this memory as a transcript.\n${memory}`
+      ? `## Recent Conversation Log\nReference only. This is lossy context, not a transcript to continue. Prefer Structured Manager State for decisions and task state.\n${memory}`
       : "",
     `## Current User Request\n${input.message}`,
     "## Response Requirements\nAnswer only the current user request. Use observed facts for claims. Keep the response concise unless the user asks for detail.",
@@ -2264,8 +2282,49 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
 
 function singleLineManagerAssistantMemory(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
-  if (compact.length <= 500) return compact;
-  return `${compact.slice(0, 497)}...`;
+  if (compact.length <= 300) return compact;
+  return `${compact.slice(0, 297)}...`;
+}
+
+function isShortManagerAssistantReply(value: string): boolean {
+  const compact = value.trim();
+  if (!compact) return false;
+  if (compact.length <= 12) return true;
+  return /^(응|네|그래|좋아|진행|그걸로|첫|두|세|1번|2번|3번|a|b|c)$/i.test(compact);
+}
+
+function formatManagerAssistantLastReply(value: string | undefined): string {
+  if (!value?.trim()) return "";
+  return value.trim().slice(0, 6_000);
+}
+
+function formatManagerAssistantStructuredState(
+  state: ManagerAssistantStructuredState | undefined,
+): string {
+  if (!state) return "";
+  const lines: string[] = [];
+  if (state.task) {
+    lines.push(`- task state: ${state.task.state}`);
+    if (state.task.title) lines.push(`- task title: ${state.task.title}`);
+    if (state.task.updatedAt) lines.push(`- task updated at: ${state.task.updatedAt}`);
+  }
+  if (state.pendingDecision?.options.length) {
+    lines.push("- pending decision:");
+    if (state.pendingDecision.prompt) lines.push(`  prompt: ${state.pendingDecision.prompt}`);
+    for (const option of state.pendingDecision.options) {
+      lines.push(`  ${option.key}. ${option.label}${option.detail ? ` - ${option.detail}` : ""}`);
+    }
+  }
+  appendManagerAssistantList(lines, "facts", state.facts);
+  appendManagerAssistantList(lines, "decisions", state.decisions);
+  appendManagerAssistantList(lines, "open questions", state.openQuestions);
+  return lines.join("\n");
+}
+
+function appendManagerAssistantList(lines: string[], label: string, values: string[] | undefined) {
+  if (!values?.length) return;
+  lines.push(`- ${label}:`);
+  for (const value of values.slice(0, 8)) lines.push(`  - ${value}`);
 }
 
 interface ManagerAssistantWorkspace {
@@ -3864,12 +3923,14 @@ function parseManagerAssistantChatRequest(
   }
   if (input.message.length > 20_000) return { ok: false, error: "message is too long" };
   const context = normalizeAssistantContext(input.context);
+  const assistantState = normalizeAssistantState(input.assistantState);
   return {
     ok: true,
     value: {
       message: input.message.trim(),
       history: normalizeAssistantHistory(input.history),
       ...(context ? { context } : {}),
+      ...(assistantState ? { assistantState } : {}),
     },
   };
 }
@@ -3912,6 +3973,104 @@ function formatManagerAssistantBrowserContext(
   if (context.sessionTitle) lines.push(`- selected session title: ${context.sessionTitle}`);
   if (context.cwd) lines.push(`- selected/current cwd: ${context.cwd}`);
   return lines.join("\n");
+}
+
+function normalizeAssistantState(input: unknown): ManagerAssistantStructuredState | undefined {
+  if (!isRecord(input)) return undefined;
+  const state: ManagerAssistantStructuredState = {};
+  if (typeof input.lastAssistantText === "string" && input.lastAssistantText.trim()) {
+    state.lastAssistantText = sanitizeManagerAssistantText(input.lastAssistantText).slice(0, 8_000);
+  }
+  if (isRecord(input.pendingDecision)) {
+    const decision = input.pendingDecision;
+    const options = Array.isArray(decision.options)
+      ? decision.options
+          .filter(isManagerAssistantDecisionOption)
+          .map((option) => ({
+            key: option.key.trim().slice(0, 24),
+            label: sanitizeManagerAssistantText(option.label).replace(/\s+/g, " ").slice(0, 400),
+            ...(option.detail
+              ? {
+                  detail: sanitizeManagerAssistantText(option.detail)
+                    .replace(/\s+/g, " ")
+                    .slice(0, 400),
+                }
+              : {}),
+          }))
+          .slice(0, 12)
+      : [];
+    if (options.length) {
+      state.pendingDecision = {
+        id:
+          typeof decision.id === "string" && decision.id.trim()
+            ? decision.id.trim().slice(0, 120)
+            : "pending-decision",
+        ...(typeof decision.prompt === "string" && decision.prompt.trim()
+          ? { prompt: decision.prompt.trim().slice(0, 1_000) }
+          : {}),
+        options,
+        ...(typeof decision.createdAt === "string" && decision.createdAt.trim()
+          ? { createdAt: decision.createdAt.trim().slice(0, 120) }
+          : {}),
+      };
+    }
+  }
+  if (isRecord(input.task)) {
+    const task = input.task;
+    const taskState =
+      typeof task.state === "string" && isManagerAssistantTaskState(task.state)
+        ? task.state
+        : "idle";
+    state.task = {
+      state: taskState,
+      ...(typeof task.title === "string" && task.title.trim()
+        ? { title: task.title.trim().slice(0, 240) }
+        : {}),
+      ...(typeof task.updatedAt === "string" && task.updatedAt.trim()
+        ? { updatedAt: task.updatedAt.trim().slice(0, 120) }
+        : {}),
+    };
+  }
+  const facts = normalizeManagerAssistantStringList(input.facts);
+  const decisions = normalizeManagerAssistantStringList(input.decisions);
+  const openQuestions = normalizeManagerAssistantStringList(input.openQuestions);
+  if (facts.length) state.facts = facts;
+  if (decisions.length) state.decisions = decisions;
+  if (openQuestions.length) state.openQuestions = openQuestions;
+  return Object.keys(state).length ? state : undefined;
+}
+
+function isManagerAssistantDecisionOption(input: unknown): input is ManagerAssistantDecisionOption {
+  if (!isRecord(input)) return false;
+  return (
+    typeof input.key === "string" &&
+    input.key.trim() !== "" &&
+    typeof input.label === "string" &&
+    input.label.trim() !== ""
+  );
+}
+
+function isManagerAssistantTaskState(
+  value: string,
+): value is NonNullable<ManagerAssistantStructuredState["task"]>["state"] {
+  return [
+    "idle",
+    "planning",
+    "waiting_user_choice",
+    "executing",
+    "verifying",
+    "blocked",
+    "done",
+  ].includes(value);
+}
+
+function normalizeManagerAssistantStringList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((value): value is string => typeof value === "string" && value.trim() !== "")
+    .map((value) => sanitizeManagerAssistantText(value).replace(/\s+/g, " ").trim().slice(0, 500))
+    .filter(Boolean)
+    .slice(0, 8);
 }
 
 function normalizeAssistantHistory(input: unknown): ManagerAssistantChatMessage[] {

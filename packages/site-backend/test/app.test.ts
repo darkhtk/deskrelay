@@ -1794,11 +1794,68 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
 
     expect(prompt).toContain("## Current User Request");
     expect(prompt).toContain("deskrelay 에 대해 알려줘");
-    expect(prompt).toContain("## Conversation Memory");
+    expect(prompt).toContain("## Recent Conversation Log");
     expect(prompt).toContain("not a dialogue transcript to continue");
     expect(prompt).not.toContain("\nUser: deskrelay");
     expect(prompt).not.toContain("\nAssistant:");
     expect(prompt.trim().endsWith("Assistant:")).toBe(false);
+  });
+
+  test("manager assistant prompt preserves pending decisions for short replies", () => {
+    const longLastReply = [
+      "확인된 사실 보고합니다.",
+      "",
+      "다음 중 어느 쪽으로 가시겠어요?",
+      "",
+      "1. remote-claude chat을 1회 스캐폴딩 호출로 써서 8개 md를 셋업",
+      "2. scope를 서버-로컬로 변경해서 서버 PC 폴더에 직접 작성",
+      "3. 계획 수정",
+      "",
+      "이 선택지는 오래 유지되어야 합니다.",
+    ].join("\n");
+    const prompt = buildManagerAssistantPrompt({
+      message: "1",
+      history: [
+        {
+          id: "a1",
+          role: "assistant",
+          text: longLastReply,
+          createdAt: "2026-05-12T00:00:00.000Z",
+        },
+      ],
+      assistantState: {
+        lastAssistantText: longLastReply,
+        pendingDecision: {
+          id: "write-strategy",
+          prompt: "다음 중 어느 쪽으로 가시겠어요?",
+          options: [
+            { key: "1", label: "remote-claude chat을 1회 스캐폴딩 호출" },
+            { key: "2", label: "scope를 서버-로컬로 변경" },
+            { key: "3", label: "계획 수정" },
+          ],
+        },
+        task: { state: "waiting_user_choice", title: "orchestration bootstrap" },
+        facts: ["원격 arbitrary file write API 없음"],
+      },
+      context: {
+        deviceId: "dev_test",
+        deviceLabel: "test device",
+        deviceConnectionState: "online",
+        sessionId: "session_test",
+        cwd: "C:\\work",
+      },
+      cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+      repoRoot: "C:\\repo",
+      instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+      apiBaseUrl: "http://127.0.0.1:18193",
+    });
+
+    expect(prompt).toContain("## Structured Manager State");
+    expect(prompt).toContain("task state: waiting_user_choice");
+    expect(prompt).toContain("1. remote-claude chat을 1회 스캐폴딩 호출");
+    expect(prompt).toContain("## Last Assistant Reply");
+    expect(prompt).toContain("## Short Reply Resolution");
+    expect(prompt).toContain("resolve the user's reply against that decision");
   });
 
   test("shortcut APIs create manager tasks", async () => {
