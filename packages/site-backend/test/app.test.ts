@@ -1103,7 +1103,7 @@ describe("manager task API", () => {
     expect(body.message?.text).toContain("context=session_1");
   });
 
-  test("manager assistant sends Korean prompt through structured stdin instead of argv", async () => {
+  test("manager assistant preserves Korean prompt when invoking the CLI", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-stdin-"));
     const scriptPath = join(cwd, "fake-claude-stdin.js");
     writeFileSync(
