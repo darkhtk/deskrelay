@@ -5,9 +5,9 @@ import { networkInterfaces, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   type DiagnosticCheck,
-  type DiagnosticStep,
   type DiagnosticReport,
   type DiagnosticSeverity,
+  type DiagnosticStep,
   MANAGER_API_VERSION,
   type ManagerAssistantChatContext,
   type ManagerAssistantChatMessage,
@@ -2011,7 +2011,10 @@ async function runDefaultManagerAssistantCliStream(
   const baseArgs =
     assistantOptions?.args ??
     parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
-  const args = managerAssistantSessionArgs(managerAssistantStreamArgs(baseArgs), input.managerSessionId);
+  const args = managerAssistantSessionArgs(
+    managerAssistantStreamArgs(baseArgs),
+    input.managerSessionId,
+  );
   const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
   const invocation = await prepareManagerAssistantInvocation(command, args, prompt);
@@ -2119,7 +2122,10 @@ async function prepareManagerAssistantInvocation(
       stdin: "ignore",
       displayCommand: `${command} ${args.join(" ")}`.trim(),
       cleanup: async () => {
-        await Promise.all([rm(payloadPath, { force: true }), rm(cmdPath, { force: true })]);
+        await Promise.all([
+          removeManagerAssistantTempFileBestEffort(payloadPath),
+          removeManagerAssistantTempFileBestEffort(cmdPath),
+        ]);
       },
     };
   }
@@ -2134,9 +2140,38 @@ async function prepareManagerAssistantInvocation(
   };
 }
 
+async function removeManagerAssistantTempFileBestEffort(path: string): Promise<void> {
+  const retryDelaysMs = [0, 100, 500, 1_500];
+  for (const delayMs of retryDelaysMs) {
+    if (delayMs > 0) await sleep(delayMs);
+    try {
+      await rm(path, { force: true });
+      return;
+    } catch (error) {
+      if (!isRetryableTempCleanupError(error)) break;
+    }
+  }
+
+  const timer = setTimeout(() => {
+    void rm(path, { force: true }).catch(() => undefined);
+  }, 5_000);
+  timer.unref?.();
+}
+
+function isRetryableTempCleanupError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isDefaultClaudeCommand(command: string): boolean {
   const normalized = command.trim().replaceAll("\\", "/").toLowerCase();
-  return normalized === "claude" || normalized.endsWith("/claude") || normalized.endsWith("/claude.cmd");
+  return (
+    normalized === "claude" || normalized.endsWith("/claude") || normalized.endsWith("/claude.cmd")
+  );
 }
 
 function managerAssistantSessionArgs(args: string[], sessionId: string | undefined): string[] {
@@ -2149,11 +2184,7 @@ function managerAssistantSessionArgs(args: string[], sessionId: string | undefin
       continue;
     }
     if (arg === "--continue" || arg === "-c" || arg === "--fork-session") continue;
-    if (
-      arg.startsWith("--resume=") ||
-      arg.startsWith("--session-id=") ||
-      arg.startsWith("-r=")
-    ) {
+    if (arg.startsWith("--resume=") || arg.startsWith("--session-id=") || arg.startsWith("-r=")) {
       continue;
     }
     normalized.push(arg);
@@ -4143,10 +4174,10 @@ async function analyzeLastRegistrationFailure(store: InstallReportStore | undefi
     report.steps.find((step) => step.severity === "error") ??
     report.steps.find((step) => step.status !== "ok");
   const classification = classifyRegistrationFailure(failureStep);
-  const action = redactManagerSensitiveText(actionFromRegistrationFailure(failureStep, classification) ?? "");
-  const safeFailureStep = failureStep
-    ? sanitizeDiagnosticStepForAssistant(failureStep)
-    : undefined;
+  const action = redactManagerSensitiveText(
+    actionFromRegistrationFailure(failureStep, classification) ?? "",
+  );
+  const safeFailureStep = failureStep ? sanitizeDiagnosticStepForAssistant(failureStep) : undefined;
   return {
     generatedAt,
     found: true,
