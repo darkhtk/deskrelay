@@ -8,6 +8,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
+import type { ManagerAssistantChatContext } from "@deskrelay/shared";
 import {
   ApiError,
   type ClaudeInstructionScope,
@@ -495,6 +496,14 @@ export const App: Component = () => {
   });
   const [conversationExport, setConversationExport] =
     createSignal<ConversationExportSnapshot | null>(null);
+  const settingsAssistantContext = createMemo<ManagerAssistantChatContext | null>(() => {
+    const workspace = activeWorkspace();
+    const deviceId = settingsDeviceId() ?? workspace.deviceId;
+    const context: ManagerAssistantChatContext = {};
+    if (deviceId) context.deviceId = deviceId;
+    if (workspace.cwd) context.cwd = workspace.cwd;
+    return Object.keys(context).length > 0 ? context : null;
+  });
 
   createEffect(() => {
     const theme = appTheme();
@@ -722,7 +731,7 @@ export const App: Component = () => {
                   />
                 </Show>
                 <Show when={settingsTab() === "assistant"}>
-                  <ManagerAssistant />
+                  <ManagerAssistant context={settingsAssistantContext()} />
                 </Show>
                 <Show when={settingsTab() === "workers"}>
                   <ManagerWorkersSettings />

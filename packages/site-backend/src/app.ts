@@ -5,6 +5,7 @@ import { networkInterfaces } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   type DiagnosticCheck,
+  type DiagnosticStep,
   type DiagnosticReport,
   type DiagnosticSeverity,
   MANAGER_API_VERSION,
@@ -186,7 +187,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   });
 
   app.get("/api/manager/tasks", async (c) => {
-    return c.json({ tasks: await managerTaskStore.list(clampListLimit(c.req.query("limit"))) });
+    return c.json({
+      tasks: (await managerTaskStore.list(clampListLimit(c.req.query("limit")))).map(
+        sanitizeManagerTaskForAssistant,
+      ),
+    });
   });
 
   app.post("/api/manager/tasks", async (c) => {
@@ -208,13 +213,16 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       build,
       requestUrl: c.req.url,
     });
-    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+    return c.json(
+      sanitizeManagerTaskForAssistant(completed),
+      completed.state === "blocked" ? 409 : 202,
+    );
   });
 
   app.get("/api/manager/tasks/:id/logs", async (c) => {
     const task = await managerTaskStore.get(c.req.param("id"));
     if (!task) return c.json({ error: "unknown task" }, 404);
-    return c.json(buildManagerTaskLogResponse(task));
+    return c.json(sanitizeManagerTaskLogForAssistant(buildManagerTaskLogResponse(task)));
   });
 
   app.post("/api/manager/tasks/:id/cancel", async (c) => {
@@ -222,16 +230,24 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     if (!task) return c.json({ error: "unknown task" }, 404);
     const cancelled = await cancelManagerTask(task, managerTaskStore, options.deviceUpdateQueue);
     if (!cancelled.ok) {
-      return c.json({ error: cancelled.error ?? "task cannot be cancelled", task }, 409);
+      return c.json(
+        {
+          error: cancelled.error ?? "task cannot be cancelled",
+          task: sanitizeManagerTaskForAssistant(task),
+        },
+        409,
+      );
     }
-    return c.json(cancelled.task, 202);
+    return c.json(sanitizeManagerTaskForAssistant(cancelled.task), 202);
   });
 
   app.post("/api/manager/tasks/:id/retry", async (c) => {
     const task = await managerTaskStore.get(c.req.param("id"));
     if (!task) return c.json({ error: "unknown task" }, 404);
     const retry = buildRetryManagerTaskRequest(task);
-    if (!retry.ok) return c.json({ error: retry.error, task }, 409);
+    if (!retry.ok) {
+      return c.json({ error: retry.error, task: sanitizeManagerTaskForAssistant(task) }, 409);
+    }
     const completed = await createAndRunManagerTask({
       request: retry.value,
       store: managerTaskStore,
@@ -242,13 +258,16 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       build,
       requestUrl: c.req.url,
     });
-    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+    return c.json(
+      sanitizeManagerTaskForAssistant(completed),
+      completed.state === "blocked" ? 409 : 202,
+    );
   });
 
   app.get("/api/manager/tasks/:id", async (c) => {
     const task = await managerTaskStore.get(c.req.param("id"));
     if (!task) return c.json({ error: "unknown task" }, 404);
-    return c.json(task);
+    return c.json(sanitizeManagerTaskForAssistant(task));
   });
 
   app.post("/api/manager/assistant/chat", async (c) => {
@@ -308,11 +327,18 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       build,
       requestUrl: c.req.url,
     });
-    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+    return c.json(
+      sanitizeManagerTaskForAssistant(completed),
+      completed.state === "blocked" ? 409 : 202,
+    );
   });
 
   app.get("/api/manager/audit-log", async (c) => {
-    return c.json({ entries: await managerTaskStore.list(clampListLimit(c.req.query("limit"))) });
+    return c.json({
+      entries: (await managerTaskStore.list(clampListLimit(c.req.query("limit")))).map(
+        sanitizeManagerTaskForAssistant,
+      ),
+    });
   });
 
   app.get("/api/manager/system/summary", async (c) => {
@@ -364,7 +390,10 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       build,
       requestUrl: c.req.url,
     });
-    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+    return c.json(
+      sanitizeManagerTaskForAssistant(completed),
+      completed.state === "blocked" ? 409 : 202,
+    );
   });
 
   app.get("/api/manager/registration/last-failure", async (c) => {
@@ -393,7 +422,10 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       build,
       requestUrl: c.req.url,
     });
-    return c.json(completed, completed.state === "blocked" ? 409 : 202);
+    return c.json(
+      sanitizeManagerTaskForAssistant(completed),
+      completed.state === "blocked" ? 409 : 202,
+    );
   });
 
   app.get("/api/manager/security/boundary", async (c) => {
@@ -1672,6 +1704,43 @@ function buildManagerTaskLogResponse(task: ManagerTask): ManagerTaskLogResponse 
   };
 }
 
+function sanitizeManagerTaskForAssistant(task: ManagerTask): ManagerTask {
+  return redactManagerSensitiveValue(task);
+}
+
+function sanitizeManagerTaskLogForAssistant(log: ManagerTaskLogResponse): ManagerTaskLogResponse {
+  return redactManagerSensitiveValue(log);
+}
+
+function sanitizeDiagnosticStepForAssistant(step: DiagnosticStep): DiagnosticStep {
+  return redactManagerSensitiveValue(step);
+}
+
+function redactManagerSensitiveValue<T>(value: T): T {
+  if (typeof value === "string") return redactManagerSensitiveText(value) as T;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactManagerSensitiveValue(item)) as T;
+  }
+  if (!isRecord(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    out[key] = redactManagerSensitiveValue(item);
+  }
+  return out as T;
+}
+
+function redactManagerSensitiveText(value: string): string {
+  return value
+    .replace(/(-SiteToken\s+)(?:"[^"]*"|'[^']*'|\S+)/gi, "$1[redacted]")
+    .replace(/(--site-token(?:=|\s+))(?:"[^"]*"|'[^']*'|\S+)/gi, "$1[redacted]")
+    .replace(/(\bSite token:\s*)(?:"[^"]*"|'[^']*'|\S+)/gi, "$1[redacted]")
+    .replace(/(\bAuthorization\s*[:=]\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]")
+    .replace(
+      /(["']?(?:siteToken|authToken|daemonToken|token)["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/=-]{16,}(["']?)/gi,
+      "$1[redacted]$2",
+    );
+}
+
 async function runManagerAssistantChat(
   request: ManagerAssistantChatRequest,
   options: SiteAppOptions,
@@ -2327,6 +2396,8 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     "Before using APIs or commands, identify the user's intent and the affected scope.",
     "Answer in Korean unless the user asks for another language.",
     "If you did not actually run a command, do not claim that you did.",
+    "Do not treat registry `connectionState: online` as proof of connector reachability; verify with doctor/process/specific APIs before operational claims.",
+    "Never print full Site tokens, daemon tokens, or token-bearing registration commands. Redact token values as `[redacted]` and point to the UI or command file when the user needs the full command.",
     "This prompt is an instruction packet, not a dialogue transcript to continue.",
     "Do not output transcript labels such as `User:`, `Assistant:`, `A:`, or `B:` unless the user explicitly asks for that format.",
     "If you list planned checks, label them as planned. Only report a check as observed after you actually used an API or command.",
@@ -2828,6 +2899,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "For authenticated `/api/*` calls, send `Authorization: Bearer $DESKRELAY_SITE_TOKEN` when the token exists.",
     "`GET /api/capabilities` is the live source of truth for route and behavior-method discovery.",
     "When behavior methods or route shapes are uncertain, discover capabilities before calling them.",
+    "- Do not treat a device registry `connectionState: online` value as proof that the server can reach that connector. For operational decisions, confirm with `/api/devices/:id/doctor`, `/process/status`, or the specific API needed for the task.",
     "When verifying generated files, call `/api/devices/:id/fs/list?includeFiles=1` for the target directory. The default list is directory-only for the cwd picker.",
     "Use `/api/devices/:id/files/preview` for guarded image or UTF-8 text/Markdown previews. If a file type is unsupported, report that limitation rather than claiming the file was read.",
     "Avoid calling `POST /api/manager/assistant/chat` or `POST /api/manager/assistant/chat/stream` from inside the assistant unless you are deliberately testing the assistant endpoint.",
@@ -2885,6 +2957,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "## Safety Rules",
     "",
     "- Never print full Site tokens or daemon tokens in the answer.",
+    "- If an API response contains a token-bearing registration or cleanup command, do not paste that command back into chat. Say that the command is available in the UI or command file, and redact token values as `[redacted]` in any diagnostic summary.",
     "- Do not expose connector daemon tokens; `/api/devices` intentionally omits them.",
     "- Summarize large logs; quote only the relevant lines.",
     "- If a command or API call fails, report the failing endpoint/command and the exact status or error.",
@@ -3785,7 +3858,7 @@ async function buildManagerSystemSummary(input: {
     },
     update,
     registration,
-    recentTasks,
+    recentTasks: recentTasks.map(sanitizeManagerTaskForAssistant),
     summary: {
       severity,
       message: `Server and ${input.registry.list().length} device(s) summarized.`,
@@ -3963,7 +4036,10 @@ async function analyzeLastRegistrationFailure(store: InstallReportStore | undefi
     report.steps.find((step) => step.severity === "error") ??
     report.steps.find((step) => step.status !== "ok");
   const classification = classifyRegistrationFailure(failureStep);
-  const action = actionFromRegistrationFailure(failureStep, classification);
+  const action = redactManagerSensitiveText(actionFromRegistrationFailure(failureStep, classification) ?? "");
+  const safeFailureStep = failureStep
+    ? sanitizeDiagnosticStepForAssistant(failureStep)
+    : undefined;
   return {
     generatedAt,
     found: true,
@@ -3971,7 +4047,7 @@ async function analyzeLastRegistrationFailure(store: InstallReportStore | undefi
     receivedAt: report.receivedAt,
     status: report.status,
     ...(report.label ? { label: report.label } : {}),
-    ...(failureStep ? { failureStep } : {}),
+    ...(safeFailureStep ? { failureStep: safeFailureStep } : {}),
     classification,
     retrySafe: failureStep?.retrySafe ?? isRetrySafeRegistrationClassification(classification),
     ...(action ? { action } : {}),

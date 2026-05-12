@@ -1664,6 +1664,55 @@ process.stdin.on("end", () => {
     expect(body.retrySafe).toBe(true);
   });
 
+  test("manager-facing diagnostics redact token-bearing registration commands", async () => {
+    const secret = "super-secret-site-token-123456789";
+    const reports = [
+      {
+        id: "install_secret",
+        receivedAt: "2026-05-11T00:00:00.000Z",
+        status: "failed" as const,
+        label: "Remote PC",
+        steps: [
+          {
+            id: "installer-error",
+            label: "installer",
+            status: "failed" as const,
+            severity: "error" as const,
+            summary: `powershell -File install-connector.ps1 -SiteToken '${secret}' failed`,
+            detail: `Authorization: Bearer ${secret}`,
+            evidence: [`--site-token ${secret}`],
+            action: `rerun with Site token: ${secret}`,
+            retrySafe: true,
+          },
+        ],
+      },
+    ];
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      installReportStore: {
+        async list() {
+          return reports;
+        },
+        async add() {
+          return reports[0] as never;
+        },
+      },
+    });
+
+    const failure = await app.fetch(authedRequest("GET", "/api/manager/registration/last-failure"));
+    expect(failure.status).toBe(200);
+    const failureText = JSON.stringify(await failure.json());
+    expect(failureText).not.toContain(secret);
+    expect(failureText).toContain("[redacted]");
+
+    const summary = await app.fetch(authedRequest("GET", "/api/manager/system/summary"));
+    expect(summary.status).toBe(200);
+    const summaryText = JSON.stringify(await summary.json());
+    expect(summaryText).not.toContain(secret);
+    expect(summaryText).toContain("[redacted]");
+  });
+
   test("server startup recovers stale running manager tasks without clearing queued device work", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const running = await managerTaskStore.create({
