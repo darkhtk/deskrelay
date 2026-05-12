@@ -516,6 +516,7 @@ function managerTaskKindLabel(kind: ManagerTask["kind"]): string {
     "restart-server": "서버 재시작",
     "restart-device": "디바이스 재시작",
     "repair-registration": "등록 복구",
+    "run-worker": "작업자 실행",
   };
   return labels[kind] ?? kind;
 }

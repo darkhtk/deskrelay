@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   type DiagnosticCheck,
   type DiagnosticReport,
@@ -33,6 +33,8 @@ import {
   type ManagerUpdatePlan,
   type ManagerUpdateStatus,
   type ManagerUpdateTargetStatus,
+  type ManagerWorkerListResponse,
+  type ManagerWorkerProfile,
   type UpdateState,
   diagnosticStepFromCheck,
   normalizeDiagnosticStep,
@@ -77,6 +79,7 @@ export interface SiteAppOptions {
   deviceUpdateQueue?: DeviceUpdateQueueStore;
   managerTaskStore?: ManagerTaskStore;
   managerAssistant?: ManagerAssistantOptions;
+  managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
 }
 
@@ -101,6 +104,17 @@ export interface ManagerAssistantOptions {
   args?: string[];
   timeoutMs?: number;
   runner?: (input: ManagerAssistantRunInput) => Promise<ManagerAssistantRunResult>;
+}
+
+export interface ManagerWorkerProfileConfig {
+  id: string;
+  label: string;
+  description: string;
+  command: string;
+  args?: string[];
+  destructive?: boolean;
+  defaultTimeoutMs?: number;
+  available?: boolean;
 }
 
 const DEFAULT_CONNECTOR_PORT = 18091;
@@ -235,6 +249,26 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const request = parseManagerAssistantChatRequest(body);
     if (!request.ok) return c.json({ error: request.error }, 400);
     return streamManagerAssistantChat(request.value, options, c.req.url);
+  });
+
+  app.get("/api/manager/workers", (c) => {
+    return c.json(buildManagerWorkerList(options));
+  });
+
+  app.post("/api/manager/workers/run", async (c) => {
+    const request = await parseManagerWorkerRunRequest(c.req);
+    if (!request.ok) return c.json({ error: request.error }, 400);
+    const completed = await createAndRunManagerTask({
+      request: request.value,
+      store: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken: options.localDaemonToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    return c.json(completed, 202);
   });
 
   app.get("/api/manager/audit-log", async (c) => {
@@ -1173,6 +1207,16 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/workers",
+    description: "List server-local worker CLI profiles available to the manager assistant.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/workers/run",
+    description: "Create a worker CLI manager task.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/audit-log",
     description: "Read manager task audit log.",
   },
@@ -1497,6 +1541,7 @@ async function createAndRunManagerTask(input: ManagerTaskCreateRunInput): Promis
   const task = await input.store.create({
     kind: input.request.kind,
     ...(input.request.targetId ? { targetId: input.request.targetId } : {}),
+    ...(input.request.params ? { params: input.request.params } : {}),
     dryRun: input.request.dryRun ?? true,
     requestedBy: input.request.requestedBy ?? "browser",
     steps: [
@@ -2174,6 +2219,192 @@ async function ensureManagerAssistantWorkspace(
   return { cwd, instructionsPath };
 }
 
+function buildManagerWorkerList(options: SiteAppOptions): ManagerWorkerListResponse {
+  return {
+    generatedAt: new Date().toISOString(),
+    profiles: buildManagerWorkerProfiles(options),
+  };
+}
+
+function buildManagerWorkerProfiles(options: SiteAppOptions): ManagerWorkerProfile[] {
+  const configured = options.managerWorkers?.length ? options.managerWorkers : undefined;
+  const profiles = configured ?? [
+    {
+      id: "claude-code",
+      label: "Claude Code worker",
+      description:
+        "Runs a separate Claude CLI process for implementation, verification, and repo work.",
+      command: process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_CLI ?? "claude",
+      args: managerAssistantPermissionArgs(
+        parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_ARGS),
+      ),
+      destructive: true,
+      defaultTimeoutMs: 600_000,
+      available: true,
+    },
+  ];
+  return profiles.map((profile) => ({
+    id: profile.id,
+    label: profile.label,
+    description: profile.description,
+    command: profile.command,
+    args: profile.args ?? [],
+    available: profile.available !== false,
+    destructive: profile.destructive !== false,
+    defaultTimeoutMs: clampWorkerTimeoutMs(profile.defaultTimeoutMs ?? 600_000),
+  }));
+}
+
+interface ManagerWorkerParams {
+  profile: string;
+  prompt: string;
+  cwd?: string;
+  timeoutMs?: number;
+}
+
+function parseManagerWorkerParams(
+  input: unknown,
+): { ok: true; value: ManagerWorkerParams } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "worker params must be an object" };
+  const profile =
+    typeof input.profile === "string" && input.profile.trim()
+      ? input.profile.trim()
+      : "claude-code";
+  const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+  if (!prompt) return { ok: false, error: "worker prompt is required" };
+  if (prompt.length > 40_000) return { ok: false, error: "worker prompt is too long" };
+  const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd.trim() : undefined;
+  const timeoutMs = Number(input.timeoutMs);
+  return {
+    ok: true,
+    value: {
+      profile,
+      prompt,
+      ...(cwd ? { cwd } : {}),
+      ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+    },
+  };
+}
+
+function resolveManagerWorkerCwd(
+  repoRoot: string,
+  cwd: string | undefined,
+): { ok: true; value: string } | { ok: false; error: string } {
+  const root = resolve(repoRoot);
+  const candidate = cwd ? (isAbsolute(cwd) ? resolve(cwd) : resolve(root, cwd)) : root;
+  const rel = relative(root, candidate);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    return { ok: false, error: `worker cwd must stay inside the server repository: ${root}` };
+  }
+  return { ok: true, value: candidate };
+}
+
+interface ManagerWorkerCliRunInput {
+  profile: ManagerWorkerProfile;
+  prompt: string;
+  cwd: string;
+  timeoutMs: number;
+  apiBaseUrl: string;
+  repoRoot: string;
+  token: string | undefined;
+}
+
+interface ManagerWorkerCliRunResult {
+  profile: string;
+  command: string;
+  cwd: string;
+  exitCode: number;
+  timedOut: boolean;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+}
+
+async function runManagerWorkerCli(
+  input: ManagerWorkerCliRunInput,
+): Promise<ManagerWorkerCliRunResult> {
+  const started = Date.now();
+  const argv = [...input.profile.args, input.prompt];
+  const proc = Bun.spawn([input.profile.command, ...argv], {
+    cwd: input.cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "pipe",
+    env: {
+      ...process.env,
+      ...(input.token ? { DESKRELAY_SITE_TOKEN: input.token } : {}),
+      DESKRELAY_MANAGER_API_BASE: input.apiBaseUrl,
+      DESKRELAY_MANAGER_WORKER: "1",
+      DESKRELAY_REPOSITORY_ROOT: input.repoRoot,
+    },
+  });
+  proc.stdin.end();
+  const stdout = readLimitedText(proc.stdout, 2_000_000);
+  const stderr = readLimitedText(proc.stderr, 500_000);
+  let timedOut = false;
+  const exitCode = await withTimeout(proc.exited, input.timeoutMs, () => {
+    timedOut = true;
+    proc.kill();
+  });
+  const [stdoutResult, stderrResult] = await Promise.all([stdout, stderr]);
+  return {
+    profile: input.profile.id,
+    command: `${input.profile.command} ${[...input.profile.args, "<prompt>"].join(" ")}`.trim(),
+    cwd: input.cwd,
+    exitCode,
+    timedOut,
+    durationMs: Date.now() - started,
+    stdout: sanitizeManagerAssistantText(stdoutResult.text),
+    stderr: sanitizeManagerAssistantText(stderrResult.text),
+    stdoutTruncated: stdoutResult.truncated,
+    stderrTruncated: stderrResult.truncated,
+  };
+}
+
+async function readLimitedText(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean }> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    const remaining = maxBytes - total;
+    if (remaining <= 0) {
+      truncated = true;
+      continue;
+    }
+    const next = value.byteLength > remaining ? value.slice(0, remaining) : value;
+    chunks.push(next);
+    total += next.byteLength;
+    if (next.byteLength < value.byteLength) truncated = true;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const suffix = truncated ? "\n[output truncated]\n" : "";
+  return { text: `${new TextDecoder().decode(bytes)}${suffix}`, truncated };
+}
+
+function clampWorkerTimeoutMs(value: number): number {
+  if (!Number.isFinite(value)) return 600_000;
+  return Math.max(5_000, Math.min(1_800_000, Math.floor(value)));
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
 function managerAssistantApiBaseUrl(options: SiteAppOptions, requestUrl: string): string {
   return new URL(options.selfHostUrl ?? requestUrl).origin;
 }
@@ -2254,6 +2485,16 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Destructive work: ask for confirmation unless the user explicitly requested the exact deletion/removal target.",
     "- Planning/explanation: do not mutate state unless the user clearly asks you to proceed.",
     "",
+    "## Worker Delegation",
+    "",
+    "- You are the supervisor. Answer questions, choose scope, inspect state, decide whether work is needed, and verify results yourself.",
+    "- Delegate substantial implementation, repo edits, test runs, documentation edits, and multi-step repair work to a worker CLI instead of pretending you performed the work inline.",
+    "- Use `GET /api/manager/workers` to discover worker profiles.",
+    '- Use `POST /api/manager/workers/run` or `POST /api/manager/tasks` with `kind: "run-worker"` to launch a worker task.',
+    "- Worker prompts must include the exact objective, allowed scope, files/modules to touch, forbidden actions, verification commands, and the expected final report.",
+    "- Use `dryRun: true` first when you are deciding whether delegation is appropriate. Use `dryRun: false` only after the user asked to proceed or the requested operation clearly implies execution.",
+    "- After worker completion, read the task result/logs, verify the changed state yourself, and report observed facts. Do not blindly trust the worker's conclusion.",
+    "",
     "## Local Context",
     "",
     `- Repository root: ${input.repoRoot}`,
@@ -2277,7 +2518,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- The server PC is Windows. Prefer PowerShell for local commands and HTTP calls.",
     "- Do not put PowerShell syntax inside Bash. If a command uses `$env:`, hashtables, `Invoke-RestMethod`, or `ConvertTo-Json`, it must run in PowerShell.",
     "- Use Bash only when the command is explicitly shell-portable or a Unix shell is actually required.",
-    "- For code/text search, use `rg` when it is installed and the target path is readable. If `rg` is unavailable or fails, use PowerShell `Select-String`.",
+    "- For code/text search in this project, use PowerShell `Select-String` or targeted file reads. Do not rely on `rg`.",
     "- Prefer `Invoke-RestMethod` for JSON APIs and `Invoke-WebRequest` for previews or non-JSON responses.",
     "- If a command fails, do not blindly retry in another shell. Classify the failure first and report the command, endpoint, status, and likely cause.",
     "",
@@ -2317,8 +2558,9 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Prefer `dryRun: true` first for manager task shortcuts when available.",
     "- Ask the user before destructive or disruptive actions unless the user already gave explicit instruction.",
     "- If the user explicitly requested the exact mutating action, perform the smallest matching API call and verify afterward.",
-    '- Manager task body: `{ "kind": "diagnose|update-server|update-device|update-all|restart-server|restart-device|repair-registration", "targetId": "optional-device-id", "dryRun": true, "requestedBy": "manager-assistant" }`.',
+    '- Manager task body: `{ "kind": "diagnose|update-server|update-device|update-all|restart-server|restart-device|repair-registration|run-worker", "targetId": "optional-device-id", "dryRun": true, "requestedBy": "manager-assistant", "params": {} }`.',
     '- Shortcut task bodies accept `{ "dryRun": true, "requestedBy": "manager-assistant" }` when supported.',
+    '- Worker run body: `{ "profile": "claude-code", "prompt": "objective/scope/verification", "cwd": ".", "timeoutMs": 600000, "dryRun": false, "requestedBy": "manager-assistant" }`.',
     "",
     "## Safety Rules",
     "",
@@ -2415,6 +2657,7 @@ function buildRetryManagerTaskRequest(
     value: {
       kind: task.kind,
       ...(task.targetId ? { targetId: task.targetId } : {}),
+      ...(task.params ? { params: task.params } : {}),
       dryRun: task.dryRun,
       requestedBy: "manager-assistant",
     },
@@ -2485,6 +2728,8 @@ async function executeManagerTask(input: ManagerTaskRunInput): Promise<ManagerTa
       return await executeRestartDeviceTask(input);
     case "repair-registration":
       return await executeRepairRegistrationTask(input);
+    case "run-worker":
+      return await executeRunWorkerTask(input);
   }
 }
 
@@ -2797,6 +3042,95 @@ async function executeRepairRegistrationTask(
     ],
     result: analysis,
     error: "automatic registration repair is not implemented",
+  };
+}
+
+async function executeRunWorkerTask(
+  input: ManagerTaskRunInput,
+): Promise<ManagerTaskExecutionResult> {
+  const params = parseManagerWorkerParams(input.request.params);
+  if (!params.ok) return blockedTask(input, "worker.params.invalid", params.error);
+
+  const profiles = buildManagerWorkerProfiles(input.options);
+  const profile = profiles.find((item) => item.id === params.value.profile);
+  if (!profile) {
+    return blockedTask(
+      input,
+      "worker.profile.unknown",
+      `Unknown worker profile: ${params.value.profile}.`,
+    );
+  }
+  if (!profile.available) {
+    return blockedTask(
+      input,
+      "worker.profile.unavailable",
+      `Worker profile is unavailable: ${profile.id}.`,
+    );
+  }
+
+  const cwd = resolveManagerWorkerCwd(
+    input.options.managerAssistant?.cwd ?? process.cwd(),
+    params.value.cwd,
+  );
+  if (!cwd.ok) return blockedTask(input, "worker.cwd.invalid", cwd.error);
+
+  const commandPreview = `${profile.command} ${[...profile.args, "<prompt>"].join(" ")}`.trim();
+  if (input.request.dryRun !== false) {
+    return {
+      state: "succeeded",
+      targetLabel: profile.label,
+      steps: [
+        ...input.task.steps,
+        taskStep({
+          id: "worker.plan",
+          label: "Worker planned",
+          status: "ok",
+          summary: `${profile.label} would run in ${cwd.value}.`,
+          evidence: [commandPreview],
+        }),
+      ],
+      result: {
+        dryRun: true,
+        profile: profile.id,
+        cwd: cwd.value,
+        command: commandPreview,
+        promptPreview: truncateText(params.value.prompt, 500),
+      },
+    };
+  }
+
+  const timeoutMs = clampWorkerTimeoutMs(params.value.timeoutMs ?? profile.defaultTimeoutMs);
+  const started = Date.now();
+  const result = await runManagerWorkerCli({
+    profile,
+    prompt: params.value.prompt,
+    cwd: cwd.value,
+    timeoutMs,
+    apiBaseUrl: managerAssistantApiBaseUrl(input.options, input.requestUrl),
+    repoRoot: input.options.managerAssistant?.cwd ?? process.cwd(),
+    token: input.options.token,
+  });
+  const succeeded = result.exitCode === 0 && !result.timedOut;
+  const summary = result.timedOut
+    ? `${profile.label} timed out after ${timeoutMs}ms.`
+    : succeeded
+      ? `${profile.label} completed in ${Date.now() - started}ms.`
+      : `${profile.label} exited with code ${result.exitCode}.`;
+  return {
+    state: succeeded ? "succeeded" : "failed",
+    targetLabel: profile.label,
+    steps: [
+      ...input.task.steps,
+      taskStep({
+        id: "worker.completed",
+        label: "Worker CLI",
+        status: succeeded ? "ok" : "failed",
+        summary,
+        evidence: [commandPreview, `cwd: ${cwd.value}`],
+      }),
+    ],
+    result,
+    ...(!succeeded ? { error: summary } : {}),
   };
 }
 
@@ -3410,6 +3744,26 @@ async function parseManagerShortcutRequest(
   return parseManagerTaskRequest({ ...body, kind });
 }
 
+async function parseManagerWorkerRunRequest(req: { json(): Promise<unknown> }): Promise<
+  { ok: true; value: ManagerTaskRequest } | { ok: false; error: string }
+> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return { ok: false, error: "body must be valid JSON" };
+  }
+  if (!isRecord(body)) return { ok: false, error: "body must be an object" };
+  const params = parseManagerWorkerParams(body);
+  if (!params.ok) return { ok: false, error: params.error };
+  return parseManagerTaskRequest({
+    kind: "run-worker",
+    dryRun: body.dryRun,
+    requestedBy: body.requestedBy,
+    params: params.value,
+  });
+}
+
 function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
   return (
     value === "diagnose" ||
@@ -3418,7 +3772,8 @@ function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
     value === "update-all" ||
     value === "restart-server" ||
     value === "restart-device" ||
-    value === "repair-registration"
+    value === "repair-registration" ||
+    value === "run-worker"
   );
 }
 

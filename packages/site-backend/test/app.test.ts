@@ -515,6 +515,17 @@ describe("API route inventory", () => {
           authedRequest("POST", "/api/manager/assistant/chat/stream", {}),
           [400],
         ],
+        ["GET /api/manager/workers", authedRequest("GET", "/api/manager/workers")],
+        [
+          "POST /api/manager/workers/run",
+          authedRequest("POST", "/api/manager/workers/run", {
+            profile: "claude-code",
+            prompt: "Say hello.",
+            dryRun: true,
+            requestedBy: "browser",
+          }),
+          [202],
+        ],
         [
           "GET /api/manager/devices/:id/actions",
           authedRequest("GET", `/api/manager/devices/${deviceId}/actions`),
@@ -1322,6 +1333,9 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(instructions).toContain("Use lazy reads");
       expect(instructions).toContain("selected/current conversation");
       expect(instructions).toContain("sessions.read");
+      expect(instructions).toContain("## Worker Delegation");
+      expect(instructions).toContain("GET /api/manager/workers");
+      expect(instructions).toContain("run-worker");
       expect(instructions).toContain("Prefer PowerShell");
       expect(instructions).toContain("Do not put PowerShell syntax inside Bash");
       expect(instructions).toContain('"message": "..."');
@@ -1331,6 +1345,66 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(instructions).toContain("PUT /api/devices/:id/instructions/:scope");
       expect(instructions).toContain("Authorization: Bearer $DESKRELAY_SITE_TOKEN");
       expect(instructions).not.toContain(TOKEN);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager worker APIs expose profiles and run a worker task", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-"));
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerWorkers: [
+        {
+          id: "echo",
+          label: "Echo worker",
+          description: "Test worker",
+          command: process.execPath,
+          args: ["-e", "console.log(Bun.argv.at(-1))"],
+          defaultTimeoutMs: 30_000,
+        },
+      ],
+    });
+
+    try {
+      const list = await app.fetch(authedRequest("GET", "/api/manager/workers"));
+      expect(list.status).toBe(200);
+      const listBody = (await list.json()) as { profiles?: Array<{ id?: string }> };
+      expect(listBody.profiles?.some((profile) => profile.id === "echo")).toBe(true);
+
+      const dryRun = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "echo",
+          prompt: "hello worker",
+          dryRun: true,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(dryRun.status).toBe(202);
+      expect(((await dryRun.json()) as { state?: string; kind?: string }).state).toBe("succeeded");
+
+      const run = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "echo",
+          prompt: "hello worker",
+          dryRun: false,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(run.status).toBe(202);
+      const body = (await run.json()) as {
+        kind?: string;
+        state?: string;
+        result?: { stdout?: string; command?: string };
+        params?: { prompt?: string };
+      };
+      expect(body.kind).toBe("run-worker");
+      expect(body.state).toBe("succeeded");
+      expect(body.params?.prompt).toBe("hello worker");
+      expect(body.result?.stdout).toContain("hello worker");
+      expect(body.result?.command).toContain("<prompt>");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

@@ -19,6 +19,7 @@ export type ManagerTaskCreateInput = Pick<
 > & {
   targetId?: string;
   targetLabel?: string;
+  params?: Record<string, unknown>;
   result?: unknown;
 };
 
@@ -107,6 +108,7 @@ function createTask(input: ManagerTaskCreateInput, now: Date): ManagerTask {
     kind: input.kind,
     ...(input.targetId ? { targetId: input.targetId } : {}),
     ...(input.targetLabel ? { targetLabel: input.targetLabel } : {}),
+    ...(input.params ? { params: input.params } : {}),
     state: "pending",
     dryRun: input.dryRun,
     requestedBy: input.requestedBy,
@@ -170,6 +172,7 @@ function normalizeStoredTask(input: unknown): ManagerTask | null {
     kind: input.kind,
     ...(typeof input.targetId === "string" ? { targetId: input.targetId } : {}),
     ...(typeof input.targetLabel === "string" ? { targetLabel: input.targetLabel } : {}),
+    ...(isRecord(input.params) ? { params: input.params } : {}),
     state: input.state,
     dryRun: input.dryRun !== false,
     requestedBy: isRequestedBy(input.requestedBy) ? input.requestedBy : "browser",
@@ -226,7 +229,8 @@ function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
     value === "update-all" ||
     value === "restart-server" ||
     value === "restart-device" ||
-    value === "repair-registration"
+    value === "repair-registration" ||
+    value === "run-worker"
   );
 }
 

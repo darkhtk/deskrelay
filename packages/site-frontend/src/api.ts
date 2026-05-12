@@ -21,6 +21,7 @@ import type {
   ManagerTaskRequest,
   ManagerUpdatePlan,
   ManagerUpdateStatus,
+  ManagerWorkerListResponse,
   UpdateState,
 } from "@deskrelay/shared";
 
@@ -534,6 +535,15 @@ export const api = {
   retryManagerTask: (id: string) => request<ManagerTask>("POST", `/api/manager/tasks/${id}/retry`),
   createManagerTask: (input: ManagerTaskRequest) =>
     request<ManagerTask>("POST", "/api/manager/tasks", input),
+  managerWorkers: () => request<ManagerWorkerListResponse>("GET", "/api/manager/workers"),
+  runManagerWorker: (input: {
+    profile?: string;
+    prompt: string;
+    cwd?: string;
+    timeoutMs?: number;
+    dryRun?: boolean;
+    requestedBy?: ManagerTaskRequest["requestedBy"];
+  }) => request<ManagerTask>("POST", "/api/manager/workers/run", input),
   managerAuditLog: (limit?: number) =>
     request<{ entries: ManagerTask[] }>(
       "GET",

@@ -12,7 +12,8 @@ export type ManagerTaskKind =
   | "update-all"
   | "restart-server"
   | "restart-device"
-  | "repair-registration";
+  | "repair-registration"
+  | "run-worker";
 export type ManagerTaskState =
   | "pending"
   | "running"
@@ -208,6 +209,7 @@ export interface ManagerTask {
   kind: ManagerTaskKind;
   targetId?: string;
   targetLabel?: string;
+  params?: Record<string, unknown>;
   state: ManagerTaskState;
   dryRun: boolean;
   requestedBy: ManagerTaskRequestedBy;
@@ -236,6 +238,22 @@ export interface ManagerTaskLogResponse {
   steps: DiagnosticStep[];
   result?: unknown;
   error?: string;
+}
+
+export interface ManagerWorkerProfile {
+  id: string;
+  label: string;
+  description: string;
+  command: string;
+  args: string[];
+  available: boolean;
+  destructive: boolean;
+  defaultTimeoutMs: number;
+}
+
+export interface ManagerWorkerListResponse {
+  generatedAt: string;
+  profiles: ManagerWorkerProfile[];
 }
 
 export interface ManagerAssistantChatMessage {
