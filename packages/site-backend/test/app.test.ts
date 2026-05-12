@@ -1587,9 +1587,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(updateRes.status).toBe(202);
     const updateTask = (await updateRes.json()) as { kind?: string; state?: string };
     expect(updateTask.kind).toBe("update-all");
-    expect(["running", "waiting_for_device", "succeeded"].includes(updateTask.state ?? "")).toBe(
-      true,
-    );
+    expect(updateTask.state).toBe("running");
     expect(calls.some((call) => call.url === `${DAEMON_URL}/system/update`)).toBe(true);
 
     const restartRes = await app.fetch(

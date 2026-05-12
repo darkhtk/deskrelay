@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { createSiteApp } from "./app.ts";
 import { InMemoryDeviceRegistry, JsonFileDeviceRegistry } from "./device-registry.ts";
 import { createJsonDeviceUpdateQueueStore } from "./device-update-queue-store.ts";
@@ -14,6 +16,7 @@ import { createPowerShellSelfServerProcessController } from "./self-server-proce
 import { createPowerShellSelfServerUpdater } from "./self-server-update.ts";
 import { createGitUpdateNoticeSource } from "./update-notice.ts";
 
+const execFileAsync = promisify(execFile);
 const port = process.env.CR_SITE_PORT ? Number(process.env.CR_SITE_PORT) : 18092;
 const host = process.env.CR_SITE_HOST ?? "127.0.0.1";
 const idleTimeoutSeconds = positiveNumber(process.env.CR_SITE_IDLE_TIMEOUT_SECONDS, 255);
@@ -27,12 +30,14 @@ if (!token && process.env.CR_SITE_AUTH_OPTIONAL !== "1") {
 
 const localDaemonToken = process.env.CR_CONNECTOR_DAEMON_TOKEN ?? (await readLocalDaemonToken());
 const announcementUrl = resolveAnnouncementUrl();
+const updateBranch =
+  process.env.DESKRELAY_UPDATE_BRANCH ?? (await readCurrentGitBranch(process.cwd())) ?? "main";
 const updateNotice =
   process.env.DESKRELAY_UPDATE_NOTICE === "0"
     ? undefined
     : createGitUpdateNoticeSource({
         repoRoot: process.cwd(),
-        branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
+        branch: updateBranch,
         ...(process.env.DESKRELAY_NEXT_VERSION
           ? { nextVersion: process.env.DESKRELAY_NEXT_VERSION }
           : {}),
@@ -75,7 +80,7 @@ const app = createSiteApp({
   selfServerUpdater: createPowerShellSelfServerUpdater({
     repoRoot: process.cwd(),
     root: selfServerRoot,
-    branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
+    branch: updateBranch,
   }),
   installReportStore: createJsonInstallReportStore(
     join(selfServerRoot, "state", "install-reports.json"),
@@ -135,6 +140,33 @@ async function readLocalDaemonToken(): Promise<string | undefined> {
     const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw) as { token?: unknown };
     return typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readCurrentGitBranch(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
+      cwd,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 2_000,
+    });
+    const branch = stdout.trim();
+    if (branch) return branch;
+  } catch {
+    // Fall back below.
+  }
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 2_000,
+    });
+    const branch = stdout.trim();
+    return branch && branch !== "HEAD" ? branch : undefined;
   } catch {
     return undefined;
   }

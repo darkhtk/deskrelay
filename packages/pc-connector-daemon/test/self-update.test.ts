@@ -18,6 +18,9 @@ describe("updateLocalSourceConnector", () => {
     let headReads = 0;
     const runner: CommandRunner = async (command, args) => {
       calls.push({ command, args });
+      if (command === "git" && args.join(" ") === "branch --show-current") {
+        return { stdout: "api-ai-assistant\n", stderr: "" };
+      }
       if (command === "git" && args.join(" ") === "rev-parse HEAD") {
         headReads += 1;
         return {
@@ -25,7 +28,7 @@ describe("updateLocalSourceConnector", () => {
           stderr: "",
         };
       }
-      if (command === "git" && args.join(" ") === "rev-parse origin/main") {
+      if (command === "git" && args.join(" ") === "rev-parse origin/api-ai-assistant") {
         return { stdout: `${"b".repeat(40)}\n`, stderr: "" };
       }
       if (command === "git" && args[0] === "status") return { stdout: "", stderr: "" };
@@ -64,11 +67,12 @@ describe("updateLocalSourceConnector", () => {
     expect(result.before.shortCommit).toBe("a".repeat(12));
     expect(result.after.shortCommit).toBe("b".repeat(12));
     expect(calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
+      "git branch --show-current",
       "git rev-parse HEAD",
       "git status --porcelain --untracked-files=no",
-      "git fetch origin main",
-      "git rev-parse origin/main",
-      "git pull --ff-only origin main",
+      "git fetch origin api-ai-assistant",
+      "git rev-parse origin/api-ai-assistant",
+      "git pull --ff-only origin api-ai-assistant",
       "bun install",
       "git rev-parse HEAD",
     ]);
@@ -77,6 +81,9 @@ describe("updateLocalSourceConnector", () => {
   test("does not report restart success when the login task restart request fails", async () => {
     let headReads = 0;
     const runner: CommandRunner = async (command, args) => {
+      if (command === "git" && args.join(" ") === "branch --show-current") {
+        return { stdout: "main\n", stderr: "" };
+      }
       if (command === "git" && args.join(" ") === "rev-parse HEAD") {
         headReads += 1;
         return {
@@ -117,6 +124,9 @@ describe("updateLocalSourceConnector", () => {
     const calls: string[] = [];
     const runner: CommandRunner = async (command, args) => {
       calls.push(`${command} ${args.join(" ")}`);
+      if (command === "git" && args.join(" ") === "branch --show-current") {
+        return { stdout: "main\n", stderr: "" };
+      }
       if (command === "git" && args.join(" ") === "rev-parse HEAD") {
         return { stdout: `${"a".repeat(40)}\n`, stderr: "" };
       }
@@ -137,7 +147,11 @@ describe("updateLocalSourceConnector", () => {
         }),
       }),
     ).rejects.toThrow(/local changes/);
-    expect(calls).toEqual(["git rev-parse HEAD", "git status --porcelain --untracked-files=no"]);
+    expect(calls).toEqual([
+      "git branch --show-current",
+      "git rev-parse HEAD",
+      "git status --porcelain --untracked-files=no",
+    ]);
   });
 });
 

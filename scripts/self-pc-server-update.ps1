@@ -2,7 +2,7 @@
 param(
   [string]$Root = "",
   [string]$RepoRoot = "",
-  [string]$Branch = "main",
+  [string]$Branch = "",
   [string]$LogPath = "",
   [string]$StatusPath = "",
   [switch]$NoOpenBrowser
@@ -31,6 +31,27 @@ function Get-FullPathNoResolve {
     return [System.IO.Path]::GetFullPath($Path)
   }
   return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
+}
+
+function Get-CurrentGitBranch {
+  param([string]$Repo)
+  Push-Location -LiteralPath $Repo
+  try {
+    $branch = (& git branch --show-current 2>$null)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($branch)) {
+      return $branch.Trim()
+    }
+    $branch = (& git rev-parse --abbrev-ref HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($branch)) {
+      $branch = $branch.Trim()
+      if ($branch -ne "HEAD") {
+        return $branch
+      }
+    }
+  } finally {
+    Pop-Location
+  }
+  return "main"
 }
 
 function Write-UpdateStatus {
@@ -68,6 +89,9 @@ function Write-UpdateStatus {
 
 $repo = Get-RepoRoot -Explicit $RepoRoot
 $root = Get-FullPathNoResolve -Path $Root -Repo $repo
+if ([string]::IsNullOrWhiteSpace($Branch)) {
+  $Branch = Get-CurrentGitBranch -Repo $repo
+}
 $startedAt = (Get-Date).ToUniversalTime().ToString("o")
 $before = ""
 $after = ""

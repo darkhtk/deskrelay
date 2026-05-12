@@ -60,8 +60,8 @@ export async function updateLocalSourceConnector(
 ): Promise<LocalConnectorUpdateResult> {
   const steps: DiagnosticStep[] = [];
   const repoRoot = options.repoRoot ?? process.cwd();
-  const branch = options.branch?.trim() || DEFAULT_BRANCH;
   const runner = options.runner ?? runCommand;
+  const branch = options.branch?.trim() || (await readCurrentGitBranch(runner, repoRoot));
   const beforeBuild = getDeskRelayBuildInfo(repoRoot);
   const beforeCommit = await gitText(runner, repoRoot, ["rev-parse", "HEAD"]);
 
@@ -186,6 +186,15 @@ export async function updateLocalSourceConnector(
       : {}),
     steps,
   };
+}
+
+async function readCurrentGitBranch(runner: CommandRunner, repoRoot: string): Promise<string> {
+  const current = await gitText(runner, repoRoot, ["branch", "--show-current"]).catch(() => "");
+  if (current) return current;
+  const fallback = await gitText(runner, repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(
+    () => "",
+  );
+  return fallback && fallback !== "HEAD" ? fallback : DEFAULT_BRANCH;
 }
 
 function addUpdateStep(

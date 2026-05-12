@@ -458,7 +458,9 @@ const daemon = new Daemon({
   },
   requestSelfUpdate: async () => {
     const result = await updateLocalSourceConnector({
-      branch: process.env.DESKRELAY_UPDATE_BRANCH ?? "main",
+      ...(process.env.DESKRELAY_UPDATE_BRANCH
+        ? { branch: process.env.DESKRELAY_UPDATE_BRANCH }
+        : {}),
     });
     if (result.restartScheduled && result.restartRequested !== false) {
       const exitTimer = setTimeout(() => process.exit(0), 500);

@@ -2636,7 +2636,7 @@ async function executeUpdateAllTask(
     steps.push(...deviceResult.steps.slice(input.task.steps.length));
   }
 
-  const states = steps.map((step) => step.status);
+  const states = steps.filter((step) => step.id !== "task.created").map((step) => step.status);
   const state: ManagerTaskState = states.includes("failed")
     ? "failed"
     : states.includes("pending")
