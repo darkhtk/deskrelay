@@ -78,6 +78,21 @@ function authedRequest(method: string, path: string, body?: unknown): Request {
   return new Request(`http://site.local${path}`, init);
 }
 
+function parseSseEvents(text: string): Array<Record<string, unknown>> {
+  const events: Array<Record<string, unknown>> = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trim())
+      .join("\n");
+    if (!data) continue;
+    const parsed = JSON.parse(data);
+    if (parsed && typeof parsed === "object") events.push(parsed as Record<string, unknown>);
+  }
+  return events;
+}
+
 function findCheck<T extends { id: string }>(checks: T[], id: string): T | undefined {
   return checks.find((check) => check.id === id);
 }
@@ -1098,6 +1113,122 @@ describe("manager task API", () => {
     expect(text).toContain('"main":"Assistant 실행 중"');
     expect(text).toContain('"type":"message"');
     expect(text).toContain("streamed 업데이트 상태 확인");
+  });
+
+  test("manager assistant history drops synthetic tool transcript artifacts", async () => {
+    const cwd = join(tmpdir(), "deskrelay-assistant-history-test");
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: {
+        cwd,
+        runner: async (input) => ({
+          command: "fake-claude -p",
+          text: `history=${input.history.length}`,
+        }),
+      },
+    });
+
+    const res = await app.fetch(
+      authedRequest("POST", "/api/manager/assistant/chat", {
+        message: "retry",
+        history: [
+          {
+            id: "broken",
+            role: "assistant",
+            text: '[Calls Bash -> cmd /c "set DESKRELAY"]\nB:',
+            createdAt: "2026-05-11T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { message?: { text?: string } };
+    expect(body.message?.text).toContain("history=0");
+  });
+
+  test("manager assistant stream rejects incomplete tool transcript artifacts", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-tool-artifact-"));
+    const scriptPath = join(cwd, "fake-claude.js");
+    writeFileSync(
+      scriptPath,
+      `
+console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "I will inspect the project." }] } }));
+console.log(JSON.stringify({ type: "result", result: "I will inspect the project.\\n[Calls Bash -> cmd /c \\"set DESKRELAY\\"]\\nB:" }));
+`,
+      "utf8",
+    );
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          command: process.execPath,
+          args: [scriptPath],
+          timeoutMs: 10_000,
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat/stream", {
+          message: "analyze",
+          history: [],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const events = parseSseEvents(await res.text());
+      expect(events.some((event) => event.type === "message")).toBe(false);
+      const error = events.find((event) => event.type === "error");
+      expect(error?.error).toContain("started a tool call");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager assistant stream keeps final text after a completed tool call", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-tool-complete-"));
+    const scriptPath = join(cwd, "fake-claude.js");
+    writeFileSync(
+      scriptPath,
+      `
+console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "cmd /c ver" } }] } }));
+console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } }));
+console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Done after tool." }] } }));
+console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
+`,
+      "utf8",
+    );
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          command: process.execPath,
+          args: [scriptPath],
+          timeoutMs: 10_000,
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat/stream", {
+          message: "analyze",
+          history: [],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const events = parseSseEvents(await res.text());
+      const message = events.find((event) => event.type === "message");
+      expect(message).toBeTruthy();
+      expect(JSON.stringify(message)).toContain("Done after tool.");
+      expect(JSON.stringify(message)).not.toContain("Calls Bash");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("manager assistant chat creates managed Claude instructions outside user-editable scopes", async () => {

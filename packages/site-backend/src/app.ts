@@ -1710,7 +1710,7 @@ async function runDefaultManagerAssistantCli(
       `Manager assistant CLI exited with code ${exitCode}${err.trim() ? `: ${err.trim()}` : ""}`,
     );
   }
-  const text = out.trim() || err.trim();
+  const text = sanitizeManagerAssistantText(out) || sanitizeManagerAssistantText(err);
   if (!text) throw new Error("Manager assistant CLI returned no output.");
   return {
     text,
@@ -1775,12 +1775,8 @@ async function runDefaultManagerAssistantCliStream(
       }`,
     );
   }
-  const text =
-    stdoutResult.resultText.trim() ||
-    stdoutResult.assistantText.trim() ||
-    stdoutResult.rawText.trim() ||
-    stderrText.trim();
-  if (!text) throw new Error("Manager assistant CLI returned no output.");
+  const finalText = chooseManagerAssistantFinalText(stdoutResult, stderrText);
+  if (!finalText.ok) throw new Error(finalText.error);
   emit(
     managerAssistantStatusEvent({
       phase: "finalizing",
@@ -1789,7 +1785,7 @@ async function runDefaultManagerAssistantCliStream(
     }),
   );
   return {
-    text,
+    text: finalText.text,
     command: `${command} ${args.join(" ")}`.trim(),
   };
 }
@@ -1830,7 +1826,11 @@ function managerAssistantPermissionArgs(args: string[]): string[] {
 interface ManagerAssistantStdoutResult {
   resultText: string;
   assistantText: string;
+  assistantTextAfterToolResult: string;
   rawText: string;
+  sawToolUse: boolean;
+  sawToolResult: boolean;
+  sawSyntheticToolArtifact: boolean;
 }
 
 async function readManagerAssistantStdout(
@@ -1842,7 +1842,11 @@ async function readManagerAssistantStdout(
   let buffer = "";
   let resultText = "";
   let assistantText = "";
+  let assistantTextAfterToolResult = "";
   let rawText = "";
+  let sawToolUse = false;
+  let sawToolResult = false;
+  let sawSyntheticToolArtifact = false;
 
   const consumeLine = (line: string) => {
     const trimmed = line.trim();
@@ -1852,19 +1856,43 @@ async function readManagerAssistantStdout(
       parsed = JSON.parse(trimmed);
     } catch {
       rawText += `${trimmed}\n`;
+      if (containsManagerAssistantToolTranscriptArtifact(trimmed)) {
+        sawSyntheticToolArtifact = true;
+      }
       return;
     }
     if (!isRecord(parsed) || typeof parsed.type !== "string") {
       rawText += `${trimmed}\n`;
+      if (containsManagerAssistantToolTranscriptArtifact(trimmed)) {
+        sawSyntheticToolArtifact = true;
+      }
       return;
     }
     emit({ type: "claude_event", event: parsed });
     const status = managerAssistantStatusFromClaudeEvent(parsed);
     if (status) emit(managerAssistantStatusEvent(status));
+    const blocks = managerAssistantMessageBlocks(parsed);
+    if (blocks.some((block) => block.type === "tool_use")) {
+      sawToolUse = true;
+    }
+    if (parsed.type === "user" && blocks.some((block) => block.type === "tool_result")) {
+      sawToolResult = true;
+    }
     const result = managerAssistantResultTextFromEvent(parsed);
-    if (result) resultText = result;
+    if (result) {
+      resultText = result;
+      if (containsManagerAssistantToolTranscriptArtifact(result)) {
+        sawSyntheticToolArtifact = true;
+      }
+    }
     const text = managerAssistantAssistantTextFromEvent(parsed);
-    if (text) assistantText += `${text}\n`;
+    if (text) {
+      assistantText += `${text}\n`;
+      if (sawToolResult) assistantTextAfterToolResult += `${text}\n`;
+      if (containsManagerAssistantToolTranscriptArtifact(text)) {
+        sawSyntheticToolArtifact = true;
+      }
+    }
   };
 
   while (true) {
@@ -1881,7 +1909,15 @@ async function readManagerAssistantStdout(
   }
   const trailing = `${buffer}${decoder.decode()}`.trim();
   if (trailing) consumeLine(trailing);
-  return { resultText, assistantText, rawText };
+  return {
+    resultText,
+    assistantText,
+    assistantTextAfterToolResult,
+    rawText,
+    sawToolUse,
+    sawToolResult,
+    sawSyntheticToolArtifact,
+  };
 }
 
 async function readManagerAssistantStderr(
@@ -1904,6 +1940,68 @@ async function readManagerAssistantStderr(
     );
   }
   return text;
+}
+
+function chooseManagerAssistantFinalText(
+  stdoutResult: ManagerAssistantStdoutResult,
+  stderrText: string,
+): { ok: true; text: string } | { ok: false; error: string } {
+  const resultText = sanitizeManagerAssistantText(stdoutResult.resultText);
+  const assistantAfterTool = sanitizeManagerAssistantText(
+    stdoutResult.assistantTextAfterToolResult,
+  );
+  const assistantText = sanitizeManagerAssistantText(stdoutResult.assistantText);
+  const rawText = sanitizeManagerAssistantText(stdoutResult.rawText);
+  const stderr = sanitizeManagerAssistantText(stderrText);
+  const incompleteToolTranscript =
+    stdoutResult.sawSyntheticToolArtifact && !stdoutResult.sawToolResult && !assistantAfterTool;
+
+  if (incompleteToolTranscript) {
+    return {
+      ok: false,
+      error:
+        "Manager assistant started a tool call but did not complete a final response. Retry the request.",
+    };
+  }
+
+  if (resultText) return { ok: true, text: resultText };
+  if (assistantAfterTool) return { ok: true, text: assistantAfterTool };
+  if (!stdoutResult.sawToolUse && assistantText) return { ok: true, text: assistantText };
+  if (rawText) return { ok: true, text: rawText };
+  if (stderr) return { ok: true, text: stderr };
+  return { ok: false, error: "Manager assistant CLI returned no output." };
+}
+
+function sanitizeManagerAssistantText(value: string): string {
+  const lines = value.replace(/\0/g, "").split(/\r?\n/);
+  const sanitized: string[] = [];
+  let removedToolTranscriptLine = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (isManagerAssistantToolTranscriptLine(trimmed)) {
+      removedToolTranscriptLine = true;
+      continue;
+    }
+    if (removedToolTranscriptLine && /^[A-Z][A-Za-z0-9_-]{0,20}:\s*$/.test(trimmed)) {
+      continue;
+    }
+    sanitized.push(line);
+    removedToolTranscriptLine = false;
+  }
+  return sanitized
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function containsManagerAssistantToolTranscriptArtifact(value: string): boolean {
+  return value.split(/\r?\n/).some((line) => isManagerAssistantToolTranscriptLine(line.trim()));
+}
+
+function isManagerAssistantToolTranscriptLine(line: string): boolean {
+  if (!line.startsWith("[") || !line.endsWith("]")) return false;
+  if (!/\b(?:Call|Calls|Calling|Use|Uses|Using)\b/i.test(line)) return false;
+  return /(?:->|→)/.test(line) || /\b(?:Bash|Read|Grep|Glob|Edit|Write|Task)\b/i.test(line);
 }
 
 function managerAssistantStatusEvent(
@@ -3253,10 +3351,12 @@ function normalizeAssistantHistory(input: unknown): ManagerAssistantChatMessage[
     if (!isRecord(item)) continue;
     if (item.role !== "user" && item.role !== "assistant" && item.role !== "system") continue;
     if (typeof item.text !== "string" || !item.text.trim()) continue;
+    const text = sanitizeManagerAssistantText(item.text);
+    if (!text) continue;
     history.push({
       id: typeof item.id === "string" && item.id.trim() ? item.id : `history_${history.length}`,
       role: item.role,
-      text: item.text.trim().slice(0, 20_000),
+      text: text.slice(0, 20_000),
       createdAt:
         typeof item.createdAt === "string" && item.createdAt.trim()
           ? item.createdAt
