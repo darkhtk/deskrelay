@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
@@ -78,6 +79,7 @@ export interface SiteAppOptions {
   selfServerAutostart?: SelfServerAutostartController;
   selfServerProcess?: SelfServerProcessController;
   selfServerUpdater?: SelfServerUpdater;
+  updateBranch?: string;
   installReportStore?: InstallReportStore;
   deviceUpdateQueue?: DeviceUpdateQueueStore;
   managerTaskStore?: ManagerTaskStore;
@@ -425,6 +427,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       command: buildRegisterOtherPcCommand({
         siteUrl: preferredUrl,
         siteToken: options.token,
+        branch: resolveServerUpdateBranch(options),
       }),
     });
   });
@@ -993,6 +996,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         token,
         fallbackCommand,
         options.deviceUpdateQueue,
+        resolveServerUpdateBranch(options),
       ).catch(() => undefined);
     }
     return new Response(text, {
@@ -1011,6 +1015,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       daemonToken(device, localToken),
       fallbackCommand,
       options.deviceUpdateQueue,
+      resolveServerUpdateBranch(options),
     );
   });
 
@@ -3086,6 +3091,7 @@ async function executeUpdateDeviceTask(
     daemonToken(device.value, input.localToken),
     buildFallbackRegisterCommandForRequest(input.options, input.requestUrl),
     input.options.deviceUpdateQueue,
+    resolveServerUpdateBranch(input.options),
   );
   const payload = await readJsonResponse(response);
   const state = stateFromDeviceUpdateResponse(response.status, payload);
@@ -4623,6 +4629,48 @@ function parseQueryBoolean(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
+function resolveServerUpdateBranch(options: SiteAppOptions): string | undefined {
+  const explicit = normalizeOptionalUpdateBranch(
+    options.updateBranch ?? process.env.DESKRELAY_UPDATE_BRANCH,
+  );
+  if (explicit) return explicit;
+  return normalizeOptionalUpdateBranch(readCurrentServerGitBranch());
+}
+
+function readCurrentServerGitBranch(): string | undefined {
+  try {
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    }).trim();
+    if (branch) return branch;
+  } catch {
+    // Branch forwarding is best-effort; connector can fall back to its current branch.
+  }
+  return undefined;
+}
+
+function normalizeOptionalUpdateBranch(value: string | undefined): string | undefined {
+  const branch = String(value ?? "").trim();
+  if (
+    !branch ||
+    branch.length > 200 ||
+    branch.startsWith("-") ||
+    branch.startsWith("/") ||
+    branch.endsWith("/") ||
+    branch.endsWith(".") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.includes("//") ||
+    !/^[A-Za-z0-9._/-]+$/.test(branch)
+  ) {
+    return undefined;
+  }
+  return branch;
+}
+
 async function readLogResponse(input: {
   scope: "server";
   source: string;
@@ -4746,6 +4794,7 @@ async function requestDaemonSystemUpdate(
   token: string | undefined,
   fallbackCommand: string,
   queue?: DeviceUpdateQueueStore,
+  branch?: string,
 ): Promise<Response> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -4766,7 +4815,7 @@ async function requestDaemonSystemUpdate(
     res = await fetchImpl(`${device.daemonUrl}/system/update`, {
       method: "POST",
       headers,
-      body: JSON.stringify({}),
+      body: JSON.stringify(branch ? { branch } : {}),
     });
   } catch (err) {
     const error = `cannot reach daemon: ${(err as Error).message}`;
@@ -4825,7 +4874,21 @@ async function requestDaemonSystemUpdate(
     );
   }
 
-  const responsePayload = isRecord(payload) ? payload : { ok: true };
+  const rawResponsePayload = isRecord(payload) ? payload : { ok: true };
+  const actualBranch =
+    typeof rawResponsePayload.branch === "string" ? rawResponsePayload.branch : undefined;
+  const branchMismatch = Boolean(branch && actualBranch && actualBranch !== branch);
+  const responsePayload = branchMismatch
+    ? {
+        ...rawResponsePayload,
+        ok: false,
+        state: "failed",
+        expectedBranch: branch,
+        actualBranch,
+        error: `connector updated ${actualBranch} instead of ${branch}. Re-run the registration command for this server branch.`,
+        fallbackCommand,
+      }
+    : rawResponsePayload;
   const finalState =
     normalizeUpdateState(responsePayload.state) ??
     (typeof responsePayload.restartRequestError === "string" ? "restart_required" : "succeeded");
@@ -4856,7 +4919,7 @@ async function requestDaemonSystemUpdate(
       : {}),
   });
 
-  return Response.json(responsePayload);
+  return Response.json(responsePayload, { status: branchMismatch ? 409 : 200 });
 }
 
 async function retryQueuedDeviceSystemUpdate(
@@ -4865,10 +4928,11 @@ async function retryQueuedDeviceSystemUpdate(
   token: string | undefined,
   fallbackCommand: string,
   queue: DeviceUpdateQueueStore,
+  branch?: string,
 ): Promise<void> {
   const entry = await queue.get(device.id);
   if (entry?.state !== "pending_until_device_online") return;
-  await requestDaemonSystemUpdate(fetchImpl, device, token, fallbackCommand, queue);
+  await requestDaemonSystemUpdate(fetchImpl, device, token, fallbackCommand, queue, branch);
 }
 
 function buildFallbackRegisterCommandForRequest(
@@ -4878,7 +4942,11 @@ function buildFallbackRegisterCommandForRequest(
   if (!options.token) return "";
   const urls = getAccessUrls(options.selfHostUrl ?? requestUrl);
   const preferredUrl = pickRemoteAccessUrl(urls);
-  return buildRegisterOtherPcCommand({ siteUrl: preferredUrl, siteToken: options.token });
+  return buildRegisterOtherPcCommand({
+    siteUrl: preferredUrl,
+    siteToken: options.token,
+    branch: resolveServerUpdateBranch(options),
+  });
 }
 
 function normalizeUpdateState(value: unknown): UpdateState | undefined {
@@ -5137,15 +5205,21 @@ function isTailscaleUrl(raw: string): boolean {
   }
 }
 
-function buildRegisterOtherPcCommand(input: { siteUrl: string; siteToken: string }): string {
+function buildRegisterOtherPcCommand(input: {
+  siteUrl: string;
+  siteToken: string;
+  branch?: string | undefined;
+}): string {
   const siteUrl = input.siteUrl.replace(/\/+$/, "");
+  const branch = input.branch ?? "main";
+  const installerUrl = `https://raw.githubusercontent.com/darkhtk/deskrelay/${branch}/scripts/install-connector.ps1`;
   return [
     "$ErrorActionPreference = 'Stop'",
     "$installer = Join-Path $env:TEMP 'deskrelay-install-connector.ps1'",
-    "Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1' -OutFile $installer",
+    `Invoke-WebRequest -UseBasicParsing -Uri ${quotePs(installerUrl)} -OutFile $installer`,
     "",
     "$workspaceRoots = Join-Path $HOME 'Projects'",
-    `powershell -ExecutionPolicy Bypass -File $installer -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -WorkspaceRoots $workspaceRoots -Label $env:COMPUTERNAME -Port ${DEFAULT_CONNECTOR_PORT}`,
+    `powershell -ExecutionPolicy Bypass -File $installer -Server ${quotePs(siteUrl)} -SiteToken ${quotePs(input.siteToken)} -WorkspaceRoots $workspaceRoots -Label $env:COMPUTERNAME -Port ${DEFAULT_CONNECTOR_PORT} -Branch ${quotePs(branch)}`,
   ].join("\n");
 }
 

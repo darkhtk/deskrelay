@@ -133,7 +133,7 @@ export interface DaemonOptions {
   requestSelfUninstall?: (options: { removeRepo?: boolean }) => Promise<unknown>;
   /** Pull the local source checkout and restart through the login task when
    *  available. Wired by bin.ts for the real daemon; tests may provide a stub. */
-  requestSelfUpdate?: () => Promise<unknown>;
+  requestSelfUpdate?: (options?: { branch?: string }) => Promise<unknown>;
   /** Restart the connector without pulling source. Wired by bin.ts for the
    *  real daemon; tests may provide a stub. */
   requestSelfRestart?: () => Promise<ManagerRestartResult>;
@@ -322,7 +322,7 @@ export class Daemon {
         return await this.#handleSystemUninstall(req);
       }
       if (req.method === "POST" && path === "/system/update") {
-        return await this.#handleSystemUpdate();
+        return await this.#handleSystemUpdate(req);
       }
       if (req.method === "POST" && path === "/hooks/pretooluse") {
         return await this.#handleApprovalRequest(req);
@@ -1078,13 +1078,17 @@ export class Daemon {
     return jsonResponse(200, result ?? { ok: true });
   }
 
-  async #handleSystemUpdate(): Promise<Response> {
+  async #handleSystemUpdate(req: Request): Promise<Response> {
     const update = this.#options.requestSelfUpdate;
     if (!update) {
       return jsonResponse(501, { ok: false, error: "self update is not wired" });
     }
+    const bodyResult = await readOptionalUpdateBody(req);
+    if (!bodyResult.ok) {
+      return jsonResponse(400, { ok: false, error: bodyResult.error });
+    }
     try {
-      const result = await update();
+      const result = await update(bodyResult.value);
       return jsonResponse(200, result ?? { ok: true });
     } catch (err) {
       return jsonResponse(500, { ok: false, error: (err as Error).message });
@@ -1346,4 +1350,44 @@ function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 function parseQueryBoolean(value: string | null): boolean {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+async function readOptionalUpdateBody(
+  req: Request,
+): Promise<{ ok: true; value: { branch?: string } } | { ok: false; error: string }> {
+  const raw = await req.text().catch(() => "");
+  if (!raw.trim()) return { ok: true, value: {} };
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "invalid JSON body" };
+  }
+  if (typeof body !== "object" || body === null) {
+    return { ok: false, error: "body must be an object" };
+  }
+  const branch = normalizeOptionalUpdateBranch((body as { branch?: unknown }).branch);
+  if (branch === false) return { ok: false, error: "branch is invalid" };
+  return { ok: true, value: branch ? { branch } : {} };
+}
+
+function normalizeOptionalUpdateBranch(value: unknown): string | false | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") return false;
+  const branch = value.trim();
+  if (
+    !branch ||
+    branch.length > 200 ||
+    branch.startsWith("-") ||
+    branch.startsWith("/") ||
+    branch.endsWith("/") ||
+    branch.endsWith(".") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.includes("//") ||
+    !/^[A-Za-z0-9._/-]+$/.test(branch)
+  ) {
+    return false;
+  }
+  return branch;
 }

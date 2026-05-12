@@ -353,25 +353,48 @@ describe("Daemon HTTP API — basics", () => {
     expect(r.status).toBe(401);
   });
 
-  test("POST /system/update invokes the wired update callback", async () => {
-    let calls = 0;
-    await daemon.stop();
-    daemon = new Daemon({
-      port: 0,
-      bunPath: process.execPath,
-      authToken: TEST_AUTH_TOKEN,
-      requestSelfUpdate: async () => {
-        calls += 1;
-        return { ok: true, restartScheduled: true };
-      },
+    test("POST /system/update invokes the wired update callback", async () => {
+      let calls = 0;
+      const options: Array<{ branch?: string } | undefined> = [];
+      await daemon.stop();
+      daemon = new Daemon({
+        port: 0,
+        bunPath: process.execPath,
+        authToken: TEST_AUTH_TOKEN,
+        requestSelfUpdate: async (input) => {
+          calls += 1;
+          options.push(input);
+          return { ok: true, restartScheduled: true };
+        },
+      });
+      const listening = daemon.start();
+      baseUrl = `http://${listening.host}:${listening.port}`;
+    const r = await http("POST", "/system/update", { branch: "api-ai-assistant" });
+      expect(r.status).toBe(200);
+      expect(calls).toBe(1);
+      expect(options).toEqual([{ branch: "api-ai-assistant" }]);
+      expect(r.data).toEqual({ ok: true, restartScheduled: true });
     });
-    const listening = daemon.start();
-    baseUrl = `http://${listening.host}:${listening.port}`;
-    const r = await http("POST", "/system/update");
-    expect(r.status).toBe(200);
-    expect(calls).toBe(1);
-    expect(r.data).toEqual({ ok: true, restartScheduled: true });
-  });
+
+    test("POST /system/update rejects invalid branch names", async () => {
+      let calls = 0;
+      await daemon.stop();
+      daemon = new Daemon({
+        port: 0,
+        bunPath: process.execPath,
+        authToken: TEST_AUTH_TOKEN,
+        requestSelfUpdate: async () => {
+          calls += 1;
+          return { ok: true };
+        },
+      });
+      const listening = daemon.start();
+      baseUrl = `http://${listening.host}:${listening.port}`;
+      const r = await http("POST", "/system/update", { branch: "../main" });
+      expect(r.status).toBe(400);
+      expect(calls).toBe(0);
+      expect(r.data).toEqual({ ok: false, error: "branch is invalid" });
+    });
 
   test("POST /system/update requires Bearer auth", async () => {
     const r = await http("POST", "/system/update", undefined, { token: null });

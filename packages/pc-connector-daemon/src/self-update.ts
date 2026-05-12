@@ -61,7 +61,10 @@ export async function updateLocalSourceConnector(
   const steps: DiagnosticStep[] = [];
   const repoRoot = options.repoRoot ?? process.cwd();
   const runner = options.runner ?? runCommand;
-  const branch = options.branch?.trim() || (await readCurrentGitBranch(runner, repoRoot));
+  const requestedBranch = options.branch?.trim();
+  const branch = normalizeUpdateBranch(
+    requestedBranch || (await readCurrentGitBranch(runner, repoRoot)),
+  );
   const beforeBuild = getDeskRelayBuildInfo(repoRoot);
   const beforeCommit = await gitText(runner, repoRoot, ["rev-parse", "HEAD"]);
 
@@ -195,6 +198,25 @@ async function readCurrentGitBranch(runner: CommandRunner, repoRoot: string): Pr
     () => "",
   );
   return fallback && fallback !== "HEAD" ? fallback : DEFAULT_BRANCH;
+}
+
+function normalizeUpdateBranch(value: string): string {
+  const branch = value.trim();
+  if (
+    !branch ||
+    branch.length > 200 ||
+    branch.startsWith("-") ||
+    branch.startsWith("/") ||
+    branch.endsWith("/") ||
+    branch.endsWith(".") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.includes("//") ||
+    !/^[A-Za-z0-9._/-]+$/.test(branch)
+  ) {
+    throw new Error(`Invalid update branch: ${value}`);
+  }
+  return branch;
 }
 
 function addUpdateStep(

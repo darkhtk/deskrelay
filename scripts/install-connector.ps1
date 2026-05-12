@@ -10,6 +10,7 @@ param(
   [string]$Label = "",
   [string]$Repo = "",
   [string]$RepoUrl = "https://github.com/darkhtk/deskrelay.git",
+  [string]$Branch = "main",
   [int]$Port = 18091,
   [switch]$NoOpenBrowser
 )
@@ -86,6 +87,7 @@ function Save-InstallReport {
     server = $Server
     repo = $Repo
     repoUrl = $RepoUrl
+    branch = $Branch
     port = $Port
     workspaceRoots = $WorkspaceRoots
     label = $Label
@@ -460,6 +462,26 @@ function Normalize-RepoUrl {
   return $value.ToLowerInvariant()
 }
 
+function Normalize-GitBranch {
+  param([string]$Value)
+  $branchName = $Value.Trim()
+  if (
+    [string]::IsNullOrWhiteSpace($branchName) -or
+    $branchName.Length -gt 200 -or
+    $branchName.StartsWith("-") -or
+    $branchName.StartsWith("/") -or
+    $branchName.EndsWith("/") -or
+    $branchName.EndsWith(".") -or
+    $branchName.Contains("..") -or
+    $branchName.Contains("@{") -or
+    $branchName.Contains("//") -or
+    $branchName -notmatch "^[A-Za-z0-9._/-]+$"
+  ) {
+    throw "Invalid DeskRelay git branch: $Value"
+  }
+  return $branchName
+}
+
 function Backup-ExistingRepo {
   param([string]$Path, [string]$Reason)
   if (-not (Test-Path -LiteralPath $Path)) {
@@ -479,14 +501,17 @@ function Backup-ExistingRepo {
 }
 
 function Clone-Fresh {
-  param([string]$Url, [string]$Path)
+  param([string]$Url, [string]$Path, [string]$BranchName)
   Invoke-Native "git" @("clone", $Url, $Path)
   Set-Location -LiteralPath $Path
-  Add-InstallStep -Id "repo" -Label "DeskRelay repo" -Status "repaired" -Summary "cloned fresh repo" -Evidence @("path=$Path", "origin=$Url")
+  Invoke-Native "git" @("fetch", "origin", $BranchName)
+  Invoke-Native "git" @("checkout", $BranchName)
+  Invoke-Native "git" @("pull", "--ff-only", "origin", $BranchName)
+  Add-InstallStep -Id "repo" -Label "DeskRelay repo" -Status "repaired" -Summary "cloned fresh repo" -Evidence @("path=$Path", "origin=$Url", "branch=$BranchName")
 }
 
 function Ensure-DeskRelayRepo {
-  param([string]$Path, [string]$Url)
+  param([string]$Path, [string]$Url, [string]$BranchName)
 
   if (Test-Path -LiteralPath $Path) {
     if (-not (Test-Path -LiteralPath (Join-Path $Path ".git"))) {
@@ -495,7 +520,7 @@ function Ensure-DeskRelayRepo {
   }
 
   if (-not (Test-Path -LiteralPath $Path)) {
-    Clone-Fresh -Url $Url -Path $Path
+    Clone-Fresh -Url $Url -Path $Path -BranchName $BranchName
     return
   }
 
@@ -507,25 +532,25 @@ function Ensure-DeskRelayRepo {
     (Normalize-RepoUrl $origin) -ne (Normalize-RepoUrl $Url)
   ) {
     Backup-ExistingRepo -Path $Path -Reason "DeskRelay git remote is not $Url."
-    Clone-Fresh -Url $Url -Path $Path
+    Clone-Fresh -Url $Url -Path $Path -BranchName $BranchName
     return
   }
 
   $dirty = (& git status --porcelain)
   if ($LASTEXITCODE -ne 0 -or $dirty) {
     Backup-ExistingRepo -Path $Path -Reason "DeskRelay folder has local changes or unreadable git status."
-    Clone-Fresh -Url $Url -Path $Path
+    Clone-Fresh -Url $Url -Path $Path -BranchName $BranchName
     return
   }
 
   try {
-    Invoke-Native "git" @("fetch", "origin", "main")
-    Invoke-Native "git" @("checkout", "main")
-    Invoke-Native "git" @("pull", "--ff-only", "origin", "main")
-    Add-InstallStep -Id "repo" -Label "DeskRelay repo" -Status "ok" -Summary "repo is clean and up to date" -Evidence @("path=$Path", "origin=$Url")
+    Invoke-Native "git" @("fetch", "origin", $BranchName)
+    Invoke-Native "git" @("checkout", $BranchName)
+    Invoke-Native "git" @("pull", "--ff-only", "origin", $BranchName)
+    Add-InstallStep -Id "repo" -Label "DeskRelay repo" -Status "ok" -Summary "repo is clean and up to date" -Evidence @("path=$Path", "origin=$Url", "branch=$BranchName")
   } catch {
     Backup-ExistingRepo -Path $Path -Reason "DeskRelay could not update cleanly."
-    Clone-Fresh -Url $Url -Path $Path
+    Clone-Fresh -Url $Url -Path $Path -BranchName $BranchName
   }
 }
 
@@ -538,6 +563,9 @@ if ([string]::IsNullOrWhiteSpace($WorkspaceRoots)) {
 if ([string]::IsNullOrWhiteSpace($Label)) {
   $Label = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { "DeskRelay PC" }
 }
+$Branch = Normalize-GitBranch -Value $Branch
+$env:DESKRELAY_UPDATE_BRANCH = $Branch
+[Environment]::SetEnvironmentVariable("DESKRELAY_UPDATE_BRANCH", $Branch, "User")
 
 Require-Command "git" "Install Git for Windows, then run this command again."
 Require-Command "bun" "Install Bun, then run this command again."
@@ -550,7 +578,7 @@ Write-Host "This PC will be registered as $($endpoint.Kind): http://$($endpoint.
 Ensure-ConnectorFirewallRule -Port $Port
 Stop-StaleConnector -Port $Port
 
-Ensure-DeskRelayRepo -Path $Repo -Url $RepoUrl
+Ensure-DeskRelayRepo -Path $Repo -Url $RepoUrl -BranchName $Branch
 
 if (-not (Test-Path -LiteralPath $WorkspaceRoots)) {
   New-Item -ItemType Directory -Force -Path $WorkspaceRoots | Out-Null

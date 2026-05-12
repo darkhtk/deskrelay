@@ -456,11 +456,13 @@ const daemon = new Daemon({
     (exitTimer as { unref?: () => void }).unref?.();
     return result;
   },
-  requestSelfUpdate: async () => {
+  requestSelfUpdate: async (input) => {
     const result = await updateLocalSourceConnector({
-      ...(process.env.DESKRELAY_UPDATE_BRANCH
-        ? { branch: process.env.DESKRELAY_UPDATE_BRANCH }
-        : {}),
+      ...(input?.branch
+        ? { branch: input.branch }
+        : process.env.DESKRELAY_UPDATE_BRANCH
+          ? { branch: process.env.DESKRELAY_UPDATE_BRANCH }
+          : {}),
     });
     if (result.restartScheduled && result.restartRequested !== false) {
       const exitTimer = setTimeout(() => process.exit(0), 500);

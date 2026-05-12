@@ -3,7 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Hono } from "hono";
-import { buildManagerAssistantPrompt, createSiteApp } from "../src/app.ts";
+import {
+  buildManagerAssistantPrompt,
+  createSiteApp,
+  type SiteAppOptions,
+} from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
 import type {
   DeviceUpdateEntryInput,
@@ -29,7 +33,9 @@ interface MockSetup {
   setMockResponse(handler: (req: Request) => Response | Promise<Response>): void;
 }
 
-function makeApp(): MockSetup {
+function makeApp(
+  options: Partial<Omit<SiteAppOptions, "registry" | "token" | "fetchImpl">> = {},
+): MockSetup {
   const registry = new InMemoryDeviceRegistry();
   const calls: MockDaemonCall[] = [];
   let mockResponse: (req: Request) => Response | Promise<Response> = () =>
@@ -55,7 +61,7 @@ function makeApp(): MockSetup {
     return mockResponse(new Request(url, init));
   }) as typeof fetch;
 
-  const app = createSiteApp({ registry, token: TOKEN, fetchImpl });
+  const app = createSiteApp({ registry, token: TOKEN, fetchImpl, ...options });
   return {
     app,
     registry,
@@ -2068,6 +2074,7 @@ describe("self-host command helper", () => {
       registry: new InMemoryDeviceRegistry(),
       token: TOKEN,
       selfHostUrl: "http://100.64.1.2:18193",
+      updateBranch: "api-ai-assistant",
     });
     const res = await app.fetch(
       new Request("http://site.local/api/self/register-other-pc-command", {
@@ -2088,9 +2095,10 @@ describe("self-host command helper", () => {
     expect(body.connectorPort).toBe(18091);
     expect(body.siteToken).toBe(TOKEN);
     expect(body.command).toContain(
-      "https://raw.githubusercontent.com/darkhtk/deskrelay/main/scripts/install-connector.ps1",
+      "https://raw.githubusercontent.com/darkhtk/deskrelay/api-ai-assistant/scripts/install-connector.ps1",
     );
     expect(body.command).toContain("deskrelay-install-connector.ps1");
+    expect(body.command).toContain("-Branch 'api-ai-assistant'");
     expect(body.command).not.toMatch(/^\s*#/m);
     expect(body.command).toContain(`-Server '${body.preferredUrl}'`);
     expect(body.command).toContain(`-SiteToken '${TOKEN}'`);
@@ -2702,21 +2710,27 @@ describe("device CRUD", () => {
 
 describe("device update proxy", () => {
   test("POST /api/devices/:id/system/update forwards to daemon with saved token", async () => {
-    const device = setup.registry.register({
+    const branchSetup = makeApp({ updateBranch: "api-ai-assistant" });
+    const device = branchSetup.registry.register({
       daemonUrl: DAEMON_URL,
       authToken: "daemon-token",
       label: "Office",
     });
-    setup.setMockResponse(() => Response.json({ ok: true, restartScheduled: true, changed: true }));
+    branchSetup.setMockResponse(() =>
+      Response.json({ ok: true, restartScheduled: true, changed: true }),
+    );
 
-    const res = await setup.app.fetch(
+    const res = await branchSetup.app.fetch(
       authedRequest("POST", `/api/devices/${device.id}/system/update`),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, restartScheduled: true, changed: true });
-    expect(setup.calls.at(-1)?.method).toBe("POST");
-    expect(setup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/system/update`);
-    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+    expect(branchSetup.calls.at(-1)?.method).toBe("POST");
+    expect(branchSetup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/system/update`);
+    expect(branchSetup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+    expect(JSON.parse(branchSetup.calls.at(-1)?.body ?? "{}")).toEqual({
+      branch: "api-ai-assistant",
+    });
   });
 
   test("old daemon update route returns a registration fallback command", async () => {
@@ -2742,6 +2756,40 @@ describe("device update proxy", () => {
     expect(body.error).toContain("registration command");
     expect(body.fallbackCommand).toContain("deskrelay-install-connector.ps1");
     expect(body.fallbackCommand).toContain(`-SiteToken '${TOKEN}'`);
+  });
+
+  test("branch-mismatched connector update is reported as failed with fallback command", async () => {
+    const branchSetup = makeApp({ updateBranch: "api-ai-assistant" });
+    const device = branchSetup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "Office",
+    });
+    branchSetup.setMockResponse(() =>
+      Response.json({
+        ok: true,
+        state: "succeeded",
+        branch: "main",
+        changed: false,
+      }),
+    );
+
+    const res = await branchSetup.app.fetch(
+      authedRequest("POST", `/api/devices/${device.id}/system/update`),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      ok: boolean;
+      state: string;
+      expectedBranch: string;
+      actualBranch: string;
+      fallbackCommand: string;
+    };
+    expect(body.ok).toBe(false);
+    expect(body.state).toBe("failed");
+    expect(body.expectedBranch).toBe("api-ai-assistant");
+    expect(body.actualBranch).toBe("main");
+    expect(body.fallbackCommand).toContain("-Branch 'api-ai-assistant'");
   });
 });
 

@@ -120,6 +120,65 @@ describe("updateLocalSourceConnector", () => {
     });
   });
 
+  test("uses an explicit server branch instead of the local checkout branch", async () => {
+    const calls: string[] = [];
+    let headReads = 0;
+    const runner: CommandRunner = async (command, args) => {
+      calls.push(`${command} ${args.join(" ")}`);
+      if (command === "git" && args.join(" ") === "rev-parse HEAD") {
+        headReads += 1;
+        return {
+          stdout: headReads === 1 ? `${"a".repeat(40)}\n` : `${"c".repeat(40)}\n`,
+          stderr: "",
+        };
+      }
+      if (command === "git" && args.join(" ") === "rev-parse origin/api-ai-assistant") {
+        return { stdout: `${"c".repeat(40)}\n`, stderr: "" };
+      }
+      if (command === "git" && args[0] === "status") return { stdout: "", stderr: "" };
+      return { stdout: "", stderr: "" };
+    };
+
+    const result = await updateLocalSourceConnector({
+      repoRoot: root,
+      branch: "api-ai-assistant",
+      runner,
+      loginTaskStatus: async () => ({
+        supported: true,
+        installed: true,
+        taskName: "DeskRelay Connector",
+      }),
+      restartLoginTask: async () => ({ ok: true }),
+    });
+
+    expect(result.branch).toBe("api-ai-assistant");
+    expect(calls).not.toContain("git branch --show-current");
+    expect(calls).toContain("git fetch origin api-ai-assistant");
+    expect(calls).toContain("git pull --ff-only origin api-ai-assistant");
+  });
+
+  test("rejects invalid explicit update branches before fetching", async () => {
+    const calls: string[] = [];
+    const runner: CommandRunner = async (command, args) => {
+      calls.push(`${command} ${args.join(" ")}`);
+      return { stdout: "", stderr: "" };
+    };
+
+    await expect(
+      updateLocalSourceConnector({
+        repoRoot: root,
+        branch: "../main",
+        runner,
+        loginTaskStatus: async () => ({
+          supported: true,
+          installed: true,
+          taskName: "DeskRelay Connector",
+        }),
+      }),
+    ).rejects.toThrow(/Invalid update branch/);
+    expect(calls).toEqual([]);
+  });
+
   test("refuses to update a dirty tracked checkout before fetching", async () => {
     const calls: string[] = [];
     const runner: CommandRunner = async (command, args) => {
