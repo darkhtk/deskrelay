@@ -1,3 +1,4 @@
+import type { ManagerAssistantChatContext } from "@deskrelay/shared";
 import {
   type Component,
   For,
@@ -8,7 +9,6 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
-import type { ManagerAssistantChatContext } from "@deskrelay/shared";
 import {
   ApiError,
   type ClaudeInstructionScope,
@@ -1139,10 +1139,10 @@ const GeneralSettings: Component<{
             return { deviceId: device.id, error: "offline" };
           }
           try {
-            const snapshot = await api.diagnostics(device.id);
+            const snapshot = await api.deviceInstallStatus(device.id);
             return {
               deviceId: device.id,
-              ...(snapshot.build ? { build: snapshot.build } : {}),
+              build: snapshot.build,
             };
           } catch (err) {
             return { deviceId: device.id, error: (err as Error).message };
@@ -1549,7 +1549,11 @@ const GeneralSettings: Component<{
                               ? "명령 필요"
                               : phase() === "failed"
                                 ? "조치 필요"
-                                : "최신"}
+                                : deviceBuildSnapshots.loading || !snapshot()
+                                  ? "확인 중"
+                                  : phase() === "queued"
+                                    ? "업데이트 가능"
+                                    : "최신"}
                   </button>
                 </div>
                 <Show when={fallbackCommand()}>
@@ -2064,6 +2068,7 @@ function deviceUpdateStatusText(
     return deviceUpdateQueueStatusText(queueEntry);
   }
   if (device.connectionState === "offline") return "오프라인: 온라인 상태가 되면 업데이트 가능";
+  if (!snapshot) return "connector 상태 확인 중";
   if (snapshot?.error) return `상태 확인 실패: ${snapshot.error}`;
   return buildDetail(server, snapshot?.build);
 }

@@ -390,7 +390,9 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   });
 
   app.get("/api/manager/update/plan", async (c) => {
-    return c.json(await buildManagerUpdatePlan({ options, registry, build }));
+    return c.json(
+      await buildManagerUpdatePlan({ options, registry, build, fetchImpl, localToken }),
+    );
   });
 
   app.get("/api/manager/update/status", async (c) => {
@@ -3409,6 +3411,8 @@ async function executeUpdateAllTask(
       options: input.options,
       registry: input.registry,
       build: input.build,
+      fetchImpl: input.fetchImpl,
+      localToken: input.localToken,
     });
     return {
       state: "succeeded",
@@ -3763,6 +3767,8 @@ async function buildManagerUpdatePlan(input: {
   options: SiteAppOptions;
   registry: DeviceRegistry;
   build: DeskRelayBuildInfo;
+  fetchImpl?: NonNullable<SiteAppOptions["fetchImpl"]>;
+  localToken?: string | undefined;
 }): Promise<ManagerUpdatePlan> {
   const generatedAt = new Date().toISOString();
   const items: ManagerUpdatePlan["items"] = [];
@@ -3805,6 +3811,16 @@ async function buildManagerUpdatePlan(input: {
     : [];
   for (const device of input.registry.list()) {
     const queued = queueEntries.find((entry) => entry.deviceId === device.id);
+    const installStatus =
+      queued || !input.fetchImpl
+        ? null
+        : await buildDeviceInstallStatus(
+            input.fetchImpl,
+            device,
+            daemonToken(device, input.localToken),
+            input.options.deviceUpdateQueue,
+          ).catch(() => null);
+    const deviceMatchesServer = installStatus ? sameBuild(input.build, installStatus.build) : null;
     items.push({
       scope: "device",
       targetId: device.id,
@@ -3819,11 +3835,29 @@ async function buildManagerUpdatePlan(input: {
               : queued.state === "failed"
                 ? "update"
                 : "none"
-        : "unknown",
-      ...(queued?.state ? { state: queued.state } : {}),
+        : installStatus
+          ? deviceMatchesServer === false
+            ? "update"
+            : deviceMatchesServer === true
+              ? "none"
+              : "unknown"
+          : "unknown",
+      ...(queued?.state
+        ? { state: queued.state }
+        : installStatus?.update?.state
+          ? { state: installStatus.update.state }
+          : installStatus?.running
+            ? { state: "running" }
+            : {}),
       reason: queued
         ? queued.warning || queued.error || `Queued update state: ${queued.state}.`
-        : "No queued update state is known. Query device install status before deciding.",
+        : installStatus
+          ? deviceMatchesServer === false
+            ? "Connector update is available."
+            : deviceMatchesServer === true
+              ? "Connector build matches the server."
+              : installStatus.summary.message
+          : "Device install status is unavailable.",
     });
   }
 
@@ -3861,6 +3895,8 @@ async function buildManagerUpdateStatus(input: {
       options: input.options,
       registry: input.registry,
       build: input.build,
+      fetchImpl: input.fetchImpl,
+      localToken: input.localToken,
     }),
   ]);
   const server = updateTargetFromRaw({
@@ -3972,6 +4008,8 @@ async function buildManagerSystemSummary(input: {
       options: input.options,
       registry: input.registry,
       build: input.build,
+      fetchImpl: input.fetchImpl,
+      localToken: input.localToken,
     }),
     analyzeLastRegistrationFailure(input.options.installReportStore),
     input.store.list(5),
