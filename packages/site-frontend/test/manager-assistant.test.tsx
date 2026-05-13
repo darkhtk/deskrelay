@@ -33,6 +33,55 @@ describe("ManagerAssistant", () => {
           deviceLabel: SERVER_DEVICE.label,
         });
       }
+      if (url.includes("/api/manager/sessions/hygiene")) {
+        return Response.json({
+          generatedAt: "2026-05-13T00:00:00.000Z",
+          managerCwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          managerSessionId: "manager-session-1",
+          summary: {
+            total: 2,
+            preserved: 1,
+            cleanupCandidates: 1,
+            currentManagerSession: "manager-session-1",
+            categories: {
+              current_manager: 1,
+              manager_history: 0,
+              internal_only: 1,
+              worker_session: 0,
+              orphan: 0,
+              unreadable: 0,
+              unknown: 0,
+            },
+          },
+          items: [
+            {
+              deviceId: SERVER_DEVICE.id,
+              deviceLabel: SERVER_DEVICE.label,
+              behaviorInstanceId: "remote-claude",
+              sessionId: "manager-session-1",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              title: "Current manager",
+              modifiedAt: "2026-05-13T00:00:00.000Z",
+              category: "current_manager",
+              action: "preserve",
+              reason: "current persistent manager assistant conversation",
+            },
+            {
+              deviceId: SERVER_DEVICE.id,
+              deviceLabel: SERVER_DEVICE.label,
+              behaviorInstanceId: "remote-claude",
+              sessionId: "internal-context",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              title: "/context",
+              modifiedAt: "2026-05-13T00:00:00.000Z",
+              category: "internal_only",
+              action: "cleanup",
+              reason: "manager cwd session created by a local command/status probe",
+            },
+          ],
+          errors: [],
+        });
+      }
       if (url.includes("/api/manager/agents")) {
         return Response.json({
           generatedAt: "2026-05-13T00:00:00.000Z",
@@ -188,6 +237,11 @@ describe("ManagerAssistant", () => {
     fireEvent.click(screen.getByRole("button", { name: "Artifacts" }));
     await waitFor(() => {
       expect(document.body.textContent).toContain("PROTOCOL.md");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Hygiene" }));
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Safe cleanup");
+      expect(document.body.textContent).toContain("Internal only");
     });
     fireEvent.click(screen.getByRole("button", { name: "Overview" }));
     await waitFor(() => {

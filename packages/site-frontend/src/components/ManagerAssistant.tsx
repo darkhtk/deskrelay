@@ -1,4 +1,9 @@
-import type { ManagerAgent, ManagerAssistantChatContext, ManagerRound } from "@deskrelay/shared";
+import type {
+  ManagerAgent,
+  ManagerAssistantChatContext,
+  ManagerRound,
+  ManagerSessionHygieneReport,
+} from "@deskrelay/shared";
 import {
   type Component,
   Show,
@@ -78,6 +83,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [error, setError] = createSignal<string | null>(null);
   const [status, setStatus] = createSignal<ManagerVisibleStatus | null>(null);
   const [statusReportSeq, setStatusReportSeq] = createSignal(0);
+  const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
   let transcriptScroller: HTMLDivElement | undefined;
   let statusReportTimer: number | undefined;
 
@@ -123,6 +129,16 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       try {
         const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
         return { agents: agents.agents, rounds: rounds.rounds };
+      } catch {
+        return null;
+      }
+    },
+  );
+  const [sessionHygiene, { refetch: refetchSessionHygiene }] = createResource(
+    () => statusReportSeq(),
+    async (): Promise<ManagerSessionHygieneReport | null> => {
+      try {
+        return await api.managerSessionHygiene();
       } catch {
         return null;
       }
@@ -477,6 +493,21 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     }
   };
 
+  const cleanupSessionHygiene = async () => {
+    if (hygieneCleanupBusy()) return;
+    setHygieneCleanupBusy(true);
+    setError(null);
+    try {
+      await api.cleanupManagerSessionHygiene();
+      await refetchSessionHygiene();
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHygieneCleanupBusy(false);
+    }
+  };
+
   const runOrchestrationPreset = () => {
     void send(ORCHESTRATION_PRESET_PROMPT);
   };
@@ -488,6 +519,11 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           rounds={orchestration()?.rounds ?? []}
           agents={orchestration()?.agents ?? []}
           report={activeRoundReport()}
+          hygiene={sessionHygiene()}
+          hygieneLoading={sessionHygiene.loading}
+          hygieneCleanupBusy={hygieneCleanupBusy()}
+          onRefreshHygiene={() => void refetchSessionHygiene()}
+          onCleanupHygiene={() => void cleanupSessionHygiene()}
         />
       </Show>
       <div

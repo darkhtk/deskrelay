@@ -50,6 +50,11 @@ import {
   type ManagerRouteCapability,
   type ManagerSecurityBoundary,
   type ManagerSecurityBoundarySummary,
+  type ManagerSessionHygieneCategory,
+  type ManagerSessionHygieneCleanupRequest,
+  type ManagerSessionHygieneCleanupResponse,
+  type ManagerSessionHygieneItem,
+  type ManagerSessionHygieneReport,
   type ManagerSystemSummary,
   type ManagerTask,
   type ManagerTaskKind,
@@ -329,6 +334,46 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return c.json({ error: result.error, attempts: result.attempts }, result.status as never);
     }
     return c.json(result.value);
+  });
+
+  app.get("/api/manager/sessions/hygiene", async (c) => {
+    try {
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      const report = await buildManagerSessionHygieneReport({
+        repoRoot,
+        registry,
+        fetchImpl,
+        localToken,
+      });
+      return c.json(report);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/api/manager/sessions/hygiene/cleanup", async (c) => {
+    let body: unknown = {};
+    try {
+      const text = await c.req.text();
+      body = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerSessionHygieneCleanupRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      const result = await cleanupManagerSessionHygiene({
+        repoRoot,
+        registry,
+        fetchImpl,
+        localToken,
+        request: parsed.value,
+      });
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
   });
 
   app.get("/api/manager/tasks", async (c) => {
@@ -1654,6 +1699,17 @@ const SITE_ROUTE_CAPABILITIES = [
     path: "/api/manager/sessions/read",
     description:
       "Read a Claude session transcript by session id, optionally searching registered devices and cwd values.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/sessions/hygiene",
+    description: "Classify manager and worker Claude sessions for safe cleanup.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/sessions/hygiene/cleanup",
+    description: "Delete only manager-session cleanup candidates selected by the hygiene policy.",
+    destructive: true,
   },
   {
     method: "GET",
@@ -4146,6 +4202,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Resolve selected device/session/cwd from browser context first. Then read only the needed session content with `POST /api/manager/sessions/read`.",
     "- Do not claim selected context is missing until you checked the browser context and available manager/session APIs.",
     "- Summaries and analysis must be based on retrieved transcript data, not memory guesses.",
+    "- For manager session cleanup, first call `GET /api/manager/sessions/hygiene`. Never delete the current manager conversation. Use `POST /api/manager/sessions/hygiene/cleanup` only for cleanup candidates reported by that API.",
     "",
     "### Guide",
     "",
@@ -5993,6 +6050,52 @@ class ManagerSessionReadError extends Error {
   }
 }
 
+const MANAGER_SESSION_HYGIENE_CATEGORIES: ManagerSessionHygieneCategory[] = [
+  "current_manager",
+  "manager_history",
+  "internal_only",
+  "worker_session",
+  "orphan",
+  "unreadable",
+  "unknown",
+];
+
+function parseManagerSessionHygieneCleanupRequest(
+  value: unknown,
+):
+  | { ok: true; value: ManagerSessionHygieneCleanupRequest }
+  | { ok: false; error: string } {
+  if (!isRecord(value)) return { ok: false, error: "JSON object body is required" };
+  const categoriesRaw = value.categories;
+  let categories: ManagerSessionHygieneCategory[] | undefined;
+  if (categoriesRaw !== undefined) {
+    if (!Array.isArray(categoriesRaw)) {
+      return { ok: false, error: "categories must be an array" };
+    }
+    categories = [];
+    for (const item of categoriesRaw) {
+      if (!isManagerSessionHygieneCategory(item)) {
+        return { ok: false, error: `unsupported hygiene category: ${String(item)}` };
+      }
+      categories.push(item);
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      dryRun: value.dryRun === true,
+      ...(categories ? { categories } : {}),
+    },
+  };
+}
+
+function isManagerSessionHygieneCategory(value: unknown): value is ManagerSessionHygieneCategory {
+  return (
+    typeof value === "string" &&
+    MANAGER_SESSION_HYGIENE_CATEGORIES.includes(value as ManagerSessionHygieneCategory)
+  );
+}
+
 function parseManagerSessionReadRequest(
   value: unknown,
 ): { ok: true; value: ManagerSessionReadRequest } | { ok: false; error: string } {
@@ -6154,6 +6257,354 @@ async function readManagerSessionTranscript(
     error: `session transcript not found: ${request.sessionId}`,
     attempts,
   };
+}
+
+async function buildManagerSessionHygieneReport(input: {
+  repoRoot: string;
+  registry: DeviceRegistry;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  localToken: string | undefined;
+}): Promise<ManagerSessionHygieneReport> {
+  const generatedAt = new Date().toISOString();
+  const managerCwd = join(input.repoRoot, MANAGER_ASSISTANT_DIR);
+  const conversation = await readManagerAssistantConversationState(input.repoRoot).catch(
+    () => null,
+  );
+  const errors: ManagerSessionHygieneReport["errors"] = [];
+  const items: ManagerSessionHygieneItem[] = [];
+  const device =
+    input.registry.list().find(isServerDevice) ??
+    input.registry.list()[0];
+
+  if (!device) {
+    errors.push({ stage: "devices", error: "no registered devices" });
+    return {
+      generatedAt,
+      managerCwd,
+      ...(conversation?.sessionId ? { managerSessionId: conversation.sessionId } : {}),
+      summary: summarizeManagerSessionHygiene([], conversation?.sessionId),
+      items: [],
+      errors,
+    };
+  }
+
+  try {
+    const behaviors = await readDeviceBehaviors(
+      input.fetchImpl,
+      device,
+      daemonToken(device, input.localToken),
+    );
+    const behavior = selectClaudeBehavior(behaviors, undefined);
+    if (!behavior) {
+      errors.push({
+        deviceId: device.id,
+        deviceLabel: device.label,
+        stage: "behaviors",
+        error: "remote-claude behavior is not loaded",
+      });
+      return {
+        generatedAt,
+        managerCwd,
+        ...(conversation?.sessionId ? { managerSessionId: conversation.sessionId } : {}),
+        summary: summarizeManagerSessionHygiene([], conversation?.sessionId),
+        items,
+        errors,
+      };
+    }
+
+    const sessionMap = new Map<string, ManagerSessionCandidate>();
+    const addSessions = (sessions: ManagerSessionCandidate[]) => {
+      for (const session of sessions) {
+        sessionMap.set(
+          `${session.sessionId}\u0000${normalizeManagerPath(session.cwd)}`,
+          session,
+        );
+      }
+    };
+    addSessions(
+      await listDeviceSessionsForHygiene(input.fetchImpl, device, behavior, input.localToken, {
+        cwd: managerCwd,
+        limit: 300,
+        dedupeSessionIds: false,
+      }),
+    );
+    addSessions(
+      (
+        await listDeviceSessionsForHygiene(input.fetchImpl, device, behavior, input.localToken, {
+          limit: 500,
+          dedupeSessionIds: false,
+        })
+      ).filter((session) => isWorkerLikeSession(session)),
+    );
+
+    for (const session of [...sessionMap.values()].sort(compareHygieneSessions)) {
+      items.push(
+        classifyManagerSessionForHygiene(session, {
+          device,
+          behavior,
+          managerCwd,
+          ...(conversation?.sessionId ? { managerSessionId: conversation.sessionId } : {}),
+        }),
+      );
+    }
+  } catch (error) {
+    errors.push({
+      deviceId: device.id,
+      deviceLabel: device.label,
+      stage: error instanceof ManagerSessionReadError ? error.stage : "sessions.hygiene",
+      error: errorMessage(error),
+    });
+  }
+
+  return {
+    generatedAt,
+    managerCwd,
+    ...(conversation?.sessionId ? { managerSessionId: conversation.sessionId } : {}),
+    summary: summarizeManagerSessionHygiene(items, conversation?.sessionId),
+    items,
+    errors,
+  };
+}
+
+async function cleanupManagerSessionHygiene(input: {
+  repoRoot: string;
+  registry: DeviceRegistry;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  localToken: string | undefined;
+  request: ManagerSessionHygieneCleanupRequest;
+}): Promise<ManagerSessionHygieneCleanupResponse> {
+  const dryRun = input.request.dryRun === true;
+  const allowedCategories = new Set<ManagerSessionHygieneCategory>(
+    input.request.categories?.length ? input.request.categories : ["internal_only", "manager_history"],
+  );
+  const initialReport = await buildManagerSessionHygieneReport(input);
+  const targets = dedupeHygieneCleanupTargets(
+    initialReport.items.filter(
+      (item) => item.action === "cleanup" && allowedCategories.has(item.category),
+    ),
+  );
+  const skipped = initialReport.items.filter(
+    (item) => item.action !== "cleanup" || !allowedCategories.has(item.category),
+  );
+  const deleted: ManagerSessionHygieneCleanupResponse["deleted"] = [];
+  const failures: ManagerSessionHygieneCleanupResponse["failures"] = [];
+
+  if (!dryRun) {
+    for (const target of targets) {
+      const device = input.registry.get(target.deviceId);
+      if (!device) {
+        failures.push({
+          deviceId: target.deviceId,
+          deviceLabel: target.deviceLabel,
+          sessionId: target.sessionId,
+          category: target.category,
+          error: "device is no longer registered",
+        });
+        continue;
+      }
+      try {
+        const behaviors = await readDeviceBehaviors(
+          input.fetchImpl,
+          device,
+          daemonToken(device, input.localToken),
+        );
+        const behavior =
+          behaviors.find((candidate) => candidate.instanceId === target.behaviorInstanceId) ??
+          selectClaudeBehavior(behaviors, target.behaviorInstanceId);
+        if (!behavior) throw new Error("remote-claude behavior is no longer loaded");
+        const result = await callDeviceBehavior(input.fetchImpl, device, behavior, input.localToken, {
+          method: "sessions.deleteBySessionId",
+          params: { sessionId: target.sessionId },
+        });
+        deleted.push({
+          deviceId: target.deviceId,
+          deviceLabel: target.deviceLabel,
+          sessionId: target.sessionId,
+          category: target.category,
+          result,
+        });
+      } catch (error) {
+        failures.push({
+          deviceId: target.deviceId,
+          deviceLabel: target.deviceLabel,
+          sessionId: target.sessionId,
+          category: target.category,
+          error: errorMessage(error),
+        });
+      }
+    }
+  }
+
+  const report = dryRun ? initialReport : await buildManagerSessionHygieneReport(input);
+  return {
+    generatedAt: new Date().toISOString(),
+    dryRun,
+    deleted,
+    skipped: dryRun ? [...skipped, ...targets] : skipped,
+    failures,
+    report,
+  };
+}
+
+async function listDeviceSessionsForHygiene(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  behavior: ManagerBehaviorDescriptor,
+  localToken: string | undefined,
+  params: {
+    cwd?: string;
+    limit: number;
+    dedupeSessionIds: boolean;
+  },
+): Promise<ManagerSessionCandidate[]> {
+  const payload = await callDeviceBehavior(fetchImpl, device, behavior, localToken, {
+    method: "sessions.list",
+    params: {
+      limit: params.limit,
+      dedupeSessionIds: params.dedupeSessionIds,
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+    },
+  });
+  return normalizeSessionCandidates(payload);
+}
+
+function classifyManagerSessionForHygiene(
+  session: ManagerSessionCandidate,
+  context: {
+    device: Device;
+    behavior: ManagerBehaviorDescriptor;
+    managerCwd: string;
+    managerSessionId?: string;
+  },
+): ManagerSessionHygieneItem {
+  const isManagerCwd =
+    normalizeManagerPath(session.cwd) === normalizeManagerPath(context.managerCwd);
+  const isCurrentManager =
+    isManagerCwd &&
+    Boolean(context.managerSessionId) &&
+    session.sessionId === context.managerSessionId;
+  const base = {
+    deviceId: context.device.id,
+    deviceLabel: context.device.label,
+    behaviorInstanceId: context.behavior.instanceId,
+    sessionId: session.sessionId,
+    cwd: session.cwd,
+    ...(session.title ? { title: session.title } : {}),
+    ...(session.fullTitle ? { fullTitle: session.fullTitle } : {}),
+    ...(session.modifiedAt ? { modifiedAt: session.modifiedAt } : {}),
+    ...(typeof session.fileSize === "number" ? { fileSize: session.fileSize } : {}),
+  };
+  if (isCurrentManager) {
+    return {
+      ...base,
+      category: "current_manager",
+      action: "preserve",
+      reason: "current persistent manager assistant conversation",
+    };
+  }
+  if (isInternalCommandOnlySession(session, isManagerCwd)) {
+    return {
+      ...base,
+      category: "internal_only",
+      action: "cleanup",
+      reason: "manager cwd session created by a local command/status probe",
+    };
+  }
+  if (isManagerCwd) {
+    const cleanupOldManagerSession = Boolean(context.managerSessionId);
+    return {
+      ...base,
+      category: "manager_history",
+      action: cleanupOldManagerSession ? "cleanup" : "preserve",
+      reason: cleanupOldManagerSession
+        ? "older manager assistant conversation superseded by the persistent current session"
+        : "older manager assistant conversation; no current session pointer is available",
+    };
+  }
+  if (isWorkerLikeSession(session)) {
+    return {
+      ...base,
+      category: "worker_session",
+      action: "preserve",
+      reason: "worker/orchestration transcript; preserve unless explicitly reviewed",
+    };
+  }
+  return {
+    ...base,
+    category: "orphan",
+    action: "preserve",
+    reason: "not linked to the current manager session; preserve by default",
+  };
+}
+
+function isInternalCommandOnlySession(
+  session: ManagerSessionCandidate,
+  isManagerCwd: boolean,
+): boolean {
+  if (!isManagerCwd) return false;
+  const text = `${session.title ?? ""}\n${session.fullTitle ?? ""}`.toLowerCase();
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  return (
+    compact === "context" ||
+    compact === "/context" ||
+    compact === "status" ||
+    compact === "/status" ||
+    compact === "usage" ||
+    compact === "/usage" ||
+    compact.includes("<local-command-caveat>") ||
+    compact.includes("<command-name>/context</command-name>") ||
+    compact.includes("<command-name>/status</command-name>") ||
+    compact.includes("<command-name>/usage</command-name>")
+  );
+}
+
+function isWorkerLikeSession(session: ManagerSessionCandidate): boolean {
+  const text = `${session.title ?? ""}\n${session.fullTitle ?? ""}\n${session.cwd}`.toLowerCase();
+  return (
+    text.includes("role:") ||
+    text.includes("orchestration") ||
+    text.includes("agent") ||
+    text.includes("worker")
+  );
+}
+
+function dedupeHygieneCleanupTargets(
+  items: ManagerSessionHygieneItem[],
+): ManagerSessionHygieneItem[] {
+  const result = new Map<string, ManagerSessionHygieneItem>();
+  for (const item of items) {
+    result.set(`${item.deviceId}\u0000${item.behaviorInstanceId}\u0000${item.sessionId}`, item);
+  }
+  return [...result.values()];
+}
+
+function summarizeManagerSessionHygiene(
+  items: ManagerSessionHygieneItem[],
+  currentManagerSession: string | undefined,
+): ManagerSessionHygieneReport["summary"] {
+  const categories = Object.fromEntries(
+    MANAGER_SESSION_HYGIENE_CATEGORIES.map((category) => [category, 0]),
+  ) as Record<ManagerSessionHygieneCategory, number>;
+  for (const item of items) categories[item.category] += 1;
+  return {
+    total: items.length,
+    preserved: items.filter((item) => item.action === "preserve").length,
+    cleanupCandidates: items.filter((item) => item.action === "cleanup").length,
+    ...(currentManagerSession ? { currentManagerSession } : {}),
+    categories,
+  };
+}
+
+function compareHygieneSessions(left: ManagerSessionCandidate, right: ManagerSessionCandidate) {
+  return (
+    Date.parse(right.modifiedAt ?? "") - Date.parse(left.modifiedAt ?? "") ||
+    right.sessionId.localeCompare(left.sessionId)
+  );
+}
+
+function normalizeManagerPath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
 }
 
 function publicManagerDevice(device: Device): { id: string; label: string; daemonUrl: string } {

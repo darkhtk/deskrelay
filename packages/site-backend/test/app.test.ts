@@ -556,6 +556,14 @@ describe("API route inventory", () => {
           }),
         ],
         [
+          "GET /api/manager/sessions/hygiene",
+          authedRequest("GET", "/api/manager/sessions/hygiene"),
+        ],
+        [
+          "POST /api/manager/sessions/hygiene/cleanup",
+          authedRequest("POST", "/api/manager/sessions/hygiene/cleanup", { dryRun: true }),
+        ],
+        [
           "POST /api/manager/assistant/chat",
           authedRequest("POST", "/api/manager/assistant/chat", {}),
           [400],

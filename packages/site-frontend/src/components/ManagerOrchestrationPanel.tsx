@@ -2,17 +2,24 @@ import type {
   ManagerAgent,
   ManagerRound,
   ManagerRoundReportResponse,
+  ManagerSessionHygieneItem,
+  ManagerSessionHygieneReport,
   ManagerTask,
 } from "@deskrelay/shared";
 import { type Component, For, Show, createMemo, createSignal } from "solid-js";
 
-type OrchestrationTab = "overview" | "agents" | "timeline" | "graph" | "artifacts";
+type OrchestrationTab = "overview" | "agents" | "timeline" | "graph" | "artifacts" | "hygiene";
 type Tone = "neutral" | "running" | "done" | "blocked";
 
 interface ManagerOrchestrationPanelProps {
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
+  hygiene?: ManagerSessionHygieneReport | null | undefined;
+  hygieneLoading?: boolean | undefined;
+  hygieneCleanupBusy?: boolean | undefined;
+  onRefreshHygiene?: (() => void) | undefined;
+  onCleanupHygiene?: (() => void) | undefined;
 }
 
 interface TimelineEntry {
@@ -35,6 +42,7 @@ const ORCHESTRATION_TABS: Array<{ id: OrchestrationTab; label: string }> = [
   { id: "timeline", label: "Timeline" },
   { id: "graph", label: "Graph" },
   { id: "artifacts", label: "Artifacts" },
+  { id: "hygiene", label: "Hygiene" },
 ];
 
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
@@ -123,6 +131,15 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           </Show>
           <Show when={tab() === "artifacts"}>
             <ArtifactsView artifacts={artifacts()} />
+          </Show>
+          <Show when={tab() === "hygiene"}>
+            <HygieneView
+              report={props.hygiene}
+              loading={props.hygieneLoading}
+              cleanupBusy={props.hygieneCleanupBusy}
+              onRefresh={props.onRefreshHygiene}
+              onCleanup={props.onCleanupHygiene}
+            />
           </Show>
         </div>
       </Show>
@@ -268,6 +285,99 @@ const ArtifactsView: Component<{ artifacts: ArtifactEntry[] }> = (props) => (
         No artifact paths detected yet. File paths in worker output will appear here.
       </p>
     </Show>
+  </div>
+);
+
+const HygieneView: Component<{
+  report?: ManagerSessionHygieneReport | null | undefined;
+  loading?: boolean | undefined;
+  cleanupBusy?: boolean | undefined;
+  onRefresh?: (() => void) | undefined;
+  onCleanup?: (() => void) | undefined;
+}> = (props) => {
+  const cleanupItems = createMemo(() =>
+    (props.report?.items ?? []).filter((item) => item.action === "cleanup"),
+  );
+  const visibleItems = createMemo(() => [
+    ...cleanupItems(),
+    ...(props.report?.items ?? []).filter((item) => item.action !== "cleanup"),
+  ]);
+  return (
+    <div class="manager-hygiene">
+      <div class="manager-hygiene-head">
+        <div>
+          <span class="manager-overview-label">Session hygiene</span>
+          <p>
+            <Show
+              when={props.report}
+              fallback={props.loading ? "Scanning manager sessions..." : "No hygiene report yet."}
+            >
+              {(report) =>
+                `${report().summary.cleanupCandidates} cleanup candidates · ${report().summary.preserved} preserved`
+              }
+            </Show>
+          </p>
+        </div>
+        <div class="manager-hygiene-actions">
+          <button type="button" onClick={() => props.onRefresh?.()} disabled={props.loading}>
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={() => props.onCleanup?.()}
+            disabled={props.cleanupBusy || cleanupItems().length === 0}
+          >
+            {props.cleanupBusy ? "Cleaning..." : "Safe cleanup"}
+          </button>
+        </div>
+      </div>
+      <Show when={props.report?.errors.length}>
+        <div class="manager-hygiene-errors">
+          <For each={props.report?.errors ?? []}>
+            {(error) => (
+              <span>
+                {error.stage}: {error.error}
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={props.report}>
+        {(report) => (
+          <div class="manager-hygiene-categories">
+            <For each={Object.entries(report().summary.categories)}>
+              {([category, count]) => (
+                <span classList={{ "manager-hygiene-category-empty": count === 0 }}>
+                  {formatHygieneCategory(category)} {count}
+                </span>
+              )}
+            </For>
+          </div>
+        )}
+      </Show>
+      <div class="manager-hygiene-list">
+        <For each={visibleItems().slice(0, 16)}>
+          {(item) => <HygieneItemRow item={item} />}
+        </For>
+        <Show when={visibleItems().length === 0}>
+          <p class="manager-orchestration-empty">No manager sessions were found.</p>
+        </Show>
+      </div>
+    </div>
+  );
+};
+
+const HygieneItemRow: Component<{ item: ManagerSessionHygieneItem }> = (props) => (
+  <div class="manager-hygiene-row">
+    <span class={`manager-agent-status manager-agent-status-${hygieneTone(props.item)}`}>
+      {props.item.action === "cleanup" ? "cleanup" : "keep"}
+    </span>
+    <span class="manager-hygiene-title" title={props.item.fullTitle || props.item.title || ""}>
+      {props.item.title || shortId(props.item.sessionId)}
+    </span>
+    <span>{formatHygieneCategory(props.item.category)}</span>
+    <span title={props.item.reason}>{clip(props.item.reason, 72)}</span>
+    <time>{formatTime(props.item.modifiedAt)}</time>
   </div>
 );
 
@@ -439,6 +549,12 @@ function statusTone(status: string | undefined): Tone {
   }
 }
 
+function hygieneTone(item: ManagerSessionHygieneItem): Tone {
+  if (item.action === "cleanup") return "blocked";
+  if (item.category === "current_manager") return "done";
+  return "neutral";
+}
+
 function statusLabel(status: string | undefined): string {
   switch (status) {
     case "planned":
@@ -477,6 +593,25 @@ function statusLabel(status: string | undefined): string {
       return "succeeded";
     default:
       return status ?? "unknown";
+  }
+}
+
+function formatHygieneCategory(value: string): string {
+  switch (value) {
+    case "current_manager":
+      return "Current manager";
+    case "manager_history":
+      return "Manager history";
+    case "internal_only":
+      return "Internal only";
+    case "worker_session":
+      return "Worker";
+    case "orphan":
+      return "Orphan";
+    case "unreadable":
+      return "Unreadable";
+    default:
+      return value;
   }
 }
 

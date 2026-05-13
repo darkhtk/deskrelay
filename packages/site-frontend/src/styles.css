@@ -5904,6 +5904,76 @@ dialog.approval-modal-root,
 .manager-artifact-row {
   grid-template-columns: minmax(140px, 1.4fr) minmax(80px, 0.7fr) minmax(70px, 0.5fr) 70px;
 }
+.manager-hygiene {
+  display: grid;
+  gap: 10px;
+}
+.manager-hygiene-head,
+.manager-hygiene-actions,
+.manager-hygiene-categories,
+.manager-hygiene-errors {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.manager-hygiene-head {
+  justify-content: space-between;
+}
+.manager-hygiene-head p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 2px 0 0;
+}
+.manager-hygiene-actions button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 9px;
+}
+.manager-hygiene-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.manager-hygiene-categories {
+  flex-wrap: wrap;
+}
+.manager-hygiene-categories span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.manager-hygiene-categories .manager-hygiene-category-empty {
+  color: var(--text-faint);
+}
+.manager-hygiene-errors {
+  color: var(--danger);
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.manager-hygiene-list {
+  display: grid;
+  gap: 1px;
+}
+.manager-hygiene-row {
+  align-items: center;
+  color: var(--text-muted);
+  display: grid;
+  font-size: 12px;
+  gap: 8px;
+  grid-template-columns: 74px minmax(120px, 1fr) 100px minmax(140px, 1.2fr) 70px;
+  min-width: 0;
+  padding: 5px 0;
+}
+.manager-hygiene-title {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .manager-orchestration-empty {
   color: var(--text-faint);
   font-size: 12px;
@@ -6340,13 +6410,21 @@ dialog.approval-modal-root,
     display: none;
   }
   .manager-timeline-item,
-  .manager-artifact-row {
+  .manager-artifact-row,
+  .manager-hygiene-row {
     grid-template-columns: 64px minmax(0, 1fr);
   }
   .manager-timeline-item small,
   .manager-artifact-row > span:nth-child(3),
-  .manager-artifact-row > time {
+  .manager-artifact-row > time,
+  .manager-hygiene-row > span:nth-child(3),
+  .manager-hygiene-row > span:nth-child(4),
+  .manager-hygiene-row > time {
     grid-column: 2;
+  }
+  .manager-hygiene-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   /* Composer placeholder text is too long for 320px. The mobile

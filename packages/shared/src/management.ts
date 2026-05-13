@@ -435,6 +435,80 @@ export interface ManagerAssistantConversationStateInput {
   reset?: boolean;
 }
 
+export type ManagerSessionHygieneCategory =
+  | "current_manager"
+  | "manager_history"
+  | "internal_only"
+  | "worker_session"
+  | "orphan"
+  | "unreadable"
+  | "unknown";
+
+export type ManagerSessionHygieneAction = "preserve" | "cleanup";
+
+export interface ManagerSessionHygieneItem {
+  deviceId: string;
+  deviceLabel: string;
+  behaviorInstanceId: string;
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  fullTitle?: string;
+  modifiedAt?: string;
+  fileSize?: number;
+  category: ManagerSessionHygieneCategory;
+  action: ManagerSessionHygieneAction;
+  reason: string;
+}
+
+export interface ManagerSessionHygieneSummary {
+  total: number;
+  preserved: number;
+  cleanupCandidates: number;
+  currentManagerSession?: string;
+  categories: Record<ManagerSessionHygieneCategory, number>;
+}
+
+export interface ManagerSessionHygieneReport {
+  generatedAt: string;
+  managerCwd: string;
+  managerSessionId?: string;
+  summary: ManagerSessionHygieneSummary;
+  items: ManagerSessionHygieneItem[];
+  errors: Array<{
+    deviceId?: string;
+    deviceLabel?: string;
+    stage: string;
+    error: string;
+  }>;
+}
+
+export interface ManagerSessionHygieneCleanupRequest {
+  dryRun?: boolean;
+  categories?: ManagerSessionHygieneCategory[];
+}
+
+export interface ManagerSessionHygieneCleanupResponse {
+  generatedAt: string;
+  dryRun: boolean;
+  deleted: Array<{
+    deviceId: string;
+    deviceLabel: string;
+    sessionId: string;
+    category: ManagerSessionHygieneCategory;
+    result?: unknown;
+  }>;
+  skipped: ManagerSessionHygieneItem[];
+  failures: Array<{
+    deviceId: string;
+    deviceLabel: string;
+    sessionId: string;
+    category: ManagerSessionHygieneCategory;
+    error: string;
+  }>;
+  report: ManagerSessionHygieneReport;
+}
+
 export interface ManagerAssistantChatMessage {
   id: string;
   role: "user" | "assistant" | "system";

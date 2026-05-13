@@ -31,6 +31,9 @@ import type {
   ManagerRoundReportResponse,
   ManagerSecurityBoundary,
   ManagerSecurityBoundarySummary,
+  ManagerSessionHygieneCleanupRequest,
+  ManagerSessionHygieneCleanupResponse,
+  ManagerSessionHygieneReport,
   ManagerSystemSummary,
   ManagerTask,
   ManagerTaskLogResponse,
@@ -621,6 +624,14 @@ export const api = {
     request<ManagerAssistantStatusReportResponse>("POST", "/api/manager/assistant/status", input),
   managerSessionRead: (input: ManagerSessionReadRequest) =>
     request<ManagerSessionReadResponse>("POST", "/api/manager/sessions/read", input),
+  managerSessionHygiene: () =>
+    request<ManagerSessionHygieneReport>("GET", "/api/manager/sessions/hygiene"),
+  cleanupManagerSessionHygiene: (input?: ManagerSessionHygieneCleanupRequest) =>
+    request<ManagerSessionHygieneCleanupResponse>(
+      "POST",
+      "/api/manager/sessions/hygiene/cleanup",
+      input ?? {},
+    ),
   managerAssistantChat: (input: ManagerAssistantChatRequest) =>
     request<ManagerAssistantChatResponse>("POST", "/api/manager/assistant/chat", input),
   managerAssistantChatStream: (
