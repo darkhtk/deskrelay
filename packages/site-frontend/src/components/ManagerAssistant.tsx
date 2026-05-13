@@ -19,6 +19,7 @@ import {
 } from "../api.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { Composer } from "./Composer.tsx";
+import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 import { Transcript } from "./Transcript.tsx";
 
 const MANAGER_CONVERSATION_ID = "deskrelay-manager-assistant";
@@ -242,6 +243,22 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   });
   const orchestrationStatus = createMemo(() =>
     summarizeOrchestration(orchestration()?.rounds ?? [], orchestration()?.agents ?? []),
+  );
+  const activeOrchestrationRound = createMemo(() => pickActiveRound(orchestration()?.rounds ?? []));
+  const [activeRoundReport] = createResource(
+    () => {
+      const round = activeOrchestrationRound();
+      const seq = statusReportSeq();
+      return round ? { id: round.id, seq } : null;
+    },
+    async (input) => {
+      if (!input) return null;
+      try {
+        return await api.managerRoundReport(input.id);
+      } catch {
+        return null;
+      }
+    },
   );
 
   createEffect(() => {
@@ -467,12 +484,11 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   return (
     <div class="manager-assistant manager-assistant-chat">
       <Show when={orchestrationStatus()}>
-        {(summary) => (
-          <div class="manager-orchestration-status" aria-label="orchestration status">
-            <span class="manager-orchestration-round">{summary().round}</span>
-            <span class="manager-orchestration-agents">{summary().agents}</span>
-          </div>
-        )}
+        <ManagerOrchestrationPanel
+          rounds={orchestration()?.rounds ?? []}
+          agents={orchestration()?.agents ?? []}
+          report={activeRoundReport()}
+        />
       </Show>
       <div
         ref={transcriptScroller}
@@ -568,12 +584,7 @@ function summarizeOrchestration(
   agents: ManagerAgent[],
 ): { round: string; agents: string } | null {
   if (rounds.length === 0 && agents.length === 0) return null;
-  const activeRound =
-    rounds.find((round) =>
-      ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
-        round.status,
-      ),
-    ) ?? rounds[0];
+  const activeRound = pickActiveRound(rounds);
   const activeAgents = agents.filter((agent) =>
     ["assigned", "running", "waiting", "blocked", "failed"].includes(agent.status),
   );
@@ -585,6 +596,16 @@ function summarizeOrchestration(
     ? visibleAgents.map((agent) => `${agent.role}: ${statusLabel(agent.status)}`).join(" · ")
     : "agent 없음";
   return { round: roundText, agents: agentText };
+}
+
+function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
+  return (
+    rounds.find((round) =>
+      ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
+        round.status,
+      ),
+    ) ?? rounds[0]
+  );
 }
 
 function statusLabel(status: string): string {

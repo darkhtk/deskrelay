@@ -5633,6 +5633,258 @@ dialog.approval-modal-root,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.manager-orchestration-panel {
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  max-height: 280px;
+  min-height: 0;
+}
+.manager-orchestration-panel-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  min-height: 34px;
+  padding: 6px 14px 4px;
+}
+.manager-orchestration-title,
+.manager-orchestration-summary {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.manager-orchestration-title {
+  flex: 1;
+}
+.manager-orchestration-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-orchestration-summary {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.manager-status-dot {
+  border-radius: 999px;
+  flex: 0 0 auto;
+  height: 7px;
+  width: 7px;
+}
+.manager-status-dot-neutral {
+  background: var(--text-faint);
+}
+.manager-status-dot-running {
+  background: var(--warning);
+}
+.manager-status-dot-done {
+  background: var(--success);
+}
+.manager-status-dot-blocked {
+  background: var(--danger);
+}
+.manager-status-pill,
+.manager-agent-status {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 7px;
+}
+.manager-agent-status-running {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
+  color: var(--warning);
+}
+.manager-agent-status-done {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border-subtle));
+  color: var(--success);
+}
+.manager-agent-status-blocked {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border-subtle));
+  color: var(--danger);
+}
+.manager-orchestration-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 0 14px 6px;
+}
+.manager-orchestration-tab {
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 5px 7px;
+}
+.manager-orchestration-tab-active {
+  border-bottom-color: var(--accent-coral);
+  color: var(--text);
+  font-weight: 650;
+}
+.manager-orchestration-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 14px 10px;
+}
+.manager-overview-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(54px, 72px));
+}
+.manager-overview-main,
+.manager-overview-stat {
+  min-width: 0;
+}
+.manager-overview-main p {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 2px 0 0;
+}
+.manager-overview-label,
+.manager-overview-stat span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.manager-overview-stat {
+  display: grid;
+  gap: 3px;
+}
+.manager-overview-stat strong {
+  color: var(--text);
+  font-size: 18px;
+}
+.manager-agent-table,
+.manager-artifact-list {
+  display: grid;
+  gap: 1px;
+}
+.manager-agent-row,
+.manager-artifact-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 0;
+}
+.manager-agent-row {
+  grid-template-columns: minmax(72px, 0.8fr) minmax(70px, 0.7fr) minmax(160px, 2fr) minmax(
+      48px,
+      0.5fr
+    );
+}
+.manager-agent-row-head {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-agent-role {
+  color: var(--text);
+  font-weight: 650;
+}
+.manager-agent-work,
+.manager-agent-task,
+.manager-artifact-row {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.manager-agent-work,
+.manager-artifact-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-timeline {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.manager-timeline-item {
+  align-items: baseline;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 70px minmax(120px, 0.8fr) minmax(0, 1.4fr);
+}
+.manager-timeline-item time,
+.manager-timeline-item small {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-timeline-running span {
+  color: var(--warning);
+}
+.manager-timeline-done span {
+  color: var(--success);
+}
+.manager-timeline-blocked span {
+  color: var(--danger);
+}
+.manager-graph-layout {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(220px, 1.2fr);
+}
+.manager-graph-preview {
+  align-content: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.manager-graph-node {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  display: inline-grid;
+  gap: 2px;
+  min-width: 92px;
+  padding: 7px 10px;
+}
+.manager-graph-node strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.manager-graph-node span {
+  font-size: 10px;
+}
+.manager-graph-node-running {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
+}
+.manager-graph-node-done {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border-subtle));
+}
+.manager-graph-node-blocked {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border-subtle));
+}
+.manager-mermaid-source {
+  background: var(--code-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 0;
+  max-height: 150px;
+  overflow: auto;
+  padding: 8px;
+}
+.manager-artifact-row {
+  grid-template-columns: minmax(140px, 1.4fr) minmax(80px, 0.7fr) minmax(70px, 0.5fr) 70px;
+}
+.manager-orchestration-empty {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin: 8px 0;
+}
 .manager-assistant-header,
 .manager-section-head,
 .manager-assistant-confirm {
@@ -6041,6 +6293,38 @@ dialog.approval-modal-root,
 @media (max-width: 720px) {
   .signed-in {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-orchestration-panel {
+    max-height: 240px;
+  }
+  .manager-orchestration-panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .manager-orchestration-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .manager-overview-grid,
+  .manager-graph-layout {
+    grid-template-columns: 1fr;
+  }
+  .manager-agent-row {
+    grid-template-columns: minmax(64px, 0.7fr) minmax(64px, 0.6fr) minmax(120px, 1.5fr);
+  }
+  .manager-agent-row > span:last-child {
+    display: none;
+  }
+  .manager-timeline-item,
+  .manager-artifact-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .manager-timeline-item small,
+  .manager-artifact-row > span:nth-child(3),
+  .manager-artifact-row > time {
+    grid-column: 2;
   }
 
   /* Composer placeholder text is too long for 320px. The mobile
