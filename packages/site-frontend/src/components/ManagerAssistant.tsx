@@ -62,6 +62,12 @@ interface ManagerRuntime {
   cwd: string;
 }
 
+type ManagerVisibleStatus = {
+  tone: "ready" | "thinking" | "warning";
+  main: string;
+  detail?: string;
+};
+
 export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [reloadSeq, setReloadSeq] = createSignal(0);
   const [events, setEvents] = createSignal<ClaudeStreamEvent[]>([]);
@@ -69,11 +75,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [sessionId, setSessionId] = createSignal<string | null>(null);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
-  const [status, setStatus] = createSignal<{
-    tone: "thinking" | "warning";
-    main: string;
-    detail?: string;
-  } | null>(null);
+  const [status, setStatus] = createSignal<ManagerVisibleStatus | null>(null);
   const [statusReportSeq, setStatusReportSeq] = createSignal(0);
   let transcriptScroller: HTMLDivElement | undefined;
   let statusReportTimer: number | undefined;
@@ -202,7 +204,42 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const visibleEvents = createMemo(() => (events().length > 0 ? events() : [INITIAL_EVENT]));
   const busy = createMemo(() => runIds().length > 0);
   const latestReportStatus = createMemo(() => managerStatusFromReport(statusReports()?.latest));
-  const visibleStatus = createMemo(() => status() ?? latestReportStatus());
+  const visibleStatus = createMemo<ManagerVisibleStatus>(() => {
+    const currentStatus = status();
+    if (currentStatus) return currentStatus;
+    const reportStatus = latestReportStatus();
+    if (reportStatus) return reportStatus;
+    if (!serverDevice()) {
+      return {
+        tone: "warning",
+        main: "관리자 준비 안 됨",
+        detail: "서버 PC connector를 찾을 수 없습니다.",
+      };
+    }
+    if (workspace.loading || behaviors.loading || loadedTranscript.loading) {
+      return { tone: "thinking", main: "관리자 상태 확인 중" };
+    }
+    if (!workspace()) {
+      return {
+        tone: "warning",
+        main: "관리자 준비 안 됨",
+        detail: "작업 폴더를 준비하지 못했습니다.",
+      };
+    }
+    if (!runtime()) {
+      return {
+        tone: "warning",
+        main: "관리자 준비 안 됨",
+        detail: "서버 PC의 Claude 실행 환경을 확인해야 합니다.",
+      };
+    }
+    if (busy()) return { tone: "thinking", main: "관리자 실행 중" };
+    return {
+      tone: "ready",
+      main: "관리자 대기 중",
+      detail: "Orchestration 또는 직접 메시지 입력 가능",
+    };
+  });
   const orchestrationStatus = createMemo(() =>
     summarizeOrchestration(orchestration()?.rounds ?? [], orchestration()?.agents ?? []),
   );
@@ -612,7 +649,7 @@ function sessionIdFromClaudeEvent(event: ClaudeStreamEvent | null): string | nul
 function managerStatusFromEnvelope(
   kind: string | undefined,
   content: unknown,
-): { tone: "thinking" | "warning"; main: string; detail?: string } | null {
+): ManagerVisibleStatus | null {
   if (kind === "queue.updated") {
     const status =
       typeof (content as { status?: unknown })?.status === "string"
@@ -649,7 +686,7 @@ function managerStatusFromEnvelope(
 
 function managerStatusFromReport(
   report: ManagerAssistantStatusReport | undefined,
-): { tone: "thinking" | "warning"; main: string; detail?: string } | null {
+): ManagerVisibleStatus | null {
   if (!report) return null;
   const tone = report.level === "warning" || report.level === "error" ? "warning" : "thinking";
   const prefix = report.round ? `${report.round} ` : "";

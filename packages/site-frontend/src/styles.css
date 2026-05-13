@@ -553,6 +553,9 @@ body.sidebar-resizing * {
   background: var(--accent-coral);
   animation: composer-status-pulse 1.4s ease-in-out infinite;
 }
+.composer-status-ready::before {
+  background: var(--success);
+}
 .composer-status-warning::before,
 .composer-status-queued::before {
   background: var(--warning);

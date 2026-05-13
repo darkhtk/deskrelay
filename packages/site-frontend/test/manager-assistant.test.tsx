@@ -139,6 +139,9 @@ describe("ManagerAssistant", () => {
       expect(document.body.textContent).toContain("R1");
       expect(document.body.textContent).toContain("architect");
     });
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("관리자 대기 중");
+    });
     const presetButton = screen.getByRole("button", { name: "Orchestration" }) as HTMLButtonElement;
     expect(presetButton.disabled).toBe(false);
     fireEvent.click(presetButton);
