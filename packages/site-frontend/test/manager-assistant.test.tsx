@@ -139,6 +139,21 @@ describe("ManagerAssistant", () => {
       expect(document.body.textContent).toContain("R1");
       expect(document.body.textContent).toContain("architect");
     });
+    const presetButton = screen.getByRole("button", { name: "Orchestration" }) as HTMLButtonElement;
+    expect(presetButton.disabled).toBe(false);
+    fireEvent.click(presetButton);
+    await waitFor(() => {
+      expect(
+        behaviorCalls.some(
+          (call) =>
+            call.method === "chat" &&
+            String(call.params?.message ?? "").includes("orchestration framework loop"),
+        ),
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(presetButton.disabled).toBe(false);
+    });
     fireEvent.input(input, { target: { value: "현재 상태 확인" } });
     await waitFor(() => {
       expect((screen.getByRole("button", { name: "전송" }) as HTMLButtonElement).disabled).toBe(

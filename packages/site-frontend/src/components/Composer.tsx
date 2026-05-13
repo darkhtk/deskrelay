@@ -16,7 +16,7 @@
 //   - hasExtraContent() lets attachments keep send enabled even when text
 //     is empty.
 
-import { type Component, For, Show, createEffect, createSignal } from "solid-js";
+import { type Component, For, type JSX, Show, createEffect, createSignal } from "solid-js";
 import {
   BUILTIN_SLASH_COMMANDS,
   type SlashCommand,
@@ -52,6 +52,8 @@ export interface ComposerProps {
   placeholder?: string;
   /** Prefix for DOM ids when multiple composers are mounted at once. */
   idPrefix?: string;
+  /** Optional host-specific actions rendered directly left of stop/send. */
+  extraActions?: JSX.Element;
 }
 
 export const Composer: Component<ComposerProps> = (props) => {
@@ -309,6 +311,9 @@ export const Composer: Component<ComposerProps> = (props) => {
             </output>
           </Show>
           <div class="composer-actions">
+            <Show when={props.extraActions}>
+              {(actions) => <div class="composer-preset-actions">{actions()}</div>}
+            </Show>
             <button
               type="button"
               class="composer-stop"

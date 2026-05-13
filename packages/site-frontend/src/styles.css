@@ -3260,6 +3260,31 @@ pre .copy-button:hover {
   gap: 8px;
   margin-left: auto;
 }
+.composer-preset-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.composer-preset-button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.composer-preset-button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.composer-preset-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 
 .composer-context-status {
   align-self: flex-end;

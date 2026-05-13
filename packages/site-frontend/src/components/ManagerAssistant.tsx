@@ -26,6 +26,17 @@ const MANAGER_SESSION_LIMIT = 10;
 const MANAGER_SESSION_EVENT_LIMIT = 400;
 const MANAGER_SESSION_MAX_BYTES = 8 * 1024 * 1024;
 const STREAM_OPEN_GRACE_MS = 350;
+const ORCHESTRATION_PRESET_PROMPT = [
+  "Start or continue a DeskRelay orchestration framework loop.",
+  "",
+  "Act as the supervisor, not as the sole implementer. Use the manager orchestration APIs to create rounds, create role agents, dispatch multiple workers, collect their outputs, compare results, and improve the protocol.",
+  "",
+  "Default roles to consider: architect, protocol, implementer, verifier, critic, and recorder. Use multiple agents when a task benefits from independent viewpoints. Keep each worker prompt bounded, with a clear objective, writable scope, expected output, and failure reporting format.",
+  "",
+  "After every round, produce a compact Korean status report: what was assigned, what each agent returned, what changed, what failed, and what the next round should test. Continue iterating unless there is a real blocker that cannot be resolved with available APIs.",
+  "",
+  "Do not do all project work yourself. Your job is to supervise the agents, improve the orchestration documents/protocol, and verify that the framework is becoming more reliable.",
+].join("\n");
 
 const INITIAL_EVENT: ClaudeStreamEvent = {
   type: "assistant",
@@ -412,6 +423,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     }
   };
 
+  const runOrchestrationPreset = () => {
+    void send(ORCHESTRATION_PRESET_PROMPT);
+  };
+
   return (
     <div class="manager-assistant manager-assistant-chat">
       <Show when={orchestrationStatus()}>
@@ -482,6 +497,17 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           inFlight={busy()}
           disabled={Boolean(readyError())}
           idPrefix="manager-assistant-composer"
+          extraActions={
+            <button
+              type="button"
+              class="composer-preset-button"
+              disabled={busy() || Boolean(readyError())}
+              title="Run orchestration preset"
+              onClick={runOrchestrationPreset}
+            >
+              Orchestration
+            </button>
+          }
           placeholder={`${serverDevice() ? deviceDisplayName(serverDevice() as Device) : "DeskRelay"} 관리자에게 보내기...`}
         />
       </div>
