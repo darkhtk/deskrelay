@@ -6,9 +6,8 @@ import type {
   ManagerSessionHygieneReport,
   ManagerTask,
 } from "@deskrelay/shared";
-import { type Component, For, Show, createMemo, createSignal } from "solid-js";
+import { type Component, For, type JSX, Show, createMemo, createSignal } from "solid-js";
 
-type OrchestrationTab = "overview" | "agents" | "timeline" | "graph" | "artifacts" | "hygiene";
 type Tone = "neutral" | "running" | "done" | "blocked";
 
 interface ManagerOrchestrationPanelProps {
@@ -36,17 +35,7 @@ interface ArtifactEntry {
   updatedAt: string;
 }
 
-const ORCHESTRATION_TABS: Array<{ id: OrchestrationTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "agents", label: "Agents" },
-  { id: "timeline", label: "Timeline" },
-  { id: "graph", label: "Graph" },
-  { id: "artifacts", label: "Artifacts" },
-  { id: "hygiene", label: "Hygiene" },
-];
-
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
-  const [tab, setTab] = createSignal<OrchestrationTab>("overview");
   const [expanded, setExpanded] = createSignal(false);
   const activeRound = createMemo(() => pickActiveRound(props.rounds));
   const agents = createMemo(() => {
@@ -59,7 +48,6 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const tasks = createMemo(() => props.report?.tasks ?? []);
   const timeline = createMemo(() => buildTimeline(activeRound(), agents(), tasks()));
   const artifacts = createMemo(() => buildArtifacts(agents(), tasks()));
-  const mermaid = createMemo(() => buildMermaid(activeRound(), agents()));
   const totals = createMemo(() => summarizeTotals(agents()));
 
   return (
@@ -101,38 +89,23 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       </header>
 
       <Show when={expanded()}>
-        <nav class="manager-orchestration-tabs" aria-label="orchestration views">
-          <For each={ORCHESTRATION_TABS}>
-            {(item) => (
-              <button
-                type="button"
-                class="manager-orchestration-tab"
-                classList={{ "manager-orchestration-tab-active": tab() === item.id }}
-                onClick={() => setTab(item.id)}
-              >
-                {item.label}
-              </button>
-            )}
-          </For>
-        </nav>
-
         <div class="manager-orchestration-body">
-          <Show when={tab() === "overview"}>
+          <OrchestrationSection title="Overview">
             <OverviewView round={activeRound()} agents={agents()} tasks={tasks()} />
-          </Show>
-          <Show when={tab() === "agents"}>
+          </OrchestrationSection>
+          <OrchestrationSection title="Agents">
             <AgentsView agents={agents()} />
-          </Show>
-          <Show when={tab() === "timeline"}>
+          </OrchestrationSection>
+          <OrchestrationSection title="Timeline">
             <TimelineView entries={timeline()} />
-          </Show>
-          <Show when={tab() === "graph"}>
-            <GraphView mermaid={mermaid()} agents={agents()} />
-          </Show>
-          <Show when={tab() === "artifacts"}>
+          </OrchestrationSection>
+          <OrchestrationSection title="Flow">
+            <FlowView round={activeRound()} agents={agents()} />
+          </OrchestrationSection>
+          <OrchestrationSection title="Artifacts">
             <ArtifactsView artifacts={artifacts()} />
-          </Show>
-          <Show when={tab() === "hygiene"}>
+          </OrchestrationSection>
+          <OrchestrationSection title="Hygiene">
             <HygieneView
               report={props.hygiene}
               loading={props.hygieneLoading}
@@ -140,12 +113,19 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               onRefresh={props.onRefreshHygiene}
               onCleanup={props.onCleanupHygiene}
             />
-          </Show>
+          </OrchestrationSection>
         </div>
       </Show>
     </section>
   );
 };
+
+const OrchestrationSection: Component<{ title: string; children: JSX.Element }> = (props) => (
+  <section class="manager-orchestration-section" aria-label={props.title}>
+    <h4>{props.title}</h4>
+    {props.children}
+  </section>
+);
 
 const OverviewView: Component<{
   round: ManagerRound | undefined;
@@ -247,22 +227,37 @@ const TimelineView: Component<{ entries: TimelineEntry[] }> = (props) => (
   </ol>
 );
 
-const GraphView: Component<{ mermaid: string; agents: ManagerAgent[] }> = (props) => (
-  <div class="manager-graph-layout">
-    <div class="manager-graph-preview" aria-label="agent graph preview">
-      <div class="manager-graph-node manager-graph-manager">Manager</div>
-      <For each={props.agents.slice(0, 8)}>
+const FlowView: Component<{ round: ManagerRound | undefined; agents: ManagerAgent[] }> = (
+  props,
+) => (
+  <div class="manager-flow" aria-label="agent flow visualization">
+    <div class="manager-flow-spine">
+      <div class="manager-flow-node manager-flow-node-manager">
+        <strong>Manager</strong>
+        <span>supervisor</span>
+      </div>
+      <div class="manager-flow-edge" />
+      <div class={`manager-flow-node manager-flow-node-${statusTone(props.round?.status)}`}>
+        <strong>{props.round?.title ?? "Round"}</strong>
+        <span>{statusLabel(props.round?.status)}</span>
+      </div>
+    </div>
+    <div class="manager-flow-branches">
+      <For each={props.agents.slice(0, 12)}>
         {(agent) => (
-          <div class={`manager-graph-node manager-graph-node-${statusTone(agent.status)}`}>
-            <strong>{agent.role}</strong>
-            <span>{statusLabel(agent.status)}</span>
+          <div class={`manager-flow-agent manager-flow-agent-${statusTone(agent.status)}`}>
+            <span class="manager-flow-connector" />
+            <div class="manager-flow-node">
+              <strong>{agent.role}</strong>
+              <span>{statusLabel(agent.status)}</span>
+            </div>
           </div>
         )}
       </For>
+      <Show when={props.agents.length === 0}>
+        <p class="manager-orchestration-empty">No agents yet.</p>
+      </Show>
     </div>
-    <pre class="manager-mermaid-source">
-      <code>{props.mermaid}</code>
-    </pre>
   </div>
 );
 
@@ -356,9 +351,7 @@ const HygieneView: Component<{
         )}
       </Show>
       <div class="manager-hygiene-list">
-        <For each={visibleItems().slice(0, 16)}>
-          {(item) => <HygieneItemRow item={item} />}
-        </For>
+        <For each={visibleItems().slice(0, 16)}>{(item) => <HygieneItemRow item={item} />}</For>
         <Show when={visibleItems().length === 0}>
           <p class="manager-orchestration-empty">No manager sessions were found.</p>
         </Show>
@@ -498,32 +491,6 @@ function collectArtifactPaths(text: string): string[] {
   return [...paths];
 }
 
-function buildMermaid(round: ManagerRound | undefined, agents: ManagerAgent[]): string {
-  const lines = ["flowchart TD", '  Manager["Manager Supervisor"]'];
-  if (round) lines.push(`  Round["${escapeMermaid(round.title)}\\n${statusLabel(round.status)}"]`);
-  if (round) lines.push("  Manager --> Round");
-  const graphAgents = agents.slice(0, 12);
-  for (const [index, agent] of graphAgents.entries()) {
-    const id = `A${index}`;
-    lines.push(`  ${id}["${escapeMermaid(agent.role)}\\n${statusLabel(agent.status)}"]`);
-    lines.push(round ? `  Round --> ${id}` : `  Manager --> ${id}`);
-  }
-  lines.push(
-    "  classDef done fill:#d8f3dc,stroke:#2d6a4f,color:#111",
-    "  classDef running fill:#fff3bf,stroke:#f08c00,color:#111",
-    "  classDef blocked fill:#ffe3e3,stroke:#c92a2a,color:#111",
-    "  classDef neutral fill:#f1f3f5,stroke:#868e96,color:#111",
-  );
-  const groups = new Map<string, string[]>();
-  for (const [index, agent] of graphAgents.entries()) {
-    const tone = statusTone(agent.status);
-    const className = tone === "done" ? "done" : tone === "blocked" ? "blocked" : tone;
-    groups.set(className, [...(groups.get(className) ?? []), `A${index}`]);
-  }
-  for (const [className, ids] of groups) lines.push(`  class ${ids.join(",")} ${className}`);
-  return lines.join("\n");
-}
-
 function statusTone(status: string | undefined): Tone {
   switch (status) {
     case "completed":
@@ -634,8 +601,4 @@ function clip(value: string | undefined, max: number): string {
 
 function shortId(value: string): string {
   return value.length <= 10 ? value : `${value.slice(0, 8)}...`;
-}
-
-function escapeMermaid(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
 }

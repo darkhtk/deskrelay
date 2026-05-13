@@ -5732,31 +5732,29 @@ dialog.approval-modal-root,
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border-subtle));
   color: var(--danger);
 }
-.manager-orchestration-tabs {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  padding: 0 14px 6px;
-}
-.manager-orchestration-tab {
-  border: 0;
-  border-bottom: 1px solid transparent;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex: 0 0 auto;
-  font-size: 12px;
-  padding: 5px 7px;
-}
-.manager-orchestration-tab-active {
-  border-bottom-color: var(--accent-coral);
-  color: var(--text);
-  font-weight: 650;
-}
 .manager-orchestration-body {
+  display: grid;
+  gap: 14px;
   min-height: 0;
   overflow: auto;
-  padding: 0 14px 10px;
+  padding: 2px 14px 12px;
+}
+.manager-orchestration-section {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 10px;
+}
+.manager-orchestration-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.manager-orchestration-section h4 {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  margin: 0;
 }
 .manager-overview-grid {
   display: grid;
@@ -5854,52 +5852,76 @@ dialog.approval-modal-root,
 .manager-timeline-blocked span {
   color: var(--danger);
 }
-.manager-graph-layout {
+.manager-flow {
   display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(150px, 0.8fr) minmax(220px, 1.2fr);
+  gap: 12px;
+  grid-template-columns: minmax(120px, 150px) minmax(0, 1fr);
 }
-.manager-graph-preview {
+.manager-flow-spine {
   align-content: start;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  gap: 6px;
+  justify-items: stretch;
 }
-.manager-graph-node {
+.manager-flow-edge {
+  background: var(--border-subtle);
+  height: 18px;
+  justify-self: center;
+  width: 1px;
+}
+.manager-flow-branches {
+  align-content: start;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  min-width: 0;
+}
+.manager-flow-agent {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-width: 0;
+}
+.manager-flow-connector {
+  background: var(--border-subtle);
+  height: 1px;
+  width: 100%;
+}
+.manager-flow-node {
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: 8px;
   color: var(--text-muted);
   display: inline-grid;
   gap: 2px;
-  min-width: 92px;
-  padding: 7px 10px;
+  min-width: 0;
+  padding: 7px 9px;
 }
-.manager-graph-node strong {
+.manager-flow-node strong {
   color: var(--text);
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.manager-graph-node span {
+.manager-flow-node span {
   font-size: 10px;
 }
-.manager-graph-node-running {
+.manager-flow-node-running .manager-flow-node,
+.manager-flow-agent-running .manager-flow-node,
+.manager-flow-node-running {
   border-color: color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
 }
-.manager-graph-node-done {
+.manager-flow-node-done .manager-flow-node,
+.manager-flow-agent-done .manager-flow-node,
+.manager-flow-node-done {
   border-color: color-mix(in srgb, var(--success) 45%, var(--border-subtle));
 }
-.manager-graph-node-blocked {
+.manager-flow-node-blocked .manager-flow-node,
+.manager-flow-agent-blocked .manager-flow-node,
+.manager-flow-node-blocked {
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border-subtle));
-}
-.manager-mermaid-source {
-  background: var(--code-bg);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  color: var(--text-muted);
-  font-size: 11px;
-  margin: 0;
-  max-height: 150px;
-  overflow: auto;
-  padding: 8px;
 }
 .manager-artifact-row {
   grid-template-columns: minmax(140px, 1.4fr) minmax(80px, 0.7fr) minmax(70px, 0.5fr) 70px;
@@ -6400,8 +6422,14 @@ dialog.approval-modal-root,
     display: none;
   }
   .manager-overview-grid,
-  .manager-graph-layout {
+  .manager-flow {
     grid-template-columns: 1fr;
+  }
+  .manager-flow-branches {
+    grid-template-columns: 1fr;
+  }
+  .manager-flow-agent {
+    grid-template-columns: 14px minmax(0, 1fr);
   }
   .manager-agent-row {
     grid-template-columns: minmax(64px, 0.7fr) minmax(64px, 0.6fr) minmax(120px, 1.5fr);

@@ -224,26 +224,17 @@ describe("ManagerAssistant", () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain("Overview");
       expect(document.body.textContent).toContain("Agents");
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Agents" }));
-    await waitFor(() => {
+      expect(document.body.textContent).toContain("Timeline");
+      expect(document.body.textContent).toContain("Flow");
+      expect(document.body.textContent).toContain("Artifacts");
+      expect(document.body.textContent).toContain("Hygiene");
       expect(document.body.textContent).toContain("architect");
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Graph" }));
-    await waitFor(() => {
-      expect(document.body.textContent).toContain("flowchart TD");
-      expect(document.body.textContent).toContain("Manager Supervisor");
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Artifacts" }));
-    await waitFor(() => {
+      expect(document.body.textContent).toContain("Manager");
+      expect(document.body.textContent).not.toContain("flowchart TD");
       expect(document.body.textContent).toContain("PROTOCOL.md");
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Hygiene" }));
-    await waitFor(() => {
       expect(document.body.textContent).toContain("Safe cleanup");
       expect(document.body.textContent).toContain("Internal only");
     });
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
     await waitFor(() => {
       expect(document.body.textContent).toContain("관리자 대기 중");
     });
