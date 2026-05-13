@@ -231,6 +231,11 @@ function mockDaemonApiResponse(req: Request): Response {
       { instanceId: "remote-claude", name: "remote-claude", version: "0.0.1", loadedAt: "x" },
     ]);
   }
+  if (path === "/behaviors/remote-claude/request") {
+    return Response.json({
+      result: { sessionId: "smoke-session", cwd: "C:\\Users\\darkh\\Projects", events: [] },
+    });
+  }
   if (path === "/capabilities") {
     return Response.json({ apiVersion: "1", features: ["manager"] });
   }
@@ -521,6 +526,14 @@ describe("API route inventory", () => {
             message: "Inventory smoke report.",
           }),
           [201],
+        ],
+        [
+          "POST /api/manager/sessions/read",
+          authedRequest("POST", "/api/manager/sessions/read", {
+            deviceId,
+            sessionId: "smoke-session",
+            cwd: "C:\\Users\\darkh\\Projects",
+          }),
         ],
         [
           "POST /api/manager/assistant/chat",
@@ -3259,6 +3272,158 @@ describe("device update proxy", () => {
     expect(body.retryable).toBe(false);
     expect(body.error).toContain("branch switch required");
     expect(body.fallbackCommand).toContain("-Branch 'api-ai-assistant'");
+  });
+});
+
+describe("manager session transcript API", () => {
+  test("POST /api/manager/sessions/read reads a known device and cwd", async () => {
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "Remote PC",
+    });
+    const behaviorBodies: Array<{ method?: string; params?: Record<string, unknown> }> = [];
+    setup.setMockResponse(async (req) => {
+      const path = new URL(req.url).pathname;
+      if (path === "/behaviors") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "x",
+          },
+        ]);
+      }
+      if (path === "/behaviors/remote-claude/request") {
+        const body = (await req.json()) as { method?: string; params?: Record<string, unknown> };
+        behaviorBodies.push(body);
+        return Response.json({
+          result: {
+            sessionId: "session_1",
+            cwd: "C:\\repo",
+            events: [{ type: "user", message: { content: "hello" } }],
+          },
+        });
+      }
+      return Response.json({ ok: true });
+    });
+
+    const res = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/sessions/read", {
+        deviceId: device.id,
+        sessionId: "session_1",
+        cwd: "C:\\repo",
+        maxBytes: 1024,
+        eventLimit: 20,
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      device: { id: string };
+      behavior: { instanceId: string };
+      resolvedCwd: string;
+      transcript: { sessionId: string; events: unknown[] };
+    };
+    expect(body.device.id).toBe(device.id);
+    expect(body.behavior.instanceId).toBe("remote-claude");
+    expect(body.resolvedCwd).toBe("C:\\repo");
+    expect(body.transcript.sessionId).toBe("session_1");
+    expect(body.transcript.events).toHaveLength(1);
+    expect(behaviorBodies).toEqual([
+      {
+        method: "sessions.read",
+        params: {
+          cwd: "C:\\repo",
+          sessionId: "session_1",
+          maxBytes: 1024,
+          eventLimit: 20,
+        },
+      },
+    ]);
+    expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
+  });
+
+  test("POST /api/manager/sessions/read discovers cwd and device from session id", async () => {
+    const first = setup.registry.register({
+      daemonUrl: "http://daemon-one.test:18091",
+      authToken: "token-one",
+      label: "First PC",
+    });
+    const second = setup.registry.register({
+      daemonUrl: "http://daemon-two.test:18091",
+      authToken: "token-two",
+      label: "Second PC",
+    });
+    const behaviorBodies: Array<{ host: string; method?: string; params?: Record<string, unknown> }> =
+      [];
+    setup.setMockResponse(async (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/behaviors") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "x",
+          },
+        ]);
+      }
+      if (url.pathname === "/behaviors/remote-claude/request") {
+        const body = (await req.json()) as { method?: string; params?: Record<string, unknown> };
+        behaviorBodies.push({ host: url.hostname, ...body });
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result:
+              url.hostname === "daemon-one.test"
+                ? [{ sessionId: "other", cwd: "C:\\one", modifiedAt: "2026-05-12T00:00:00.000Z" }]
+                : [
+                    {
+                      sessionId: "target",
+                      cwd: "C:\\two",
+                      title: "Target session",
+                      modifiedAt: "2026-05-13T00:00:00.000Z",
+                    },
+                  ],
+          });
+        }
+        return Response.json({
+          result: {
+            sessionId: "target",
+            cwd: "C:\\two",
+            events: [{ type: "assistant", message: { content: "found" } }],
+          },
+        });
+      }
+      return Response.json({ ok: true });
+    });
+
+    const res = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/sessions/read", { sessionId: "target" }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      device: { id: string };
+      resolvedCwd: string;
+      session?: { title?: string };
+      transcript: { sessionId: string };
+      attempts: Array<{ deviceId: string; stage: string }>;
+    };
+    expect(first.id).not.toBe(second.id);
+    expect(body.device.id).toBe(second.id);
+    expect(body.resolvedCwd).toBe("C:\\two");
+    expect(body.session?.title).toBe("Target session");
+    expect(body.transcript.sessionId).toBe("target");
+    expect(body.attempts).toEqual([
+      expect.objectContaining({ deviceId: first.id, stage: "sessions.list" }),
+    ]);
+    expect(behaviorBodies.map((entry) => `${entry.host}:${entry.method}`)).toEqual([
+      "daemon-one.test:sessions.list",
+      "daemon-two.test:sessions.list",
+      "daemon-two.test:sessions.read",
+    ]);
   });
 });
 

@@ -163,6 +163,41 @@ export interface ClaudeSessionTranscript {
   eventsTruncated?: boolean;
 }
 
+export interface ManagerSessionReadRequest {
+  deviceId?: string;
+  behaviorInstanceId?: string;
+  sessionId: string;
+  cwd?: string;
+  projectsDir?: string;
+  maxBytes?: number;
+  eventLimit?: number;
+  listLimit?: number;
+}
+
+export interface ManagerSessionReadAttempt {
+  deviceId: string;
+  label: string;
+  daemonUrl: string;
+  stage: string;
+  error: string;
+  status?: number;
+}
+
+export interface ManagerSessionReadResponse {
+  device: { id: string; label: string; daemonUrl: string };
+  behavior: {
+    instanceId: string;
+    name?: string;
+    packageName?: string;
+    version?: string;
+    loadedAt?: string;
+  };
+  resolvedCwd: string;
+  session?: ClaudeSessionSummary;
+  transcript: ClaudeSessionTranscript;
+  attempts: ManagerSessionReadAttempt[];
+}
+
 export interface ClaudeStreamEvent {
   type: string;
   [key: string]: unknown;
@@ -556,6 +591,8 @@ export const api = {
     ),
   postManagerAssistantStatus: (input: ManagerAssistantStatusReportInput) =>
     request<ManagerAssistantStatusReportResponse>("POST", "/api/manager/assistant/status", input),
+  managerSessionRead: (input: ManagerSessionReadRequest) =>
+    request<ManagerSessionReadResponse>("POST", "/api/manager/sessions/read", input),
   managerAssistantChat: (input: ManagerAssistantChatRequest) =>
     request<ManagerAssistantChatResponse>("POST", "/api/manager/assistant/chat", input),
   managerAssistantChatStream: (

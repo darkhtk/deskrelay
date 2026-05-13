@@ -248,6 +248,25 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
   });
 
+  app.post("/api/manager/sessions/read", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerSessionReadRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const result = await readManagerSessionTranscript(fetchImpl, registry, localToken, parsed.value);
+    if (!result.ok) {
+      return c.json(
+        { error: result.error, attempts: result.attempts },
+        result.status as never,
+      );
+    }
+    return c.json(result.value);
+  });
+
   app.get("/api/manager/tasks", async (c) => {
     return c.json({
       tasks: (await managerTaskStore.list(clampListLimit(c.req.query("limit")))).map(
@@ -1372,6 +1391,12 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "POST",
     path: "/api/manager/assistant/status",
     description: "Write a concise manager assistant progress report for the UI.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/sessions/read",
+    description:
+      "Read a Claude session transcript by session id, optionally searching registered devices and cwd values.",
   },
   {
     method: "GET",
@@ -3258,7 +3283,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "### Session Analyst",
     "",
     "- Use for: summarize selected conversation, analyze a transcript, inspect an image/session issue, compare messages, continue a selected session.",
-    "- Resolve selected device/session/cwd from browser context first. Then read only the needed session content with `sessions.read`.",
+    "- Resolve selected device/session/cwd from browser context first. Then read only the needed session content with `POST /api/manager/sessions/read`.",
     "- Do not claim selected context is missing until you checked the browser context and available manager/session APIs.",
     "- Summaries and analysis must be based on retrieved transcript data, not memory guesses.",
     "",
@@ -3305,14 +3330,14 @@ function buildManagedManagerAssistantInstructions(input: {
     "Use lazy reads: read large data only when the user's intent requires that data.",
     "If the user refers to the selected/current conversation, chat, or session, use the browser-provided selected device/session/cwd first. Do not ask the user to paste text or provide IDs when selected context is available.",
     "Read the selected session only for requests that require session content, such as summarize, analyze this conversation, inspect this error, continue this session, or compare messages.",
-    "To inspect a selected Claude session, list the selected device behaviors, then call the Claude behavior method `sessions.read` with the selected `sessionId` and `cwd` when present.",
+    "To inspect a selected Claude session, call `POST /api/manager/sessions/read` with the selected `deviceId`, `sessionId`, and `cwd` when present. If `cwd` is absent, the API searches session lists to resolve it.",
     "For device/server/update/registration/security questions, do not read session content unless the user specifically asks about the selected session.",
     "If the intent or scope is ambiguous, ask one concise clarification question before mutating anything.",
     "",
     "## Generic Decision Rules",
     "",
     "- Status inquiry: use summary/status/diagnostic read APIs and avoid session reads.",
-    "- Selected session work: require selected device id and session id; read behaviors first, then `sessions.read`; summarize or analyze from observed events.",
+    "- Selected session work: use `POST /api/manager/sessions/read` with the selected device/session/cwd when available; summarize or analyze from observed events.",
     "- Remote Claude work: inspect target device state and cwd; call the `chat` behavior with `message`, `cwd`, and optional `sessionId` only when the user asked to send work.",
     "- For remote worker prompts where exact generated filenames or commands matter, prefer ASCII-only operational prompts. Answer the DeskRelay user in Korean afterward.",
     "- Configuration change: read current config first, mutate only the requested scope, then re-read.",
@@ -4866,6 +4891,432 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   } catch {
     return text;
   }
+}
+
+interface ManagerSessionReadRequest {
+  deviceId?: string;
+  behaviorInstanceId?: string;
+  sessionId: string;
+  cwd?: string;
+  projectsDir?: string;
+  maxBytes?: number;
+  eventLimit?: number;
+  listLimit: number;
+}
+
+interface ManagerSessionReadAttempt {
+  deviceId: string;
+  label: string;
+  daemonUrl: string;
+  stage: string;
+  error: string;
+  status?: number;
+}
+
+interface ManagerBehaviorDescriptor {
+  instanceId: string;
+  name?: string;
+  packageName?: string;
+  version?: string;
+  loadedAt?: string;
+}
+
+interface ManagerSessionCandidate {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  fullTitle?: string;
+  modifiedAt?: string;
+  fileSize?: number;
+}
+
+class ManagerSessionReadError extends Error {
+  constructor(
+    readonly stage: string,
+    readonly status: number | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ManagerSessionReadError";
+  }
+}
+
+function parseManagerSessionReadRequest(
+  value: unknown,
+): { ok: true; value: ManagerSessionReadRequest } | { ok: false; error: string } {
+  if (!isRecord(value)) return { ok: false, error: "JSON object body is required" };
+  const sessionId = parseRequiredStringField(value, "sessionId");
+  if (!sessionId.ok) return sessionId;
+  const deviceId = parseOptionalStringField(value, "deviceId");
+  if (!deviceId.ok) return deviceId;
+  const behaviorInstanceId = parseOptionalStringField(value, "behaviorInstanceId");
+  if (!behaviorInstanceId.ok) return behaviorInstanceId;
+  const cwd = parseOptionalStringField(value, "cwd");
+  if (!cwd.ok) return cwd;
+  const projectsDir = parseOptionalStringField(value, "projectsDir");
+  if (!projectsDir.ok) return projectsDir;
+  const maxBytes = parseOptionalPositiveIntegerField(value, "maxBytes", 64 * 1024 * 1024);
+  if (!maxBytes.ok) return maxBytes;
+  const eventLimit = parseOptionalPositiveIntegerField(value, "eventLimit", 10_000);
+  if (!eventLimit.ok) return eventLimit;
+  const listLimit = parseOptionalPositiveIntegerField(value, "listLimit", 5_000);
+  if (!listLimit.ok) return listLimit;
+  return {
+    ok: true,
+    value: {
+      sessionId: sessionId.value,
+      listLimit: listLimit.value ?? 1_000,
+      ...(deviceId.value ? { deviceId: deviceId.value } : {}),
+      ...(behaviorInstanceId.value ? { behaviorInstanceId: behaviorInstanceId.value } : {}),
+      ...(cwd.value ? { cwd: cwd.value } : {}),
+      ...(projectsDir.value ? { projectsDir: projectsDir.value } : {}),
+      ...(maxBytes.value !== undefined ? { maxBytes: maxBytes.value } : {}),
+      ...(eventLimit.value !== undefined ? { eventLimit: eventLimit.value } : {}),
+    },
+  };
+}
+
+function parseRequiredStringField(
+  record: Record<string, unknown>,
+  field: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  const raw = record[field];
+  if (typeof raw !== "string" || !raw.trim()) {
+    return { ok: false, error: `${field} is required` };
+  }
+  return { ok: true, value: raw.trim() };
+}
+
+function parseOptionalStringField(
+  record: Record<string, unknown>,
+  field: string,
+): { ok: true; value?: string } | { ok: false; error: string } {
+  const raw = record[field];
+  if (raw === undefined || raw === null) return { ok: true };
+  if (typeof raw !== "string") return { ok: false, error: `${field} must be a string` };
+  const trimmed = raw.trim();
+  return trimmed ? { ok: true, value: trimmed } : { ok: true };
+}
+
+function parseOptionalPositiveIntegerField(
+  record: Record<string, unknown>,
+  field: string,
+  max: number,
+): { ok: true; value?: number } | { ok: false; error: string } {
+  const raw = record[field];
+  if (raw === undefined || raw === null || raw === "") return { ok: true };
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isFinite(n) || n <= 0) {
+    return { ok: false, error: `${field} must be a positive integer` };
+  }
+  return { ok: true, value: Math.max(1, Math.min(max, Math.floor(n))) };
+}
+
+async function readManagerSessionTranscript(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  registry: DeviceRegistry,
+  localToken: string | undefined,
+  request: ManagerSessionReadRequest,
+): Promise<
+  | {
+      ok: true;
+      value: {
+        device: { id: string; label: string; daemonUrl: string };
+        behavior: ManagerBehaviorDescriptor;
+        resolvedCwd: string;
+        session?: ManagerSessionCandidate;
+        transcript: unknown;
+        attempts: ManagerSessionReadAttempt[];
+      };
+    }
+  | { ok: false; status: number; error: string; attempts: ManagerSessionReadAttempt[] }
+> {
+  const attempts: ManagerSessionReadAttempt[] = [];
+  const devices = request.deviceId ? [registry.get(request.deviceId)].filter(Boolean) : registry.list();
+  if (request.deviceId && devices.length === 0) {
+    return { ok: false, status: 404, error: `unknown device: ${request.deviceId}`, attempts };
+  }
+  if (devices.length === 0) {
+    return { ok: false, status: 404, error: "no registered devices", attempts };
+  }
+
+  for (const device of devices as Device[]) {
+    try {
+      const behaviors = await readDeviceBehaviors(fetchImpl, device, daemonToken(device, localToken));
+      const behavior = selectClaudeBehavior(behaviors, request.behaviorInstanceId);
+      if (!behavior) {
+        throw new ManagerSessionReadError(
+          "behaviors",
+          404,
+          request.behaviorInstanceId
+            ? `behavior not found: ${request.behaviorInstanceId}`
+            : "remote-claude behavior is not loaded",
+        );
+      }
+
+      let resolvedCwd = request.cwd;
+      let session: ManagerSessionCandidate | undefined;
+      if (!resolvedCwd) {
+        const sessions = await listDeviceSessions(fetchImpl, device, behavior, localToken, request);
+        session = selectSessionCandidate(sessions, request.sessionId);
+        if (!session) {
+          throw new ManagerSessionReadError(
+            "sessions.list",
+            404,
+            `session not found in listed sessions: ${request.sessionId}`,
+          );
+        }
+        resolvedCwd = session.cwd;
+      }
+
+      const transcript = await callDeviceBehavior(fetchImpl, device, behavior, localToken, {
+        method: "sessions.read",
+        params: buildSessionReadParams(request, resolvedCwd),
+      });
+      return {
+        ok: true,
+        value: {
+          device: publicManagerDevice(device),
+          behavior,
+          resolvedCwd,
+          ...(session ? { session } : {}),
+          transcript,
+          attempts,
+        },
+      };
+    } catch (error) {
+      attempts.push(managerSessionReadAttempt(device, error));
+      if (request.deviceId) break;
+    }
+  }
+
+  return {
+    ok: false,
+    status: managerSessionReadFailureStatus(attempts),
+    error: `session transcript not found: ${request.sessionId}`,
+    attempts,
+  };
+}
+
+function publicManagerDevice(device: Device): { id: string; label: string; daemonUrl: string } {
+  return { id: device.id, label: device.label, daemonUrl: device.daemonUrl };
+}
+
+async function readDeviceBehaviors(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  token: string | undefined,
+): Promise<ManagerBehaviorDescriptor[]> {
+  const payload = await fetchDeviceJson(fetchImpl, device, `${device.daemonUrl}/behaviors`, {
+    method: "GET",
+    stage: "behaviors",
+    ...(token ? { token } : {}),
+  });
+  return normalizeBehaviorDescriptors(payload);
+}
+
+async function listDeviceSessions(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  behavior: ManagerBehaviorDescriptor,
+  localToken: string | undefined,
+  request: ManagerSessionReadRequest,
+): Promise<ManagerSessionCandidate[]> {
+  const payload = await callDeviceBehavior(fetchImpl, device, behavior, localToken, {
+    method: "sessions.list",
+    params: {
+      limit: request.listLimit,
+      dedupeSessionIds: false,
+      ...(request.projectsDir ? { projectsDir: request.projectsDir } : {}),
+    },
+  });
+  return normalizeSessionCandidates(payload);
+}
+
+function buildSessionReadParams(request: ManagerSessionReadRequest, cwd: string): Record<string, unknown> {
+  return {
+    cwd,
+    sessionId: request.sessionId,
+    ...(request.projectsDir ? { projectsDir: request.projectsDir } : {}),
+    ...(request.maxBytes !== undefined ? { maxBytes: request.maxBytes } : {}),
+    ...(request.eventLimit !== undefined ? { eventLimit: request.eventLimit } : {}),
+  };
+}
+
+async function callDeviceBehavior(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  behavior: ManagerBehaviorDescriptor,
+  localToken: string | undefined,
+  input: { method: string; params?: unknown },
+): Promise<unknown> {
+  const token = daemonToken(device, localToken);
+  const payload = await fetchDeviceJson(
+    fetchImpl,
+    device,
+    `${device.daemonUrl}/behaviors/${encodeURIComponent(behavior.instanceId)}/request`,
+    {
+      method: "POST",
+      stage: input.method,
+      body: JSON.stringify(input.params !== undefined ? input : { method: input.method }),
+      ...(token ? { token } : {}),
+    },
+  );
+  if (isRecord(payload) && isRecord(payload.error)) {
+    throw new ManagerSessionReadError(
+      input.method,
+      behaviorErrorStatus(payload.error),
+      payloadErrorMessage(payload) ?? `behavior method failed: ${input.method}`,
+    );
+  }
+  return isRecord(payload) && "result" in payload ? payload.result : payload;
+}
+
+async function fetchDeviceJson(
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
+  device: Device,
+  url: string,
+  input: { method: string; token?: string; stage: string; body?: string },
+): Promise<unknown> {
+  const headers: Record<string, string> = {};
+  if (input.body !== undefined) headers["content-type"] = "application/json";
+  if (input.token) headers.authorization = `Bearer ${input.token}`;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: input.method,
+      ...(input.body !== undefined ? { body: input.body } : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    });
+  } catch (error) {
+    throw new ManagerSessionReadError(
+      input.stage,
+      502,
+      `cannot reach daemon ${device.label}: ${errorMessage(error)}`,
+    );
+  }
+  const payload = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new ManagerSessionReadError(
+      input.stage,
+      response.status,
+      payloadErrorMessage(payload) ?? `daemon returned HTTP ${response.status}`,
+    );
+  }
+  return payload;
+}
+
+function normalizeBehaviorDescriptors(value: unknown): ManagerBehaviorDescriptor[] {
+  if (!Array.isArray(value)) return [];
+  const result: ManagerBehaviorDescriptor[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.instanceId !== "string" || !item.instanceId.trim()) {
+      continue;
+    }
+    result.push({
+      instanceId: item.instanceId,
+      ...(typeof item.name === "string" ? { name: item.name } : {}),
+      ...(typeof item.packageName === "string" ? { packageName: item.packageName } : {}),
+      ...(typeof item.version === "string" ? { version: item.version } : {}),
+      ...(typeof item.loadedAt === "string" ? { loadedAt: item.loadedAt } : {}),
+    });
+  }
+  return result;
+}
+
+function selectClaudeBehavior(
+  behaviors: ManagerBehaviorDescriptor[],
+  preferredInstanceId: string | undefined,
+): ManagerBehaviorDescriptor | undefined {
+  if (preferredInstanceId) {
+    return behaviors.find((behavior) => behavior.instanceId === preferredInstanceId);
+  }
+  return (
+    behaviors.find((behavior) => behavior.instanceId === "remote-claude") ??
+    behaviors.find((behavior) => behavior.name === "remote-claude") ??
+    behaviors.find((behavior) => behavior.packageName === "remote-claude")
+  );
+}
+
+function normalizeSessionCandidates(value: unknown): ManagerSessionCandidate[] {
+  if (!Array.isArray(value)) return [];
+  const result: ManagerSessionCandidate[] = [];
+  for (const item of value) {
+    if (
+      !isRecord(item) ||
+      typeof item.sessionId !== "string" ||
+      !item.sessionId.trim() ||
+      typeof item.cwd !== "string" ||
+      !item.cwd.trim()
+    ) {
+      continue;
+    }
+    result.push({
+      sessionId: item.sessionId,
+      cwd: item.cwd,
+      ...(typeof item.title === "string" ? { title: item.title } : {}),
+      ...(typeof item.fullTitle === "string" ? { fullTitle: item.fullTitle } : {}),
+      ...(typeof item.modifiedAt === "string" ? { modifiedAt: item.modifiedAt } : {}),
+      ...(typeof item.fileSize === "number" ? { fileSize: item.fileSize } : {}),
+    });
+  }
+  return result;
+}
+
+function selectSessionCandidate(
+  sessions: ManagerSessionCandidate[],
+  sessionId: string,
+): ManagerSessionCandidate | undefined {
+  return sessions
+    .filter((session) => session.sessionId === sessionId)
+    .sort((left, right) => Date.parse(right.modifiedAt ?? "") - Date.parse(left.modifiedAt ?? ""))[0];
+}
+
+function managerSessionReadAttempt(device: Device, error: unknown): ManagerSessionReadAttempt {
+  if (error instanceof ManagerSessionReadError) {
+    return {
+      deviceId: device.id,
+      label: device.label,
+      daemonUrl: device.daemonUrl,
+      stage: error.stage,
+      error: error.message,
+      ...(error.status ? { status: error.status } : {}),
+    };
+  }
+  return {
+    deviceId: device.id,
+    label: device.label,
+    daemonUrl: device.daemonUrl,
+    stage: "unknown",
+    error: errorMessage(error),
+  };
+}
+
+function managerSessionReadFailureStatus(attempts: ManagerSessionReadAttempt[]): number {
+  if (attempts.some((attempt) => (attempt.status ?? 0) >= 500)) {
+    return 502;
+  }
+  return 404;
+}
+
+function behaviorErrorStatus(error: Record<string, unknown>): number {
+  if (typeof error.code === "number" && error.code >= 400 && error.code < 600) {
+    return error.code;
+  }
+  const message = typeof error.message === "string" ? error.message : "";
+  return /enoent|not found|missing/i.test(message) ? 404 : 502;
+}
+
+function payloadErrorMessage(payload: unknown): string | undefined {
+  if (!isRecord(payload)) {
+    return typeof payload === "string" && payload.trim() ? payload : undefined;
+  }
+  if (typeof payload.error === "string") return payload.error;
+  if (isRecord(payload.error) && typeof payload.error.message === "string") {
+    return payload.error.message;
+  }
+  if (typeof payload.message === "string") return payload.message;
+  return undefined;
 }
 
 function stateFromDeviceUpdateResponse(status: number, payload: unknown): ManagerTaskState {
