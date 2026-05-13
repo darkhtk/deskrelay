@@ -150,9 +150,8 @@ export async function listSessions(options: ListSessionsOptions = {}): Promise<S
     const cwd = metadata.cwd ?? info.cwd;
     if (options.cwd !== undefined && options.cwd !== cwd) continue;
     if (options.dedupeSessionIds && seenSessionIds.has(info.sessionId)) continue;
-    const finalPath = sessionFilePath(root, cwd, info.sessionId);
-    if (!sameFilesystemPath(info.path, finalPath)) continue;
-    const fileSize = await readableFileSize(finalPath);
+    if (!matchesSessionFilePath(info.path, root, cwd, info.sessionId)) continue;
+    const fileSize = await readableFileSize(info.path);
     if (fileSize === undefined) continue;
     if (options.dedupeSessionIds) seenSessionIds.add(info.sessionId);
     summaries.push({
@@ -187,7 +186,7 @@ export interface ReadSessionOptions {
 
 export async function readSession(options: ReadSessionOptions): Promise<SessionTranscript> {
   const root = options.projectsDir ?? defaultClaudeProjectsDir();
-  const path = sessionFilePath(root, options.cwd, options.sessionId);
+  const path = await resolveExistingSessionFilePath(root, options.cwd, options.sessionId);
   const maxBytes = normalizeMaxBytes(options.maxBytes);
   const st = await stat(path);
   const truncated = st.size > maxBytes;
@@ -249,6 +248,51 @@ function encodeCwd(cwd: string): string {
 
 function sessionFilePath(root: string, cwd: string, sessionId: string): string {
   return join(root, encodeCwd(cwd), `${sessionId}.jsonl`);
+}
+
+function sessionFilePathCandidates(root: string, cwd: string, sessionId: string): string[] {
+  return encodeCwdAliases(cwd).map((dirName) => join(root, dirName, `${sessionId}.jsonl`));
+}
+
+function encodeCwdAliases(cwd: string): string[] {
+  const primary = encodeCwd(cwd);
+  // Claude Code currently turns literal dots in hidden path segments into "-"
+  // when naming project session directories. Example:
+  //   C:\repo\.deskrelay\manager-assistant
+  // becomes:
+  //   C--repo--deskrelay-manager-assistant
+  // Keep the documented primary form first, then accept the dotted alias so
+  // existing sessions in hidden folders remain readable and listable.
+  const dotsAsDashes = primary.replace(/\./g, "-");
+  return Array.from(new Set([primary, dotsAsDashes]));
+}
+
+async function resolveExistingSessionFilePath(
+  root: string,
+  cwd: string,
+  sessionId: string,
+): Promise<string> {
+  const candidates = sessionFilePathCandidates(root, cwd, sessionId);
+  for (const candidate of candidates) {
+    try {
+      const st = await stat(candidate);
+      if (st.isFile()) return candidate;
+    } catch {
+      // Try the next known encoding alias.
+    }
+  }
+  return candidates[0] ?? sessionFilePath(root, cwd, sessionId);
+}
+
+function matchesSessionFilePath(
+  path: string,
+  root: string,
+  cwd: string,
+  sessionId: string,
+): boolean {
+  return sessionFilePathCandidates(root, cwd, sessionId).some((candidate) =>
+    sameFilesystemPath(path, candidate),
+  );
 }
 
 function sameFilesystemPath(left: string, right: string): boolean {
@@ -328,7 +372,7 @@ export async function deleteSession(options: DeleteSessionOptions): Promise<Dele
     throw new Error(`invalid sessionId: ${JSON.stringify(options.sessionId)}`);
   }
   const root = options.projectsDir ?? defaultClaudeProjectsDir();
-  const path = sessionFilePath(root, options.cwd, options.sessionId);
+  const path = await resolveExistingSessionFilePath(root, options.cwd, options.sessionId);
   try {
     await unlink(path);
     return { deleted: true, path };

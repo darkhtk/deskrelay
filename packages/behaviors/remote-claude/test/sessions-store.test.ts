@@ -117,6 +117,28 @@ describe("listSessions", () => {
     expect(transcript.events).toHaveLength(1);
   });
 
+  test("reads sessions stored under Claude's dot-as-dash hidden-folder cwd alias", async () => {
+    const exactCwd = String.raw`C:\sourcetree\DeskRelay\deskrelay\.deskrelay\manager-assistant`;
+    const actualClaudeDir = "C--sourcetree-DeskRelay-deskrelay--deskrelay-manager-assistant";
+    await mkdir(join(projectsDir, actualClaudeDir));
+    await writeJsonl(join(projectsDir, actualClaudeDir, "manager-session.jsonl"), [
+      { type: "system", subtype: "init", cwd: exactCwd, sessionId: "manager-session" },
+      { type: "user", cwd: exactCwd, message: { role: "user", content: "status please" } },
+    ]);
+
+    const list = await listSessions({ projectsDir, cwd: exactCwd });
+    expect(list.map((session) => session.sessionId)).toEqual(["manager-session"]);
+    expect(list[0]?.cwd).toBe(exactCwd);
+
+    const transcript = await readSession({
+      projectsDir,
+      cwd: exactCwd,
+      sessionId: "manager-session",
+    });
+    expect(transcript.events).toHaveLength(2);
+    expect(transcript.cwd).toBe(exactCwd);
+  });
+
   test("skips sessions whose final read path no longer exists", async () => {
     await mkdir(join(projectsDir, "C--Users-darkh-Projects-stale"));
     await writeJsonl(join(projectsDir, "C--Users-darkh-Projects-stale", "gone.jsonl"), [
