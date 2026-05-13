@@ -152,29 +152,45 @@ function Start-DevProcess {
     [string]$Command,
     [string]$LogPath,
     [string]$Repo,
-    [string]$EnvFile
+    [string]$EnvFile,
+    [switch]$RestartOnExit,
+    [int]$RestartDelaySeconds = 2
   )
   $runnerPath = Join-Path $env:CR_DEV_LOG_DIR "$Name.runner.ps1"
+  $restartLiteral = if ($RestartOnExit) { '$true' } else { '$false' }
   $ps = @"
 `$ErrorActionPreference = 'Stop'
-try {
-  "[$((Get-Date).ToUniversalTime().ToString("o"))] starting $Name" | Out-File -Encoding utf8 -FilePath $(Quote-PsString $LogPath)
-  . $(Quote-PsString $EnvFile)
-  Set-Location $(Quote-PsString $Repo)
-  `$ErrorActionPreference = 'Continue'
-  Invoke-Expression $(Quote-PsString "$Command 2>&1") | ForEach-Object {
-    `$_.ToString() | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
+`$restartOnExit = $restartLiteral
+`$restartDelaySeconds = $RestartDelaySeconds
+`$attempt = 0
+while (`$true) {
+  `$attempt += 1
+  try {
+    "[`$((Get-Date).ToUniversalTime().ToString('o'))] starting $Name attempt=`$attempt" | Out-File -Encoding utf8 -FilePath $(Quote-PsString $LogPath) -Append
+    . $(Quote-PsString $EnvFile)
+    Set-Location $(Quote-PsString $Repo)
+    `$ErrorActionPreference = 'Continue'
+    Invoke-Expression $(Quote-PsString "$Command 2>&1") | ForEach-Object {
+      `$_.ToString() | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
+    }
+    `$nativeExit = `$LASTEXITCODE
+    `$ErrorActionPreference = 'Stop'
+    "[`$((Get-Date).ToUniversalTime().ToString('o'))] $Name exited with code `$nativeExit" | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
+    if (-not `$restartOnExit) {
+      if (`$nativeExit -ne 0) {
+        exit `$nativeExit
+      }
+      exit 0
+    }
+  } catch {
+    "[`$((Get-Date).ToUniversalTime().ToString('o'))] failed $Name" | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
+    `$_ | Out-String | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
+    if (-not `$restartOnExit) {
+      exit 1
+    }
   }
-  `$nativeExit = `$LASTEXITCODE
-  `$ErrorActionPreference = 'Stop'
-  if (`$nativeExit -ne 0) {
-    "[$((Get-Date).ToUniversalTime().ToString("o"))] $Name exited with code `$nativeExit" | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
-    exit `$nativeExit
-  }
-} catch {
-  "[$((Get-Date).ToUniversalTime().ToString("o"))] failed $Name" | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
-  `$_ | Out-String | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
-  exit 1
+  "[`$((Get-Date).ToUniversalTime().ToString('o'))] restarting $Name in `$restartDelaySeconds seconds" | Out-File -Encoding utf8 -Append -FilePath $(Quote-PsString $LogPath)
+  Start-Sleep -Seconds `$restartDelaySeconds
 }
 "@
   if ($PrintOnly) {
@@ -319,7 +335,7 @@ $started = @()
 
 if (-not $NoDaemon) {
   $daemonLog = Join-Path $env:CR_DEV_LOG_DIR "daemon.log"
-  $daemon = Start-DevProcess -Name "daemon" -Command "bun run packages/pc-connector-daemon/src/bin.ts" -LogPath $daemonLog -Repo $repo -EnvFile $envFile
+  $daemon = Start-DevProcess -Name "daemon" -Command "bun run packages/pc-connector-daemon/src/bin.ts" -LogPath $daemonLog -Repo $repo -EnvFile $envFile -RestartOnExit
   if ($daemon) {
     $started += $daemon
     Wait-File -Path $env:CR_CONNECTOR_AUTH_FILE -TimeoutSeconds 20

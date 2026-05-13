@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { join } from "node:path";
 import type {
   ManagerProcessComponent,
@@ -105,27 +106,36 @@ async function readProcessComponents(processFile: string): Promise<ManagerProces
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(stripUtf8Bom(raw));
   } catch {
     return [];
   }
   const rows = Array.isArray(parsed) ? parsed : [parsed];
-  return rows
-    .map((row) => normalizeProcessComponent(row))
-    .filter((row): row is ManagerProcessComponent => row !== null);
+  const components = await Promise.all(rows.map((row) => normalizeProcessComponent(row)));
+  return components.filter((row): row is ManagerProcessComponent => row !== null);
 }
 
-function normalizeProcessComponent(value: unknown): ManagerProcessComponent | null {
+function stripUtf8Bom(value: string): string {
+  return value.charCodeAt(0) === 0xfeff ? value.slice(1) : value;
+}
+
+async function normalizeProcessComponent(value: unknown): Promise<ManagerProcessComponent | null> {
   if (typeof value !== "object" || value === null) return null;
   const row = value as Record<string, unknown>;
   const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : "process";
   const pid = typeof row.pid === "number" && Number.isInteger(row.pid) ? row.pid : undefined;
   const logPath = typeof row.log === "string" && row.log.trim() ? row.log.trim() : undefined;
+  const alive = pid ? isProcessRunning(pid) : false;
+  const endpoint = expectedComponentEndpoint(name);
+  const portReachable = endpoint
+    ? await probeTcpPort(endpoint.host, endpoint.port, 300)
+    : undefined;
   return {
     name,
     ...(pid ? { pid } : {}),
-    alive: pid ? isProcessRunning(pid) : false,
+    alive,
     ...(logPath ? { logPath } : {}),
+    ...componentDetail({ pid, alive, endpoint, portReachable }),
   };
 }
 
@@ -136,6 +146,60 @@ function isProcessRunning(pid: number): boolean {
   } catch (err) {
     return (err as { code?: string }).code === "EPERM";
   }
+}
+
+function expectedComponentEndpoint(name: string): { host: string; port: number } | undefined {
+  const normalized = name.toLowerCase();
+  if (normalized === "daemon" && process.env.CR_CONNECTOR_PORT) {
+    return { host: "127.0.0.1", port: Number(process.env.CR_CONNECTOR_PORT) };
+  }
+  if (normalized === "site-backend" && process.env.CR_SITE_PORT) {
+    return { host: "127.0.0.1", port: Number(process.env.CR_SITE_PORT) };
+  }
+  if (normalized === "site-frontend" && process.env.CR_DEV_FRONTEND_URL) {
+    try {
+      const url = new URL(process.env.CR_DEV_FRONTEND_URL);
+      return { host: "127.0.0.1", port: url.port ? Number(url.port) : 80 };
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function componentDetail(input: {
+  pid: number | undefined;
+  alive: boolean;
+  endpoint: { host: string; port: number } | undefined;
+  portReachable: boolean | undefined;
+}): Pick<ManagerProcessComponent, "detail"> {
+  if (!input.pid) return { detail: "pid not recorded" };
+  if (!input.alive) return { detail: "recorded pid is not running" };
+  if (input.endpoint && !input.portReachable) {
+    return {
+      detail: `process is running but ${input.endpoint.host}:${input.endpoint.port} is not reachable`,
+    };
+  }
+  if (input.endpoint && input.portReachable) {
+    return { detail: `process and ${input.endpoint.host}:${input.endpoint.port} are reachable` };
+  }
+  return {};
+}
+
+function probeTcpPort(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host, port });
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
 }
 
 function buildRestartScript(input: { repoRoot: string; root: string; logPath: string }): string {
