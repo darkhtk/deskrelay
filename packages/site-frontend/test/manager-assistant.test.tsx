@@ -33,6 +33,40 @@ describe("ManagerAssistant", () => {
           deviceLabel: SERVER_DEVICE.label,
         });
       }
+      if (url.includes("/api/manager/agents")) {
+        return Response.json({
+          generatedAt: "2026-05-13T00:00:00.000Z",
+          agents: [
+            {
+              id: "agent_architect",
+              role: "architect",
+              label: "Architect agent",
+              profile: "claude-code",
+              status: "running",
+              roundId: "round_r1",
+              createdAt: "2026-05-13T00:00:00.000Z",
+              updatedAt: "2026-05-13T00:00:00.000Z",
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/manager/rounds")) {
+        return Response.json({
+          generatedAt: "2026-05-13T00:00:00.000Z",
+          rounds: [
+            {
+              id: "round_r1",
+              title: "R1",
+              objective: "Test orchestration",
+              status: "running",
+              agentIds: ["agent_architect"],
+              taskIds: [],
+              createdAt: "2026-05-13T00:00:00.000Z",
+              updatedAt: "2026-05-13T00:00:00.000Z",
+            },
+          ],
+        });
+      }
       if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
         return Response.json([
           {
@@ -100,6 +134,10 @@ describe("ManagerAssistant", () => {
     const input = await screen.findByPlaceholderText(/관리자에게 보내기/);
     await waitFor(() => {
       expect(behaviorCalls.some((call) => call.method === "sessions.list")).toBe(true);
+    });
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("R1");
+      expect(document.body.textContent).toContain("architect");
     });
     fireEvent.input(input, { target: { value: "현재 상태 확인" } });
     await waitFor(() => {

@@ -245,12 +245,7 @@ export interface ManagerTaskObservationResponse {
   log: ManagerTaskLogResponse;
   terminal: boolean;
   summary: string;
-  nextRead:
-    | "none"
-    | "task"
-    | "task-log"
-    | "task-stream"
-    | "session-transcript";
+  nextRead: "none" | "task" | "task-log" | "task-stream" | "session-transcript";
 }
 
 export type ManagerTaskStreamEvent =
@@ -292,6 +287,138 @@ export interface ManagerWorkerCheckResult {
 export interface ManagerWorkerListResponse {
   generatedAt: string;
   profiles: ManagerWorkerProfile[];
+}
+
+export type ManagerAgentRole =
+  | "architect"
+  | "implementer"
+  | "verifier"
+  | "critic"
+  | "protocol"
+  | "documenter"
+  | "operator"
+  | (string & {});
+
+export type ManagerAgentStatus =
+  | "idle"
+  | "assigned"
+  | "running"
+  | "waiting"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "stale";
+
+export type ManagerRoundStatus =
+  | "planned"
+  | "dispatching"
+  | "running"
+  | "collecting"
+  | "reviewing"
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "cancelled";
+
+export interface ManagerAgent {
+  id: string;
+  role: ManagerAgentRole;
+  label: string;
+  profile: string;
+  status: ManagerAgentStatus;
+  cwd?: string;
+  roundId?: string;
+  taskId?: string;
+  lastInstruction?: string;
+  lastOutput?: string;
+  lastError?: string;
+  lastHeartbeatAt?: string;
+  lastOutputAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ManagerAgentCreateRequest {
+  role: ManagerAgentRole;
+  label?: string;
+  profile?: string;
+  cwd?: string;
+  roundId?: string;
+  instruction?: string;
+}
+
+export interface ManagerAgentMessageRequest {
+  prompt: string;
+  profile?: string;
+  cwd?: string;
+  roundId?: string;
+  timeoutMs?: number;
+  dryRun?: boolean;
+}
+
+export interface ManagerAgentMessageResponse {
+  agent: ManagerAgent;
+  task: ManagerTask;
+}
+
+export interface ManagerAgentListResponse {
+  generatedAt: string;
+  agents: ManagerAgent[];
+}
+
+export interface ManagerRoundAgentAssignment {
+  agentId?: string;
+  role: ManagerAgentRole;
+  label?: string;
+  profile?: string;
+  cwd?: string;
+  prompt: string;
+  timeoutMs?: number;
+}
+
+export interface ManagerRound {
+  id: string;
+  title: string;
+  objective: string;
+  status: ManagerRoundStatus;
+  agentIds: string[];
+  taskIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  summary?: string;
+  error?: string;
+}
+
+export interface ManagerRoundCreateRequest {
+  title?: string;
+  objective: string;
+  agents?: Array<Omit<ManagerRoundAgentAssignment, "prompt"> & { prompt?: string }>;
+}
+
+export interface ManagerRoundDispatchRequest {
+  assignments?: ManagerRoundAgentAssignment[];
+  dryRun?: boolean;
+}
+
+export interface ManagerRoundDispatchResponse {
+  round: ManagerRound;
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+}
+
+export interface ManagerRoundListResponse {
+  generatedAt: string;
+  rounds: ManagerRound[];
+}
+
+export interface ManagerRoundReportResponse {
+  round: ManagerRound;
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+  summary: string;
 }
 
 export interface ManagerAssistantConversationState {

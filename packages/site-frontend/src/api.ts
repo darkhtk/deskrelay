@@ -1,6 +1,11 @@
 import type {
   DiagnosticReport,
   DiagnosticStep,
+  ManagerAgent,
+  ManagerAgentCreateRequest,
+  ManagerAgentListResponse,
+  ManagerAgentMessageRequest,
+  ManagerAgentMessageResponse,
   ManagerAssistantChatRequest,
   ManagerAssistantChatResponse,
   ManagerAssistantConversationState,
@@ -18,6 +23,12 @@ import type {
   ManagerRegistrationDiagnosis,
   ManagerRegistrationFailureAnalysis,
   ManagerRestartResult,
+  ManagerRound,
+  ManagerRoundCreateRequest,
+  ManagerRoundDispatchRequest,
+  ManagerRoundDispatchResponse,
+  ManagerRoundListResponse,
+  ManagerRoundReportResponse,
   ManagerSecurityBoundary,
   ManagerSecurityBoundarySummary,
   ManagerSystemSummary,
@@ -600,11 +611,7 @@ export const api = {
   managerAssistantConversation: () =>
     request<ManagerAssistantConversationState>("GET", "/api/manager/assistant/conversation"),
   updateManagerAssistantConversation: (input: ManagerAssistantConversationStateInput) =>
-    request<ManagerAssistantConversationState>(
-      "PUT",
-      "/api/manager/assistant/conversation",
-      input,
-    ),
+    request<ManagerAssistantConversationState>("PUT", "/api/manager/assistant/conversation", input),
   managerAssistantStatus: (limit?: number) =>
     request<ManagerAssistantStatusReportResponse>(
       "GET",
@@ -646,6 +653,36 @@ export const api = {
     dryRun?: boolean;
     requestedBy?: ManagerTaskRequest["requestedBy"];
   }) => request<ManagerTask>("POST", "/api/manager/workers/run", input),
+  managerAgents: () => request<ManagerAgentListResponse>("GET", "/api/manager/agents"),
+  managerAgent: (id: string) =>
+    request<ManagerAgent>("GET", `/api/manager/agents/${encodeURIComponent(id)}`),
+  createManagerAgent: (input: ManagerAgentCreateRequest) =>
+    request<ManagerAgent>("POST", "/api/manager/agents", input),
+  messageManagerAgent: (id: string, input: ManagerAgentMessageRequest) =>
+    request<ManagerAgentMessageResponse>(
+      "POST",
+      `/api/manager/agents/${encodeURIComponent(id)}/message`,
+      input,
+    ),
+  stopManagerAgent: (id: string) =>
+    request<{ agent: ManagerAgent; task?: ManagerTask }>(
+      "POST",
+      `/api/manager/agents/${encodeURIComponent(id)}/stop`,
+    ),
+  managerRounds: () => request<ManagerRoundListResponse>("GET", "/api/manager/rounds"),
+  createManagerRound: (input: ManagerRoundCreateRequest) =>
+    request<{ round: ManagerRound; agents: ManagerAgent[] }>("POST", "/api/manager/rounds", input),
+  dispatchManagerRound: (id: string, input: ManagerRoundDispatchRequest) =>
+    request<ManagerRoundDispatchResponse>(
+      "POST",
+      `/api/manager/rounds/${encodeURIComponent(id)}/dispatch`,
+      input,
+    ),
+  managerRoundReport: (id: string) =>
+    request<ManagerRoundReportResponse>(
+      "GET",
+      `/api/manager/rounds/${encodeURIComponent(id)}/report`,
+    ),
   managerAuditLog: (limit?: number) =>
     request<{ entries: ManagerTask[] }>(
       "GET",

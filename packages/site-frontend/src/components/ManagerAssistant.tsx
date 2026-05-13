@@ -1,4 +1,4 @@
-import type { ManagerAssistantChatContext } from "@deskrelay/shared";
+import type { ManagerAgent, ManagerAssistantChatContext, ManagerRound } from "@deskrelay/shared";
 import {
   type Component,
   Show,
@@ -80,22 +80,35 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     () => reloadSeq(),
     () => api.managerAssistantWorkspace(),
   );
-  const [conversationState, { mutate: mutateConversationState, refetch: refetchConversationState }] =
-    createResource(
-      () => reloadSeq(),
-      async () => {
-        try {
-          return await api.managerAssistantConversation();
-        } catch {
-          return null;
-        }
-      },
-    );
+  const [
+    conversationState,
+    { mutate: mutateConversationState, refetch: refetchConversationState },
+  ] = createResource(
+    () => reloadSeq(),
+    async () => {
+      try {
+        return await api.managerAssistantConversation();
+      } catch {
+        return null;
+      }
+    },
+  );
   const [statusReports] = createResource(
     () => statusReportSeq(),
     async (): Promise<ManagerAssistantStatusReportResponse | null> => {
       try {
         return await api.managerAssistantStatus(5);
+      } catch {
+        return null;
+      }
+    },
+  );
+  const [orchestration] = createResource(
+    () => statusReportSeq(),
+    async (): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
+      try {
+        const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
+        return { agents: agents.agents, rounds: rounds.rounds };
       } catch {
         return null;
       }
@@ -179,6 +192,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const busy = createMemo(() => runIds().length > 0);
   const latestReportStatus = createMemo(() => managerStatusFromReport(statusReports()?.latest));
   const visibleStatus = createMemo(() => status() ?? latestReportStatus());
+  const orchestrationStatus = createMemo(() =>
+    summarizeOrchestration(orchestration()?.rounds ?? [], orchestration()?.agents ?? []),
+  );
 
   createEffect(() => {
     const transcript = loadedTranscript();
@@ -398,6 +414,14 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   return (
     <div class="manager-assistant manager-assistant-chat">
+      <Show when={orchestrationStatus()}>
+        {(summary) => (
+          <div class="manager-orchestration-status" aria-label="orchestration status">
+            <span class="manager-orchestration-round">{summary().round}</span>
+            <span class="manager-orchestration-agents">{summary().agents}</span>
+          </div>
+        )}
+      </Show>
       <div
         ref={transcriptScroller}
         class="transcript manager-assistant-transcript"
@@ -474,6 +498,63 @@ function chooseManagerSession(
     if (current) return current;
   }
   return sessions[0] ?? null;
+}
+
+function summarizeOrchestration(
+  rounds: ManagerRound[],
+  agents: ManagerAgent[],
+): { round: string; agents: string } | null {
+  if (rounds.length === 0 && agents.length === 0) return null;
+  const activeRound =
+    rounds.find((round) =>
+      ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
+        round.status,
+      ),
+    ) ?? rounds[0];
+  const activeAgents = agents.filter((agent) =>
+    ["assigned", "running", "waiting", "blocked", "failed"].includes(agent.status),
+  );
+  const visibleAgents = (activeAgents.length ? activeAgents : agents).slice(0, 4);
+  const roundText = activeRound
+    ? `${activeRound.title} · ${statusLabel(activeRound.status)}`
+    : "Agent orchestration";
+  const agentText = visibleAgents.length
+    ? visibleAgents.map((agent) => `${agent.role}: ${statusLabel(agent.status)}`).join(" · ")
+    : "agent 없음";
+  return { round: roundText, agents: agentText };
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case "planned":
+      return "계획됨";
+    case "dispatching":
+      return "배정 중";
+    case "running":
+      return "실행 중";
+    case "collecting":
+      return "수집 중";
+    case "reviewing":
+      return "검토 중";
+    case "completed":
+      return "완료";
+    case "blocked":
+      return "막힘";
+    case "failed":
+      return "실패";
+    case "cancelled":
+      return "취소";
+    case "idle":
+      return "대기";
+    case "assigned":
+      return "배정됨";
+    case "waiting":
+      return "대기 중";
+    case "stale":
+      return "끊김";
+    default:
+      return status;
+  }
 }
 
 function userTranscriptEvent(text: string): ClaudeStreamEvent {

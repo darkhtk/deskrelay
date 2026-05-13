@@ -581,6 +581,46 @@ describe("API route inventory", () => {
           }),
           [202],
         ],
+        ["GET /api/manager/agents", authedRequest("GET", "/api/manager/agents")],
+        [
+          "POST /api/manager/agents",
+          authedRequest("POST", "/api/manager/agents", {
+            role: "critic",
+            profile: "claude-code",
+          }),
+          [201],
+        ],
+        ["GET /api/manager/agents/:id", authedRequest("GET", "/api/manager/agents/missing"), [404]],
+        [
+          "POST /api/manager/agents/:id/message",
+          authedRequest("POST", "/api/manager/agents/missing/message", {
+            prompt: "Say hello.",
+          }),
+          [404],
+        ],
+        [
+          "POST /api/manager/agents/:id/stop",
+          authedRequest("POST", "/api/manager/agents/missing/stop"),
+          [404],
+        ],
+        ["GET /api/manager/rounds", authedRequest("GET", "/api/manager/rounds")],
+        [
+          "POST /api/manager/rounds",
+          authedRequest("POST", "/api/manager/rounds", {
+            objective: "Smoke orchestration route.",
+          }),
+          [201],
+        ],
+        [
+          "POST /api/manager/rounds/:id/dispatch",
+          authedRequest("POST", "/api/manager/rounds/missing/dispatch", {}),
+          [404],
+        ],
+        [
+          "GET /api/manager/rounds/:id/report",
+          authedRequest("GET", "/api/manager/rounds/missing/report"),
+          [404],
+        ],
         [
           "GET /api/manager/devices/:id/actions",
           authedRequest("GET", `/api/manager/devices/${deviceId}/actions`),
@@ -1193,9 +1233,7 @@ describe("manager task API", () => {
         managerAssistant: { cwd },
       });
 
-      const initial = await app.fetch(
-        authedRequest("GET", "/api/manager/assistant/conversation"),
-      );
+      const initial = await app.fetch(authedRequest("GET", "/api/manager/assistant/conversation"));
       expect(initial.status).toBe(200);
       expect(await initial.json()).toMatchObject({
         conversationId: "deskrelay-manager-assistant",
@@ -1213,9 +1251,7 @@ describe("manager task API", () => {
         sessionId: "manager-session-42",
       });
 
-      const restored = await app.fetch(
-        authedRequest("GET", "/api/manager/assistant/conversation"),
-      );
+      const restored = await app.fetch(authedRequest("GET", "/api/manager/assistant/conversation"));
       expect(await restored.json()).toMatchObject({
         sessionId: "manager-session-42",
       });
@@ -1764,6 +1800,84 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     }
   });
 
+  test("manager orchestration rounds dispatch multiple role agents", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-round-"));
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerWorkers: [
+        {
+          id: "echo",
+          label: "Echo worker",
+          description: "Test worker",
+          command: process.execPath,
+          args: ["-e", "console.log(Bun.argv.at(-1))"],
+          defaultTimeoutMs: 30_000,
+        },
+      ],
+    });
+
+    try {
+      const create = await app.fetch(
+        authedRequest("POST", "/api/manager/rounds", {
+          title: "R1",
+          objective: "Verify multi-agent orchestration.",
+        }),
+      );
+      expect(create.status).toBe(201);
+      const created = (await create.json()) as { round?: { id?: string } };
+      expect(created.round?.id).toBeTruthy();
+
+      const dispatch = await app.fetch(
+        authedRequest("POST", `/api/manager/rounds/${created.round?.id}/dispatch`, {
+          dryRun: false,
+          assignments: [
+            { role: "architect", profile: "echo", prompt: "architect report" },
+            { role: "protocol", profile: "echo", prompt: "protocol report" },
+            { role: "critic", profile: "echo", prompt: "critic report" },
+          ],
+        }),
+      );
+      expect(dispatch.status).toBe(202);
+      const dispatched = (await dispatch.json()) as {
+        round?: { status?: string; agentIds?: string[]; taskIds?: string[] };
+        agents?: Array<{ role?: string; status?: string; taskId?: string }>;
+        tasks?: Array<{
+          state?: string;
+          params?: { agentRole?: string };
+          result?: { stdout?: string };
+        }>;
+      };
+      expect(dispatched.round?.status).toBe("completed");
+      expect(dispatched.agents?.map((agent) => agent.role).sort()).toEqual([
+        "architect",
+        "critic",
+        "protocol",
+      ]);
+      expect(dispatched.agents?.every((agent) => agent.status === "completed")).toBe(true);
+      expect(dispatched.tasks).toHaveLength(3);
+      expect(dispatched.tasks?.every((task) => task.state === "succeeded")).toBe(true);
+      expect(dispatched.tasks?.some((task) => task.params?.agentRole === "critic")).toBe(true);
+      expect(
+        dispatched.tasks?.some((task) => task.result?.stdout?.includes("protocol report")),
+      ).toBe(true);
+
+      const agents = await app.fetch(authedRequest("GET", "/api/manager/agents"));
+      expect(agents.status).toBe(200);
+      const agentList = (await agents.json()) as { agents?: Array<{ status?: string }> };
+      expect(agentList.agents?.filter((agent) => agent.status === "completed")).toHaveLength(3);
+
+      const report = await app.fetch(
+        authedRequest("GET", `/api/manager/rounds/${created.round?.id}/report`),
+      );
+      expect(report.status).toBe(200);
+      expect(((await report.json()) as { summary?: string }).summary).toContain("3 task");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager worker stdin mode can use Claude structured input for Korean prompts", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-stdin-"));
     const scriptPath = join(cwd, "fake-worker-stdin.js");
@@ -2071,9 +2185,7 @@ process.stdin.on("end", () => {
     expect(observation.log?.source).toBe("manager-task");
     expect(observation.summary).toContain("cancelled");
 
-    const stream = await app.fetch(
-      authedRequest("GET", `/api/manager/tasks/${pending.id}/stream`),
-    );
+    const stream = await app.fetch(authedRequest("GET", `/api/manager/tasks/${pending.id}/stream`));
     expect(stream.status).toBe(200);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
     const streamEvents = parseSseEvents(await stream.text());
@@ -3461,8 +3573,11 @@ describe("manager session transcript API", () => {
       authToken: "token-two",
       label: "Second PC",
     });
-    const behaviorBodies: Array<{ host: string; method?: string; params?: Record<string, unknown> }> =
-      [];
+    const behaviorBodies: Array<{
+      host: string;
+      method?: string;
+      params?: Record<string, unknown>;
+    }> = [];
     setup.setMockResponse(async (req) => {
       const url = new URL(req.url);
       if (url.pathname === "/behaviors") {

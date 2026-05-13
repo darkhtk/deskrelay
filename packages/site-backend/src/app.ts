@@ -9,12 +9,19 @@ import {
   type DiagnosticSeverity,
   type DiagnosticStep,
   MANAGER_API_VERSION,
-  type ManagerAssistantConversationState,
-  type ManagerAssistantConversationStateInput,
+  type ManagerAgent,
+  type ManagerAgentCreateRequest,
+  type ManagerAgentListResponse,
+  type ManagerAgentMessageRequest,
+  type ManagerAgentMessageResponse,
+  type ManagerAgentRole,
+  type ManagerAgentStatus,
   type ManagerAssistantChatContext,
   type ManagerAssistantChatMessage,
   type ManagerAssistantChatRequest,
   type ManagerAssistantChatResponse,
+  type ManagerAssistantConversationState,
+  type ManagerAssistantConversationStateInput,
   type ManagerAssistantDecisionOption,
   type ManagerAssistantStatusReport,
   type ManagerAssistantStatusReportInput,
@@ -32,6 +39,14 @@ import {
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
   type ManagerRegistrationDiagnosis,
+  type ManagerRound,
+  type ManagerRoundAgentAssignment,
+  type ManagerRoundCreateRequest,
+  type ManagerRoundDispatchRequest,
+  type ManagerRoundDispatchResponse,
+  type ManagerRoundListResponse,
+  type ManagerRoundReportResponse,
+  type ManagerRoundStatus,
   type ManagerRouteCapability,
   type ManagerSecurityBoundary,
   type ManagerSecurityBoundarySummary,
@@ -68,6 +83,10 @@ import type {
 } from "./device-update-queue-store.ts";
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
+import {
+  type ManagerOrchestrationStore,
+  createJsonManagerOrchestrationStore,
+} from "./manager-orchestration-store.ts";
 import { type ManagerTaskStore, createInMemoryManagerTaskStore } from "./manager-task-store.ts";
 import type {
   SelfServerAutostartController,
@@ -96,6 +115,7 @@ export interface SiteAppOptions {
   installReportStore?: InstallReportStore;
   deviceUpdateQueue?: DeviceUpdateQueueStore;
   managerTaskStore?: ManagerTaskStore;
+  managerOrchestrationStore?: ManagerOrchestrationStore;
   managerAssistant?: ManagerAssistantOptions;
   managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
@@ -159,6 +179,7 @@ const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
+const MANAGER_ORCHESTRATION_FILE = "orchestration-state.json";
 const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
 
@@ -171,6 +192,15 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const announcements = createAnnouncementSource(options, fetchImpl);
   const build = options.build ?? getDeskRelayBuildInfo();
   const managerTaskStore = options.managerTaskStore ?? createInMemoryManagerTaskStore();
+  const managerOrchestrationStore =
+    options.managerOrchestrationStore ??
+    createJsonManagerOrchestrationStore(
+      join(
+        options.managerAssistant?.cwd ?? process.cwd(),
+        MANAGER_ASSISTANT_DIR,
+        MANAGER_ORCHESTRATION_FILE,
+      ),
+    );
   const managerTaskStoreRecovery = recoverStaleManagerTasks(managerTaskStore, build).catch(
     () => undefined,
   );
@@ -289,12 +319,14 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
     const parsed = parseManagerSessionReadRequest(body);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    const result = await readManagerSessionTranscript(fetchImpl, registry, localToken, parsed.value);
+    const result = await readManagerSessionTranscript(
+      fetchImpl,
+      registry,
+      localToken,
+      parsed.value,
+    );
     if (!result.ok) {
-      return c.json(
-        { error: result.error, attempts: result.attempts },
-        result.status as never,
-      );
+      return c.json({ error: result.error, attempts: result.attempts }, result.status as never);
     }
     return c.json(result.value);
   });
@@ -456,6 +488,167 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       sanitizeManagerTaskForAssistant(completed),
       completed.state === "blocked" ? 409 : 202,
     );
+  });
+
+  app.get("/api/manager/agents", async (c) => {
+    const agents = await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const response: ManagerAgentListResponse = {
+      generatedAt: new Date().toISOString(),
+      agents,
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/agents", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerAgentCreateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const agent = await managerOrchestrationStore.createAgent(parsed.value);
+    return c.json(agent, 201);
+  });
+
+  app.get("/api/manager/agents/:id", async (c) => {
+    const agent = await syncManagerAgentWithTask(
+      managerOrchestrationStore,
+      managerTaskStore,
+      c.req.param("id"),
+    );
+    if (!agent) return c.json({ error: "unknown agent" }, 404);
+    return c.json(agent);
+  });
+
+  app.post("/api/manager/agents/:id/message", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerAgentMessageRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const agent = await managerOrchestrationStore.getAgent(c.req.param("id"));
+    if (!agent) return c.json({ error: "unknown agent" }, 404);
+    const response = await runManagerAgentMessage({
+      agent,
+      message: parsed.value,
+      store: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    return c.json(response, response.task.state === "blocked" ? 409 : 202);
+  });
+
+  app.post("/api/manager/agents/:id/stop", async (c) => {
+    const agent = await managerOrchestrationStore.getAgent(c.req.param("id"));
+    if (!agent) return c.json({ error: "unknown agent" }, 404);
+    let task: ManagerTask | undefined;
+    if (agent.taskId) {
+      task = await managerTaskStore.get(agent.taskId);
+      if (task && !isManagerTaskTerminalState(task.state)) {
+        const cancelled = await cancelManagerTask(
+          task,
+          managerTaskStore,
+          options.deviceUpdateQueue,
+        );
+        task = cancelled.task;
+      }
+    }
+    const updated =
+      (await managerOrchestrationStore.updateAgent(agent.id, {
+        status: "cancelled",
+        ...(task?.id ? { taskId: task.id } : {}),
+        ...(task?.error ? { lastError: task.error } : {}),
+      })) ?? agent;
+    return c.json({
+      agent: updated,
+      ...(task ? { task: sanitizeManagerTaskForAssistant(task) } : {}),
+    });
+  });
+
+  app.get("/api/manager/rounds", async (c) => {
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const response: ManagerRoundListResponse = {
+      generatedAt: new Date().toISOString(),
+      rounds: await managerOrchestrationStore.listRounds(),
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/rounds", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerRoundCreateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const round = await managerOrchestrationStore.createRound(parsed.value);
+    const agents: ManagerAgent[] = [];
+    for (const assignment of parsed.value.agents ?? []) {
+      const agent = await managerOrchestrationStore.createAgent({
+        role: assignment.role,
+        ...(assignment.label ? { label: assignment.label } : {}),
+        ...(assignment.profile ? { profile: assignment.profile } : {}),
+        ...(assignment.cwd ? { cwd: assignment.cwd } : {}),
+        roundId: round.id,
+        ...(assignment.prompt ? { instruction: assignment.prompt } : {}),
+      });
+      agents.push(agent);
+    }
+    const updated =
+      agents.length > 0
+        ? await managerOrchestrationStore.updateRound(round.id, {
+            agentIds: agents.map((agent) => agent.id),
+          })
+        : round;
+    return c.json({ round: updated ?? round, agents }, 201);
+  });
+
+  app.post("/api/manager/rounds/:id/dispatch", async (c) => {
+    let body: unknown = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const parsed = parseManagerRoundDispatchRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const round = await managerOrchestrationStore.getRound(c.req.param("id"));
+    if (!round) return c.json({ error: "unknown round" }, 404);
+    const response = await dispatchManagerRound({
+      round,
+      request: parsed.value,
+      store: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    return c.json(response, response.round.status === "blocked" ? 409 : 202);
+  });
+
+  app.get("/api/manager/rounds/:id/report", async (c) => {
+    const report = await buildManagerRoundReport(
+      c.req.param("id"),
+      managerOrchestrationStore,
+      managerTaskStore,
+    );
+    if (!report) return c.json({ error: "unknown round" }, 404);
+    return c.json(report);
   });
 
   app.get("/api/manager/audit-log", async (c) => {
@@ -1484,6 +1677,51 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/agents",
+    description: "List orchestration agents and their latest task status.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/agents",
+    description: "Create a persistent orchestration agent role.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/agents/:id",
+    description: "Read one orchestration agent.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/agents/:id/message",
+    description: "Assign work to one orchestration agent through a worker CLI task.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/agents/:id/stop",
+    description: "Cancel or mark one orchestration agent as stopped.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/rounds",
+    description: "List orchestration rounds.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/rounds",
+    description: "Create an orchestration round with optional agent assignments.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/rounds/:id/dispatch",
+    description: "Dispatch a round to multiple orchestration agents.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/rounds/:id/report",
+    description: "Read a round report with agents and worker task results.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/audit-log",
     description: "Read manager task audit log.",
   },
@@ -1760,6 +1998,8 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "manager.action-discovery",
       "manager.security-summary",
       "manager.assistant-chat",
+      "manager.orchestration-agents",
+      "manager.orchestration-rounds",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -1807,6 +2047,32 @@ interface ManagerTaskExecutionResult {
 }
 
 type ManagerTaskCreateRunInput = Omit<ManagerTaskRunInput, "task">;
+
+interface ManagerAgentRunInput {
+  agent: ManagerAgent;
+  message: ManagerAgentMessageRequest;
+  store: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  options: SiteAppOptions;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  localToken: string | undefined;
+  build: DeskRelayBuildInfo;
+  requestUrl: string;
+}
+
+interface ManagerRoundDispatchInput {
+  round: ManagerRound;
+  request: ManagerRoundDispatchRequest;
+  store: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  options: SiteAppOptions;
+  fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>;
+  registry: DeviceRegistry;
+  localToken: string | undefined;
+  build: DeskRelayBuildInfo;
+  requestUrl: string;
+}
 
 async function recoverStaleManagerTasks(
   store: ManagerTaskStore,
@@ -1922,6 +2188,287 @@ function managerTaskNextRead(
   if (!terminal) return "task-stream";
   if (task.state === "failed" || task.state === "blocked") return "task-log";
   return "none";
+}
+
+async function syncManagerAgentsWithTasks(
+  store: ManagerOrchestrationStore,
+  taskStore: ManagerTaskStore,
+): Promise<ManagerAgent[]> {
+  const agents = await store.listAgents();
+  const synced: ManagerAgent[] = [];
+  for (const agent of agents) {
+    synced.push((await syncManagerAgentRecordWithTask(store, taskStore, agent)) ?? agent);
+  }
+  return synced;
+}
+
+async function syncManagerAgentWithTask(
+  store: ManagerOrchestrationStore,
+  taskStore: ManagerTaskStore,
+  id: string,
+): Promise<ManagerAgent | undefined> {
+  const agent = await store.getAgent(id);
+  if (!agent) return undefined;
+  return (await syncManagerAgentRecordWithTask(store, taskStore, agent)) ?? agent;
+}
+
+async function syncManagerAgentRecordWithTask(
+  store: ManagerOrchestrationStore,
+  taskStore: ManagerTaskStore,
+  agent: ManagerAgent,
+): Promise<ManagerAgent | undefined> {
+  if (!agent.taskId) return agent;
+  const task = await taskStore.get(agent.taskId);
+  if (!task) return agent;
+  const status = managerAgentStatusFromTaskState(task.state);
+  if (
+    status === agent.status &&
+    task.updatedAt === agent.lastHeartbeatAt &&
+    task.error === agent.lastError
+  ) {
+    return agent;
+  }
+  return await store.updateAgent(agent.id, {
+    status,
+    lastHeartbeatAt: task.updatedAt,
+    ...(task.error ? { lastError: task.error } : {}),
+    ...(task.completedAt ? { lastOutputAt: task.completedAt } : {}),
+    ...(managerWorkerResultText(task) ? { lastOutput: managerWorkerResultText(task) } : {}),
+  });
+}
+
+async function runManagerAgentMessage(
+  input: ManagerAgentRunInput,
+): Promise<ManagerAgentMessageResponse> {
+  const prompt = input.message.prompt.trim();
+  const profile = input.message.profile?.trim() || input.agent.profile || "claude-code";
+  const roundId = input.message.roundId?.trim() || input.agent.roundId;
+  await input.store.updateAgent(input.agent.id, {
+    status: "running",
+    profile,
+    ...(input.message.cwd ? { cwd: input.message.cwd } : {}),
+    ...(roundId ? { roundId } : {}),
+    lastInstruction: prompt,
+    lastError: "",
+  });
+  const task = await createAndRunManagerTask({
+    request: {
+      kind: "run-worker",
+      dryRun: input.message.dryRun ?? false,
+      requestedBy: "manager-assistant",
+      params: {
+        profile,
+        prompt,
+        ...((input.message.cwd ?? input.agent.cwd)
+          ? { cwd: input.message.cwd ?? input.agent.cwd }
+          : {}),
+        ...(input.message.timeoutMs ? { timeoutMs: input.message.timeoutMs } : {}),
+        agentId: input.agent.id,
+        agentRole: input.agent.role,
+        ...(roundId ? { roundId } : {}),
+      },
+    },
+    store: input.taskStore,
+    options: input.options,
+    fetchImpl: input.fetchImpl,
+    registry: input.registry,
+    localToken: input.localToken,
+    build: input.build,
+    requestUrl: input.requestUrl,
+  });
+  const updated =
+    (await input.store.updateAgent(input.agent.id, {
+      status: managerAgentStatusFromTaskState(task.state),
+      taskId: task.id,
+      lastHeartbeatAt: task.updatedAt,
+      ...(task.error ? { lastError: task.error } : { lastError: "" }),
+      ...(managerWorkerResultText(task) ? { lastOutput: managerWorkerResultText(task) } : {}),
+      ...(task.completedAt ? { lastOutputAt: task.completedAt } : {}),
+    })) ?? input.agent;
+  if (roundId) {
+    const round = await input.store.getRound(roundId);
+    if (round) {
+      await input.store.updateRound(round.id, {
+        agentIds: uniqueStrings([...round.agentIds, input.agent.id]),
+        taskIds: uniqueStrings([...round.taskIds, task.id]),
+      });
+    }
+  }
+  return { agent: updated, task: sanitizeManagerTaskForAssistant(task) };
+}
+
+async function dispatchManagerRound(
+  input: ManagerRoundDispatchInput,
+): Promise<ManagerRoundDispatchResponse> {
+  const startedAt = new Date().toISOString();
+  await input.store.updateRound(input.round.id, {
+    status: "dispatching",
+    startedAt: input.round.startedAt ?? startedAt,
+  });
+  const assignments = await resolveRoundAssignments(input);
+  if (!assignments.ok) {
+    const blocked =
+      (await input.store.updateRound(input.round.id, {
+        status: "blocked",
+        completedAt: new Date().toISOString(),
+        error: assignments.error,
+        summary: assignments.error,
+      })) ?? input.round;
+    return { round: blocked, agents: [], tasks: [] };
+  }
+
+  await input.store.updateRound(input.round.id, { status: "running" });
+  const results = await Promise.all(
+    assignments.value.map(async ({ agent, assignment }) =>
+      runManagerAgentMessage({
+        agent,
+        message: {
+          prompt: assignment.prompt,
+          ...(assignment.profile ? { profile: assignment.profile } : {}),
+          ...(assignment.cwd ? { cwd: assignment.cwd } : {}),
+          roundId: input.round.id,
+          ...(assignment.timeoutMs ? { timeoutMs: assignment.timeoutMs } : {}),
+          dryRun: input.request.dryRun ?? false,
+        },
+        store: input.store,
+        taskStore: input.taskStore,
+        options: input.options,
+        fetchImpl: input.fetchImpl,
+        registry: input.registry,
+        localToken: input.localToken,
+        build: input.build,
+        requestUrl: input.requestUrl,
+      }),
+    ),
+  );
+  const agents = results.map((result) => result.agent);
+  const tasks = results.map((result) => result.task);
+  const nextStatus = managerRoundStatusFromTasks(tasks);
+  const summary = managerRoundSummary(input.round, agents, tasks);
+  const updated =
+    (await input.store.updateRound(input.round.id, {
+      status: nextStatus,
+      agentIds: uniqueStrings([...input.round.agentIds, ...agents.map((agent) => agent.id)]),
+      taskIds: uniqueStrings([...input.round.taskIds, ...tasks.map((task) => task.id)]),
+      completedAt: new Date().toISOString(),
+      summary,
+      ...(nextStatus === "failed" || nextStatus === "blocked"
+        ? { error: tasks.find((task) => task.error)?.error ?? summary }
+        : { error: "" }),
+    })) ?? input.round;
+  return { round: updated, agents, tasks };
+}
+
+async function resolveRoundAssignments(input: ManagerRoundDispatchInput): Promise<
+  | {
+      ok: true;
+      value: Array<{ agent: ManagerAgent; assignment: ManagerRoundAgentAssignment }>;
+    }
+  | { ok: false; error: string }
+> {
+  const assignments = input.request.assignments?.length
+    ? input.request.assignments
+    : await assignmentsFromRoundAgents(input.round, input.store);
+  if (assignments.length === 0) {
+    return { ok: false, error: "round has no agent assignments to dispatch" };
+  }
+  const out: Array<{ agent: ManagerAgent; assignment: ManagerRoundAgentAssignment }> = [];
+  for (const assignment of assignments) {
+    let agent = assignment.agentId ? await input.store.getAgent(assignment.agentId) : undefined;
+    if (!agent) {
+      agent = await input.store.createAgent({
+        role: assignment.role,
+        ...(assignment.label ? { label: assignment.label } : {}),
+        ...(assignment.profile ? { profile: assignment.profile } : {}),
+        ...(assignment.cwd ? { cwd: assignment.cwd } : {}),
+        roundId: input.round.id,
+        instruction: assignment.prompt,
+      });
+    }
+    out.push({ agent, assignment });
+  }
+  return { ok: true, value: out };
+}
+
+async function assignmentsFromRoundAgents(
+  round: ManagerRound,
+  store: ManagerOrchestrationStore,
+): Promise<ManagerRoundAgentAssignment[]> {
+  const assignments: ManagerRoundAgentAssignment[] = [];
+  for (const agentId of round.agentIds) {
+    const agent = await store.getAgent(agentId);
+    if (!agent?.lastInstruction) continue;
+    assignments.push({
+      agentId: agent.id,
+      role: agent.role,
+      label: agent.label,
+      profile: agent.profile,
+      ...(agent.cwd ? { cwd: agent.cwd } : {}),
+      prompt: agent.lastInstruction,
+    });
+  }
+  return assignments;
+}
+
+async function buildManagerRoundReport(
+  roundId: string,
+  store: ManagerOrchestrationStore,
+  taskStore: ManagerTaskStore,
+): Promise<ManagerRoundReportResponse | null> {
+  const round = await store.getRound(roundId);
+  if (!round) return null;
+  const agents = (
+    await Promise.all(round.agentIds.map((id) => syncManagerAgentWithTask(store, taskStore, id)))
+  ).filter(isPresent);
+  const tasks = (await Promise.all(round.taskIds.map((id) => taskStore.get(id)))).filter(isPresent);
+  return {
+    round,
+    agents,
+    tasks: tasks.map(sanitizeManagerTaskForAssistant),
+    summary: managerRoundSummary(round, agents, tasks),
+  };
+}
+
+function managerAgentStatusFromTaskState(state: ManagerTaskState): ManagerAgentStatus {
+  if (state === "pending") return "assigned";
+  if (state === "running" || state === "waiting_for_device") return "running";
+  if (state === "succeeded") return "completed";
+  if (state === "blocked" || state === "restart_required") return "blocked";
+  if (state === "cancelled") return "cancelled";
+  return "failed";
+}
+
+function managerRoundStatusFromTasks(tasks: ManagerTask[]): ManagerRoundStatus {
+  if (tasks.some((task) => task.state === "running" || task.state === "pending")) return "running";
+  if (tasks.some((task) => task.state === "failed")) return "failed";
+  if (tasks.some((task) => task.state === "blocked" || task.state === "restart_required")) {
+    return "blocked";
+  }
+  if (tasks.some((task) => task.state === "cancelled")) return "cancelled";
+  return "completed";
+}
+
+function managerWorkerResultText(task: ManagerTask): string {
+  const result = isRecord(task.result) ? task.result : null;
+  const stdout = typeof result?.stdout === "string" ? result.stdout.trim() : "";
+  const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
+  return truncateText(stdout || stderr, 2_000);
+}
+
+function managerRoundSummary(
+  round: ManagerRound,
+  agents: ManagerAgent[],
+  tasks: ManagerTask[],
+): string {
+  const counts = new Map<string, number>();
+  for (const agent of agents) counts.set(agent.status, (counts.get(agent.status) ?? 0) + 1);
+  const taskSummary = tasks.length
+    ? `${tasks.length} task(s): ${tasks.map((task) => task.state).join(", ")}`
+    : "no tasks";
+  const agentSummary = agents.length
+    ? [...counts.entries()].map(([status, count]) => `${status} ${count}`).join(", ")
+    : "no agents";
+  return `${round.title}: ${agentSummary}; ${taskSummary}.`;
 }
 
 function streamManagerTaskObservation(store: ManagerTaskStore, taskId: string): Response {
@@ -2984,19 +3531,21 @@ async function writeManagerAssistantConversationState(
   const filePath = join(dir, MANAGER_ASSISTANT_CONVERSATION_FILE);
   await mkdir(dir, { recursive: true });
   const current = input.reset ? {} : await readStoredManagerAssistantConversationState(filePath);
-  const next: Omit<ManagerAssistantConversationState, "generatedAt"> = {
+  let next: Omit<ManagerAssistantConversationState, "generatedAt"> = {
     conversationId: MANAGER_ASSISTANT_CONVERSATION_ID,
     ...current,
     updatedAt: new Date().toISOString(),
   };
   if (input.sessionId === null) {
-    delete next.sessionId;
+    const { sessionId: _sessionId, ...rest } = next;
+    next = rest;
   } else if (typeof input.sessionId === "string") {
     const sessionId = input.sessionId.trim();
     if (sessionId) next.sessionId = sessionId.slice(0, 200);
   }
   if (input.cwd === null) {
-    delete next.cwd;
+    const { cwd: _cwd, ...rest } = next;
+    next = rest;
   } else if (typeof input.cwd === "string") {
     const cwd = input.cwd.trim();
     if (cwd) next.cwd = cwd.slice(0, 2_000);
@@ -3188,15 +3737,17 @@ function buildManagerWorkerList(options: SiteAppOptions): ManagerWorkerListRespo
 
 function buildManagerWorkerProfiles(options: SiteAppOptions): ManagerWorkerProfile[] {
   const configured = options.managerWorkers?.length ? options.managerWorkers : undefined;
+  const defaultClaudeWorkerCommand = process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_CLI ?? "claude";
   const profiles: ManagerWorkerProfileConfig[] = configured ?? [
     {
       id: "claude-code",
       label: "Claude Code worker",
       description:
         "Runs a separate Claude CLI process for implementation, verification, and repo work.",
-      command: process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_CLI ?? "claude",
+      command: defaultClaudeWorkerCommand,
       args: managerAssistantStructuredInputArgs(
-        managerAssistantPermissionArgs(
+        managerAssistantStreamArgs(
+          defaultClaudeWorkerCommand,
           parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_ARGS),
         ),
       ),
@@ -3678,6 +4229,9 @@ function buildManagedManagerAssistantInstructions(input: {
     "- You are the supervisor. Answer questions, choose scope, inspect state, decide whether work is needed, and verify results yourself.",
     "- Delegate substantial implementation, repo edits, test runs, documentation edits, and multi-step repair work to a worker CLI instead of pretending you performed the work inline.",
     "- Use `GET /api/manager/workers` to discover worker profiles.",
+    "- Use `GET /api/manager/agents` and `GET /api/manager/rounds` to observe persistent orchestration state.",
+    "- Use `POST /api/manager/agents` to create role agents such as architect, protocol, verifier, critic, implementer, or documenter.",
+    "- Use `POST /api/manager/rounds` and `POST /api/manager/rounds/:id/dispatch` when the user wants multi-agent orchestration. A real orchestration round should dispatch at least two non-dry-run agents unless it is intentionally blocked.",
     "- Use `POST /api/manager/workers/:id/check` before non-dry-run delegation unless that worker was checked recently in the same task.",
     '- Use `POST /api/manager/workers/run` or `POST /api/manager/tasks` with `kind: "run-worker"` to launch a worker task.',
     "- Worker prompts must include the exact objective, allowed scope, files/modules to touch, forbidden actions, verification commands, and the expected final report.",
@@ -3806,6 +4360,8 @@ function buildManagedManagerAssistantInstructions(input: {
     '- Manager task body: `{ "kind": "diagnose|update-server|update-device|update-all|restart-server|restart-device|repair-registration|run-worker", "targetId": "optional-device-id", "dryRun": true, "requestedBy": "manager-assistant", "params": {} }`.',
     '- Shortcut task bodies accept `{ "dryRun": true, "requestedBy": "manager-assistant" }` when supported.',
     '- Worker run body: `{ "profile": "claude-code", "prompt": "objective/scope/verification", "cwd": ".", "timeoutMs": 600000, "dryRun": false, "requestedBy": "manager-assistant" }`.',
+    '- Agent body: `{ "role": "architect|implementer|verifier|critic|protocol|documenter", "profile": "claude-code", "cwd": "optional", "instruction": "optional" }`.',
+    '- Round dispatch body: `{ "dryRun": false, "assignments": [{ "role": "architect", "profile": "claude-code", "prompt": "role-specific objective", "cwd": "." }] }`.',
     "",
     "## Safety Rules",
     "",
@@ -5204,6 +5760,145 @@ async function parseManagerWorkerRunRequest(req: { json(): Promise<unknown> }): 
   });
 }
 
+function parseManagerAgentCreateRequest(
+  input: unknown,
+): { ok: true; value: ManagerAgentCreateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "agent body must be an object" };
+  const role = parseManagerAgentRole(input.role);
+  if (!role) return { ok: false, error: "agent role is required" };
+  const instruction =
+    typeof input.instruction === "string" && input.instruction.trim()
+      ? input.instruction.trim()
+      : undefined;
+  return {
+    ok: true,
+    value: {
+      role,
+      ...(typeof input.label === "string" && input.label.trim()
+        ? { label: input.label.trim() }
+        : {}),
+      ...(typeof input.profile === "string" && input.profile.trim()
+        ? { profile: input.profile.trim() }
+        : {}),
+      ...(typeof input.cwd === "string" && input.cwd.trim() ? { cwd: input.cwd.trim() } : {}),
+      ...(typeof input.roundId === "string" && input.roundId.trim()
+        ? { roundId: input.roundId.trim() }
+        : {}),
+      ...(instruction ? { instruction } : {}),
+    },
+  };
+}
+
+function parseManagerAgentMessageRequest(
+  input: unknown,
+): { ok: true; value: ManagerAgentMessageRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "agent message body must be an object" };
+  const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+  if (!prompt) return { ok: false, error: "agent message prompt is required" };
+  if (prompt.length > 40_000) return { ok: false, error: "agent message prompt is too long" };
+  const timeoutMs = Number(input.timeoutMs);
+  return {
+    ok: true,
+    value: {
+      prompt,
+      ...(typeof input.profile === "string" && input.profile.trim()
+        ? { profile: input.profile.trim() }
+        : {}),
+      ...(typeof input.cwd === "string" && input.cwd.trim() ? { cwd: input.cwd.trim() } : {}),
+      ...(typeof input.roundId === "string" && input.roundId.trim()
+        ? { roundId: input.roundId.trim() }
+        : {}),
+      ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      ...(typeof input.dryRun === "boolean" ? { dryRun: input.dryRun } : {}),
+    },
+  };
+}
+
+function parseManagerRoundCreateRequest(
+  input: unknown,
+): { ok: true; value: ManagerRoundCreateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "round body must be an object" };
+  const objective = typeof input.objective === "string" ? input.objective.trim() : "";
+  if (!objective) return { ok: false, error: "round objective is required" };
+  const agents: ManagerRoundCreateRequest["agents"] = [];
+  if (Array.isArray(input.agents)) {
+    for (const item of input.agents) {
+      if (!isRecord(item)) return { ok: false, error: "round agent assignment must be an object" };
+      const role = parseManagerAgentRole(item.role);
+      if (!role) return { ok: false, error: "round agent role is required" };
+      agents.push({
+        role,
+        ...(typeof item.label === "string" && item.label.trim()
+          ? { label: item.label.trim() }
+          : {}),
+        ...(typeof item.profile === "string" && item.profile.trim()
+          ? { profile: item.profile.trim() }
+          : {}),
+        ...(typeof item.cwd === "string" && item.cwd.trim() ? { cwd: item.cwd.trim() } : {}),
+        ...(typeof item.prompt === "string" && item.prompt.trim()
+          ? { prompt: item.prompt.trim() }
+          : {}),
+      });
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      objective,
+      ...(typeof input.title === "string" && input.title.trim()
+        ? { title: input.title.trim() }
+        : {}),
+      ...(agents.length ? { agents } : {}),
+    },
+  };
+}
+
+function parseManagerRoundDispatchRequest(
+  input: unknown,
+): { ok: true; value: ManagerRoundDispatchRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "round dispatch body must be an object" };
+  const assignments: ManagerRoundAgentAssignment[] = [];
+  if (Array.isArray(input.assignments)) {
+    for (const item of input.assignments) {
+      if (!isRecord(item)) return { ok: false, error: "round assignment must be an object" };
+      const role = parseManagerAgentRole(item.role);
+      if (!role) return { ok: false, error: "round assignment role is required" };
+      const prompt = typeof item.prompt === "string" ? item.prompt.trim() : "";
+      if (!prompt) return { ok: false, error: "round assignment prompt is required" };
+      const timeoutMs = Number(item.timeoutMs);
+      assignments.push({
+        role,
+        prompt,
+        ...(typeof item.agentId === "string" && item.agentId.trim()
+          ? { agentId: item.agentId.trim() }
+          : {}),
+        ...(typeof item.label === "string" && item.label.trim()
+          ? { label: item.label.trim() }
+          : {}),
+        ...(typeof item.profile === "string" && item.profile.trim()
+          ? { profile: item.profile.trim() }
+          : {}),
+        ...(typeof item.cwd === "string" && item.cwd.trim() ? { cwd: item.cwd.trim() } : {}),
+        ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      });
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      ...(assignments.length ? { assignments } : {}),
+      ...(typeof input.dryRun === "boolean" ? { dryRun: input.dryRun } : {}),
+    },
+  };
+}
+
+function parseManagerAgentRole(value: unknown): ManagerAgentRole | undefined {
+  if (typeof value !== "string") return undefined;
+  const role = value.trim();
+  if (!role || role.length > 64) return undefined;
+  return role;
+}
+
 function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
   return (
     value === "diagnose" ||
@@ -5389,7 +6084,9 @@ async function readManagerSessionTranscript(
   | { ok: false; status: number; error: string; attempts: ManagerSessionReadAttempt[] }
 > {
   const attempts: ManagerSessionReadAttempt[] = [];
-  const devices = request.deviceId ? [registry.get(request.deviceId)].filter(Boolean) : registry.list();
+  const devices = request.deviceId
+    ? [registry.get(request.deviceId)].filter(Boolean)
+    : registry.list();
   if (request.deviceId && devices.length === 0) {
     return { ok: false, status: 404, error: `unknown device: ${request.deviceId}`, attempts };
   }
@@ -5399,7 +6096,11 @@ async function readManagerSessionTranscript(
 
   for (const device of devices as Device[]) {
     try {
-      const behaviors = await readDeviceBehaviors(fetchImpl, device, daemonToken(device, localToken));
+      const behaviors = await readDeviceBehaviors(
+        fetchImpl,
+        device,
+        daemonToken(device, localToken),
+      );
       const behavior = selectClaudeBehavior(behaviors, request.behaviorInstanceId);
       if (!behavior) {
         throw new ManagerSessionReadError(
@@ -5490,7 +6191,10 @@ async function listDeviceSessions(
   return normalizeSessionCandidates(payload);
 }
 
-function buildSessionReadParams(request: ManagerSessionReadRequest, cwd: string): Record<string, unknown> {
+function buildSessionReadParams(
+  request: ManagerSessionReadRequest,
+  cwd: string,
+): Record<string, unknown> {
   return {
     cwd,
     sessionId: request.sessionId,
@@ -5626,7 +6330,9 @@ function selectSessionCandidate(
 ): ManagerSessionCandidate | undefined {
   return sessions
     .filter((session) => session.sessionId === sessionId)
-    .sort((left, right) => Date.parse(right.modifiedAt ?? "") - Date.parse(left.modifiedAt ?? ""))[0];
+    .sort(
+      (left, right) => Date.parse(right.modifiedAt ?? "") - Date.parse(left.modifiedAt ?? ""),
+    )[0];
 }
 
 function managerSessionReadAttempt(device: Device, error: unknown): ManagerSessionReadAttempt {
@@ -6505,6 +7211,14 @@ function parseJsonPayload(text: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value != null;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim()))];
 }
 
 function errorMessage(error: unknown): string {

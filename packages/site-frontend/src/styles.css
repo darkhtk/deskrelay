@@ -5579,6 +5579,32 @@ dialog.approval-modal-root,
   height: 100%;
   gap: 0;
 }
+.manager-orchestration-status {
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  gap: 10px;
+  min-height: 34px;
+  overflow: hidden;
+  padding: 6px 14px;
+}
+.manager-orchestration-round {
+  color: var(--text);
+  font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-orchestration-agents {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .manager-assistant-header,
 .manager-section-head,
 .manager-assistant-confirm {

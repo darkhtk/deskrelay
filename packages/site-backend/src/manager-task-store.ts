@@ -71,32 +71,49 @@ export function createJsonManagerTaskStore(
 ): ManagerTaskStore {
   const maxTasks = Math.max(1, options.maxTasks ?? 200);
   const now = options.now ?? (() => new Date());
+  let queue: Promise<unknown> = Promise.resolve();
+
+  const readConsistent = async () => {
+    await queue.catch(() => undefined);
+    return await readTasks(filePath);
+  };
+
+  const mutate = async <T>(fn: (tasks: ManagerTask[]) => Promise<T> | T): Promise<T> => {
+    const run = queue.then(async () => await fn(await readTasks(filePath)));
+    queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await run;
+  };
 
   return {
     async list(limit = 50) {
-      return (await readTasks(filePath)).slice(0, clampLimit(limit));
+      return (await readConsistent()).slice(0, clampLimit(limit));
     },
 
     async get(id) {
-      return (await readTasks(filePath)).find((task) => task.id === id);
+      return (await readConsistent()).find((task) => task.id === id);
     },
 
     async create(input) {
-      const task = createTask(input, now());
-      const existing = await readTasks(filePath);
-      await writeTasks(filePath, [task, ...existing].slice(0, maxTasks));
-      return task;
+      return await mutate(async (existing) => {
+        const task = createTask(input, now());
+        await writeTasks(filePath, [task, ...existing].slice(0, maxTasks));
+        return task;
+      });
     },
 
     async update(id, patch) {
-      const existing = await readTasks(filePath);
-      const index = existing.findIndex((task) => task.id === id);
-      if (index < 0) return undefined;
-      const updated = patchTask(existing[index] as ManagerTask, patch, now());
-      const next = [...existing];
-      next[index] = updated;
-      await writeTasks(filePath, sortTasks(next).slice(0, maxTasks));
-      return updated;
+      return await mutate(async (existing) => {
+        const index = existing.findIndex((task) => task.id === id);
+        if (index < 0) return undefined;
+        const updated = patchTask(existing[index] as ManagerTask, patch, now());
+        const next = [...existing];
+        next[index] = updated;
+        await writeTasks(filePath, sortTasks(next).slice(0, maxTasks));
+        return updated;
+      });
     },
   };
 }
