@@ -154,7 +154,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       setSessionId(summary.sessionId);
       if (
         current.conversationLoaded &&
-        !current.persistedSessionId &&
+        current.persistedSessionId !== summary.sessionId &&
         conversationState()?.sessionId !== summary.sessionId
       ) {
         void persistManagerSession(summary.sessionId, summary.cwd);

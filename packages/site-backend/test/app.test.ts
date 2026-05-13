@@ -430,6 +430,7 @@ describe("API route inventory", () => {
         dirty: false,
         source: "package",
       },
+      managerAssistant: { cwd: logDir },
     });
 
     const coveredRoutes = new Set<string>();
