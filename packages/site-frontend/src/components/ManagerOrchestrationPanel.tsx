@@ -39,6 +39,7 @@ const ORCHESTRATION_TABS: Array<{ id: OrchestrationTab; label: string }> = [
 
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
   const [tab, setTab] = createSignal<OrchestrationTab>("overview");
+  const [expanded, setExpanded] = createSignal(false);
   const activeRound = createMemo(() => pickActiveRound(props.rounds));
   const agents = createMemo(() => {
     const round = activeRound();
@@ -54,9 +55,18 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const totals = createMemo(() => summarizeTotals(agents()));
 
   return (
-    <section class="manager-orchestration-panel" aria-label="orchestration progress">
+    <section
+      class="manager-orchestration-panel"
+      classList={{ "manager-orchestration-panel-expanded": expanded() }}
+      aria-label="orchestration progress"
+    >
       <header class="manager-orchestration-panel-head">
-        <div class="manager-orchestration-title">
+        <button
+          type="button"
+          class="manager-orchestration-title"
+          aria-expanded={expanded()}
+          onClick={() => setExpanded((current) => !current)}
+        >
           <span
             class={`manager-status-dot manager-status-dot-${statusTone(activeRound()?.status)}`}
           />
@@ -64,7 +74,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           <Show when={activeRound()}>
             {(round) => <span class="manager-status-pill">{statusLabel(round().status)}</span>}
           </Show>
-        </div>
+        </button>
         <div class="manager-orchestration-summary">
           <span>
             {totals().completed}/{totals().total} agents done
@@ -72,40 +82,50 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           <span>running {totals().running}</span>
           <span>blocked {totals().blocked}</span>
         </div>
+        <button
+          type="button"
+          class="manager-orchestration-expand"
+          aria-expanded={expanded()}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded() ? "Hide" : "Details"}
+        </button>
       </header>
 
-      <nav class="manager-orchestration-tabs" aria-label="orchestration views">
-        <For each={ORCHESTRATION_TABS}>
-          {(item) => (
-            <button
-              type="button"
-              class="manager-orchestration-tab"
-              classList={{ "manager-orchestration-tab-active": tab() === item.id }}
-              onClick={() => setTab(item.id)}
-            >
-              {item.label}
-            </button>
-          )}
-        </For>
-      </nav>
+      <Show when={expanded()}>
+        <nav class="manager-orchestration-tabs" aria-label="orchestration views">
+          <For each={ORCHESTRATION_TABS}>
+            {(item) => (
+              <button
+                type="button"
+                class="manager-orchestration-tab"
+                classList={{ "manager-orchestration-tab-active": tab() === item.id }}
+                onClick={() => setTab(item.id)}
+              >
+                {item.label}
+              </button>
+            )}
+          </For>
+        </nav>
 
-      <div class="manager-orchestration-body">
-        <Show when={tab() === "overview"}>
-          <OverviewView round={activeRound()} agents={agents()} tasks={tasks()} />
-        </Show>
-        <Show when={tab() === "agents"}>
-          <AgentsView agents={agents()} />
-        </Show>
-        <Show when={tab() === "timeline"}>
-          <TimelineView entries={timeline()} />
-        </Show>
-        <Show when={tab() === "graph"}>
-          <GraphView mermaid={mermaid()} agents={agents()} />
-        </Show>
-        <Show when={tab() === "artifacts"}>
-          <ArtifactsView artifacts={artifacts()} />
-        </Show>
-      </div>
+        <div class="manager-orchestration-body">
+          <Show when={tab() === "overview"}>
+            <OverviewView round={activeRound()} agents={agents()} tasks={tasks()} />
+          </Show>
+          <Show when={tab() === "agents"}>
+            <AgentsView agents={agents()} />
+          </Show>
+          <Show when={tab() === "timeline"}>
+            <TimelineView entries={timeline()} />
+          </Show>
+          <Show when={tab() === "graph"}>
+            <GraphView mermaid={mermaid()} agents={agents()} />
+          </Show>
+          <Show when={tab() === "artifacts"}>
+            <ArtifactsView artifacts={artifacts()} />
+          </Show>
+        </div>
+      </Show>
     </section>
   );
 };

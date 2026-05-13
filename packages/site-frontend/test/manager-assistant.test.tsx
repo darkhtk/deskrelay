@@ -168,6 +168,11 @@ describe("ManagerAssistant", () => {
     });
     await waitFor(() => {
       expect(document.body.textContent).toContain("R1");
+      expect(document.body.textContent).toContain("Details");
+      expect(document.body.textContent).not.toContain("Overview");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    await waitFor(() => {
       expect(document.body.textContent).toContain("Overview");
       expect(document.body.textContent).toContain("Agents");
     });
