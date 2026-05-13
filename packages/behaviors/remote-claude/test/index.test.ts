@@ -79,6 +79,52 @@ describe("remote-claude behavior chat request", () => {
     await waitFor(() => events.some((event) => event.kind === "run.finished"));
   });
 
+  test("aborts a run that never produces a Claude stream event", async () => {
+    const { ctx, handlers, events } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const chat = handlers.get("chat");
+    if (!chat) throw new Error("chat handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-stuck-"));
+    tempDirs.push(cwd);
+    const fixture = fileURLToPath(new URL("./fixtures/fake-claude-hang.ts", import.meta.url));
+    const runId = "r_no_events";
+
+    await chat({
+      cwd,
+      message: "hang before first event",
+      runId,
+      command: ["bun", fixture],
+      firstEventTimeoutMs: 1_000,
+    });
+
+    await waitFor(
+      () =>
+        events.some(
+          (event) => event.kind === "run.stalled" && event.spaceId?.endsWith(":r_no_events"),
+        ),
+      2_500,
+    );
+    await waitFor(
+      () =>
+        events.some(
+          (event) => event.kind === "run.error" && event.spaceId?.endsWith(":r_no_events"),
+        ),
+      2_500,
+    );
+
+    const error = events.find(
+      (event) => event.kind === "run.error" && event.spaceId?.endsWith(":r_no_events"),
+    )?.content as { message?: string } | undefined;
+    expect(error?.message).toContain("no stream events");
+    expect(
+      events.some(
+        (event) => event.kind === "run.finished" && event.spaceId?.endsWith(":r_no_events"),
+      ),
+    ).toBe(false);
+  });
+
   test("serializes queued chat requests and resumes a new-chat session", async () => {
     const { ctx, handlers, events } = makeCtx();
     await behaviorDef.start(ctx);

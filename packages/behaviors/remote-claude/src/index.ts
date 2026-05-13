@@ -88,6 +88,8 @@ interface ChatParams {
   managerInstructionsPath?: string;
   managerSiteToken?: string;
   managerBrowserContext?: unknown;
+  /** Abort the run when Claude accepts the process but emits no stream event. */
+  firstEventTimeoutMs?: number;
   /** For tests/dev — substitute the executable. */
   command?: string[];
 }
@@ -288,6 +290,9 @@ const chatQueue: ChatQueueItem[] = [];
 const sessionByConversation = new Map<string, string>();
 let activeChat: ChatQueueItem | null = null;
 let drainingChatQueue = false;
+const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 120_000;
+const MIN_FIRST_EVENT_TIMEOUT_MS = 1_000;
+const MAX_FIRST_EVENT_TIMEOUT_MS = 600_000;
 
 function safeClaudeModel(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -305,6 +310,18 @@ function chatConversationKey(params: ChatParams): string {
     return `conversation:${params.conversationId.trim()}`;
   }
   return `cwd:${params.cwd}`;
+}
+
+function chatFirstEventTimeoutMs(params: ChatParams): number {
+  const raw =
+    typeof params.firstEventTimeoutMs === "number"
+      ? params.firstEventTimeoutMs
+      : Number(process.env.CR_REMOTE_CLAUDE_FIRST_EVENT_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_FIRST_EVENT_TIMEOUT_MS;
+  return Math.min(
+    MAX_FIRST_EVENT_TIMEOUT_MS,
+    Math.max(MIN_FIRST_EVENT_TIMEOUT_MS, Math.floor(raw)),
+  );
 }
 
 function publishChatQueueSnapshot(
@@ -397,6 +414,26 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
   });
 
   let capturedSessionId: string | null = null;
+  let firstClaudeEventSeen = false;
+  let firstEventWatchdogTriggered = false;
+  const firstEventTimeoutMs = chatFirstEventTimeoutMs(params);
+  const firstEventWatchdog = setTimeout(() => {
+    if (firstClaudeEventSeen || abort.signal.aborted) return;
+    firstEventWatchdogTriggered = true;
+    const message = `Claude produced no stream events for ${firstEventTimeoutMs}ms after run start; aborting stuck run.`;
+    ctx.publish({
+      spaceId,
+      kind: "run.stalled",
+      content: {
+        runId,
+        message,
+        firstEventTimeoutMs,
+        stalledAt: new Date().toISOString(),
+      },
+    });
+    abort.abort();
+  }, firstEventTimeoutMs);
+  firstEventWatchdog.unref?.();
   try {
     const managerMode = params.managerMode === true;
     const permissionMode = managerMode
@@ -433,6 +470,8 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
       env,
       ...(managerPrompt ? { appendSystemPrompt: managerPrompt } : {}),
       onEvent: (event) => {
+        firstClaudeEventSeen = true;
+        clearTimeout(firstEventWatchdog);
         capturedSessionId = sessionIdFromClaudeEvent(event) ?? capturedSessionId;
         ctx.publish({ spaceId, kind: "claude.event", content: event });
       },
@@ -443,6 +482,12 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
         ctx.logger.warn("malformed stdout line", { line, error: error.message });
       },
     });
+    clearTimeout(firstEventWatchdog);
+    if (firstEventWatchdogTriggered) {
+      throw new Error(
+        `Claude produced no stream events for ${firstEventTimeoutMs}ms after run start; aborted stuck run.`,
+      );
+    }
     if (capturedSessionId) sessionByConversation.set(item.conversationKey, capturedSessionId);
     item.status = abort.signal.aborted ? "cancelled" : "done";
     publishChatQueueSnapshot(ctx, item);
@@ -457,6 +502,7 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
       },
     });
   } catch (err) {
+    clearTimeout(firstEventWatchdog);
     item.status = "failed";
     publishChatQueueSnapshot(ctx, item);
     const isClaudeErr = err instanceof ClaudeRunError;
