@@ -1530,12 +1530,23 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       const instructions = readFileSync(captured?.instructionsPath ?? "", "utf8");
       expect(instructions).toContain("DeskRelay Manager Assistant");
       expect(instructions).toContain("administrator and supervisor");
+      expect(instructions).toContain("## Supervisor Boundary");
+      expect(instructions).toContain("not the primary implementer");
+      expect(instructions).toContain("Do not write the main project artifacts yourself");
+      expect(instructions).toContain("PowerShell is for inspection");
+      expect(instructions).toContain("## Development Round Completion Gate");
+      expect(instructions).toContain("At least one non-dry-run `claude-code` worker task");
+      expect(instructions).toContain("If the work only used your own reasoning");
       expect(instructions).toContain("## Common Behavior Contract");
       expect(instructions).toContain("## Role Profiles");
       expect(instructions).toContain("### Status Reporter");
       expect(instructions).toContain("### Diagnostician");
       expect(instructions).toContain("### Operator");
       expect(instructions).toContain("### Developer Supervisor");
+      expect(instructions).toContain("Do not directly implement the worker's assigned files");
+      expect(instructions).toContain(
+        "Do not close a development round without a non-dry-run `claude-code` worker result",
+      );
       expect(instructions).toContain("### Session Analyst");
       expect(instructions).toContain("### Guide");
       expect(instructions).toContain("### Safety Steward");
@@ -2132,6 +2143,8 @@ process.stdin.on("end", () => {
     expect(prompt).toContain("## Current Browser Context");
     expect(prompt).toContain("## Role Selection Reminder");
     expect(prompt).toContain("status reporter, diagnostician, operator");
+    expect(prompt).toContain("do not become the implementer");
+    expect(prompt).toContain("Supervise `claude-code` worker tasks");
     expect(prompt).not.toContain("## Recent Conversation Log");
     expect(prompt).not.toContain("## Structured Manager State");
     expect(prompt).not.toContain("## Last Assistant Reply");
