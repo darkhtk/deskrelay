@@ -2561,6 +2561,7 @@ function truncateForStatus(value: string): string {
 
 export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
   const browserContext = formatManagerAssistantBrowserContext(input.context);
+  const asciiSafeRequest = asciiSafeJsonString(input.message);
   const pendingDecision = isShortManagerAssistantReply(input.message)
     ? formatManagerAssistantPendingDecision(input.assistantState?.pendingDecision)
     : "";
@@ -2576,10 +2577,31 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     browserContext ? `## Current Browser Context\n${browserContext}` : "",
     shortReplyHint,
     `## Current User Request\n${input.message}`,
+    [
+      "## Current User Request ASCII-Safe Copy",
+      asciiSafeRequest,
+      "If the raw request above appears as question marks, mojibake, or otherwise corrupted, decode this JSON string and use it as the source of truth for intent.",
+    ].join("\n"),
     "## Response Requirements\nAnswer only the current user request. Use the active Claude session for conversation memory. Use observed facts for operational claims.",
+    [
+      "## Per-Turn Tool Constraints",
+      "- This server is Windows.",
+      "- Do not use Bash for DeskRelay manager API calls.",
+      "- For simple read-only GET observations, prefer `Set-Location $env:DESKRELAY_REPOSITORY_ROOT; bun run scripts/manager-api.ts batch-get name=/api/path`.",
+      "- For JSON mutation or dry-run bodies, prefer `--body-file` to avoid shell quoting failures.",
+    ].join("\n"),
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function asciiSafeJsonString(value: string): string {
+  return JSON.stringify(value).replace(/[^\x20-\x7e]/g, (char) =>
+    char
+      .split("")
+      .map((part) => `\\u${part.charCodeAt(0).toString(16).padStart(4, "0")}`)
+      .join(""),
+  );
 }
 
 function isShortManagerAssistantReply(value: string): boolean {

@@ -2086,6 +2086,24 @@ process.stdin.on("end", () => {
     expect(prompt.trim().endsWith("Assistant:")).toBe(false);
   });
 
+  test("manager assistant prompt includes an ASCII-safe copy of Korean requests", () => {
+    const prompt = buildManagerAssistantPrompt({
+      message: "모든 디바이스를 삭제하지 말고 상태만 확인해",
+      history: [],
+      context: undefined,
+      cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+      repoRoot: "C:\\repo",
+      instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+      apiBaseUrl: "http://127.0.0.1:18193",
+    });
+
+    expect(prompt).toContain("## Current User Request ASCII-Safe Copy");
+    expect(prompt).toContain("\\ubaa8\\ub4e0");
+    expect(prompt).toContain("decode this JSON string");
+    expect(prompt).toContain("Do not use Bash for DeskRelay manager API calls");
+    expect(prompt).toContain("batch-get");
+  });
+
   test("manager assistant prompt preserves pending decisions for short replies", () => {
     const longLastReply = [
       "확인된 사실 보고합니다.",
