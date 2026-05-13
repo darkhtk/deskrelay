@@ -1949,6 +1949,7 @@ async function runDefaultManagerAssistantCli(
     assistantOptions?.command ?? process.env.DESKRELAY_MANAGER_ASSISTANT_CLI ?? "claude";
   const args = managerAssistantSessionArgs(
     managerAssistantStreamArgs(
+      command,
       assistantOptions?.args ??
         parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS),
     ),
@@ -2014,7 +2015,7 @@ async function runDefaultManagerAssistantCliStream(
     assistantOptions?.args ??
     parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
   const args = managerAssistantSessionArgs(
-    managerAssistantStreamArgs(baseArgs),
+    managerAssistantStreamArgs(command, baseArgs),
     input.managerSessionId,
   );
   const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
@@ -2199,7 +2200,7 @@ function cmdQuote(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-function managerAssistantStreamArgs(args: string[]): string[] {
+function managerAssistantStreamArgs(command: string, args: string[]): string[] {
   const normalized: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -2213,7 +2214,30 @@ function managerAssistantStreamArgs(args: string[]): string[] {
   }
   if (!normalized.includes("--verbose")) normalized.push("--verbose");
   normalized.push("--output-format", "stream-json");
-  return managerAssistantPermissionArgs(normalized);
+  return managerAssistantPermissionArgs(managerAssistantWindowsToolSafetyArgs(command, normalized));
+}
+
+function managerAssistantWindowsToolSafetyArgs(command: string, args: string[]): string[] {
+  if (process.platform !== "win32" || !isDefaultClaudeCommand(command)) return args;
+  const normalized: string[] = [];
+  let hasBashDisallow = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) continue;
+    normalized.push(arg);
+    if (arg === "--disallowedTools" || arg === "--disallowed-tools") {
+      const next = args[index + 1];
+      if (typeof next === "string" && /\bBash\b/i.test(next)) hasBashDisallow = true;
+      continue;
+    }
+    if (
+      (arg.startsWith("--disallowedTools=") || arg.startsWith("--disallowed-tools=")) &&
+      /\bBash\b/i.test(arg)
+    ) {
+      hasBashDisallow = true;
+    }
+  }
+  return hasBashDisallow ? normalized : [...normalized, "--disallowedTools", "Bash"];
 }
 
 function managerAssistantStructuredInputArgs(args: string[]): string[] {
