@@ -3039,8 +3039,10 @@ function buildManagedManagerAssistantInstructions(input: {
     "For authenticated `/api/*` calls, send `Authorization: Bearer $DESKRELAY_SITE_TOKEN` when the token exists.",
     "`GET /api/capabilities` is the live source of truth for route and behavior-method discovery.",
     "When behavior methods or route shapes are uncertain, discover capabilities before calling them.",
-    "- Prefer the repository helper for DeskRelay API calls: `bun run scripts/manager-api.ts GET /api/manager/system/summary`.",
-    "- For multiple read-only API checks, do not launch parallel shell tool calls. Use `bun run scripts/manager-api.ts batch --file <requests.json>` so one failed request is returned as a structured result instead of cancelling the whole observation.",
+    "- Prefer the repository helper for DeskRelay API calls: `bun run scripts/manager-api.ts GET /api/manager/system/summary` from the repository root.",
+    "- For multiple simple read-only GET checks, do not launch parallel shell tool calls. Use `bun run scripts/manager-api.ts batch-get summary=/api/manager/system/summary workers=/api/manager/workers` so one failed request is returned as a structured result instead of cancelling the whole observation.",
+    "- For complex batches that need methods, bodies, or query strings, use `bun run scripts/manager-api.ts batch --file <requests.json>` or `bun run scripts/manager-api.ts batch --requests '<json-array>'`.",
+    "- For POST, PUT, PATCH, or DELETE calls with JSON bodies, prefer `--body-file <request.json>` over inline shell JSON when quoting is not trivial.",
     "- The manager API helper reads `DESKRELAY_MANAGER_API_BASE` and `DESKRELAY_SITE_TOKEN` from the environment. Do not manually assemble Authorization headers in Bash or PowerShell unless the helper cannot satisfy the task.",
     "- Do not treat a device registry `connectionState: online` value as proof that the server can reach that connector. For operational decisions, confirm with `/api/devices/:id/doctor`, `/process/status`, or the specific API needed for the task.",
     "When verifying generated files, call `/api/devices/:id/fs/list?includeFiles=1` for the target directory. The default list is directory-only for the cwd picker.",
@@ -3051,6 +3053,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "",
     "- The server PC is Windows. Prefer PowerShell for local commands and HTTP calls.",
     "- For DeskRelay API calls, use `bun run scripts/manager-api.ts ...` before considering raw shell HTTP commands.",
+    "- Do not use Bash for `scripts/manager-api.ts` calls on Windows. Run the helper from the repository root with PowerShell semantics.",
     "- Do not use parallel tool calls for shell commands that call DeskRelay APIs, build auth headers, create temp files, mutate state, or depend on shared process state.",
     "- Parallel observation is allowed only through a helper or API that preserves each result independently, such as `manager-api.ts batch`.",
     "- Do not put PowerShell syntax inside Bash. If a command uses `$env:`, hashtables, `Invoke-RestMethod`, or `ConvertTo-Json`, it must run in PowerShell.",
@@ -3817,53 +3820,73 @@ async function buildManagerUpdatePlan(input: {
     : [];
   for (const device of input.registry.list()) {
     const queued = queueEntries.find((entry) => entry.deviceId === device.id);
-    const installStatus =
-      queued || !input.fetchImpl
-        ? null
-        : await buildDeviceInstallStatus(
-            input.fetchImpl,
-            device,
-            daemonToken(device, input.localToken),
-            input.options.deviceUpdateQueue,
-          ).catch(() => null);
+    const installStatus = input.fetchImpl
+      ? await buildDeviceInstallStatus(
+          input.fetchImpl,
+          device,
+          daemonToken(device, input.localToken),
+          input.options.deviceUpdateQueue,
+        ).catch(() => null)
+      : null;
     const deviceMatchesServer = installStatus ? sameBuild(input.build, installStatus.build) : null;
+    const queuedState = queued?.state;
+    const queueIsActive =
+      queuedState === "pending_until_device_online" ||
+      queuedState === "queued" ||
+      queuedState === "running";
+    let action: ManagerUpdatePlan["items"][number]["action"];
+    let state: string | undefined;
+    let reason: string;
+    if (queueIsActive && queued) {
+      state = queuedState;
+      action =
+        queuedState === "pending_until_device_online" || queuedState === "queued"
+          ? "queue"
+          : "blocked";
+      reason =
+        queued.warning ||
+        queued.error ||
+        (queuedState === "running"
+          ? "Connector update is already running."
+          : `Queued update state: ${queuedState}.`);
+    } else if (installStatus) {
+      state =
+        installStatus.update?.state ||
+        queuedState ||
+        (installStatus.running ? "running" : undefined);
+      if (deviceMatchesServer === false) {
+        action = queuedState === "restart_required" ? "restart" : "update";
+        reason =
+          queuedState === "restart_required"
+            ? "Connector restart is required to activate the updated build."
+            : "Connector update is available.";
+      } else if (deviceMatchesServer === true) {
+        action = "none";
+        reason = "Connector build matches the server.";
+      } else {
+        action = "unknown";
+        reason = installStatus.summary.message;
+      }
+    } else if (queued) {
+      state = queuedState;
+      action =
+        queuedState === "restart_required"
+          ? "restart"
+          : queuedState === "failed"
+            ? "update"
+            : "none";
+      reason = queued.warning || queued.error || `Queued update state: ${queuedState}.`;
+    } else {
+      action = "unknown";
+      reason = "Device install status is unavailable.";
+    }
     items.push({
       scope: "device",
       targetId: device.id,
       targetLabel: device.label,
-      action: queued
-        ? queued.state === "pending_until_device_online" || queued.state === "queued"
-          ? "queue"
-          : queued.state === "running"
-            ? "blocked"
-            : queued.state === "restart_required"
-              ? "restart"
-              : queued.state === "failed"
-                ? "update"
-                : "none"
-        : installStatus
-          ? deviceMatchesServer === false
-            ? "update"
-            : deviceMatchesServer === true
-              ? "none"
-              : "unknown"
-          : "unknown",
-      ...(queued?.state
-        ? { state: queued.state }
-        : installStatus?.update?.state
-          ? { state: installStatus.update.state }
-          : installStatus?.running
-            ? { state: "running" }
-            : {}),
-      reason: queued
-        ? queued.warning || queued.error || `Queued update state: ${queued.state}.`
-        : installStatus
-          ? deviceMatchesServer === false
-            ? "Connector update is available."
-            : deviceMatchesServer === true
-              ? "Connector build matches the server."
-              : installStatus.summary.message
-          : "Device install status is unavailable.",
+      action,
+      ...(state ? { state } : {}),
+      reason,
     });
   }
 

@@ -1501,8 +1501,14 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(instructions).toContain("GET /api/manager/workers");
       expect(instructions).toContain("run-worker");
       expect(instructions).toContain("bun run scripts/manager-api.ts");
+      expect(instructions).toContain("batch-get");
+      expect(instructions).toContain("batch --requests");
       expect(instructions).toContain("batch --file");
+      expect(instructions).toContain("--body-file");
       expect(instructions).toContain("Prefer PowerShell");
+      expect(instructions).toContain(
+        "Do not use Bash for `scripts/manager-api.ts` calls on Windows",
+      );
       expect(instructions).toContain("Do not use parallel tool calls for shell commands");
       expect(instructions).toContain("Do not put PowerShell syntax inside Bash");
       expect(instructions).toContain('"message": "..."');
@@ -2680,6 +2686,68 @@ describe("device connector update queue", () => {
     const payload = (await res.json()) as { entries: StoredDeviceUpdateEntry[] };
     expect(payload.entries[0]?.fallbackCommand).toContain("deskrelay-install-connector.ps1");
     expect(payload.entries[0]?.fallbackCommand).toContain(`-SiteToken '${TOKEN}'`);
+  });
+
+  test("manager update plan does not let stale succeeded queue entries hide connector drift", async () => {
+    const queue = createMemoryUpdateQueueStore();
+    const setup = makeApp({
+      deviceUpdateQueue: queue,
+      build: {
+        version: "0.0.0",
+        commit: "server-commit",
+        shortCommit: "server",
+        dirty: false,
+        source: "git",
+      },
+    });
+    const device = setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      label: "Office",
+      authToken: "daemon-token",
+    });
+    await queue.upsert({
+      deviceId: device.id,
+      label: device.label,
+      daemonUrl: device.daemonUrl,
+      state: "succeeded",
+      requestedAt: "2026-05-11T00:00:00.000Z",
+    });
+    setup.setMockResponse((req) => {
+      if (req.url.endsWith("/install/status")) {
+        return Response.json({
+          scope: "device",
+          targetId: device.id,
+          targetLabel: device.label,
+          generatedAt: "2026-05-11T00:00:00.000Z",
+          build: {
+            version: "0.0.0",
+            commit: "old-connector-commit",
+            shortCommit: "old",
+            dirty: false,
+            source: "git",
+          },
+          installed: true,
+          running: true,
+          update: { state: "succeeded", updateAvailable: false, changed: false },
+          summary: { severity: "ok", message: "Connector is installed and running." },
+        });
+      }
+      return Response.json({ ok: true });
+    });
+
+    const res = await setup.app.fetch(authedRequest("GET", "/api/manager/update/plan"));
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items?: Array<{ scope?: string; targetId?: string; action?: string; reason?: string }>;
+    };
+    const item = body.items?.find(
+      (entry) => entry.scope === "device" && entry.targetId === device.id,
+    );
+    expect(item).toMatchObject({
+      action: "update",
+      reason: "Connector update is available.",
+    });
   });
 });
 

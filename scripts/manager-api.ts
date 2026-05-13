@@ -25,7 +25,9 @@ function usage(): never {
   bun run scripts/manager-api.ts GET /api/manager/system/summary
   bun run scripts/manager-api.ts POST /api/manager/tasks --json '{"kind":"diagnose","dryRun":true}'
   bun run scripts/manager-api.ts POST /api/manager/tasks --body-file request.json
+  bun run scripts/manager-api.ts batch-get summary=/api/manager/system/summary workers=/api/manager/workers
   bun run scripts/manager-api.ts batch --file requests.json
+  bun run scripts/manager-api.ts batch --requests '[{"id":"summary","method":"GET","path":"/api/manager/system/summary"}]'
 
 Environment:
   DESKRELAY_MANAGER_API_BASE  Defaults to http://127.0.0.1:18193
@@ -70,8 +72,23 @@ function parseOptions(raw: string[]): Record<string, string | true> {
   return out;
 }
 
+function parseJsonArgument(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    if (text.includes('\\"')) {
+      try {
+        return JSON.parse(text.replace(/\\"/g, '"'));
+      } catch {
+        // Preserve the original, more accurate JSON parser error.
+      }
+    }
+    throw error;
+  }
+}
+
 async function readJsonOption(options: Record<string, string | true>): Promise<unknown> {
-  if (typeof options.json === "string") return JSON.parse(options.json);
+  if (typeof options.json === "string") return parseJsonArgument(options.json);
   if (typeof options["body-file"] === "string") {
     return JSON.parse(await Bun.file(options["body-file"]).text());
   }
@@ -131,11 +148,33 @@ async function callApi(input: BatchRequest): Promise<ApiResult> {
 
 async function main(): Promise<number> {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") usage();
+  if (args[0] === "batch-get") {
+    const requests: BatchRequest[] = args.slice(1).map((entry, index) => {
+      const separator = entry.indexOf("=");
+      if (separator > 0) {
+        return {
+          id: entry.slice(0, separator),
+          method: "GET",
+          path: entry.slice(separator + 1),
+        };
+      }
+      return { id: `get_${index + 1}`, method: "GET", path: entry };
+    });
+    if (requests.length === 0) usage();
+    const results = await Promise.all(requests.map((request) => callApi(request)));
+    console.log(JSON.stringify({ ok: results.every((result) => result.ok), results }, null, 2));
+    return 0;
+  }
   if (args[0] === "batch") {
     const options = parseOptions(args.slice(1));
-    if (typeof options.file !== "string") usage();
-    const requests = JSON.parse(await Bun.file(options.file).text()) as BatchRequest[];
-    if (!Array.isArray(requests)) throw new Error("batch file must contain an array");
+    const requests =
+      typeof options.requests === "string"
+        ? (parseJsonArgument(options.requests) as BatchRequest[])
+        : typeof options.file === "string"
+          ? (JSON.parse(await Bun.file(options.file).text()) as BatchRequest[])
+          : undefined;
+    if (!requests) usage();
+    if (!Array.isArray(requests)) throw new Error("batch input must contain an array");
     const results = await Promise.all(requests.map((request) => callApi(request)));
     console.log(JSON.stringify({ ok: results.every((result) => result.ok), results }, null, 2));
     return 0;

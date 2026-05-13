@@ -91,4 +91,90 @@ describe("manager-api helper", () => {
       await rm(batchPath, { force: true }).catch(() => undefined);
     }
   });
+
+  test("batch accepts inline requests for simple read-only observations", async () => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return Response.json({ path: new URL(req.url).pathname });
+      },
+    });
+
+    const result = await runManagerApi(
+      [
+        "batch",
+        "--requests",
+        JSON.stringify([{ id: "summary", method: "GET", path: "/api/manager/system/summary" }]),
+      ],
+      { DESKRELAY_MANAGER_API_BASE: server.url.origin },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      ok?: boolean;
+      results?: Array<{ id?: string; ok?: boolean; data?: { path?: string } }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.results?.[0]).toMatchObject({
+      id: "summary",
+      ok: true,
+      data: { path: "/api/manager/system/summary" },
+    });
+  });
+
+  test("batch-get accepts simple read-only observations without JSON quoting", async () => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return Response.json({ path: new URL(req.url).pathname });
+      },
+    });
+
+    const result = await runManagerApi(
+      ["batch-get", "summary=/api/manager/system/summary", "workers=/api/manager/workers"],
+      { DESKRELAY_MANAGER_API_BASE: server.url.origin },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      ok?: boolean;
+      results?: Array<{ id?: string; ok?: boolean; data?: { path?: string } }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.results?.map((entry) => entry.id)).toEqual(["summary", "workers"]);
+    expect(body.results?.map((entry) => entry.data?.path)).toEqual([
+      "/api/manager/system/summary",
+      "/api/manager/workers",
+    ]);
+  });
+
+  test("batch accepts over-escaped inline JSON from PowerShell copy-paste", async () => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return Response.json({ path: new URL(req.url).pathname });
+      },
+    });
+
+    const result = await runManagerApi(
+      [
+        "batch",
+        "--requests",
+        '[{\\"id\\":\\"health\\",\\"method\\":\\"GET\\",\\"path\\":\\"/healthz\\"}]',
+      ],
+      { DESKRELAY_MANAGER_API_BASE: server.url.origin },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      ok?: boolean;
+      results?: Array<{ id?: string; ok?: boolean; data?: { path?: string } }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.results?.[0]).toMatchObject({
+      id: "health",
+      ok: true,
+      data: { path: "/healthz" },
+    });
+  });
 });
