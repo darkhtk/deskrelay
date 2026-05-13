@@ -294,6 +294,20 @@ export interface ManagerWorkerListResponse {
   profiles: ManagerWorkerProfile[];
 }
 
+export interface ManagerAssistantConversationState {
+  generatedAt: string;
+  conversationId: string;
+  sessionId?: string;
+  cwd?: string;
+  updatedAt?: string;
+}
+
+export interface ManagerAssistantConversationStateInput {
+  sessionId?: string | null;
+  cwd?: string | null;
+  reset?: boolean;
+}
+
 export interface ManagerAssistantChatMessage {
   id: string;
   role: "user" | "assistant" | "system";

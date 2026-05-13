@@ -9,6 +9,8 @@ import {
   type DiagnosticSeverity,
   type DiagnosticStep,
   MANAGER_API_VERSION,
+  type ManagerAssistantConversationState,
+  type ManagerAssistantConversationStateInput,
   type ManagerAssistantChatContext,
   type ManagerAssistantChatMessage,
   type ManagerAssistantChatRequest,
@@ -156,6 +158,8 @@ const MAX_MANAGER_ASSISTANT_TIMEOUT_MS = 1_800_000;
 const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
+const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
+const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
 
 export function createSiteApp(options: SiteAppOptions): Hono {
@@ -218,6 +222,32 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         ...(device ? { deviceId: device.id, deviceLabel: device.label } : {}),
       };
       return c.json(response);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.get("/api/manager/assistant/conversation", async (c) => {
+    try {
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      return c.json(await readManagerAssistantConversationState(repoRoot));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.put("/api/manager/assistant/conversation", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerAssistantConversationStateInput(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      return c.json(await writeManagerAssistantConversationState(repoRoot, parsed.value));
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
@@ -1408,6 +1438,16 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/assistant/conversation",
+    description: "Read the persistent manager assistant conversation pointer.",
+  },
+  {
+    method: "PUT",
+    path: "/api/manager/assistant/conversation",
+    description: "Update or clear the persistent manager assistant conversation pointer.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/assistant/status",
     description: "Read recent manager assistant progress reports.",
   },
@@ -2028,6 +2068,12 @@ async function runManagerAssistantChat(
   if (request.assistantState?.sessionId) input.managerSessionId = request.assistantState.sessionId;
   if (request.assistantState) input.assistantState = request.assistantState;
   const result = await runner(input);
+  if (result.sessionId) {
+    await writeManagerAssistantConversationState(repoRoot, {
+      sessionId: result.sessionId,
+      cwd,
+    });
+  }
   return {
     cwd,
     command: result.command,
@@ -2093,6 +2139,12 @@ function streamManagerAssistantChat(
           const result = runner
             ? await runCustomManagerAssistantRunner(input, runner, emit)
             : await runDefaultManagerAssistantCliStream(input, options, emit);
+          if (result.sessionId) {
+            await writeManagerAssistantConversationState(repoRoot, {
+              sessionId: result.sessionId,
+              cwd,
+            });
+          }
           emit({
             type: "message",
             cwd,
@@ -2912,6 +2964,82 @@ async function ensureManagerAssistantWorkspace(
   return { cwd, instructionsPath };
 }
 
+async function readManagerAssistantConversationState(
+  repoRoot: string,
+): Promise<ManagerAssistantConversationState> {
+  const filePath = join(repoRoot, MANAGER_ASSISTANT_DIR, MANAGER_ASSISTANT_CONVERSATION_FILE);
+  const stored = await readStoredManagerAssistantConversationState(filePath);
+  return {
+    generatedAt: new Date().toISOString(),
+    conversationId: MANAGER_ASSISTANT_CONVERSATION_ID,
+    ...stored,
+  };
+}
+
+async function writeManagerAssistantConversationState(
+  repoRoot: string,
+  input: ManagerAssistantConversationStateInput,
+): Promise<ManagerAssistantConversationState> {
+  const dir = join(repoRoot, MANAGER_ASSISTANT_DIR);
+  const filePath = join(dir, MANAGER_ASSISTANT_CONVERSATION_FILE);
+  await mkdir(dir, { recursive: true });
+  const current = input.reset ? {} : await readStoredManagerAssistantConversationState(filePath);
+  const next: Omit<ManagerAssistantConversationState, "generatedAt"> = {
+    conversationId: MANAGER_ASSISTANT_CONVERSATION_ID,
+    ...current,
+    updatedAt: new Date().toISOString(),
+  };
+  if (input.sessionId === null) {
+    delete next.sessionId;
+  } else if (typeof input.sessionId === "string") {
+    const sessionId = input.sessionId.trim();
+    if (sessionId) next.sessionId = sessionId.slice(0, 200);
+  }
+  if (input.cwd === null) {
+    delete next.cwd;
+  } else if (typeof input.cwd === "string") {
+    const cwd = input.cwd.trim();
+    if (cwd) next.cwd = cwd.slice(0, 2_000);
+  }
+  await writeFile(filePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return {
+    generatedAt: new Date().toISOString(),
+    ...next,
+  };
+}
+
+async function readStoredManagerAssistantConversationState(
+  filePath: string,
+): Promise<Partial<Omit<ManagerAssistantConversationState, "generatedAt">>> {
+  let text = "";
+  try {
+    text = await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return {};
+    throw error;
+  }
+  if (!text.trim()) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (!isRecord(parsed)) return {};
+    const state: Partial<Omit<ManagerAssistantConversationState, "generatedAt">> = {
+      conversationId: MANAGER_ASSISTANT_CONVERSATION_ID,
+    };
+    if (typeof parsed.sessionId === "string" && parsed.sessionId.trim()) {
+      state.sessionId = parsed.sessionId.trim().slice(0, 200);
+    }
+    if (typeof parsed.cwd === "string" && parsed.cwd.trim()) {
+      state.cwd = parsed.cwd.trim().slice(0, 2_000);
+    }
+    if (typeof parsed.updatedAt === "string" && parsed.updatedAt.trim()) {
+      state.updatedAt = parsed.updatedAt.trim();
+    }
+    return state;
+  } catch {
+    return {};
+  }
+}
+
 async function readManagerAssistantStatusReports(
   repoRoot: string,
   limit = MANAGER_ASSISTANT_STATUS_LIMIT,
@@ -3009,6 +3137,29 @@ function parseManagerAssistantStatusReportInput(
   if (typeof value.detail === "string" && value.detail.trim()) input.detail = value.detail.trim();
   if (typeof value.round === "string" && value.round.trim()) input.round = value.round.trim();
   if (typeof value.scope === "string" && value.scope.trim()) input.scope = value.scope.trim();
+  return { ok: true, value: input };
+}
+
+function parseManagerAssistantConversationStateInput(
+  value: unknown,
+): { ok: true; value: ManagerAssistantConversationStateInput } | { ok: false; error: string } {
+  if (!isRecord(value)) return { ok: false, error: "body must be an object" };
+  const input: ManagerAssistantConversationStateInput = {};
+  if (typeof value.reset === "boolean") input.reset = value.reset;
+  if (value.sessionId === null) {
+    input.sessionId = null;
+  } else if (typeof value.sessionId === "string") {
+    input.sessionId = value.sessionId.trim();
+  } else if (value.sessionId !== undefined) {
+    return { ok: false, error: "sessionId must be a string or null" };
+  }
+  if (value.cwd === null) {
+    input.cwd = null;
+  } else if (typeof value.cwd === "string") {
+    input.cwd = value.cwd.trim();
+  } else if (value.cwd !== undefined) {
+    return { ok: false, error: "cwd must be a string or null" };
+  }
   return { ok: true, value: input };
 }
 
@@ -6403,6 +6554,15 @@ async function prepareBehaviorRequestBodyForProxy(
   const repoRoot = input.options.managerAssistant?.cwd ?? process.cwd();
   const apiBaseUrl = managerAssistantApiBaseUrl(input.options, input.requestUrl);
   const workspace = await ensureManagerAssistantWorkspace(repoRoot, apiBaseUrl);
+  const conversation = await readManagerAssistantConversationState(repoRoot);
+  const requestSessionId =
+    typeof parsed.params.sessionId === "string" && parsed.params.sessionId.trim()
+      ? parsed.params.sessionId.trim()
+      : undefined;
+  const persistedSessionId =
+    typeof conversation.sessionId === "string" && conversation.sessionId.trim()
+      ? conversation.sessionId.trim()
+      : undefined;
   const params = {
     ...parsed.params,
     cwd: workspace.cwd,
@@ -6413,10 +6573,15 @@ async function prepareBehaviorRequestBodyForProxy(
     managerSiteToken: input.options.token ?? "",
     permissionMode: "bypassPermissions",
     securityProfile: "relaxed",
+    ...(requestSessionId
+      ? { sessionId: requestSessionId }
+      : persistedSessionId
+        ? { sessionId: persistedSessionId }
+        : {}),
     conversationId:
       typeof parsed.params.conversationId === "string" && parsed.params.conversationId.trim()
         ? parsed.params.conversationId
-        : "deskrelay-manager-assistant",
+        : conversation.conversationId,
   };
   return { ok: true, body: JSON.stringify({ ...parsed, params }) };
 }

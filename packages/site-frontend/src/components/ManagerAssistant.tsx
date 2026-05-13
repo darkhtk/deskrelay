@@ -80,6 +80,17 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     () => reloadSeq(),
     () => api.managerAssistantWorkspace(),
   );
+  const [conversationState, { mutate: mutateConversationState, refetch: refetchConversationState }] =
+    createResource(
+      () => reloadSeq(),
+      async () => {
+        try {
+          return await api.managerAssistantConversation();
+        } catch {
+          return null;
+        }
+      },
+    );
   const [statusReports] = createResource(
     () => statusReportSeq(),
     async (): Promise<ManagerAssistantStatusReportResponse | null> => {
@@ -118,7 +129,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     () => {
       const current = runtime();
       const seq = reloadSeq();
-      return current ? { ...current, seq } : null;
+      const persistedSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
+      const conversationLoaded = Boolean(conversationState());
+      return current ? { ...current, persistedSessionId, conversationLoaded, seq } : null;
     },
     async (current) => {
       if (!current) return null;
@@ -133,12 +146,19 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         },
       );
       if (list.error) throw new Error(list.error.message);
-      const summary = chooseManagerSession(list.result ?? [], sessionId());
+      const summary = chooseManagerSession(list.result ?? [], current.persistedSessionId);
       if (!summary) {
         setSessionId(null);
         return null;
       }
       setSessionId(summary.sessionId);
+      if (
+        current.conversationLoaded &&
+        !current.persistedSessionId &&
+        conversationState()?.sessionId !== summary.sessionId
+      ) {
+        void persistManagerSession(summary.sessionId, summary.cwd);
+      }
       const transcript = await api.callBehavior<ClaudeSessionTranscript>(
         current.deviceId,
         current.instanceId,
@@ -222,6 +242,31 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     setEvents((current) => [...current, event]);
   };
 
+  async function persistManagerSession(nextSessionId: string, nextCwd: string) {
+    const trimmed = nextSessionId.trim();
+    if (!trimmed) return;
+    setSessionId(trimmed);
+    const now = new Date().toISOString();
+    mutateConversationState((current) => ({
+      generatedAt: current?.generatedAt ?? now,
+      conversationId: current?.conversationId ?? MANAGER_CONVERSATION_ID,
+      ...current,
+      sessionId: trimmed,
+      cwd: nextCwd,
+      updatedAt: now,
+    }));
+    try {
+      const persisted = await api.updateManagerAssistantConversation({
+        sessionId: trimmed,
+        cwd: nextCwd,
+      });
+      mutateConversationState(persisted);
+    } catch {
+      // The Claude session is already persisted on disk; this server pointer is
+      // retried after the next transcript load or completed run.
+    }
+  }
+
   const removeRun = (runId: string) => {
     setRunIds((current) => current.filter((id) => id !== runId));
   };
@@ -249,6 +294,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     let streamSawRun = false;
     let chatAccepted = false;
     let capturedSessionId: string | null = null;
+    const resumeSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
 
     const streamPromise = (async () => {
       try {
@@ -313,7 +359,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         managerBrowserContext: props.context ?? null,
         permissionMode: "bypassPermissions",
         conversationId: MANAGER_CONVERSATION_ID,
-        ...(sessionId() ? { sessionId: sessionId() } : {}),
+        ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
       });
       if (response.error) {
         throw new Error(response.error.message);
@@ -331,9 +377,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       if (!chatAccepted && !streamSawRun) abort.abort();
       await streamPromise;
       removeRun(runId);
-      if (capturedSessionId) setSessionId(capturedSessionId);
+      if (capturedSessionId) await persistManagerSession(capturedSessionId, current.cwd);
       setStatus((currentStatus) => (currentStatus?.tone === "warning" ? currentStatus : null));
       setReloadSeq((seq) => seq + 1);
+      void refetchConversationState();
     }
   };
 

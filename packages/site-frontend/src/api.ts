@@ -3,6 +3,8 @@ import type {
   DiagnosticStep,
   ManagerAssistantChatRequest,
   ManagerAssistantChatResponse,
+  ManagerAssistantConversationState,
+  ManagerAssistantConversationStateInput,
   ManagerAssistantStatusReport,
   ManagerAssistantStatusReportInput,
   ManagerAssistantStatusReportResponse,
@@ -595,6 +597,14 @@ export const api = {
     }),
   managerAssistantWorkspace: () =>
     request<ManagerAssistantWorkspaceInfo>("GET", "/api/manager/assistant/workspace"),
+  managerAssistantConversation: () =>
+    request<ManagerAssistantConversationState>("GET", "/api/manager/assistant/conversation"),
+  updateManagerAssistantConversation: (input: ManagerAssistantConversationStateInput) =>
+    request<ManagerAssistantConversationState>(
+      "PUT",
+      "/api/manager/assistant/conversation",
+      input,
+    ),
   managerAssistantStatus: (limit?: number) =>
     request<ManagerAssistantStatusReportResponse>(
       "GET",

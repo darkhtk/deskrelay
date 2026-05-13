@@ -525,6 +525,17 @@ describe("API route inventory", () => {
           authedRequest("GET", "/api/manager/assistant/workspace"),
         ],
         [
+          "GET /api/manager/assistant/conversation",
+          authedRequest("GET", "/api/manager/assistant/conversation"),
+        ],
+        [
+          "PUT /api/manager/assistant/conversation",
+          authedRequest("PUT", "/api/manager/assistant/conversation", {
+            sessionId: "smoke-manager-session",
+            cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          }),
+        ],
+        [
           "GET /api/manager/assistant/status",
           authedRequest("GET", "/api/manager/assistant/status"),
         ],
@@ -1167,6 +1178,46 @@ describe("manager task API", () => {
       expect(read.status).toBe(200);
       const body = (await read.json()) as { reports?: Array<{ message?: string }> };
       expect(body.reports?.[0]?.message).toBe("Worker fallback is running.");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager assistant conversation state persists the active Claude session", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-conversation-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: { cwd },
+      });
+
+      const initial = await app.fetch(
+        authedRequest("GET", "/api/manager/assistant/conversation"),
+      );
+      expect(initial.status).toBe(200);
+      expect(await initial.json()).toMatchObject({
+        conversationId: "deskrelay-manager-assistant",
+      });
+
+      const update = await app.fetch(
+        authedRequest("PUT", "/api/manager/assistant/conversation", {
+          sessionId: "manager-session-42",
+          cwd: join(cwd, ".deskrelay", "manager-assistant"),
+        }),
+      );
+      expect(update.status).toBe(200);
+      expect(await update.json()).toMatchObject({
+        conversationId: "deskrelay-manager-assistant",
+        sessionId: "manager-session-42",
+      });
+
+      const restored = await app.fetch(
+        authedRequest("GET", "/api/manager/assistant/conversation"),
+      );
+      expect(await restored.json()).toMatchObject({
+        sessionId: "manager-session-42",
+      });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -3577,6 +3628,45 @@ describe("daemon proxy", () => {
         join(cwd, ".deskrelay", "manager-assistant", "CLAUDE.md"),
       );
       expect(forwarded.params?.conversationId).toBe("browser-value");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager-mode behavior requests resume the persisted manager conversation", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-behavior-session-"));
+    try {
+      const serverSetup = makeApp({ managerAssistant: { cwd } });
+      const device = serverSetup.registry.register({
+        daemonUrl: "http://127.0.0.1:18191",
+        authToken: "daemon-token",
+        label: "Local dev (HOMEDEV)",
+      });
+      await serverSetup.app.fetch(
+        authedRequest("PUT", "/api/manager/assistant/conversation", {
+          sessionId: "persisted-manager-session",
+          cwd: join(cwd, ".deskrelay", "manager-assistant"),
+        }),
+      );
+      serverSetup.setMockResponse(() => Response.json({ result: { ok: true } }, { status: 200 }));
+
+      const res = await serverSetup.app.fetch(
+        authedRequest("POST", `/api/devices/${device.id}/behaviors/remote-claude/request`, {
+          method: "chat",
+          params: {
+            cwd: "C:\\wrong",
+            message: "manager follow-up",
+            managerMode: true,
+          },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const forwarded = JSON.parse(serverSetup.calls.at(-1)?.body ?? "{}") as {
+        params?: Record<string, unknown>;
+      };
+      expect(forwarded.params?.sessionId).toBe("persisted-manager-session");
+      expect(forwarded.params?.conversationId).toBe("deskrelay-manager-assistant");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
