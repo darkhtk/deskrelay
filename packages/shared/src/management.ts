@@ -240,6 +240,24 @@ export interface ManagerTaskLogResponse {
   error?: string;
 }
 
+export interface ManagerTaskObservationResponse {
+  task: ManagerTask;
+  log: ManagerTaskLogResponse;
+  terminal: boolean;
+  summary: string;
+  nextRead:
+    | "none"
+    | "task"
+    | "task-log"
+    | "task-stream"
+    | "session-transcript";
+}
+
+export type ManagerTaskStreamEvent =
+  | { type: "snapshot"; observation: ManagerTaskObservationResponse }
+  | { type: "done"; observation: ManagerTaskObservationResponse }
+  | { type: "error"; error: string };
+
 export interface ManagerWorkerProfile {
   id: string;
   label: string;

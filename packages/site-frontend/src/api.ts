@@ -21,7 +21,9 @@ import type {
   ManagerSystemSummary,
   ManagerTask,
   ManagerTaskLogResponse,
+  ManagerTaskObservationResponse,
   ManagerTaskRequest,
+  ManagerTaskStreamEvent,
   ManagerUpdatePlan,
   ManagerUpdateStatus,
   ManagerWorkerCheckResult,
@@ -454,14 +456,17 @@ async function requestEventStream<E>(
   path: string,
   body: unknown,
   onEvent: (event: E) => void,
+  options: { method?: "GET" | "POST" } = {},
 ): Promise<void> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const method = options.method ?? "POST";
+  const headers: Record<string, string> = {};
+  if (method !== "GET") headers["content-type"] = "application/json";
   const token = getToken();
   if (token) headers.authorization = `Bearer ${token}`;
   const res = await fetch(`${resolveBaseUrl()}${path}`, {
-    method: "POST",
+    method,
     headers,
-    body: JSON.stringify(body),
+    ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
   });
   if (!res.ok) {
     const parsed = await readResponse(res);
@@ -582,6 +587,12 @@ export const api = {
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
   managerTaskLogs: (id: string) =>
     request<ManagerTaskLogResponse>("GET", `/api/manager/tasks/${id}/logs`),
+  managerTaskObservation: (id: string) =>
+    request<ManagerTaskObservationResponse>("GET", `/api/manager/tasks/${id}/observe`),
+  managerTaskStream: (id: string, onEvent: (event: ManagerTaskStreamEvent) => void) =>
+    requestEventStream<ManagerTaskStreamEvent>(`/api/manager/tasks/${id}/stream`, {}, onEvent, {
+      method: "GET",
+    }),
   managerAssistantWorkspace: () =>
     request<ManagerAssistantWorkspaceInfo>("GET", "/api/manager/assistant/workspace"),
   managerAssistantStatus: (limit?: number) =>

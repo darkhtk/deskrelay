@@ -497,6 +497,14 @@ describe("API route inventory", () => {
           authedRequest("GET", `/api/manager/tasks/${pendingTask.id}/logs`),
         ],
         [
+          "GET /api/manager/tasks/:id/observe",
+          authedRequest("GET", `/api/manager/tasks/${pendingTask.id}/observe`),
+        ],
+        [
+          "GET /api/manager/tasks/:id/stream",
+          authedRequest("GET", `/api/manager/tasks/${failedTask.id}/stream`),
+        ],
+        [
           "POST /api/manager/tasks/:id/cancel",
           authedRequest("POST", `/api/manager/tasks/${pendingTask.id}/cancel`),
           [202],
@@ -1984,6 +1992,39 @@ process.stdin.on("end", () => {
     const logBody = (await logs.json()) as { lines?: string[]; source?: string };
     expect(logBody.source).toBe("manager-task");
     expect(logBody.lines?.some((line) => line.includes("cancelled"))).toBe(true);
+
+    const observe = await app.fetch(
+      authedRequest("GET", `/api/manager/tasks/${pending.id}/observe`),
+    );
+    expect(observe.status).toBe(200);
+    const observation = (await observe.json()) as {
+      terminal?: boolean;
+      summary?: string;
+      nextRead?: string;
+      task?: { state?: string };
+      log?: { source?: string };
+    };
+    expect(observation.terminal).toBe(true);
+    expect(observation.nextRead).toBe("none");
+    expect(observation.task?.state).toBe("cancelled");
+    expect(observation.log?.source).toBe("manager-task");
+    expect(observation.summary).toContain("cancelled");
+
+    const stream = await app.fetch(
+      authedRequest("GET", `/api/manager/tasks/${pending.id}/stream`),
+    );
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+    const streamEvents = parseSseEvents(await stream.text());
+    expect(streamEvents).toEqual([
+      expect.objectContaining({
+        type: "done",
+        observation: expect.objectContaining({
+          terminal: true,
+          task: expect.objectContaining({ state: "cancelled" }),
+        }),
+      }),
+    ]);
 
     const failed = await managerTaskStore.create({
       kind: "diagnose",

@@ -37,8 +37,10 @@ import {
   type ManagerTask,
   type ManagerTaskKind,
   type ManagerTaskLogResponse,
+  type ManagerTaskObservationResponse,
   type ManagerTaskRequest,
   type ManagerTaskState,
+  type ManagerTaskStreamEvent,
   type ManagerUpdatePlan,
   type ManagerUpdateStatus,
   type ManagerUpdateTargetStatus,
@@ -304,6 +306,18 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const task = await managerTaskStore.get(c.req.param("id"));
     if (!task) return c.json({ error: "unknown task" }, 404);
     return c.json(sanitizeManagerTaskLogForAssistant(buildManagerTaskLogResponse(task)));
+  });
+
+  app.get("/api/manager/tasks/:id/observe", async (c) => {
+    const task = await managerTaskStore.get(c.req.param("id"));
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    return c.json(buildManagerTaskObservation(task));
+  });
+
+  app.get("/api/manager/tasks/:id/stream", async (c) => {
+    const task = await managerTaskStore.get(c.req.param("id"));
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    return streamManagerTaskObservation(managerTaskStore, task.id);
   });
 
   app.post("/api/manager/tasks/:id/cancel", async (c) => {
@@ -1357,6 +1371,16 @@ const SITE_ROUTE_CAPABILITIES = [
     description: "Read task execution log lines.",
   },
   {
+    method: "GET",
+    path: "/api/manager/tasks/:id/observe",
+    description: "Read one manager task with its concise observation summary and log.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/tasks/:id/stream",
+    description: "Stream one manager task observation until it reaches a terminal state.",
+  },
+  {
     method: "POST",
     path: "/api/manager/tasks/:id/cancel",
     description: "Cancel a cancellable manager task.",
@@ -1814,6 +1838,131 @@ function buildManagerTaskLogResponse(task: ManagerTask): ManagerTaskLogResponse 
     ...(task.result !== undefined ? { result: task.result } : {}),
     ...(task.error ? { error: task.error } : {}),
   };
+}
+
+function buildManagerTaskObservation(task: ManagerTask): ManagerTaskObservationResponse {
+  const log = sanitizeManagerTaskLogForAssistant(buildManagerTaskLogResponse(task));
+  const sanitizedTask = sanitizeManagerTaskForAssistant(task);
+  const terminal = isManagerTaskTerminalState(sanitizedTask.state);
+  return {
+    task: sanitizedTask,
+    log,
+    terminal,
+    summary: managerTaskObservationSummary(sanitizedTask),
+    nextRead: managerTaskNextRead(sanitizedTask, terminal),
+  };
+}
+
+function isManagerTaskTerminalState(state: ManagerTaskState): boolean {
+  return (
+    state === "succeeded" ||
+    state === "failed" ||
+    state === "blocked" ||
+    state === "cancelled" ||
+    state === "restart_required"
+  );
+}
+
+function managerTaskObservationSummary(task: ManagerTask): string {
+  const target = task.targetLabel ?? task.targetId ?? "server";
+  if (task.state === "succeeded") return `${task.kind} completed for ${target}.`;
+  if (task.state === "failed") return `${task.kind} failed for ${target}.`;
+  if (task.state === "blocked") return `${task.kind} is blocked for ${target}.`;
+  if (task.state === "cancelled") return `${task.kind} was cancelled for ${target}.`;
+  if (task.state === "restart_required") return `${task.kind} requires restart for ${target}.`;
+  if (task.state === "waiting_for_device") return `${task.kind} is waiting for ${target}.`;
+  if (task.state === "running") return `${task.kind} is running for ${target}.`;
+  return `${task.kind} is pending for ${target}.`;
+}
+
+function managerTaskNextRead(
+  task: ManagerTask,
+  terminal: boolean,
+): ManagerTaskObservationResponse["nextRead"] {
+  if (!terminal) return "task-stream";
+  if (task.state === "failed" || task.state === "blocked") return "task-log";
+  return "none";
+}
+
+function streamManagerTaskObservation(store: ManagerTaskStore, taskId: string): Response {
+  const encoder = new TextEncoder();
+  let closed = false;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const started = Date.now();
+  const maxDurationMs = 120_000;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (event: ManagerTaskStreamEvent) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          closed = true;
+        }
+      };
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        if (timer) clearInterval(timer);
+        try {
+          controller.close();
+        } catch {
+          // Client disconnects are fine; this stream is best-effort observation.
+        }
+      };
+      let lastFingerprint = "";
+      const poll = async () => {
+        try {
+          const task = await store.get(taskId);
+          if (!task) {
+            emit({ type: "error", error: "unknown task" });
+            close();
+            return;
+          }
+          const observation = buildManagerTaskObservation(task);
+          const fingerprint = managerTaskObservationFingerprint(observation);
+          if (fingerprint !== lastFingerprint) {
+            lastFingerprint = fingerprint;
+            emit({
+              type: observation.terminal ? "done" : "snapshot",
+              observation,
+            });
+          }
+          if (observation.terminal || Date.now() - started > maxDurationMs) close();
+        } catch (error) {
+          emit({ type: "error", error: errorMessage(error) });
+          close();
+        }
+      };
+      void poll();
+      timer = setInterval(() => {
+        void poll();
+      }, 1_000);
+    },
+    cancel() {
+      closed = true;
+      if (timer) clearInterval(timer);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      "x-accel-buffering": "no",
+    },
+  });
+}
+
+function managerTaskObservationFingerprint(observation: ManagerTaskObservationResponse): string {
+  return [
+    observation.task.id,
+    observation.task.state,
+    observation.task.updatedAt,
+    observation.task.steps.length,
+    observation.terminal ? "terminal" : "active",
+  ].join("|");
 }
 
 function sanitizeManagerTaskForAssistant(task: ManagerTask): ManagerTask {
@@ -3356,6 +3505,16 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Worker prompts must include the exact objective, allowed scope, files/modules to touch, forbidden actions, verification commands, and the expected final report.",
     "- Use `dryRun: true` first when you are deciding whether delegation is appropriate. Use `dryRun: false` only after the user asked to proceed or the requested operation clearly implies execution.",
     "- After worker completion, read the task result/logs, verify the changed state yourself, and report observed facts. Do not blindly trust the worker's conclusion.",
+    "",
+    "## Result Observation Policy",
+    "",
+    "- Default to the narrowest observation source that matches the thing you just caused.",
+    "- If you just answered directly as the manager assistant, use your current response. Do not read any Claude session transcript.",
+    "- If you created a manager task or worker task, observe that task by id with `GET /api/manager/tasks/:id/observe`.",
+    "- If the task is still running or waiting, use `GET /api/manager/tasks/:id/stream` to follow that task until it changes or completes.",
+    "- Use `GET /api/manager/tasks/:id/logs` only when the observation summary is insufficient, failed, or blocked.",
+    "- Use `POST /api/manager/sessions/read` only when the user asks about a selected/explicit Claude conversation, transcript, message history, image in a conversation, or when debugging session storage itself.",
+    "- Do not read broad conversation transcripts to find the answer to your own manager task. Task observation is the primary source for work you launched.",
     "",
     "## Progress Reports",
     "",
