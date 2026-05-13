@@ -512,6 +512,17 @@ describe("API route inventory", () => {
           authedRequest("GET", "/api/manager/assistant/workspace"),
         ],
         [
+          "GET /api/manager/assistant/status",
+          authedRequest("GET", "/api/manager/assistant/status"),
+        ],
+        [
+          "POST /api/manager/assistant/status",
+          authedRequest("POST", "/api/manager/assistant/status", {
+            message: "Inventory smoke report.",
+          }),
+          [201],
+        ],
+        [
           "POST /api/manager/assistant/chat",
           authedRequest("POST", "/api/manager/assistant/chat", {}),
           [400],
@@ -1105,6 +1116,39 @@ describe("manager task API", () => {
     expect(body.message?.text).toContain("message=상태 알려줘");
     expect(body.message?.text).toContain("history=1");
     expect(body.message?.text).toContain("context=session_1");
+  });
+
+  test("manager assistant progress reports are stored for the UI", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-status-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: { cwd },
+      });
+
+      const write = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/status", {
+          phase: "acting",
+          level: "info",
+          round: "R8",
+          scope: "orchestration",
+          message: "Worker fallback is running.",
+          detail: "Next: verify note files.",
+        }),
+      );
+      expect(write.status).toBe(201);
+      const written = (await write.json()) as { latest?: { message?: string; round?: string } };
+      expect(written.latest?.message).toBe("Worker fallback is running.");
+      expect(written.latest?.round).toBe("R8");
+
+      const read = await app.fetch(authedRequest("GET", "/api/manager/assistant/status"));
+      expect(read.status).toBe(200);
+      const body = (await read.json()) as { reports?: Array<{ message?: string }> };
+      expect(body.reports?.[0]?.message).toBe("Worker fallback is running.");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("manager assistant preserves Korean prompt when invoking the CLI", async () => {

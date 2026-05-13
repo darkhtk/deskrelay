@@ -14,6 +14,11 @@ import {
   type ManagerAssistantChatRequest,
   type ManagerAssistantChatResponse,
   type ManagerAssistantDecisionOption,
+  type ManagerAssistantStatusReport,
+  type ManagerAssistantStatusReportInput,
+  type ManagerAssistantStatusReportLevel,
+  type ManagerAssistantStatusReportPhase,
+  type ManagerAssistantStatusReportResponse,
   type ManagerAssistantStreamEvent,
   type ManagerAssistantStreamStatus,
   type ManagerAssistantStructuredState,
@@ -148,6 +153,8 @@ const DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS = 600_000;
 const MAX_MANAGER_ASSISTANT_TIMEOUT_MS = 1_800_000;
 const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
+const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
+const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
 
 export function createSiteApp(options: SiteAppOptions): Hono {
   const app = new Hono();
@@ -209,6 +216,33 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         ...(device ? { deviceId: device.id, deviceLabel: device.label } : {}),
       };
       return c.json(response);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.get("/api/manager/assistant/status", async (c) => {
+    try {
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      const limit = clampListLimit(c.req.query("limit"));
+      return c.json(await readManagerAssistantStatusReports(repoRoot, limit));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.post("/api/manager/assistant/status", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerAssistantStatusReportInput(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      return c.json(await appendManagerAssistantStatusReport(repoRoot, parsed.value), 201);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
@@ -1328,6 +1362,16 @@ const SITE_ROUTE_CAPABILITIES = [
     path: "/api/manager/assistant/workspace",
     description:
       "Prepare and return the managed server-local Claude workspace used by the DeskRelay assistant.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/assistant/status",
+    description: "Read recent manager assistant progress reports.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/assistant/status",
+    description: "Write a concise manager assistant progress report for the UI.",
   },
   {
     method: "GET",
@@ -2614,6 +2658,14 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
       "- For simple read-only GET observations, prefer `Set-Location $env:DESKRELAY_REPOSITORY_ROOT; bun run scripts/manager-api.ts batch-get name=/api/path`.",
       "- For JSON mutation or dry-run bodies, prefer `--body-file` to avoid shell quoting failures.",
     ].join("\n"),
+    [
+      "## Progress Reporting",
+      "- For multi-step or multi-round work, write short progress reports with `POST /api/manager/assistant/status`.",
+      "- Report at round start, round completion, blocker discovery, and before switching strategy.",
+      "- Keep each report short: one current state sentence plus the next action.",
+      '- Body shape: `{ "phase": "observing|deciding|acting|verifying|blocked|reporting|done", "level": "info|success|warning|error", "round": "R8", "scope": "orchestration", "message": "...", "detail": "..." }`.',
+      "- Use `bun run scripts/manager-api.ts POST /api/manager/assistant/status --body-file <json-file>` from the repository root.",
+    ].join("\n"),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -2668,6 +2720,122 @@ async function ensureManagerAssistantWorkspace(
   );
   await chmod(instructionsPath, 0o444).catch(() => undefined);
   return { cwd, instructionsPath };
+}
+
+async function readManagerAssistantStatusReports(
+  repoRoot: string,
+  limit = MANAGER_ASSISTANT_STATUS_LIMIT,
+): Promise<ManagerAssistantStatusReportResponse> {
+  const filePath = join(repoRoot, MANAGER_ASSISTANT_DIR, MANAGER_ASSISTANT_STATUS_FILE);
+  const reports = await readStoredManagerAssistantStatusReports(filePath);
+  const clipped = reports.slice(0, Math.max(1, Math.min(MANAGER_ASSISTANT_STATUS_LIMIT, limit)));
+  return {
+    generatedAt: new Date().toISOString(),
+    reports: clipped,
+    ...(clipped[0] ? { latest: clipped[0] } : {}),
+  };
+}
+
+async function appendManagerAssistantStatusReport(
+  repoRoot: string,
+  input: ManagerAssistantStatusReportInput,
+): Promise<ManagerAssistantStatusReportResponse> {
+  const dir = join(repoRoot, MANAGER_ASSISTANT_DIR);
+  const filePath = join(dir, MANAGER_ASSISTANT_STATUS_FILE);
+  await mkdir(dir, { recursive: true });
+  const reports = await readStoredManagerAssistantStatusReports(filePath);
+  const now = new Date().toISOString();
+  const report: ManagerAssistantStatusReport = {
+    id: `report_${randomBytes(10).toString("base64url")}`,
+    createdAt: now,
+    phase: input.phase ?? "reporting",
+    level: input.level ?? "info",
+    message: input.message.trim().slice(0, 500),
+    ...(input.detail?.trim() ? { detail: input.detail.trim().slice(0, 1_000) } : {}),
+    ...(input.round?.trim() ? { round: input.round.trim().slice(0, 40) } : {}),
+    ...(input.scope?.trim() ? { scope: input.scope.trim().slice(0, 80) } : {}),
+  };
+  const next = [report, ...reports].slice(0, MANAGER_ASSISTANT_STATUS_LIMIT);
+  await writeFile(filePath, `${JSON.stringify({ reports: next }, null, 2)}\n`, "utf8");
+  return {
+    generatedAt: now,
+    reports: next,
+    latest: report,
+  };
+}
+
+async function readStoredManagerAssistantStatusReports(
+  filePath: string,
+): Promise<ManagerAssistantStatusReport[]> {
+  let text = "";
+  try {
+    text = await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return [];
+    throw error;
+  }
+  if (!text.trim()) return [];
+  try {
+    const parsed = JSON.parse(text) as { reports?: unknown } | unknown[];
+    const raw = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray((parsed as { reports?: unknown }).reports)
+        ? (parsed as { reports: unknown[] }).reports
+        : [];
+    return raw.filter(isManagerAssistantStatusReport);
+  } catch {
+    return [];
+  }
+}
+
+function isManagerAssistantStatusReport(value: unknown): value is ManagerAssistantStatusReport {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.createdAt === "string" &&
+    isManagerAssistantStatusPhase(value.phase) &&
+    isManagerAssistantStatusLevel(value.level) &&
+    typeof value.message === "string"
+  );
+}
+
+function parseManagerAssistantStatusReportInput(
+  value: unknown,
+): { ok: true; value: ManagerAssistantStatusReportInput } | { ok: false; error: string } {
+  if (!isRecord(value)) return { ok: false, error: "body must be an object" };
+  const message = typeof value.message === "string" ? value.message.trim() : "";
+  if (!message) return { ok: false, error: "message is required" };
+  const phase = typeof value.phase === "string" ? value.phase : undefined;
+  if (phase !== undefined && !isManagerAssistantStatusPhase(phase)) {
+    return { ok: false, error: "invalid phase" };
+  }
+  const level = typeof value.level === "string" ? value.level : undefined;
+  if (level !== undefined && !isManagerAssistantStatusLevel(level)) {
+    return { ok: false, error: "invalid level" };
+  }
+  const input: ManagerAssistantStatusReportInput = { message };
+  if (phase) input.phase = phase;
+  if (level) input.level = level;
+  if (typeof value.detail === "string" && value.detail.trim()) input.detail = value.detail.trim();
+  if (typeof value.round === "string" && value.round.trim()) input.round = value.round.trim();
+  if (typeof value.scope === "string" && value.scope.trim()) input.scope = value.scope.trim();
+  return { ok: true, value: input };
+}
+
+function isManagerAssistantStatusPhase(value: unknown): value is ManagerAssistantStatusReportPhase {
+  return (
+    value === "observing" ||
+    value === "deciding" ||
+    value === "acting" ||
+    value === "verifying" ||
+    value === "blocked" ||
+    value === "reporting" ||
+    value === "done"
+  );
+}
+
+function isManagerAssistantStatusLevel(value: unknown): value is ManagerAssistantStatusReportLevel {
+  return value === "info" || value === "success" || value === "warning" || value === "error";
 }
 
 function buildManagerWorkerList(options: SiteAppOptions): ManagerWorkerListResponse {
@@ -3068,6 +3236,19 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Worker prompts must include the exact objective, allowed scope, files/modules to touch, forbidden actions, verification commands, and the expected final report.",
     "- Use `dryRun: true` first when you are deciding whether delegation is appropriate. Use `dryRun: false` only after the user asked to proceed or the requested operation clearly implies execution.",
     "- After worker completion, read the task result/logs, verify the changed state yourself, and report observed facts. Do not blindly trust the worker's conclusion.",
+    "",
+    "## Progress Reports",
+    "",
+    "- For long-running, multi-step, or multi-round work, post concise progress reports so the browser can show the user what is happening.",
+    "- Use `POST /api/manager/assistant/status` at round start, round completion, blocker discovery, and before changing strategy.",
+    "- Keep reports short: one current state sentence and, when useful, one next action.",
+    "- Valid phases: observing, deciding, acting, verifying, blocked, reporting, done.",
+    "- Valid levels: info, success, warning, error.",
+    "- Example body:",
+    "",
+    "```json",
+    '{ "phase": "acting", "level": "info", "round": "R3", "scope": "orchestration", "message": "Worker A is writing the protocol draft.", "detail": "Next: verify output and update FAILURES.md." }',
+    "```",
     "",
     "## Local Context",
     "",

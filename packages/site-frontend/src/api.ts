@@ -3,6 +3,9 @@ import type {
   DiagnosticStep,
   ManagerAssistantChatRequest,
   ManagerAssistantChatResponse,
+  ManagerAssistantStatusReport,
+  ManagerAssistantStatusReportInput,
+  ManagerAssistantStatusReportResponse,
   ManagerAssistantStreamEvent,
   ManagerCapabilities,
   ManagerDeviceActions,
@@ -348,7 +351,13 @@ export interface BrowserClientContext {
 }
 
 export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
-export type { ManagerWorkerCheckResult, ManagerWorkerProfile };
+export type {
+  ManagerAssistantStatusReport,
+  ManagerAssistantStatusReportInput,
+  ManagerAssistantStatusReportResponse,
+  ManagerWorkerCheckResult,
+  ManagerWorkerProfile,
+};
 
 export interface DeskRelayBuildInfo {
   version: string;
@@ -540,6 +549,13 @@ export const api = {
     request<ManagerTaskLogResponse>("GET", `/api/manager/tasks/${id}/logs`),
   managerAssistantWorkspace: () =>
     request<ManagerAssistantWorkspaceInfo>("GET", "/api/manager/assistant/workspace"),
+  managerAssistantStatus: (limit?: number) =>
+    request<ManagerAssistantStatusReportResponse>(
+      "GET",
+      `/api/manager/assistant/status${typeof limit === "number" ? `?limit=${limit}` : ""}`,
+    ),
+  postManagerAssistantStatus: (input: ManagerAssistantStatusReportInput) =>
+    request<ManagerAssistantStatusReportResponse>("POST", "/api/manager/assistant/status", input),
   managerAssistantChat: (input: ManagerAssistantChatRequest) =>
     request<ManagerAssistantChatResponse>("POST", "/api/manager/assistant/chat", input),
   managerAssistantChatStream: (

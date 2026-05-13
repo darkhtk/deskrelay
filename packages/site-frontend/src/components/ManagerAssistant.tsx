@@ -13,6 +13,8 @@ import {
   type ClaudeSessionTranscript,
   type ClaudeStreamEvent,
   type Device,
+  type ManagerAssistantStatusReport,
+  type ManagerAssistantStatusReportResponse,
   api,
 } from "../api.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
@@ -56,10 +58,14 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [sessionId, setSessionId] = createSignal<string | null>(null);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
-  const [status, setStatus] = createSignal<{ tone: "thinking" | "warning"; main: string; detail?: string } | null>(
-    null,
-  );
+  const [status, setStatus] = createSignal<{
+    tone: "thinking" | "warning";
+    main: string;
+    detail?: string;
+  } | null>(null);
+  const [statusReportSeq, setStatusReportSeq] = createSignal(0);
   let transcriptScroller: HTMLDivElement | undefined;
+  let statusReportTimer: number | undefined;
 
   const serverDevice = createMemo(() => {
     const devices = props.devices ?? [];
@@ -70,7 +76,20 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     );
   });
 
-  const [workspace] = createResource(() => reloadSeq(), () => api.managerAssistantWorkspace());
+  const [workspace] = createResource(
+    () => reloadSeq(),
+    () => api.managerAssistantWorkspace(),
+  );
+  const [statusReports] = createResource(
+    () => statusReportSeq(),
+    async (): Promise<ManagerAssistantStatusReportResponse | null> => {
+      try {
+        return await api.managerAssistantStatus(5);
+      } catch {
+        return null;
+      }
+    },
+  );
 
   const [behaviors] = createResource(
     () => serverDevice()?.id ?? null,
@@ -88,7 +107,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     const device = serverDevice();
     const info = workspace();
     if (!device || !info?.cwd) return null;
-    const instanceId = (behaviors() ?? []).find((behavior) => behavior.name === "remote-claude")?.instanceId;
+    const instanceId = (behaviors() ?? []).find(
+      (behavior) => behavior.name === "remote-claude",
+    )?.instanceId;
     if (!instanceId) return null;
     return { deviceId: device.id, instanceId, cwd: info.cwd };
   });
@@ -134,6 +155,11 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     },
   );
 
+  const visibleEvents = createMemo(() => (events().length > 0 ? events() : [INITIAL_EVENT]));
+  const busy = createMemo(() => runIds().length > 0);
+  const latestReportStatus = createMemo(() => managerStatusFromReport(statusReports()?.latest));
+  const visibleStatus = createMemo(() => status() ?? latestReportStatus());
+
   createEffect(() => {
     const transcript = loadedTranscript();
     if (runIds().length > 0) return;
@@ -154,12 +180,18 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     queueMicrotask(scrollToBottomIfPinned);
   });
 
-  onCleanup(() => {
-    transcriptScroller = undefined;
+  createEffect(() => {
+    busy();
+    if (statusReportTimer !== undefined) window.clearInterval(statusReportTimer);
+    const intervalMs = busy() ? 2_500 : 10_000;
+    statusReportTimer = window.setInterval(() => setStatusReportSeq((seq) => seq + 1), intervalMs);
   });
 
-  const visibleEvents = createMemo(() => (events().length > 0 ? events() : [INITIAL_EVENT]));
-  const busy = createMemo(() => runIds().length > 0);
+  onCleanup(() => {
+    transcriptScroller = undefined;
+    if (statusReportTimer !== undefined) window.clearInterval(statusReportTimer);
+  });
+
   const readyError = createMemo(() => {
     if (!serverDevice()) return "서버 PC connector를 찾을 수 없습니다.";
     if (workspace.loading || behaviors.loading) return null;
@@ -268,21 +300,21 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       await Promise.race([
         new Promise<void>((resolve) => setTimeout(resolve, STREAM_OPEN_GRACE_MS)),
       ]);
-      const response = await api.callBehavior<{ ok: true; runId: string; accepted: true; eventCount: number }>(
-        current.deviceId,
-        current.instanceId,
-        "chat",
-        {
-          cwd: current.cwd,
-          message: text,
-          runId,
-          managerMode: true,
-          managerBrowserContext: props.context ?? null,
-          permissionMode: "bypassPermissions",
-          conversationId: MANAGER_CONVERSATION_ID,
-          ...(sessionId() ? { sessionId: sessionId() } : {}),
-        },
-      );
+      const response = await api.callBehavior<{
+        ok: true;
+        runId: string;
+        accepted: true;
+        eventCount: number;
+      }>(current.deviceId, current.instanceId, "chat", {
+        cwd: current.cwd,
+        message: text,
+        runId,
+        managerMode: true,
+        managerBrowserContext: props.context ?? null,
+        permissionMode: "bypassPermissions",
+        conversationId: MANAGER_CONVERSATION_ID,
+        ...(sessionId() ? { sessionId: sessionId() } : {}),
+      });
       if (response.error) {
         throw new Error(response.error.message);
       }
@@ -363,7 +395,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             </svg>
           </button>
         </Show>
-        <Show when={status()}>
+        <Show when={visibleStatus()}>
           {(guidance) => (
             <output class={`composer-status composer-status-${guidance().tone}`} aria-live="polite">
               <span class="composer-status-main">{guidance().main}</span>
@@ -428,9 +460,10 @@ function managerStatusFromEnvelope(
   content: unknown,
 ): { tone: "thinking" | "warning"; main: string; detail?: string } | null {
   if (kind === "queue.updated") {
-    const status = typeof (content as { status?: unknown })?.status === "string"
-      ? ((content as { status: string }).status)
-      : "";
+    const status =
+      typeof (content as { status?: unknown })?.status === "string"
+        ? (content as { status: string }).status
+        : "";
     const position =
       typeof (content as { position?: unknown })?.position === "number"
         ? (content as { position: number }).position
@@ -451,10 +484,27 @@ function managerStatusFromEnvelope(
     return { tone: "thinking", main: "응답 수신 중" };
   }
   if (kind === "claude.stderr") {
-    const line = typeof (content as { line?: unknown })?.line === "string" ? (content as { line: string }).line : "";
+    const line =
+      typeof (content as { line?: unknown })?.line === "string"
+        ? (content as { line: string }).line
+        : "";
     if (line) return { tone: "thinking", main: "Claude CLI 메시지", detail: line.slice(0, 160) };
   }
   return null;
+}
+
+function managerStatusFromReport(
+  report: ManagerAssistantStatusReport | undefined,
+): { tone: "thinking" | "warning"; main: string; detail?: string } | null {
+  if (!report) return null;
+  const tone = report.level === "warning" || report.level === "error" ? "warning" : "thinking";
+  const prefix = report.round ? `${report.round} ` : "";
+  const detailParts = [report.scope, report.detail].filter(Boolean);
+  return {
+    tone,
+    main: `${prefix}${report.message}`,
+    ...(detailParts.length ? { detail: detailParts.join(" · ") } : {}),
+  };
 }
 
 function containsToolUse(event: ClaudeStreamEvent | null): boolean {
@@ -464,7 +514,8 @@ function containsToolUse(event: ClaudeStreamEvent | null): boolean {
   const content = (message as { content?: unknown }).content;
   if (!Array.isArray(content)) return false;
   return content.some(
-    (block) => block && typeof block === "object" && (block as { type?: unknown }).type === "tool_use",
+    (block) =>
+      block && typeof block === "object" && (block as { type?: unknown }).type === "tool_use",
   );
 }
 

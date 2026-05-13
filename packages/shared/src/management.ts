@@ -373,6 +373,39 @@ export type ManagerAssistantStreamEvent =
     }
   | { type: "error"; error: string };
 
+export type ManagerAssistantStatusReportPhase =
+  | "observing"
+  | "deciding"
+  | "acting"
+  | "verifying"
+  | "blocked"
+  | "reporting"
+  | "done";
+
+export type ManagerAssistantStatusReportLevel = "info" | "success" | "warning" | "error";
+
+export interface ManagerAssistantStatusReportInput {
+  message: string;
+  phase?: ManagerAssistantStatusReportPhase;
+  level?: ManagerAssistantStatusReportLevel;
+  detail?: string;
+  round?: string;
+  scope?: string;
+}
+
+export interface ManagerAssistantStatusReport extends ManagerAssistantStatusReportInput {
+  id: string;
+  createdAt: string;
+  phase: ManagerAssistantStatusReportPhase;
+  level: ManagerAssistantStatusReportLevel;
+}
+
+export interface ManagerAssistantStatusReportResponse {
+  generatedAt: string;
+  reports: ManagerAssistantStatusReport[];
+  latest?: ManagerAssistantStatusReport;
+}
+
 export interface ManagerActionDescriptor {
   id: string;
   label: string;
