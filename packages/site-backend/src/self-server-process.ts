@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
@@ -74,13 +75,13 @@ export function createPowerShellSelfServerProcessController(
       await mkdir(logDir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const logPath = join(logDir, `self-server-restart-${stamp}.log`);
+      const restartLogPath = join(logDir, "self-server-restart.log");
       const script = buildRestartScript({
         repoRoot: options.repoRoot,
         root: options.root,
         logPath,
       });
       try {
-        const restartLogPath = join(logDir, "self-server-restart.log");
         const entry = JSON.stringify({
           ts: new Date().toISOString(),
           event: "restart-requested",
@@ -88,11 +89,34 @@ export function createPowerShellSelfServerProcessController(
         }) + "\n";
         await appendFile(restartLogPath, entry, "utf8");
       } catch { /* never block restart on audit failure */ }
+      let logFd: number | undefined;
+      try {
+        logFd = openSync(logPath, "a");
+      } catch (err) {
+        console.warn("self-server-restart.log fd open failed:", (err as Error).message);
+      }
       const child = spawn("powershell.exe", restartBootstrapArgs(script), {
         cwd: options.repoRoot,
         detached: true,
-        stdio: "ignore",
+        stdio: logFd !== undefined ? ["ignore", logFd, logFd] : "ignore",
         windowsHide: true,
+      });
+      child.on("error", (err) => {
+        appendFile(restartLogPath, JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "spawn-error",
+          error: err.message,
+        }) + "\n", "utf8").catch(() => {});
+        if (logFd !== undefined) { try { closeSync(logFd); } catch { /* noop */ } }
+      });
+      child.on("exit", (code, signal) => {
+        appendFile(restartLogPath, JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "spawn-exit",
+          code,
+          signal,
+        }) + "\n", "utf8").catch(() => {});
+        if (logFd !== undefined) { try { closeSync(logFd); } catch { /* noop */ } }
       });
       child.unref();
       return {
