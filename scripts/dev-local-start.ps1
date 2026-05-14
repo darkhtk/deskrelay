@@ -44,6 +44,43 @@ function Quote-PsString {
   return "'" + $Value.Replace("'", "''") + "'"
 }
 
+function Get-CurrentGitBranch {
+  param([string]$Repo)
+  Push-Location -LiteralPath $Repo
+  try {
+    $branch = (& git branch --show-current 2>$null)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($branch)) {
+      return $branch.Trim()
+    }
+    $branch = (& git rev-parse --abbrev-ref HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($branch)) {
+      $trimmed = $branch.Trim()
+      if ($trimmed -ne "HEAD") {
+        return $trimmed
+      }
+    }
+  } finally {
+    Pop-Location
+  }
+  return "main"
+}
+
+function Sync-UpdateBranchEnv {
+  param([string]$EnvFile, [string]$Repo)
+  $branch = Get-CurrentGitBranch -Repo $Repo
+  $line = "`$env:DESKRELAY_UPDATE_BRANCH = $(Quote-PsString $branch)"
+  if (-not (Test-Path -LiteralPath $EnvFile)) {
+    return
+  }
+  $raw = Get-Content -LiteralPath $EnvFile -Raw
+  if ($raw -match '(?m)^\$env:DESKRELAY_UPDATE_BRANCH\s*=') {
+    $raw = [regex]::Replace($raw, '(?m)^\$env:DESKRELAY_UPDATE_BRANCH\s*=.*$', $line)
+  } else {
+    $raw = $raw.TrimEnd() + [Environment]::NewLine + $line + [Environment]::NewLine
+  }
+  Set-Content -Encoding utf8 -Path $EnvFile -Value $raw
+}
+
 function Read-JsonFile {
   param([string]$Path)
   if (-not (Test-Path $Path)) {
@@ -306,6 +343,7 @@ if (-not (Test-Path $envFile)) {
   & $initScript -NasRoot $root -RepoRoot $repo -SiteToken $SiteToken -SitePort $SitePort -FrontendPort $FrontendPort -DaemonPort $DaemonPort
 }
 
+Sync-UpdateBranchEnv -EnvFile $envFile -Repo $repo
 . $envFile
 
 $bun = Get-Command bun -ErrorAction SilentlyContinue
