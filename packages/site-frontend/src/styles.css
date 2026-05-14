@@ -5642,8 +5642,10 @@ dialog.approval-modal-root,
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  max-height: 280px;
   min-height: 0;
+}
+.manager-orchestration-panel-expanded {
+  height: var(--manager-orchestration-panel-height, 280px);
 }
 .manager-orchestration-panel-head {
   align-items: center;
@@ -5734,10 +5736,35 @@ dialog.approval-modal-root,
 }
 .manager-orchestration-body {
   display: grid;
+  flex: 1 1 auto;
   gap: 14px;
   min-height: 0;
   overflow: auto;
   padding: 2px 14px 12px;
+}
+.manager-orchestration-resize-handle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  cursor: ns-resize;
+  display: flex;
+  flex: 0 0 12px;
+  justify-content: center;
+  padding: 0;
+  touch-action: none;
+}
+.manager-orchestration-resize-handle::before {
+  background: var(--border-subtle);
+  border-radius: 999px;
+  content: "";
+  display: block;
+  height: 2px;
+  width: 42px;
+}
+body.manager-orchestration-resizing {
+  cursor: ns-resize;
+  user-select: none;
 }
 .manager-orchestration-section {
   border-top: 1px solid var(--border-subtle);
@@ -6410,8 +6437,8 @@ dialog.approval-modal-root,
   .signed-in {
     grid-template-columns: minmax(0, 1fr);
   }
-  .manager-orchestration-panel {
-    max-height: 240px;
+  .manager-orchestration-panel-expanded {
+    height: min(var(--manager-orchestration-panel-height, 280px), 70vh);
   }
   .manager-orchestration-panel-head {
     align-items: center;

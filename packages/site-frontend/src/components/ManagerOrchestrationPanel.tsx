@@ -6,9 +6,14 @@ import type {
   ManagerSessionHygieneReport,
   ManagerTask,
 } from "@deskrelay/shared";
-import { type Component, For, type JSX, Show, createMemo, createSignal } from "solid-js";
+import { type Component, For, type JSX, Show, createMemo, createSignal, onCleanup } from "solid-js";
 
 type Tone = "neutral" | "running" | "done" | "blocked";
+
+const HEIGHT_STORAGE_KEY = "cr.manager-orchestration-panel-height";
+const DEFAULT_PANEL_HEIGHT = 280;
+const MIN_PANEL_HEIGHT = 160;
+const MAX_PANEL_HEIGHT = 620;
 
 interface ManagerOrchestrationPanelProps {
   rounds: ManagerRound[];
@@ -37,6 +42,8 @@ interface ArtifactEntry {
 
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
   const [expanded, setExpanded] = createSignal(false);
+  const [panelHeight, setPanelHeight] = createSignal(readPanelHeight());
+  let stopResize: (() => void) | undefined;
   const activeRound = createMemo(() => pickActiveRound(props.rounds));
   const agents = createMemo(() => {
     const round = activeRound();
@@ -50,11 +57,43 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const artifacts = createMemo(() => buildArtifacts(agents(), tasks()));
   const totals = createMemo(() => summarizeTotals(agents()));
 
+  onCleanup(() => {
+    stopResize?.();
+  });
+
+  const startResize = (event: PointerEvent) => {
+    if (!expanded()) return;
+    event.preventDefault();
+    stopResize?.();
+    const startY = event.clientY;
+    const startHeight = panelHeight();
+    document.body.classList.add("manager-orchestration-resizing");
+
+    const move = (moveEvent: PointerEvent) => {
+      const next = clampPanelHeight(startHeight + moveEvent.clientY - startY);
+      setPanelHeight(next);
+      writePanelHeight(next);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      document.body.classList.remove("manager-orchestration-resizing");
+      stopResize = undefined;
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    stopResize = stop;
+  };
+
   return (
     <section
       class="manager-orchestration-panel"
       classList={{ "manager-orchestration-panel-expanded": expanded() }}
       aria-label="orchestration progress"
+      style={{ "--manager-orchestration-panel-height": `${panelHeight()}px` } as JSX.CSSProperties}
     >
       <header class="manager-orchestration-panel-head">
         <button
@@ -115,6 +154,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             />
           </OrchestrationSection>
         </div>
+        <button
+          type="button"
+          class="manager-orchestration-resize-handle"
+          aria-label="Resize orchestration panel"
+          title="높이 조절"
+          onPointerDown={startResize}
+        />
       </Show>
     </section>
   );
@@ -382,6 +428,28 @@ function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
       ),
     ) ?? rounds[0]
   );
+}
+
+function readPanelHeight(): number {
+  try {
+    const value = globalThis.localStorage?.getItem(HEIGHT_STORAGE_KEY);
+    return clampPanelHeight(Number(value));
+  } catch {
+    return DEFAULT_PANEL_HEIGHT;
+  }
+}
+
+function writePanelHeight(value: number): void {
+  try {
+    globalThis.localStorage?.setItem(HEIGHT_STORAGE_KEY, String(clampPanelHeight(value)));
+  } catch {
+    // Ignore private-mode/localStorage failures; the in-memory height still works.
+  }
+}
+
+function clampPanelHeight(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_PANEL_HEIGHT;
+  return Math.min(MAX_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, Math.round(value)));
 }
 
 function summarizeTotals(agents: ManagerAgent[]) {
