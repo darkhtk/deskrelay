@@ -91,6 +91,32 @@ function Test-DeskRelayProcessId {
   return Test-DeskRelayCommandLine -CommandLine (Get-ProcessCommandLine -ProcessId $ProcessId)
 }
 
+function Get-EntryPort {
+  param([object]$Entry)
+  if (-not $Entry) { return 0 }
+  $name = if ($Entry.name) { [string]$Entry.name } else { "" }
+  $command = if ($Entry.PSObject.Properties["command"]) { [string]$Entry.command } else { "" }
+  $match = [regex]::Match($command, '--port[=\s]+(\d+)')
+  if ($match.Success) { return [int]$match.Groups[1].Value }
+  switch ($name) {
+    "daemon" {
+      if ($env:CR_CONNECTOR_PORT) { return [int]$env:CR_CONNECTOR_PORT }
+      return 18191
+    }
+    "site-backend" {
+      if ($env:CR_SITE_PORT) { return [int]$env:CR_SITE_PORT }
+      return 18193
+    }
+    "site-frontend" {
+      if ($env:CR_DEV_FRONTEND_URL) {
+        try { return ([Uri]$env:CR_DEV_FRONTEND_URL).Port } catch { }
+      }
+      return 18094
+    }
+  }
+  return 0
+}
+
 function Stop-ProcessTree {
   param([int]$ProcessId, [switch]$Trusted)
   if ($ProcessId -eq $PID) {
@@ -138,27 +164,65 @@ if (-not (Test-Path $processFile)) {
   } else {
     $processes = @($decoded)
   }
+  $restartLogDir = Join-Path $root "logs"
+  $restartLogPath = Join-Path $restartLogDir "self-server-restart.log"
+  try { New-Item -ItemType Directory -Force -Path $restartLogDir | Out-Null } catch { }
   foreach ($entry in $processes) {
-    if (-not $entry.pid) {
-      continue
-    }
+    if (-not $entry.pid) { continue }
     $processId = [int]$entry.pid
-    $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($proc -and (Test-ProcessEntryAlive -Entry $entry)) {
-      Write-Host "Stopping $($entry.name) pid=$processId"
-      Stop-ProcessTree -ProcessId $processId -Trusted
-    } elseif ($proc) {
-      Write-Warning "Skipping stale $($entry.name) pid=$processId because the PID now belongs to another process."
-    } else {
-      $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$processId" -ErrorAction SilentlyContinue)
-      foreach ($child in $children) {
-        if (-not (Test-DeskRelayProcessId -ProcessId ([int]$child.ProcessId))) {
-          continue
-        }
-        Write-Host "Stopping orphaned child of $($entry.name) pid=$($child.ProcessId)"
-        Stop-ProcessTree -ProcessId ([int]$child.ProcessId) -Trusted
+    $entryPort = Get-EntryPort -Entry $entry
+    $liveOwnerPid = 0
+    if ($entryPort -gt 0) {
+      $listeners = @(Get-NetTCPConnection -LocalPort $entryPort -State Listen -ErrorAction SilentlyContinue)
+      foreach ($listener in $listeners) {
+        $candidate = [int]$listener.OwningProcess
+        if ($candidate -gt 0 -and $candidate -ne $PID) { $liveOwnerPid = $candidate; break }
       }
     }
+    $killSet = @()
+    if ($processId -gt 0) { $killSet += $processId }
+    if ($liveOwnerPid -gt 0 -and -not ($killSet -contains $liveOwnerPid)) { $killSet += $liveOwnerPid }
+    $attempted = @()
+    $killed = @()
+    if ($entryPort -gt 0) {
+      foreach ($k in $killSet) {
+        if (-not (Get-Process -Id $k -ErrorAction SilentlyContinue)) { continue }
+        $attempted += $k
+        Write-Host "Stopping $($entry.name) pid=$k port=$entryPort"
+        Stop-Process -Id $k -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 200
+        if (-not (Get-Process -Id $k -ErrorAction SilentlyContinue)) { $killed += $k }
+      }
+    } else {
+      $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+      if ($proc -and (Test-ProcessEntryAlive -Entry $entry)) {
+        Write-Host "Stopping $($entry.name) pid=$processId"
+        Stop-ProcessTree -ProcessId $processId -Trusted
+        $attempted += $processId
+        if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) { $killed += $processId }
+      } elseif ($proc) {
+        Write-Warning "Skipping stale $($entry.name) pid=$processId because the PID now belongs to another process."
+      } else {
+        $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$processId" -ErrorAction SilentlyContinue)
+        foreach ($child in $children) {
+          if (-not (Test-DeskRelayProcessId -ProcessId ([int]$child.ProcessId))) { continue }
+          Write-Host "Stopping orphaned child of $($entry.name) pid=$($child.ProcessId)"
+          Stop-ProcessTree -ProcessId ([int]$child.ProcessId) -Trusted
+        }
+      }
+    }
+    try {
+      $payload = [ordered]@{
+        ts = (Get-Date).ToUniversalTime().ToString("o")
+        name = if ($entry.name) { [string]$entry.name } else { "" }
+        recorded_pid = $processId
+        port = $entryPort
+        live_owner_pid = $liveOwnerPid
+        attempted = $attempted
+        killed = $killed
+      }
+      Add-Content -Path $restartLogPath -Value (($payload | ConvertTo-Json -Compress)) -ErrorAction SilentlyContinue
+    } catch { }
   }
   Remove-Item -Force -Path $processFile -ErrorAction SilentlyContinue
 }
