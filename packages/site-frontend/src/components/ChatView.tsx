@@ -105,7 +105,8 @@ const DEVICE_OFFLINE_REFETCH_MS = 1500;
 const STREAM_OPEN_GRACE_MS = 2500;
 const CONTEXT_USAGE_POLL_MS = 5 * 60 * 1000;
 const CONTEXT_USAGE_CACHE_TTL_MS = 60 * 1000;
-const USAGE_LIMITS_CACHE_TTL_MS = 5 * 60 * 1000;
+const USAGE_LIMITS_CACHE_TTL_MS = 5 * 60 * 60 * 1000;
+const USAGE_LIMITS_ACCOUNT_GRACE_MS = 1000;
 const USAGE_CACHE_KEY_PREFIX = "cr.usage-cache";
 const DEFAULT_NEW_CHAT_CWD = "C:\\Users\\";
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 32;
@@ -694,7 +695,11 @@ function contextUsageCacheKey(input: {
   ].join(":");
 }
 
-function usageLimitsAccountCachePart(account: ClaudeAccountInfo | null | undefined): string {
+function usageLimitsAccountCachePart(
+  account: ClaudeAccountInfo | null | undefined,
+  loading = false,
+): string {
+  if (loading) return "account:pending";
   if (!account) return "account:unknown";
   if (account.status !== "logged_in") {
     return ["account", account.status, account.source].map(encodedUsageCachePart).join(":");
@@ -2039,8 +2044,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     options: { force?: boolean } = {},
   ) {
     const seq = ++usageLimitsRequestSeq;
-    if (cliAccount.loading) return;
-    const accountPart = usageLimitsAccountCachePart(cliAccount());
+    const accountPart = usageLimitsAccountCachePart(cliAccount(), cliAccount.loading);
     const cacheKey = usageLimitsCacheKey(deviceId, instanceId, accountPart);
     if (!options.force) {
       const cached = readUsageCache<{
@@ -2086,18 +2090,32 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   });
 
   createEffect(() => {
-    if (devices.loading || behaviors.loading || cliAccount.loading) return;
+    if (devices.loading || behaviors.loading) return;
+    const accountLoading = cliAccount.loading;
+    const account = cliAccount();
+    void accountLoading;
+    void account;
     const deviceId = effectiveDeviceId();
     const instanceId = remoteClaudeInstance();
     if (!deviceId || !instanceId) return;
-    void refreshUsageLimits(deviceId, instanceId);
+    let firstRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+    if (accountLoading) {
+      firstRefreshTimer = setTimeout(() => {
+        void refreshUsageLimits(deviceId, instanceId);
+      }, USAGE_LIMITS_ACCOUNT_GRACE_MS);
+    } else {
+      void refreshUsageLimits(deviceId, instanceId);
+    }
     const timer = setInterval(() => {
       const currentDeviceId = effectiveDeviceId();
       const currentInstanceId = remoteClaudeInstance();
       if (!currentDeviceId || !currentInstanceId) return;
       void refreshUsageLimits(currentDeviceId, currentInstanceId);
     }, CONTEXT_USAGE_POLL_MS);
-    onCleanup(() => clearInterval(timer));
+    onCleanup(() => {
+      if (firstRefreshTimer) clearTimeout(firstRefreshTimer);
+      clearInterval(timer);
+    });
   });
 
   function handleScrollToBottomClick() {

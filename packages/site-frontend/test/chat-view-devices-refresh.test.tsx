@@ -840,7 +840,96 @@ describe("ChatView device refresh bridge", () => {
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
     await vi.waitFor(() => {
       expect(contextUsageRequests).toBe(2);
+      expect(usageLimitsRequests).toBe(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 60 * 1000);
+    await vi.waitFor(() => {
       expect(usageLimitsRequests).toBe(2);
+    });
+  });
+
+  test("keeps Session/Week probing alive while Claude account info is pending", async () => {
+    vi.useFakeTimers();
+    let accountInfoRequests = 0;
+    let usageLimitsRequests = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${DEV.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.0-test",
+              loadedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        if (body.method === "sessions.list") {
+          return new Response(JSON.stringify({ result: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (body.method === "account.info") {
+          accountInfoRequests += 1;
+          return new Promise<Response>(() => {});
+        }
+        if (body.method === "context.usage") {
+          return new Response(JSON.stringify({ result: { usage: null, eventCount: 0 } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (body.method === "usage.limits") {
+          usageLimitsRequests += 1;
+          return new Response(
+            JSON.stringify({
+              result: {
+                session: { remainingPercent: 83, usedPercent: 17, source: "event" },
+                week: { remainingPercent: 48, usedPercent: 52, source: "event" },
+                checkedAt: "2026-05-07T00:00:00.000Z",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    await vi.waitFor(() => {
+      expect(accountInfoRequests).toBe(1);
+    });
+    expect(usageLimitsRequests).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await vi.waitFor(() => {
+      expect(usageLimitsRequests).toBe(1);
     });
   });
 
