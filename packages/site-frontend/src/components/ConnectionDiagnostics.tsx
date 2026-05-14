@@ -552,20 +552,39 @@ function toneLabel(tone: Tone): string {
 function updateStatusTone(status: SelfServerUpdateStatus | null | undefined): Tone {
   if (!status || status.state === "idle") return "pending";
   if (status.state === "running") return "pending";
+  if (status.state === "failed") return "bad";
+  if (status.updateAvailable) return "warning";
+  if (status.updateAvailable === false) return "ok";
   if (status.state === "succeeded") return "ok";
   return "bad";
 }
 
 function updateStatusText(status: SelfServerUpdateStatus | null | undefined): string {
-  if (!status || status.state === "idle") return "서버 업데이트 기록 없음";
+  if (!status) return "서버 업데이트 상태 확인 중";
+  const updateRange =
+    status.localCommit && status.remoteCommit
+      ? ` · ${shortCommit(status.localCommit)} → ${shortCommit(status.remoteCommit)}`
+      : "";
   const range = status.before && status.after ? ` · ${status.before} → ${status.after}` : "";
   if (status.state === "running") return `서버 업데이트 진행 중${range}`;
+  if (status.state === "failed") {
+    return `서버 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+  }
+  if (status.updateAvailable === true) return `서버 업데이트 가능${updateRange}`;
+  if (status.updateAvailable === false) {
+    return `서버 최신 상태${status.localCommit ? ` · 현재 ${shortCommit(status.localCommit)}` : ""}`;
+  }
+  if (status.state === "idle") return "서버 업데이트 기록 없음";
   if (status.state === "succeeded") {
     const changed =
       status.changed === true ? "변경 적용됨" : status.changed === false ? "이미 최신" : "완료";
     return `서버 업데이트 완료 · ${changed}${range}`;
   }
-  return `서버 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+  return "서버 업데이트 상태 확인 필요";
+}
+
+function shortCommit(commit: string): string {
+  return commit.slice(0, 7);
 }
 
 function isUserVisibleStatusRow(row: StatusRow): boolean {

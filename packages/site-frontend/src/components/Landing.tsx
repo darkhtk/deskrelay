@@ -464,22 +464,40 @@ const CurrentDeviceLabel: Component<{ state: DeviceLabelState }> = (props) => (
 function updateStatusLabel(status: SelfServerUpdateStatus | null | undefined): string {
   if (!isKnownUpdateState(status?.state) || status?.state === "idle") return "기록 없음";
   if (status.state === "running") return "진행 중";
+  if (status.state === "failed") return "실패";
+  if (status.updateAvailable === true) return "업데이트 가능";
+  if (status.updateAvailable === false) return "최신";
   if (status.state === "succeeded") {
     if (status.changed === true) return "완료 · 변경 적용";
     if (status.changed === false) return "완료 · 이미 최신";
     return "완료";
   }
-  return "실패";
+  return "확인 필요";
 }
 
 function updateStatusDetail(status: SelfServerUpdateStatus | null | undefined): string {
   if (!isKnownUpdateState(status?.state) || status?.state === "idle") {
     return "설정 > 업데이트에서 업데이트를 실행할 수 있습니다.";
   }
+  const updateRange =
+    status.localCommit && status.remoteCommit
+      ? ` · ${shortCommit(status.localCommit)} → ${shortCommit(status.remoteCommit)}`
+      : "";
   const range = status.before && status.after ? ` · ${status.before} → ${status.after}` : "";
   if (status.state === "running") return `업데이트 작업이 실행 중입니다${range}`;
+  if (status.state === "failed") {
+    return `마지막 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+  }
+  if (status.updateAvailable === true) return `새 업데이트가 있습니다${updateRange}`;
+  if (status.updateAvailable === false) {
+    return `현재 서버 코드가 최신입니다${status.localCommit ? ` · ${shortCommit(status.localCommit)}` : ""}`;
+  }
   if (status.state === "succeeded") return `마지막 업데이트가 정상 종료됐습니다${range}`;
-  return `마지막 업데이트 실패${status.error ? ` · ${status.error}` : ""}${range}`;
+  return "업데이트 상태를 확인해야 합니다.";
+}
+
+function shortCommit(commit: string): string {
+  return commit.slice(0, 7);
 }
 
 function managerTaskTone(task: ManagerTask | null): StepTone {
