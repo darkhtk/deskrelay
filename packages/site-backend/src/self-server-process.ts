@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import type {
@@ -79,6 +79,15 @@ export function createPowerShellSelfServerProcessController(
         root: options.root,
         logPath,
       });
+      try {
+        const restartLogPath = join(logDir, "self-server-restart.log");
+        const entry = JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "restart-requested",
+          pid: process.pid,
+        }) + "\n";
+        await appendFile(restartLogPath, entry, "utf8");
+      } catch { /* never block restart on audit failure */ }
       const child = spawn("powershell.exe", restartBootstrapArgs(script), {
         cwd: options.repoRoot,
         detached: true,

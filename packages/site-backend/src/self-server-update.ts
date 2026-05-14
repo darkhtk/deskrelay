@@ -1,6 +1,6 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -148,6 +148,15 @@ export function createPowerShellSelfServerUpdater(
         }),
         "utf8",
       );
+      try {
+        const restartLogPath = join(logDir, "self-server-restart.log");
+        const entry = JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "update-requested",
+          pid: process.pid,
+        }) + "\n";
+        await appendFile(restartLogPath, entry, "utf8");
+      } catch { /* never block update on audit failure */ }
       let child: ChildProcess;
       try {
         child = spawn(
