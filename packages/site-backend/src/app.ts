@@ -33,6 +33,8 @@ import {
   type ManagerAssistantStructuredState,
   type ManagerCapabilities,
   type ManagerDeviceActions,
+  type ManagerEvent,
+  type ManagerEventListResponse,
   type ManagerInstallStatus,
   type ManagerLogResponse,
   type ManagerNetworkAddress,
@@ -89,6 +91,12 @@ import type {
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
 import {
+  type ManagerEventBus,
+  createManagerEventBus,
+  withManagerOrchestrationEvents,
+  withManagerTaskEvents,
+} from "./manager-event-bus.ts";
+import {
   type ManagerOrchestrationStore,
   createJsonManagerOrchestrationStore,
 } from "./manager-orchestration-store.ts";
@@ -119,6 +127,7 @@ export interface SiteAppOptions {
   updateBranch?: string;
   installReportStore?: InstallReportStore;
   deviceUpdateQueue?: DeviceUpdateQueueStore;
+  managerEventBus?: ManagerEventBus;
   managerTaskStore?: ManagerTaskStore;
   managerOrchestrationStore?: ManagerOrchestrationStore;
   managerAssistant?: ManagerAssistantOptions;
@@ -196,16 +205,22 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const localToken = options.localDaemonToken;
   const announcements = createAnnouncementSource(options, fetchImpl);
   const build = options.build ?? getDeskRelayBuildInfo();
-  const managerTaskStore = options.managerTaskStore ?? createInMemoryManagerTaskStore();
-  const managerOrchestrationStore =
+  const managerEventBus = options.managerEventBus ?? createManagerEventBus();
+  const managerTaskStore = withManagerTaskEvents(
+    options.managerTaskStore ?? createInMemoryManagerTaskStore(),
+    managerEventBus,
+  );
+  const managerOrchestrationStore = withManagerOrchestrationEvents(
     options.managerOrchestrationStore ??
-    createJsonManagerOrchestrationStore(
-      join(
-        options.managerAssistant?.cwd ?? process.cwd(),
-        MANAGER_ASSISTANT_DIR,
-        MANAGER_ORCHESTRATION_FILE,
+      createJsonManagerOrchestrationStore(
+        join(
+          options.managerAssistant?.cwd ?? process.cwd(),
+          MANAGER_ASSISTANT_DIR,
+          MANAGER_ORCHESTRATION_FILE,
+        ),
       ),
-    );
+    managerEventBus,
+  );
   const managerTaskStoreRecovery = recoverStaleManagerTasks(managerTaskStore, build).catch(
     () => undefined,
   );
@@ -242,6 +257,21 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.use("/api/manager/*", async (_c, next) => {
     await ensureManagerTaskStoreRecovered();
     await next();
+  });
+
+  app.get("/api/manager/events/recent", (c) => {
+    const afterSeq = parseManagerEventSeq(c.req.query("afterSeq"));
+    const response: ManagerEventListResponse = {
+      generatedAt: new Date().toISOString(),
+      lastSeq: managerEventBus.getLastSeq(),
+      events: managerEventBus.recent(afterSeq),
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/events/stream", (c) => {
+    const afterSeq = parseManagerEventSeq(c.req.query("afterSeq") ?? c.req.header("Last-Event-ID"));
+    return streamManagerEvents(managerEventBus, afterSeq);
   });
 
   app.get("/api/manager/assistant/workspace", async (c) => {
@@ -309,7 +339,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     try {
       const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
-      return c.json(await appendManagerAssistantStatusReport(repoRoot, parsed.value), 201);
+      const response = await appendManagerAssistantStatusReport(repoRoot, parsed.value);
+      if (response.latest) {
+        managerEventBus.emit({ type: "assistant.status", report: response.latest });
+      }
+      return c.json(response, 201);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
@@ -370,6 +404,9 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         localToken,
         request: parsed.value,
       });
+      if (!parsed.value.dryRun) {
+        managerEventBus.emit({ type: "hygiene.updated", report: result.report });
+      }
       return c.json(result);
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
@@ -1695,6 +1732,16 @@ const SITE_ROUTE_CAPABILITIES = [
     description: "Write a concise manager assistant progress report for the UI.",
   },
   {
+    method: "GET",
+    path: "/api/manager/events/recent",
+    description: "Replay recent manager state-change events after an optional sequence number.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/events/stream",
+    description: "Stream manager state-change events with Last-Event-ID resume support.",
+  },
+  {
     method: "POST",
     path: "/api/manager/sessions/read",
     description:
@@ -2525,6 +2572,64 @@ function managerRoundSummary(
     ? [...counts.entries()].map(([status, count]) => `${status} ${count}`).join(", ")
     : "no agents";
   return `${round.title}: ${agentSummary}; ${taskSummary}.`;
+}
+
+function streamManagerEvents(bus: ManagerEventBus, afterSeq: number): Response {
+  const encoder = new TextEncoder();
+  let closed = false;
+  let unsubscribe: (() => void) | undefined;
+  let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const write = (chunk: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          closed = true;
+        }
+      };
+      const emit = (event: ManagerEvent) => {
+        write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      };
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        unsubscribe?.();
+        if (keepaliveTimer) clearInterval(keepaliveTimer);
+        if (closeTimer) clearTimeout(closeTimer);
+        try {
+          controller.close();
+        } catch {
+          // Client disconnects are fine; manager events are best-effort.
+        }
+      };
+
+      write("retry: 3000\n\n");
+      for (const event of bus.recent(afterSeq)) emit(event);
+      unsubscribe = bus.subscribe(emit);
+      keepaliveTimer = setInterval(() => {
+        write(": keepalive\n\n");
+      }, 25_000);
+      closeTimer = setTimeout(close, 300_000);
+    },
+    cancel() {
+      closed = true;
+      unsubscribe?.();
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+      if (closeTimer) clearTimeout(closeTimer);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      "x-accel-buffering": "no",
+    },
+  });
 }
 
 function streamManagerTaskObservation(store: ManagerTaskStore, taskId: string): Response {
@@ -6006,6 +6111,12 @@ function clampListLimit(value: string | undefined): number {
   return Math.max(1, Math.min(500, Math.floor(n)));
 }
 
+function parseManagerEventSeq(value: string | undefined): number {
+  const n = Number(value ?? "0");
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.floor(n));
+}
+
 async function readJsonResponse(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return undefined;
@@ -6076,9 +6187,7 @@ const MANAGER_SESSION_HYGIENE_CATEGORIES: ManagerSessionHygieneCategory[] = [
 
 function parseManagerSessionHygieneCleanupRequest(
   value: unknown,
-):
-  | { ok: true; value: ManagerSessionHygieneCleanupRequest }
-  | { ok: false; error: string } {
+): { ok: true; value: ManagerSessionHygieneCleanupRequest } | { ok: false; error: string } {
   if (!isRecord(value)) return { ok: false, error: "JSON object body is required" };
   const categoriesRaw = value.categories;
   let categories: ManagerSessionHygieneCategory[] | undefined;
@@ -6286,9 +6395,7 @@ async function buildManagerSessionHygieneReport(input: {
   );
   const errors: ManagerSessionHygieneReport["errors"] = [];
   const items: ManagerSessionHygieneItem[] = [];
-  const device =
-    input.registry.list().find(isServerDevice) ??
-    input.registry.list()[0];
+  const device = input.registry.list().find(isServerDevice) ?? input.registry.list()[0];
 
   if (!device) {
     errors.push({ stage: "devices", error: "no registered devices" });
@@ -6329,10 +6436,7 @@ async function buildManagerSessionHygieneReport(input: {
     const sessionMap = new Map<string, ManagerSessionCandidate>();
     const addSessions = (sessions: ManagerSessionCandidate[]) => {
       for (const session of sessions) {
-        sessionMap.set(
-          `${session.sessionId}\u0000${normalizeManagerPath(session.cwd)}`,
-          session,
-        );
+        sessionMap.set(`${session.sessionId}\u0000${normalizeManagerPath(session.cwd)}`, session);
       }
     };
     addSessions(
@@ -6389,7 +6493,9 @@ async function cleanupManagerSessionHygiene(input: {
 }): Promise<ManagerSessionHygieneCleanupResponse> {
   const dryRun = input.request.dryRun === true;
   const allowedCategories = new Set<ManagerSessionHygieneCategory>(
-    input.request.categories?.length ? input.request.categories : ["internal_only", "manager_history"],
+    input.request.categories?.length
+      ? input.request.categories
+      : ["internal_only", "manager_history"],
   );
   const initialReport = await buildManagerSessionHygieneReport(input);
   const targets = dedupeHygieneCleanupTargets(
@@ -6426,10 +6532,16 @@ async function cleanupManagerSessionHygiene(input: {
           behaviors.find((candidate) => candidate.instanceId === target.behaviorInstanceId) ??
           selectClaudeBehavior(behaviors, target.behaviorInstanceId);
         if (!behavior) throw new Error("remote-claude behavior is no longer loaded");
-        const result = await callDeviceBehavior(input.fetchImpl, device, behavior, input.localToken, {
-          method: "sessions.deleteBySessionId",
-          params: { sessionId: target.sessionId },
-        });
+        const result = await callDeviceBehavior(
+          input.fetchImpl,
+          device,
+          behavior,
+          input.localToken,
+          {
+            method: "sessions.deleteBySessionId",
+            params: { sessionId: target.sessionId },
+          },
+        );
         deleted.push({
           deviceId: target.deviceId,
           deviceLabel: target.deviceLabel,

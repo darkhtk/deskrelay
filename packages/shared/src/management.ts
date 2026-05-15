@@ -765,3 +765,35 @@ export interface ManagerSystemSummary {
     message: string;
   };
 }
+
+export interface ManagerEventSnapshot {
+  rounds: ManagerRound[];
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+  status?: ManagerAssistantStatusReportResponse;
+  hygiene?: ManagerSessionHygieneReport;
+}
+
+export type ManagerEventInput =
+  | { type: "snapshot"; snapshot: ManagerEventSnapshot }
+  | { type: "round.created"; round: ManagerRound }
+  | { type: "round.updated"; round: ManagerRound }
+  | { type: "agent.created"; agent: ManagerAgent }
+  | { type: "agent.updated"; agent: ManagerAgent }
+  | { type: "task.created"; task: ManagerTask }
+  | { type: "task.updated"; task: ManagerTask }
+  | { type: "assistant.status"; report: ManagerAssistantStatusReport }
+  | { type: "hygiene.updated"; report: ManagerSessionHygieneReport }
+  | { type: "heartbeat" };
+
+export type ManagerEvent = ManagerEventInput & {
+  id: string;
+  seq: number;
+  generatedAt: string;
+};
+
+export interface ManagerEventListResponse {
+  generatedAt: string;
+  lastSeq: number;
+  events: ManagerEvent[];
+}

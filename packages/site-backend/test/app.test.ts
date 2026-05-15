@@ -548,6 +548,10 @@ describe("API route inventory", () => {
           [201],
         ],
         [
+          "GET /api/manager/events/recent",
+          authedRequest("GET", "/api/manager/events/recent?afterSeq=0"),
+        ],
+        [
           "POST /api/manager/sessions/read",
           authedRequest("POST", "/api/manager/sessions/read", {
             deviceId,
@@ -837,6 +841,11 @@ describe("API route inventory", () => {
       for (const [key, request, statuses] of smokeRoutes) {
         await assertRoute(key, request, statuses);
       }
+      const managerEventStream = await assertRoute(
+        "GET /api/manager/events/stream",
+        authedRequest("GET", "/api/manager/events/stream?afterSeq=0"),
+      );
+      await managerEventStream.body?.cancel();
 
       registry.register({
         daemonUrl: "http://daemon-2.test:18091",
@@ -1227,6 +1236,59 @@ describe("manager task API", () => {
       expect(read.status).toBe(200);
       const body = (await read.json()) as { reports?: Array<{ message?: string }> };
       expect(body.reports?.[0]?.message).toBe("Worker fallback is running.");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager event APIs replay and stream status changes", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-events-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: { cwd },
+      });
+
+      const write = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/status", {
+          phase: "observing",
+          level: "info",
+          message: "Watching manager state.",
+        }),
+      );
+      expect(write.status).toBe(201);
+
+      const recent = await app.fetch(authedRequest("GET", "/api/manager/events/recent"));
+      expect(recent.status).toBe(200);
+      const recentBody = (await recent.json()) as {
+        lastSeq?: number;
+        events?: Array<{ type?: string; seq?: number }>;
+      };
+      expect(recentBody.events?.map((event) => event.type)).toEqual(["assistant.status"]);
+      expect(recentBody.lastSeq).toBe(1);
+
+      const emptyReplay = await app.fetch(
+        authedRequest("GET", `/api/manager/events/recent?afterSeq=${recentBody.lastSeq}`),
+      );
+      expect(emptyReplay.status).toBe(200);
+      expect(((await emptyReplay.json()) as { events?: unknown[] }).events).toEqual([]);
+
+      const stream = await app.fetch(authedRequest("GET", "/api/manager/events/stream?afterSeq=0"));
+      expect(stream.status).toBe(200);
+      const reader = stream.body?.getReader();
+      expect(reader).toBeDefined();
+      const decoder = new TextDecoder();
+      let text = "";
+      for (let i = 0; i < 3 && !text.includes("event: assistant.status"); i += 1) {
+        const chunk = await reader?.read();
+        if (!chunk || chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      await reader?.cancel();
+      expect(text).toContain("id: 1");
+      expect(text).toContain("event: assistant.status");
+      expect(text).toContain("Watching manager state.");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
