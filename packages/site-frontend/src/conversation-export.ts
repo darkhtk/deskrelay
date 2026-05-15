@@ -154,9 +154,7 @@ function eventsToMarkdown(events: ClaudeStreamEvent[]): string {
       const subtype = typeof record.subtype === "string" ? record.subtype : "result";
       const meta = [
         subtype,
-        typeof record.total_cost_usd === "number"
-          ? `$${Number(record.total_cost_usd).toFixed(4)}`
-          : "",
+        formatRecordTime(record),
         typeof record.duration_ms === "number" ? `${record.duration_ms}ms` : "",
         typeof record.num_turns === "number" ? `${record.num_turns} turn` : "",
       ]
@@ -287,6 +285,24 @@ function exportDatePart(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "unknown-date";
   return date.toISOString().slice(0, 16).replace("T", "-").replace(":", "");
+}
+
+function formatRecordTime(record: Record<string, unknown>): string {
+  const raw = record.timestamp ?? record.created_at ?? record.createdAt;
+  let timestampMs: number | null = null;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    timestampMs = raw > 10_000_000_000 ? raw : raw * 1000;
+  } else if (typeof raw === "string" && raw.trim()) {
+    const parsed = Date.parse(raw);
+    timestampMs = Number.isFinite(parsed) ? parsed : null;
+  }
+  if (timestampMs == null) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(timestampMs));
 }
 
 function escapeMarkdownAlt(value: string): string {

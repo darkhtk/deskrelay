@@ -49,7 +49,7 @@ interface ResultEntry {
   subtype?: string | undefined;
   isError: boolean;
   text: string;
-  costUsd?: number | undefined;
+  timestampMs?: number | undefined;
   durationMs?: number | undefined;
   turns?: number | undefined;
 }
@@ -81,7 +81,9 @@ interface ClaudeRawEvent {
   message?: { role?: string; content?: string | unknown[] };
   result?: string;
   is_error?: boolean;
-  total_cost_usd?: number;
+  timestamp?: string | number;
+  created_at?: string | number;
+  createdAt?: string | number;
   duration_ms?: number;
   num_turns?: number;
   [k: string]: unknown;
@@ -147,7 +149,7 @@ export class TranscriptModel {
           subtype: event.subtype,
           isError: !!event.is_error,
           text: event.result ?? "",
-          ...(event.total_cost_usd !== undefined ? { costUsd: event.total_cost_usd } : {}),
+          timestampMs: eventTimestampMs(event),
           ...(event.duration_ms !== undefined ? { durationMs: event.duration_ms } : {}),
           ...(event.num_turns !== undefined ? { turns: event.num_turns } : {}),
         });
@@ -261,7 +263,6 @@ export class TranscriptModel {
       if (block.type === "text" && typeof block.text === "string") {
         blocks.push({ kind: "text", text: block.text });
       } else if (block.type === "tool_use" || block.type === "tool_result") {
-        continue;
       } else if (
         block.type === "thinking" &&
         typeof block.thinking === "string" &&
@@ -384,10 +385,10 @@ export class TranscriptModel {
 
   #renderResult(entry: ResultEntry): string {
     const cls = entry.isError ? "result-footer result-error" : "result-footer";
-    const cost = entry.costUsd != null ? `$${Number(entry.costUsd).toFixed(4)}` : "";
+    const time = formatResultTime(entry.timestampMs);
     const duration = entry.durationMs != null ? `${entry.durationMs}ms` : "";
     const turns = entry.turns != null ? `${entry.turns} turn${entry.turns === 1 ? "" : "s"}` : "";
-    const meta = [cost, duration, turns].filter(Boolean).join(" · ");
+    const meta = [time, duration, turns].filter(Boolean).join(" · ");
     const header = `<div class="${cls}" data-cursor="${escapeAttr(entry.cursor ?? "")}"><span class="result-status">${
       entry.isError ? "✕" : "✓"
     } ${escapeHtml(entry.subtype ?? "result")}</span>${
@@ -447,6 +448,28 @@ function safeJsonStringify(obj: unknown): string {
   } catch {
     return "";
   }
+}
+
+function eventTimestampMs(event: ClaudeRawEvent): number {
+  const raw = event.timestamp ?? event.created_at ?? event.createdAt;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw > 10_000_000_000 ? raw : raw * 1000;
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function formatResultTime(timestampMs: number | undefined): string {
+  if (typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(timestampMs));
 }
 
 function imageCaptionHtml(name: string | undefined, size: number | undefined): string {
