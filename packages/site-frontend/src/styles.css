@@ -5798,7 +5798,7 @@ dialog.approval-modal-root,
   padding: 4px 16px 16px;
 }
 .manager-section-overview,
-.manager-section-sequence {
+.manager-section-flow {
   grid-column: 1 / -1;
 }
 .manager-section-agents,
@@ -5944,7 +5944,7 @@ body.manager-orchestration-resizing {
 .manager-timeline-blocked span {
   color: var(--danger);
 }
-.manager-mermaid-sequence {
+.manager-mermaid-flow {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -5956,14 +5956,14 @@ body.manager-orchestration-resizing {
   overflow: auto;
 }
 .manager-mermaid-svg {
-  min-width: 1120px;
+  min-width: 720px;
 }
 .manager-mermaid-svg svg {
   display: block;
   height: auto;
-  max-width: none;
-  min-width: 1120px;
-  width: auto;
+  max-width: 100%;
+  min-width: 720px;
+  width: 100%;
 }
 .manager-mermaid-source {
   color: var(--text-muted);
@@ -6567,17 +6567,17 @@ body.manager-orchestration-resizing {
     padding-inline: 10px;
   }
   .manager-section-overview,
-  .manager-section-sequence {
+  .manager-section-flow {
     grid-column: auto;
   }
   .manager-mermaid-render {
     min-height: 180px;
   }
   .manager-mermaid-svg {
-    min-width: 980px;
+    min-width: 680px;
   }
   .manager-mermaid-svg svg {
-    min-width: 980px;
+    min-width: 680px;
   }
   .manager-orchestration-panel-head {
     align-items: center;

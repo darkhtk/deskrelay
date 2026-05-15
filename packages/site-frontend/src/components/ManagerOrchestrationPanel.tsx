@@ -56,13 +56,15 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   let stopResize: (() => void) | undefined;
   const isExpanded = () => Boolean(props.standalone) || expanded();
   const activeRound = createMemo(() => pickActiveRound(props.rounds));
-  const agents = createMemo(() => {
+  const rawAgents = createMemo(() => {
     const round = activeRound();
     if (!round) return props.agents;
     const ids = new Set(round.agentIds);
     const linked = props.agents.filter((agent) => agent.roundId === round.id || ids.has(agent.id));
     return linked.length > 0 ? linked : props.agents;
   });
+  const agents = createMemo(() => visibleManagerAgents(rawAgents(), activeRound()));
+  const hiddenAgentCount = createMemo(() => Math.max(0, rawAgents().length - agents().length));
   const tasks = createMemo(() => props.report?.tasks ?? []);
   const timeline = createMemo(() => buildTimeline(activeRound(), agents(), tasks()));
   const artifacts = createMemo(() => buildArtifacts(agents(), tasks()));
@@ -148,10 +150,20 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       <Show when={isExpanded()}>
         <div class="manager-orchestration-body">
           <OrchestrationSection title="Overview" class="manager-section-overview">
-            <OverviewView round={activeRound()} agents={agents()} tasks={tasks()} />
+            <OverviewView
+              round={activeRound()}
+              agents={agents()}
+              tasks={tasks()}
+              hiddenAgentCount={hiddenAgentCount()}
+            />
           </OrchestrationSection>
-          <OrchestrationSection title="Worker sequence" class="manager-section-sequence">
-            <MermaidSequenceView round={activeRound()} agents={agents()} tasks={tasks()} />
+          <OrchestrationSection title="Worker flow" class="manager-section-flow">
+            <MermaidFlowView
+              round={activeRound()}
+              agents={agents()}
+              tasks={tasks()}
+              hiddenAgentCount={hiddenAgentCount()}
+            />
           </OrchestrationSection>
           <OrchestrationSection title="Agents" class="manager-section-agents">
             <AgentsView agents={agents()} />
@@ -202,6 +214,7 @@ const OverviewView: Component<{
   round: ManagerRound | undefined;
   agents: ManagerAgent[];
   tasks: ManagerTask[];
+  hiddenAgentCount: number;
 }> = (props) => {
   const totals = createMemo(() => summarizeTotals(props.agents));
   const blocker = createMemo(
@@ -235,11 +248,14 @@ const OverviewView: Component<{
         <p>
           <Show
             when={blocker()}
-            fallback={
+            fallback={[
               props.tasks.length > 0
                 ? `${props.tasks.length} task records collected.`
-                : "No active blocker detected."
-            }
+                : "No active blocker detected.",
+              props.hiddenAgentCount > 0 ? `${props.hiddenAgentCount} quiet agents hidden.` : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             {(agent) =>
               `${agent().role} agent needs attention: ${
@@ -298,16 +314,17 @@ const TimelineView: Component<{ entries: TimelineEntry[] }> = (props) => (
   </ol>
 );
 
-const MermaidSequenceView: Component<{
+const MermaidFlowView: Component<{
   round: ManagerRound | undefined;
   agents: ManagerAgent[];
   tasks: ManagerTask[];
+  hiddenAgentCount: number;
 }> = (props) => {
   const source = createMemo(() =>
-    buildWorkerSequenceDiagram(props.round, props.agents, props.tasks),
+    buildWorkerFlowDiagram(props.round, props.agents, props.tasks, props.hiddenAgentCount),
   );
   return (
-    <div class="manager-mermaid-sequence">
+    <div class="manager-mermaid-flow">
       <MermaidDiagram source={source()} />
       <details class="manager-mermaid-source">
         <summary>Mermaid source</summary>
@@ -356,7 +373,7 @@ const MermaidDiagram: Component<{ source: string }> = (props) => {
           noteBorderColor: dark ? "#8c6a46" : "#e0b875",
         },
       });
-      const result = await mermaid.render(`manager-sequence-${currentId}`, source);
+      const result = await mermaid.render(`manager-flow-${currentId}`, source);
       if (currentId !== renderId) return;
       setSvg(result.svg);
     } catch (err) {
@@ -366,14 +383,14 @@ const MermaidDiagram: Component<{ source: string }> = (props) => {
   }
 
   return (
-    <div class="manager-mermaid-render" aria-label="worker sequence diagram">
+    <div class="manager-mermaid-render" aria-label="worker flow diagram">
       <Show
         when={!error()}
         fallback={<p class="manager-orchestration-empty">Mermaid render failed: {error()}</p>}
       >
         <Show
           when={svg()}
-          fallback={<p class="manager-orchestration-empty">Rendering worker sequence...</p>}
+          fallback={<p class="manager-orchestration-empty">Rendering worker flow...</p>}
         >
           {(html) => <div class="manager-mermaid-svg" innerHTML={html()} />}
         </Show>
@@ -537,99 +554,185 @@ function summarizeTotals(agents: ManagerAgent[]) {
   };
 }
 
-function buildWorkerSequenceDiagram(
+function visibleManagerAgents(
+  agents: ManagerAgent[],
+  round: ManagerRound | undefined,
+): ManagerAgent[] {
+  const scoped = round
+    ? agents.filter((agent) => agent.roundId === round.id || round.agentIds.includes(agent.id))
+    : agents;
+  const withSignals = scoped.filter((agent) => hasAgentSignal(agent));
+  const candidates =
+    withSignals.length > 0 ? withSignals : scoped.filter((agent) => agent.status !== "idle");
+  const fallback = candidates.length > 0 ? candidates : scoped;
+  return dedupeManagerAgents(fallback);
+}
+
+function dedupeManagerAgents(agents: ManagerAgent[]): ManagerAgent[] {
+  const preferred = agents.filter((agent) => !isShadowAgent(agent, agents));
+  const byKey = new Map<string, ManagerAgent>();
+  for (const agent of preferred) {
+    const key = managerAgentDedupeKey(agent);
+    const existing = byKey.get(key);
+    if (!existing || compareManagerAgentSignal(agent, existing) > 0) {
+      byKey.set(key, agent);
+    }
+  }
+  return [...byKey.values()].sort((left, right) => {
+    const leftActive = hasAgentSignal(left) ? 1 : 0;
+    const rightActive = hasAgentSignal(right) ? 1 : 0;
+    return (
+      rightActive - leftActive ||
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+      left.role.localeCompare(right.role)
+    );
+  });
+}
+
+function isShadowAgent(agent: ManagerAgent, agents: ManagerAgent[]): boolean {
+  if (agent.taskId) return false;
+  if (agent.status !== "idle" && agent.status !== "assigned") return false;
+  return agents.some((candidate) => {
+    if (candidate.id === agent.id || !candidate.taskId) return false;
+    return (
+      candidate.roundId === agent.roundId &&
+      candidate.role === agent.role &&
+      candidate.profile === agent.profile &&
+      (candidate.cwd ?? "") === (agent.cwd ?? "") &&
+      (!agent.lastInstruction || candidate.lastInstruction === agent.lastInstruction)
+    );
+  });
+}
+
+function managerAgentDedupeKey(agent: ManagerAgent): string {
+  if (agent.taskId) return `task:${agent.taskId}`;
+  return [
+    "agent",
+    agent.roundId ?? "",
+    agent.role,
+    agent.profile,
+    agent.cwd ?? "",
+    normalizeDedupeText(agent.lastInstruction),
+  ].join("|");
+}
+
+function compareManagerAgentSignal(left: ManagerAgent, right: ManagerAgent): number {
+  return (
+    signalWeight(left) - signalWeight(right) ||
+    Date.parse(left.updatedAt) - Date.parse(right.updatedAt)
+  );
+}
+
+function signalWeight(agent: ManagerAgent): number {
+  let score = 0;
+  if (agent.taskId) score += 8;
+  if (agent.lastOutput) score += 4;
+  if (agent.lastError) score += 4;
+  if (agent.lastInstruction) score += 2;
+  if (["running", "waiting", "blocked", "failed", "completed", "stale"].includes(agent.status)) {
+    score += 2;
+  }
+  if (agent.status === "idle") score -= 2;
+  return score;
+}
+
+function hasAgentSignal(agent: ManagerAgent): boolean {
+  return Boolean(
+    agent.taskId ||
+      agent.lastInstruction ||
+      agent.lastOutput ||
+      agent.lastError ||
+      ["assigned", "running", "waiting", "blocked", "failed", "completed", "stale"].includes(
+        agent.status,
+      ),
+  );
+}
+
+function normalizeDedupeText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+function buildWorkerFlowDiagram(
   round: ManagerRound | undefined,
   agents: ManagerAgent[],
   tasks: ManagerTask[],
+  hiddenAgentCount: number,
 ): string {
-  const activeAgents = agents.filter((agent) => isSequenceRelevantAgent(agent, round));
-  const visibleAgents = activeAgents.slice(0, 10);
-  const hiddenIdleCount = agents.length - activeAgents.length;
-  const lines = ["sequenceDiagram", "    autonumber", "    participant Manager as Manager"];
-  for (const [index, agent] of visibleAgents.entries()) {
-    lines.push(`    participant W${index + 1} as ${mermaidText(workerLabel(agent), 34)}`);
-  }
+  const visibleAgents = agents.slice(0, 12);
+  const hiddenCount = Math.max(0, agents.length - visibleAgents.length) + hiddenAgentCount;
+  const lines = [
+    "flowchart TB",
+    "    classDef neutral fill:transparent,stroke:#8d867b;",
+    "    classDef running fill:transparent,stroke:#d39b2f,stroke-width:2px;",
+    "    classDef done fill:transparent,stroke:#2f8f5b,stroke-width:2px;",
+    "    classDef blocked fill:transparent,stroke:#c94f45,stroke-width:2px;",
+    `    R["${mermaidText(round?.title ?? "Agent orchestration", 68)}"]:::${statusTone(round?.status)}`,
+    `    O["${mermaidText(round?.objective || "No objective recorded", 84)}"]:::neutral`,
+    '    D["Dispatch workers"]:::running',
+    '    C["Collect results"]:::neutral',
+    "    R --> O --> D",
+  ];
 
-  if (!round && visibleAgents.length === 0) {
-    lines.push("    Note over Manager: No active worker signal yet");
-    if (hiddenIdleCount > 0) {
-      lines.push(`    Note over Manager: ${hiddenIdleCount} idle workers hidden`);
-    }
-    return lines.join("\n");
-  }
-
-  if (round) {
-    lines.push(`    Note over Manager: ${mermaidText(round.title, 72)}`);
-    if (round.objective) {
-      lines.push(`    Note over Manager: ${mermaidText(round.objective, 96)}`);
-    }
+  if (visibleAgents.length === 0) {
+    lines.push("    D --> C");
   }
 
   for (const [index, agent] of visibleAgents.entries()) {
-    const alias = `W${index + 1}`;
     const task = tasks.find((candidate) => candidate.id === agent.taskId);
-    const firstStep = task?.steps[0];
     const lastStep = task?.steps[task.steps.length - 1];
-    const assignment =
-      agent.lastInstruction ||
-      firstStep?.summary ||
-      task?.kind ||
-      `status ${statusLabel(agent.status)}`;
-    lines.push(`    Manager->>${alias}: ${mermaidText(assignment, 82)}`);
-    lines.push(
-      `    Note over ${alias}: ${mermaidText(
-        `${agent.profile} · ${statusLabel(agent.status)} · ${formatTime(agent.updatedAt)}`,
-        82,
-      )}`,
+    const agentId = `A${index}`;
+    const taskId = `T${index}`;
+    const signalId = `N${index}`;
+    const taskState = task?.state ?? agent.status;
+    const taskLabel = lastStep
+      ? `${lastStep.label} - ${statusLabel(lastStep.status)}`
+      : `${task?.kind ?? agent.profile} - ${statusLabel(taskState)}`;
+    const signal = mermaidText(
+      agent.lastError || lastStep?.summary || agent.lastOutput || agent.lastInstruction,
+      76,
     );
-    if (lastStep) {
-      lines.push(
-        `    ${alias}-->>Manager: ${mermaidText(
-          `${lastStep.label} · ${statusLabel(lastStep.status)} · ${lastStep.summary}`,
-          92,
-        )}`,
-      );
+    lines.push(
+      `    ${agentId}["${mermaidText(
+        `${agent.role} - ${statusLabel(agent.status)}`,
+        54,
+      )}"]:::${statusTone(agent.status)}`,
+    );
+    lines.push(`    ${taskId}["${mermaidText(taskLabel, 58)}"]:::${statusTone(taskState)}`);
+    lines.push(`    D --> ${agentId} --> ${taskId}`);
+    if (signal !== "-") {
+      lines.push(`    ${signalId}["${signal}"]:::${statusTone(taskState)}`);
+      lines.push(`    ${taskId} --> ${signalId} --> C`);
     } else {
-      lines.push(
-        `    ${alias}-->>Manager: ${mermaidText(
-          agent.lastError || agent.lastOutput || statusLabel(agent.status),
-          92,
-        )}`,
-      );
-    }
-    if (["blocked", "failed", "stale"].includes(agent.status)) {
-      lines.push(`    Manager-->>${alias}: ${mermaidText("needs review or recovery", 48)}`);
+      lines.push(`    ${taskId} --> C`);
     }
   }
 
-  if (activeAgents.length > visibleAgents.length) {
-    lines.push(
-      `    Note over Manager: ${activeAgents.length - visibleAgents.length} more active workers hidden`,
-    );
+  if (hiddenCount > 0) {
+    lines.push(`    H["${hiddenCount} quiet workers hidden"]:::neutral`);
+    lines.push("    D -.-> H");
   }
-  if (hiddenIdleCount > 0) {
-    lines.push(`    Note over Manager: ${hiddenIdleCount} idle workers hidden`);
-  }
-  if (round?.summary) {
-    lines.push(`    Note over Manager: ${mermaidText(round.summary, 96)}`);
-  }
-  if (round?.error) {
-    lines.push(`    Note over Manager: ${mermaidText(round.error, 96)}`);
-  }
-
+  lines.push(
+    `    S["${mermaidText(
+      round?.error || round?.summary || currentFlowSignal(visibleAgents, tasks),
+      88,
+    )}"]:::${statusTone(round?.status)}`,
+  );
+  lines.push("    C --> S");
   return lines.join("\n");
 }
 
-function workerLabel(agent: ManagerAgent): string {
-  return agent.label && agent.label !== agent.role ? `${agent.role} ${agent.label}` : agent.role;
-}
-
-function isSequenceRelevantAgent(agent: ManagerAgent, round: ManagerRound | undefined): boolean {
-  if (agent.status === "idle") return false;
-  if (agent.taskId) return true;
-  if (agent.lastInstruction || agent.lastOutput || agent.lastError) return true;
-  if (round && (agent.roundId === round.id || round.agentIds.includes(agent.id))) return true;
-  return false;
+function currentFlowSignal(agents: ManagerAgent[], tasks: ManagerTask[]): string {
+  const blockedAgent = agents.find((agent) =>
+    ["blocked", "failed", "stale"].includes(agent.status),
+  );
+  if (blockedAgent) return `${blockedAgent.role} needs attention`;
+  const activeCount = agents.filter((agent) =>
+    ["assigned", "running", "waiting"].includes(agent.status),
+  ).length;
+  if (activeCount > 0) return `${activeCount} workers running`;
+  const blockedTask = tasks.find((task) => ["blocked", "failed"].includes(task.state));
+  if (blockedTask) return `${blockedTask.kind} ${statusLabel(blockedTask.state)}`;
+  return agents.length > 0 ? `${agents.length} worker records visible` : "No active worker signal";
 }
 
 function buildTimeline(
