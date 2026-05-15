@@ -25,6 +25,10 @@ import {
 } from "../api.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
+import {
+  readManagerOrchestrationCache,
+  writeManagerOrchestrationCache,
+} from "../manager-orchestration-cache.ts";
 import { Composer } from "./Composer.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 import { Transcript } from "./Transcript.tsx";
@@ -87,6 +91,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [status, setStatus] = createSignal<ManagerVisibleStatus | null>(null);
   const [statusReportSeq, setStatusReportSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
+  const [cachedOrchestrationSnapshot, setCachedOrchestrationSnapshot] = createSignal(
+    readManagerOrchestrationCache(),
+  );
   let transcriptScroller: HTMLDivElement | undefined;
   let statusReportTimer: number | undefined;
   let eventRefreshTimer: number | undefined;
@@ -142,21 +149,44 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     async (): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
       try {
         const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
-        return { agents: agents.agents, rounds: rounds.rounds };
+        const next = { agents: agents.agents, rounds: rounds.rounds };
+        setCachedOrchestrationSnapshot(
+          writeManagerOrchestrationCache(next) ?? {
+            ...next,
+            report: null,
+            reportRoundId: null,
+            hygiene: null,
+            cachedAt: Date.now(),
+          },
+        );
+        return next;
       } catch {
         return null;
       }
     },
   );
+  const visibleOrchestration = createMemo(() => {
+    const current = orchestration();
+    if (current) return current;
+    const cached = cachedOrchestrationSnapshot();
+    return cached ? { agents: cached.agents, rounds: cached.rounds } : null;
+  });
   const [sessionHygiene, { refetch: refetchSessionHygiene }] = createResource(
     () => statusReportSeq(),
     async (): Promise<ManagerSessionHygieneReport | null> => {
       try {
-        return await api.managerSessionHygiene();
+        const hygiene = await api.managerSessionHygiene();
+        setCachedOrchestrationSnapshot(
+          writeManagerOrchestrationCache({ hygiene }) ?? cachedOrchestrationSnapshot(),
+        );
+        return hygiene;
       } catch {
         return null;
       }
     },
+  );
+  const visibleSessionHygiene = createMemo(
+    () => sessionHygiene() ?? cachedOrchestrationSnapshot()?.hygiene ?? null,
   );
 
   const [behaviors] = createResource(
@@ -275,9 +305,14 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     };
   });
   const orchestrationStatus = createMemo(() =>
-    summarizeOrchestration(orchestration()?.rounds ?? [], orchestration()?.agents ?? []),
+    summarizeOrchestration(
+      visibleOrchestration()?.rounds ?? [],
+      visibleOrchestration()?.agents ?? [],
+    ),
   );
-  const activeOrchestrationRound = createMemo(() => pickActiveRound(orchestration()?.rounds ?? []));
+  const activeOrchestrationRound = createMemo(() =>
+    pickActiveRound(visibleOrchestration()?.rounds ?? []),
+  );
   const [activeRoundReport] = createResource(
     () => {
       const round = activeOrchestrationRound();
@@ -287,12 +322,24 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     async (input) => {
       if (!input) return null;
       try {
-        return await api.managerRoundReport(input.id);
+        const report = await api.managerRoundReport(input.id);
+        setCachedOrchestrationSnapshot(
+          writeManagerOrchestrationCache({ report, reportRoundId: input.id }) ??
+            cachedOrchestrationSnapshot(),
+        );
+        return report;
       } catch {
         return null;
       }
     },
   );
+  const visibleActiveRoundReport = createMemo(() => {
+    const current = activeRoundReport();
+    if (current) return current;
+    const cached = cachedOrchestrationSnapshot();
+    const round = activeOrchestrationRound();
+    return cached?.reportRoundId && cached.reportRoundId === round?.id ? cached.report : null;
+  });
 
   createEffect(() => {
     const transcript = loadedTranscript();
@@ -553,10 +600,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     <div class="manager-assistant manager-assistant-chat">
       <Show when={props.showOrchestrationPanel !== false && orchestrationStatus()}>
         <ManagerOrchestrationPanel
-          rounds={orchestration()?.rounds ?? []}
-          agents={orchestration()?.agents ?? []}
-          report={activeRoundReport()}
-          hygiene={sessionHygiene()}
+          rounds={visibleOrchestration()?.rounds ?? []}
+          agents={visibleOrchestration()?.agents ?? []}
+          report={visibleActiveRoundReport()}
+          hygiene={visibleSessionHygiene()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
           onRefreshHygiene={() => void refetchSessionHygiene()}

@@ -15,6 +15,10 @@ import {
 } from "solid-js";
 import { type Device, api } from "../api.ts";
 import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
+import {
+  readManagerOrchestrationCache,
+  writeManagerOrchestrationCache,
+} from "../manager-orchestration-cache.ts";
 import { ManagerAssistant } from "./ManagerAssistant.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 
@@ -33,6 +37,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 ) => {
   const [refreshSeq, setRefreshSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
+  const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   let eventRefreshTimer: number | undefined;
 
   const [orchestration] = createResource(
@@ -40,25 +45,45 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     async (): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
       try {
         const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
-        return { agents: agents.agents, rounds: rounds.rounds };
+        const next = { agents: agents.agents, rounds: rounds.rounds };
+        setCachedSnapshot(
+          writeManagerOrchestrationCache(next) ?? {
+            ...next,
+            report: null,
+            reportRoundId: null,
+            hygiene: null,
+            cachedAt: Date.now(),
+          },
+        );
+        return next;
       } catch {
         return null;
       }
     },
   );
+
+  const visibleOrchestration = createMemo(() => {
+    const current = orchestration();
+    if (current) return current;
+    const cached = cachedSnapshot();
+    return cached ? { agents: cached.agents, rounds: cached.rounds } : null;
+  });
 
   const [sessionHygiene, { refetch: refetchSessionHygiene }] = createResource(
     () => refreshSeq(),
     async (): Promise<ManagerSessionHygieneReport | null> => {
       try {
-        return await api.managerSessionHygiene();
+        const hygiene = await api.managerSessionHygiene();
+        setCachedSnapshot(writeManagerOrchestrationCache({ hygiene }) ?? cachedSnapshot());
+        return hygiene;
       } catch {
         return null;
       }
     },
   );
 
-  const activeRound = createMemo(() => pickActiveRound(orchestration()?.rounds ?? []));
+  const visibleHygiene = createMemo(() => sessionHygiene() ?? cachedSnapshot()?.hygiene ?? null);
+  const activeRound = createMemo(() => pickActiveRound(visibleOrchestration()?.rounds ?? []));
   const [activeRoundReport] = createResource(
     () => {
       const round = activeRound();
@@ -68,12 +93,24 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     async (input) => {
       if (!input) return null;
       try {
-        return await api.managerRoundReport(input.id);
+        const report = await api.managerRoundReport(input.id);
+        setCachedSnapshot(
+          writeManagerOrchestrationCache({ report, reportRoundId: input.id }) ?? cachedSnapshot(),
+        );
+        return report;
       } catch {
         return null;
       }
     },
   );
+
+  const visibleActiveRoundReport = createMemo(() => {
+    const current = activeRoundReport();
+    if (current) return current;
+    const cached = cachedSnapshot();
+    const round = activeRound();
+    return cached?.reportRoundId && cached.reportRoundId === round?.id ? cached.report : null;
+  });
 
   const scheduleEventRefresh = (includeHygiene = false) => {
     if (eventRefreshTimer !== undefined) return;
@@ -123,10 +160,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       <section class="manager-workspace-board" aria-label="Orchestration workspace">
         <ManagerOrchestrationPanel
           standalone
-          rounds={orchestration()?.rounds ?? []}
-          agents={orchestration()?.agents ?? []}
-          report={activeRoundReport()}
-          hygiene={sessionHygiene()}
+          rounds={visibleOrchestration()?.rounds ?? []}
+          agents={visibleOrchestration()?.agents ?? []}
+          report={visibleActiveRoundReport()}
+          hygiene={visibleHygiene()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
           onRefreshHygiene={() => void refetchSessionHygiene()}
