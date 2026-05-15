@@ -330,6 +330,7 @@ export interface ManagerAgent {
   cwd?: string;
   roundId?: string;
   taskId?: string;
+  sessionId?: string;
   lastInstruction?: string;
   lastOutput?: string;
   lastError?: string;

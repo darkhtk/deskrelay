@@ -2010,6 +2010,99 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     }
   });
 
+  test("manager orchestration reuses role agents and resumes worker sessions across rounds", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-round-resume-"));
+    const scriptPath = join(cwd, "fake-claude-worker.js");
+    writeFileSync(
+      scriptPath,
+      `
+const resumeIndex = process.argv.indexOf("--resume");
+const resumed = resumeIndex >= 0 ? process.argv[resumeIndex + 1] : "";
+const sessionId = resumed || "worker-session-001";
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: sessionId }));
+console.log(JSON.stringify({
+  type: "assistant",
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: "resumed:" + (resumed || "none") }]
+  }
+}));
+console.log(JSON.stringify({ type: "result", subtype: "success", duration_ms: 1, num_turns: 1 }));
+`,
+      "utf8",
+    );
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerWorkers: [
+        {
+          id: "fake-claude",
+          label: "Fake Claude worker",
+          description: "Structured test worker",
+          command: process.execPath,
+          args: [scriptPath, "-p", "--input-format", "stream-json"],
+          runMode: "stdin",
+          defaultTimeoutMs: 30_000,
+        },
+      ],
+    });
+
+    try {
+      const createR1 = await app.fetch(
+        authedRequest("POST", "/api/manager/rounds", {
+          title: "R1",
+          objective: "First worker round.",
+        }),
+      );
+      const r1 = (await createR1.json()) as { round?: { id?: string } };
+      const dispatchR1 = await app.fetch(
+        authedRequest("POST", `/api/manager/rounds/${r1.round?.id}/dispatch`, {
+          dryRun: false,
+          assignments: [{ role: "architect", profile: "fake-claude", prompt: "round one" }],
+        }),
+      );
+      expect(dispatchR1.status).toBe(202);
+      const first = (await dispatchR1.json()) as {
+        agents?: Array<{ id?: string; sessionId?: string }>;
+        tasks?: Array<{ result?: { sessionId?: string; stdout?: string } }>;
+      };
+      const firstAgentId = first.agents?.[0]?.id;
+      expect(firstAgentId).toBeTruthy();
+      expect(first.agents?.[0]?.sessionId).toBe("worker-session-001");
+      expect(first.tasks?.[0]?.result?.stdout).toContain("resumed:none");
+
+      const createR2 = await app.fetch(
+        authedRequest("POST", "/api/manager/rounds", {
+          title: "R2",
+          objective: "Second worker round.",
+        }),
+      );
+      const r2 = (await createR2.json()) as { round?: { id?: string } };
+      const dispatchR2 = await app.fetch(
+        authedRequest("POST", `/api/manager/rounds/${r2.round?.id}/dispatch`, {
+          dryRun: false,
+          assignments: [{ role: "architect", profile: "fake-claude", prompt: "round two" }],
+        }),
+      );
+      expect(dispatchR2.status).toBe(202);
+      const second = (await dispatchR2.json()) as {
+        agents?: Array<{ id?: string; sessionId?: string }>;
+        tasks?: Array<{ result?: { sessionId?: string; stdout?: string } }>;
+      };
+      expect(second.agents?.[0]?.id).toBe(firstAgentId);
+      expect(second.agents?.[0]?.sessionId).toBe("worker-session-001");
+      expect(second.tasks?.[0]?.result?.sessionId).toBe("worker-session-001");
+      expect(second.tasks?.[0]?.result?.stdout).toContain("resumed:worker-session-001");
+
+      const agents = await app.fetch(authedRequest("GET", "/api/manager/agents"));
+      const agentList = (await agents.json()) as { agents?: Array<{ role?: string }> };
+      expect(agentList.agents?.filter((agent) => agent.role === "architect")).toHaveLength(1);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager worker stdin mode can use Claude structured input for Korean prompts", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-stdin-"));
     const scriptPath = join(cwd, "fake-worker-stdin.js");

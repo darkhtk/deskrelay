@@ -2398,6 +2398,7 @@ async function runManagerAgentMessage(
         ...(input.message.timeoutMs ? { timeoutMs: input.message.timeoutMs } : {}),
         agentId: input.agent.id,
         agentRole: input.agent.role,
+        ...(input.agent.sessionId ? { sessionId: input.agent.sessionId } : {}),
         ...(roundId ? { roundId } : {}),
       },
     },
@@ -2409,10 +2410,12 @@ async function runManagerAgentMessage(
     build: input.build,
     requestUrl: input.requestUrl,
   });
+  const taskSessionId = managerWorkerSessionId(task);
   const updated =
     (await input.store.updateAgent(input.agent.id, {
       status: managerAgentStatusFromTaskState(task.state),
       taskId: task.id,
+      ...(taskSessionId ? { sessionId: taskSessionId } : {}),
       lastHeartbeatAt: task.updatedAt,
       ...(task.error ? { lastError: task.error } : { lastError: "" }),
       ...(managerWorkerResultText(task) ? { lastOutput: managerWorkerResultText(task) } : {}),
@@ -2506,8 +2509,12 @@ async function resolveRoundAssignments(input: ManagerRoundDispatchInput): Promis
     return { ok: false, error: "round has no agent assignments to dispatch" };
   }
   const out: Array<{ agent: ManagerAgent; assignment: ManagerRoundAgentAssignment }> = [];
+  const existingAgents = await input.store.listAgents();
   for (const assignment of assignments) {
     let agent = assignment.agentId ? await input.store.getAgent(assignment.agentId) : undefined;
+    if (!agent && !assignment.agentId) {
+      agent = findReusableManagerAgent(existingAgents, assignment);
+    }
     if (!agent) {
       agent = await input.store.createAgent({
         role: assignment.role,
@@ -2517,10 +2524,27 @@ async function resolveRoundAssignments(input: ManagerRoundDispatchInput): Promis
         roundId: input.round.id,
         instruction: assignment.prompt,
       });
+      existingAgents.unshift(agent);
     }
     out.push({ agent, assignment });
   }
   return { ok: true, value: out };
+}
+
+function findReusableManagerAgent(
+  agents: ManagerAgent[],
+  assignment: ManagerRoundAgentAssignment,
+): ManagerAgent | undefined {
+  const profile = assignment.profile?.trim() || "claude-code";
+  const cwd = assignment.cwd?.trim() || "";
+  const label = assignment.label?.trim();
+  return agents.find((agent) => {
+    if (agent.role !== assignment.role) return false;
+    if ((agent.profile || "claude-code") !== profile) return false;
+    if ((agent.cwd ?? "") !== cwd) return false;
+    if (label && agent.label !== label) return false;
+    return true;
+  });
 }
 
 async function assignmentsFromRoundAgents(
@@ -2907,6 +2931,12 @@ function managerWorkerResultText(task: ManagerTask): string {
   const stdout = typeof result?.stdout === "string" ? result.stdout.trim() : "";
   const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
   return truncateText(stdout || stderr, 2_000);
+}
+
+function managerWorkerSessionId(task: ManagerTask): string | undefined {
+  const result = isRecord(task.result) ? task.result : null;
+  const sessionId = result?.sessionId;
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : undefined;
 }
 
 function managerRoundSummary(
@@ -4324,6 +4354,7 @@ interface ManagerWorkerParams {
   prompt: string;
   cwd?: string;
   timeoutMs?: number;
+  sessionId?: string;
 }
 
 function parseManagerWorkerParams(
@@ -4339,6 +4370,10 @@ function parseManagerWorkerParams(
   if (prompt.length > 40_000) return { ok: false, error: "worker prompt is too long" };
   const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd.trim() : undefined;
   const timeoutMs = Number(input.timeoutMs);
+  const sessionId =
+    typeof input.sessionId === "string" && input.sessionId.trim()
+      ? input.sessionId.trim()
+      : undefined;
   return {
     ok: true,
     value: {
@@ -4346,6 +4381,7 @@ function parseManagerWorkerParams(
       prompt,
       ...(cwd ? { cwd } : {}),
       ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      ...(sessionId ? { sessionId } : {}),
     },
   };
 }
@@ -4371,6 +4407,7 @@ interface ManagerWorkerCliRunInput {
   apiBaseUrl: string;
   repoRoot: string;
   token: string | undefined;
+  sessionId?: string;
 }
 
 interface ManagerWorkerCliRunResult {
@@ -4384,16 +4421,17 @@ interface ManagerWorkerCliRunResult {
   stderr: string;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
+  sessionId?: string;
 }
 
 async function runManagerWorkerCli(
   input: ManagerWorkerCliRunInput,
 ): Promise<ManagerWorkerCliRunResult> {
   const started = Date.now();
-  const argv =
-    input.profile.runMode === "stdin"
-      ? [...input.profile.args]
-      : [...input.profile.args, input.prompt];
+  const args = profileUsesClaudeStructuredInput(input.profile)
+    ? managerAssistantSessionArgs(input.profile.args, input.sessionId)
+    : input.profile.args;
+  const argv = input.profile.runMode === "stdin" ? [...args] : [...args, input.prompt];
   const proc = Bun.spawn([input.profile.command, ...argv], {
     cwd: input.cwd,
     stdout: "pipe",
@@ -4419,6 +4457,7 @@ async function runManagerWorkerCli(
     proc.kill();
   });
   const [stdoutResult, stderrResult] = await Promise.all([stdout, stderr]);
+  const sessionId = extractClaudeSessionIdFromJsonLines(stdoutResult.text);
   return {
     profile: input.profile.id,
     command: managerWorkerCommandPreview(input.profile),
@@ -4430,6 +4469,7 @@ async function runManagerWorkerCli(
     stderr: sanitizeManagerAssistantText(stderrResult.text),
     stdoutTruncated: stdoutResult.truncated,
     stderrTruncated: stderrResult.truncated,
+    ...(sessionId ? { sessionId } : {}),
   };
 }
 
@@ -4504,6 +4544,23 @@ function profileUsesClaudeStructuredInput(profile: Pick<ManagerWorkerProfile, "a
     if (arg === "--input-format=stream-json") return true;
   }
   return false;
+}
+
+function extractClaudeSessionIdFromJsonLines(text: string): string | undefined {
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed)) continue;
+    const sessionId = parsed.session_id ?? parsed.sessionId;
+    if (typeof sessionId === "string" && sessionId.trim()) return sessionId.trim();
+  }
+  return undefined;
 }
 
 async function readLimitedText(
@@ -4831,7 +4888,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- For POST, PUT, PATCH, or DELETE calls with JSON bodies, prefer `--body-file <request.json>` over inline shell JSON when quoting is not trivial.",
     "- The manager API helper reads `DESKRELAY_MANAGER_API_BASE` and `DESKRELAY_SITE_TOKEN` from the environment. Do not manually assemble Authorization headers in Bash or PowerShell unless the helper cannot satisfy the task.",
     "- Do not treat a device registry `connectionState: online` value as proof that the server can reach that connector. For operational decisions, confirm with `/api/devices/:id/doctor`, `/process/status`, or the specific API needed for the task.",
-    "- The manager is not constrained by the user's configured workspace roots. For manager-owned filesystem inspection, call `/api/devices/:id/fs/list?workspaceScope=unrestricted&includeFiles=1`. For manager-owned directory creation, include `{ \"workspaceScope\": \"unrestricted\" }` in `/api/devices/:id/fs/mkdir` bodies. For manager-owned file preview, call `/api/devices/:id/files/preview?workspaceScope=unrestricted` with the path and optional cwd query params.",
+    '- The manager is not constrained by the user\'s configured workspace roots. For manager-owned filesystem inspection, call `/api/devices/:id/fs/list?workspaceScope=unrestricted&includeFiles=1`. For manager-owned directory creation, include `{ "workspaceScope": "unrestricted" }` in `/api/devices/:id/fs/mkdir` bodies. For manager-owned file preview, call `/api/devices/:id/files/preview?workspaceScope=unrestricted` with the path and optional cwd query params.',
     "When verifying generated files, call `/api/devices/:id/fs/list?workspaceScope=unrestricted&includeFiles=1` for the target directory. The default list is directory-only for the cwd picker.",
     "Use `/api/devices/:id/files/preview?workspaceScope=unrestricted` for manager-owned guarded image or UTF-8 text/Markdown previews. If a file type is unsupported, report that limitation rather than claiming the file was read.",
     "Avoid calling `POST /api/manager/assistant/chat` or `POST /api/manager/assistant/chat/stream` from inside the assistant unless you are deliberately testing the assistant endpoint.",
@@ -5474,6 +5531,7 @@ async function executeRunWorkerTask(
     apiBaseUrl: managerAssistantApiBaseUrl(input.options, input.requestUrl),
     repoRoot: input.options.managerAssistant?.cwd ?? process.cwd(),
     token: input.options.token,
+    ...(params.value.sessionId ? { sessionId: params.value.sessionId } : {}),
   });
   const succeeded = result.exitCode === 0 && !result.timedOut;
   const summary = result.timedOut

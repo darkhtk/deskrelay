@@ -68,6 +68,7 @@ describe("conversation export", () => {
         {
           type: "result",
           subtype: "success",
+          timestamp: "2026-05-15T13:05:09+09:00",
           total_cost_usd: 0.0123,
           duration_ms: 321,
           num_turns: 1,
@@ -80,7 +81,8 @@ describe("conversation export", () => {
     expect(markdown).toContain("## Assistant\n\npong");
     expect(markdown).toContain("### Tool: Read");
     expect(markdown).toContain("![dog.png](data:image/png;base64,abc123)");
-    expect(markdown).toContain("_Result: success · $0.0123 · 321ms · 1 turn_");
+    expect(markdown).toContain("_Result: success · 13:05:09 · 321ms · 1 turn_");
+    expect(markdown).not.toContain("$0.0123");
   });
 
   test("sanitizes the download base name", () => {

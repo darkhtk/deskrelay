@@ -24,6 +24,7 @@ export type ManagerAgentPatch = Partial<
     | "cwd"
     | "roundId"
     | "taskId"
+    | "sessionId"
     | "lastInstruction"
     | "lastOutput"
     | "lastError"
@@ -286,6 +287,7 @@ function normalizeAgent(input: unknown): ManagerAgent | null {
   const cwd = nonEmptyString(input.cwd);
   const roundId = nonEmptyString(input.roundId);
   const taskId = nonEmptyString(input.taskId);
+  const sessionId = nonEmptyString(input.sessionId);
   const lastInstruction = nonEmptyString(input.lastInstruction);
   const lastOutput = nonEmptyString(input.lastOutput);
   const lastError = nonEmptyString(input.lastError);
@@ -300,6 +302,7 @@ function normalizeAgent(input: unknown): ManagerAgent | null {
     ...(cwd ? { cwd } : {}),
     ...(roundId ? { roundId } : {}),
     ...(taskId ? { taskId } : {}),
+    ...(sessionId ? { sessionId } : {}),
     ...(lastInstruction ? { lastInstruction } : {}),
     ...(lastOutput ? { lastOutput } : {}),
     ...(lastError ? { lastError } : {}),

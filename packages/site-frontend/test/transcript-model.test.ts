@@ -207,13 +207,14 @@ describe("TranscriptModel — assistant + user messages", () => {
 });
 
 describe("TranscriptModel — result + exit", () => {
-  test("result event captures cost / duration / turns", () => {
+  test("result event captures timestamp / duration / turns without cost", () => {
     const m = new TranscriptModel();
     m.ingestEvent({
       type: "result",
       subtype: "success",
       is_error: false,
       result: "done",
+      timestamp: "2026-05-15T13:05:09+09:00",
       total_cost_usd: 0.0123,
       duration_ms: 4500,
       num_turns: 3,
@@ -221,10 +222,12 @@ describe("TranscriptModel — result + exit", () => {
     expect(m.entries[0]).toMatchObject({
       kind: "result",
       isError: false,
-      costUsd: 0.0123,
+      timestampMs: Date.parse("2026-05-15T13:05:09+09:00"),
       durationMs: 4500,
       turns: 3,
     });
+    expect(m.render()).toContain("13:05:09");
+    expect(m.render()).not.toContain("$0.0123");
   });
 
   test("error result keeps the body text", () => {
