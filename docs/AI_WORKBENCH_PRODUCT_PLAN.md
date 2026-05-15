@@ -1,5 +1,7 @@
 # DeskRelay Self-host AI Workbench Plan
 
+Canonical foundation: [PRODUCT_FOUNDATION.md](PRODUCT_FOUNDATION.md)
+
 ## Purpose
 
 DeskRelay is not just a remote Claude CLI client. Its larger goal is to become a self-hosted AI development workbench where a power user can control their own PCs, CLI tools, and multiple AI workers from one browser interface.
