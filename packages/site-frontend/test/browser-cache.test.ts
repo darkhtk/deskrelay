@@ -11,16 +11,16 @@ import {
 } from "../src/browser-cache.ts";
 
 afterEach(async () => {
-  setBrowserCacheEnabled(false);
-  setClearBrowserCacheOnOpen(true);
+  setBrowserCacheEnabled(true);
+  setClearBrowserCacheOnOpen(false);
   await clearDeskRelayBrowserCache();
   localStorage.clear();
 });
 
 describe("browser cache preferences", () => {
-  test("default to disabled cache and clear-on-open enabled", () => {
-    expect(browserCacheEnabled()).toBe(false);
-    expect(clearBrowserCacheOnOpen()).toBe(true);
+  test("default to enabled cache without clear-on-open", () => {
+    expect(browserCacheEnabled()).toBe(true);
+    expect(clearBrowserCacheOnOpen()).toBe(false);
   });
 
   test("persist cache toggles in localStorage", () => {

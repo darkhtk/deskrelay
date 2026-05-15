@@ -15,7 +15,7 @@ const LOCAL_CACHE_PREFIXES = [
 const LOCAL_CACHE_MAX_BYTES = 2 * 1024 * 1024;
 const IMAGE_PREVIEW_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
-export const SESSION_TRANSCRIPT_CACHE_TTL_MS = 10 * 60 * 1000;
+export const SESSION_TRANSCRIPT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface BrowserCacheClearResult {
   localStorageEntries: number;
@@ -45,10 +45,10 @@ function readBoolean(name: string, defaultValue: boolean): boolean {
 }
 
 const [browserCacheEnabled, setBrowserCacheEnabledSignal] = createSignal(
-  readBoolean(BROWSER_CACHE_ENABLED_KEY, false),
+  readBoolean(BROWSER_CACHE_ENABLED_KEY, true),
 );
 const [clearBrowserCacheOnOpen, setClearBrowserCacheOnOpenSignal] = createSignal(
-  readBoolean(BROWSER_CACHE_CLEAR_ON_OPEN_KEY, true),
+  readBoolean(BROWSER_CACHE_CLEAR_ON_OPEN_KEY, false),
 );
 
 export { browserCacheEnabled, clearBrowserCacheOnOpen };

@@ -2939,6 +2939,9 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         return;
       }
       if (appliedCachedTranscript) return;
+      if (transcript().length > 0 && selectedSession()?.sessionId === summary.sessionId) {
+        return;
+      }
       setError(message);
       setTranscript([]);
     }
