@@ -2103,6 +2103,94 @@ console.log(JSON.stringify({ type: "result", subtype: "success", duration_ms: 1,
     }
   });
 
+  test("manager orchestration does not reuse stale role agents", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-round-stale-"));
+    const scriptPath = join(cwd, "fake-stale-worker.js");
+    writeFileSync(
+      scriptPath,
+      `
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "fresh-session" }));
+console.log(JSON.stringify({
+  type: "assistant",
+  message: { role: "assistant", content: [{ type: "text", text: "fresh worker" }] }
+}));
+console.log(JSON.stringify({ type: "result", subtype: "success", duration_ms: 1, num_turns: 1 }));
+`,
+      "utf8",
+    );
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const staleAgent = await managerOrchestrationStore.createAgent({
+      role: "architect",
+      label: "Architect agent",
+      profile: "fake-stale-worker",
+      cwd,
+      instruction: "previous prompt",
+    });
+    await managerOrchestrationStore.updateAgent(staleAgent.id, {
+      status: "stale",
+      sessionId: "stale-session",
+      lastError: "previous server process",
+    });
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerOrchestrationStore,
+      managerWorkers: [
+        {
+          id: "fake-stale-worker",
+          label: "Fake stale worker",
+          description: "Structured test worker",
+          command: process.execPath,
+          args: [scriptPath, "-p", "--input-format", "stream-json"],
+          runMode: "stdin",
+          defaultTimeoutMs: 30_000,
+        },
+      ],
+    });
+
+    try {
+      const createRound = await app.fetch(
+        authedRequest("POST", "/api/manager/rounds", {
+          title: "R-stale-reuse",
+          objective: "Do not reuse stale workers.",
+        }),
+      );
+      const round = (await createRound.json()) as { round?: { id?: string } };
+      const dispatch = await app.fetch(
+        authedRequest("POST", `/api/manager/rounds/${round.round?.id}/dispatch`, {
+          dryRun: false,
+          assignments: [
+            {
+              role: "architect",
+              label: "Architect agent",
+              profile: "fake-stale-worker",
+              cwd,
+              prompt: "fresh prompt",
+            },
+          ],
+        }),
+      );
+      expect(dispatch.status).toBe(202);
+      const body = (await dispatch.json()) as {
+        agents?: Array<{ id?: string; status?: string; sessionId?: string }>;
+      };
+      expect(body.agents?.[0]?.id).not.toBe(staleAgent.id);
+      expect(body.agents?.[0]?.status).toBe("completed");
+      expect(body.agents?.[0]?.sessionId).toBe("fresh-session");
+
+      const agents = await app.fetch(authedRequest("GET", "/api/manager/agents"));
+      expect(agents.status).toBe(200);
+      const agentList = (await agents.json()) as {
+        agents?: Array<{ id?: string; status?: string }>;
+      };
+      expect(agentList.agents?.find((agent) => agent.id === staleAgent.id)?.status).toBe("stale");
+      expect(agentList.agents?.filter((agent) => agent.status === "completed")).toHaveLength(1);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager worker stdin mode can use Claude structured input for Korean prompts", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-stdin-"));
     const scriptPath = join(cwd, "fake-worker-stdin.js");
@@ -2305,6 +2393,7 @@ process.stdin.on("end", () => {
 
   test("server startup recovers stale running manager tasks without clearing queued device work", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
     const running = await managerTaskStore.create({
       kind: "update-all",
       dryRun: false,
@@ -2326,11 +2415,53 @@ process.stdin.on("end", () => {
       state: "waiting_for_device",
       startedAt: "2026-05-11T00:00:00.000Z",
     });
+    const round = await managerOrchestrationStore.createRound({
+      title: "R-stale-startup",
+      objective: "Recover stale runtime state.",
+    });
+    const linkedAgent = await managerOrchestrationStore.createAgent({
+      role: "verifier",
+      label: "Linked verifier",
+      roundId: round.id,
+      instruction: "Verify startup recovery.",
+    });
+    await managerOrchestrationStore.updateAgent(linkedAgent.id, {
+      status: "running",
+      taskId: running.id,
+      lastHeartbeatAt: "2026-05-11T00:00:00.000Z",
+    });
+    const orphanAgent = await managerOrchestrationStore.createAgent({
+      role: "critic",
+      label: "Orphan critic",
+      roundId: round.id,
+      instruction: "Critique startup recovery.",
+    });
+    await managerOrchestrationStore.updateAgent(orphanAgent.id, {
+      status: "running",
+      lastHeartbeatAt: "2026-05-11T00:00:00.000Z",
+    });
+    const completedAgent = await managerOrchestrationStore.createAgent({
+      role: "documenter",
+      label: "Completed documenter",
+      roundId: round.id,
+      instruction: "Document startup recovery.",
+    });
+    await managerOrchestrationStore.updateAgent(completedAgent.id, {
+      status: "completed",
+      taskId: "already_done",
+      lastHeartbeatAt: "2026-05-11T00:00:00.000Z",
+    });
+    await managerOrchestrationStore.updateRound(round.id, {
+      status: "running",
+      agentIds: [linkedAgent.id, orphanAgent.id, completedAgent.id],
+      taskIds: [running.id],
+    });
 
     const app = createSiteApp({
       registry: new InMemoryDeviceRegistry(),
       token: TOKEN,
       managerTaskStore,
+      managerOrchestrationStore,
       build: {
         version: "0.0.0",
         commit: "recovery-test",
@@ -2365,6 +2496,30 @@ process.stdin.on("end", () => {
     ).toBe(true);
     const stillQueued = body.tasks?.find((task) => task.id === waiting.id);
     expect(stillQueued?.state).toBe("waiting_for_device");
+
+    const agents = await app.fetch(authedRequest("GET", "/api/manager/agents"));
+    expect(agents.status).toBe(200);
+    const agentBody = (await agents.json()) as {
+      agents?: Array<{ id?: string; status?: string; lastError?: string }>;
+    };
+    const recoveredLinkedAgent = agentBody.agents?.find((agent) => agent.id === linkedAgent.id);
+    expect(recoveredLinkedAgent?.status).toBe("stale");
+    expect(recoveredLinkedAgent?.lastError).toContain("previous server process");
+    const recoveredOrphanAgent = agentBody.agents?.find((agent) => agent.id === orphanAgent.id);
+    expect(recoveredOrphanAgent?.status).toBe("stale");
+    expect(recoveredOrphanAgent?.lastError).toContain("previous server process");
+    const untouchedCompletedAgent = agentBody.agents?.find(
+      (agent) => agent.id === completedAgent.id,
+    );
+    expect(untouchedCompletedAgent?.status).toBe("completed");
+
+    const state = await app.fetch(authedRequest("GET", "/api/manager/state"));
+    expect(state.status).toBe(200);
+    const stateBody = (await state.json()) as {
+      counts?: { runningAgents?: number; blockedAgents?: number };
+    };
+    expect(stateBody.counts?.runningAgents).toBe(0);
+    expect(stateBody.counts?.blockedAgents).toBe(2);
   });
 
   test("task logs, cancel, and retry APIs operate on stored manager tasks", async () => {

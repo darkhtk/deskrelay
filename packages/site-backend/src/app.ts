@@ -225,12 +225,14 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       ),
     managerEventBus,
   );
-  const managerTaskStoreRecovery = recoverStaleManagerTasks(managerTaskStore, build).catch(
-    () => undefined,
-  );
+  const managerRuntimeRecovery = recoverStaleManagerRuntimeState(
+    managerTaskStore,
+    managerOrchestrationStore,
+    build,
+  ).catch(() => undefined);
 
-  async function ensureManagerTaskStoreRecovered(): Promise<void> {
-    await managerTaskStoreRecovery;
+  async function ensureManagerRuntimeRecovered(): Promise<void> {
+    await managerRuntimeRecovery;
   }
 
   app.get("/healthz", (c) =>
@@ -259,7 +261,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.get("/api/capabilities", (c) => c.json(serverCapabilities(options)));
 
   app.use("/api/manager/*", async (_c, next) => {
-    await ensureManagerTaskStoreRecovered();
+    await ensureManagerRuntimeRecovered();
     await next();
   });
 
@@ -2207,6 +2209,18 @@ interface ManagerRoundDispatchInput {
   requestUrl: string;
 }
 
+async function recoverStaleManagerRuntimeState(
+  taskStore: ManagerTaskStore,
+  orchestrationStore: ManagerOrchestrationStore,
+  build: DeskRelayBuildInfo,
+): Promise<{ tasks: number; agents: number }> {
+  const [tasks, agents] = await Promise.all([
+    recoverStaleManagerTasks(taskStore, build),
+    recoverStaleManagerAgents(orchestrationStore, build),
+  ]);
+  return { tasks, agents };
+}
+
 async function recoverStaleManagerTasks(
   store: ManagerTaskStore,
   build: DeskRelayBuildInfo,
@@ -2236,6 +2250,30 @@ async function recoverStaleManagerTasks(
     if (updated) recovered += 1;
   }
   return recovered;
+}
+
+async function recoverStaleManagerAgents(
+  store: ManagerOrchestrationStore,
+  build: DeskRelayBuildInfo,
+): Promise<number> {
+  const agents = await store.listAgents();
+  const stale = agents.filter((agent) => isManagerAgentRuntimeActive(agent.status));
+  if (stale.length === 0) return 0;
+  let recovered = 0;
+  for (const agent of stale) {
+    const summary = `Agent was left ${agent.status} by a previous server process and cannot be trusted.`;
+    const updated = await store.updateAgent(agent.id, {
+      status: "stale",
+      lastError: `${summary} Recovered when server ${build.shortCommit} started at ${SERVER_STARTED_AT}. Start a new worker or dispatch the round again if it is still needed.`,
+      lastHeartbeatAt: SERVER_STARTED_AT,
+    });
+    if (updated) recovered += 1;
+  }
+  return recovered;
+}
+
+function isManagerAgentRuntimeActive(status: ManagerAgentStatus): boolean {
+  return status === "assigned" || status === "running" || status === "waiting";
 }
 
 async function createAndRunManagerTask(input: ManagerTaskCreateRunInput): Promise<ManagerTask> {
@@ -2350,6 +2388,7 @@ async function syncManagerAgentRecordWithTask(
   taskStore: ManagerTaskStore,
   agent: ManagerAgent,
 ): Promise<ManagerAgent | undefined> {
+  if (agent.status === "stale") return agent;
   if (!agent.taskId) return agent;
   const task = await taskStore.get(agent.taskId);
   if (!task) return agent;
@@ -2569,6 +2608,7 @@ async function resolveRoundAssignments(input: ManagerRoundDispatchInput): Promis
   const existingAgents = await input.store.listAgents();
   for (const assignment of assignments) {
     let agent = assignment.agentId ? await input.store.getAgent(assignment.agentId) : undefined;
+    if (agent?.status === "stale") agent = undefined;
     if (!agent && !assignment.agentId) {
       agent = findReusableManagerAgent(existingAgents, assignment);
     }
@@ -2596,6 +2636,7 @@ function findReusableManagerAgent(
   const cwd = assignment.cwd?.trim() || "";
   const label = assignment.label?.trim();
   return agents.find((agent) => {
+    if (agent.status === "stale") return false;
     if (agent.role !== assignment.role) return false;
     if ((agent.profile || "claude-code") !== profile) return false;
     if ((agent.cwd ?? "") !== cwd) return false;
