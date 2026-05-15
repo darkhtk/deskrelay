@@ -559,6 +559,7 @@ describe("API route inventory", () => {
           "POST /api/manager/state/acknowledge",
           authedRequest("POST", "/api/manager/state/acknowledge", { reason: "route inventory" }),
         ],
+        ["GET /api/manager/worker-runs", authedRequest("GET", "/api/manager/worker-runs?limit=5")],
         [
           "GET /api/manager/events/recent",
           authedRequest("GET", "/api/manager/events/recent?afterSeq=0"),
@@ -648,6 +649,11 @@ describe("API route inventory", () => {
         [
           "GET /api/manager/rounds/:id/report",
           authedRequest("GET", "/api/manager/rounds/missing/report"),
+          [404],
+        ],
+        [
+          "GET /api/manager/rounds/:id/worker-runs",
+          authedRequest("GET", "/api/manager/rounds/missing/worker-runs"),
           [404],
         ],
         [
@@ -2160,9 +2166,81 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       );
       expect(report.status).toBe(200);
       expect(((await report.json()) as { summary?: string }).summary).toContain("3 task");
+
+      const ledger = await app.fetch(
+        authedRequest("GET", `/api/manager/rounds/${created.round?.id}/worker-runs`),
+      );
+      expect(ledger.status).toBe(200);
+      const ledgerBody = (await ledger.json()) as {
+        runs?: Array<{
+          status?: string;
+          integrity?: string[];
+          agentRole?: string;
+          outputPreview?: string;
+        }>;
+        summary?: { total?: number; succeeded?: number; integrityIssues?: number };
+      };
+      expect(ledgerBody.summary?.total).toBe(3);
+      expect(ledgerBody.summary?.succeeded).toBe(3);
+      expect(ledgerBody.summary?.integrityIssues).toBe(0);
+      expect(ledgerBody.runs?.map((run) => run.agentRole).sort()).toEqual([
+        "architect",
+        "critic",
+        "protocol",
+      ]);
+      expect(ledgerBody.runs?.every((run) => run.integrity?.includes("ok"))).toBe(true);
+      expect(ledgerBody.runs?.some((run) => run.outputPreview?.includes("protocol report"))).toBe(
+        true,
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test("manager worker run ledger surfaces missing round task records", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+      managerOrchestrationStore,
+    });
+    const round = await managerOrchestrationStore.createRound({
+      title: "R-missing-ledger",
+      objective: "Expose missing worker task links.",
+    });
+    const agent = await managerOrchestrationStore.createAgent({
+      role: "verifier",
+      label: "Verifier",
+      profile: "claude-code",
+      roundId: round.id,
+    });
+    await managerOrchestrationStore.updateAgent(agent.id, {
+      status: "stale",
+      taskId: "missing-task-001",
+      lastError: "task vanished between dispatch and collection",
+    });
+    await managerOrchestrationStore.updateRound(round.id, {
+      status: "blocked",
+      agentIds: [agent.id],
+      taskIds: ["missing-task-001"],
+    });
+
+    const ledger = await app.fetch(
+      authedRequest("GET", `/api/manager/rounds/${round.id}/worker-runs`),
+    );
+    expect(ledger.status).toBe(200);
+    const body = (await ledger.json()) as {
+      runs?: Array<{ status?: string; integrity?: string[]; agentRole?: string; error?: string }>;
+      summary?: { missing?: number; integrityIssues?: number };
+    };
+    expect(body.summary?.missing).toBe(1);
+    expect(body.summary?.integrityIssues).toBe(1);
+    expect(body.runs?.[0]?.status).toBe("missing");
+    expect(body.runs?.[0]?.agentRole).toBe("verifier");
+    expect(body.runs?.[0]?.integrity).toContain("missing-task");
+    expect(body.runs?.[0]?.error).toContain("task vanished");
   });
 
   test("manager orchestration reuses role agents and resumes worker sessions across rounds", async () => {

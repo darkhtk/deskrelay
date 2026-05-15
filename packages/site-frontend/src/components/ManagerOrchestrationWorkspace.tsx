@@ -4,6 +4,7 @@ import type {
   ManagerRound,
   ManagerSessionHygieneReport,
   ManagerStateViewResponse,
+  ManagerWorkerRunLedgerResponse,
 } from "@deskrelay/shared";
 import {
   type Component,
@@ -54,6 +55,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
             ...next,
             report: null,
             reportRoundId: null,
+            workerRuns: null,
+            workerRunsRoundId: null,
             hygiene: null,
             cachedAt: Date.now(),
           },
@@ -124,6 +127,39 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     const cached = cachedSnapshot();
     const round = activeRound();
     return cached?.reportRoundId && cached.reportRoundId === round?.id ? cached.report : null;
+  });
+
+  const [workerRuns] = createResource(
+    () => {
+      const round = activeRound();
+      const seq = refreshSeq();
+      return round ? { id: round.id, seq } : null;
+    },
+    async (input): Promise<ManagerWorkerRunLedgerResponse | null> => {
+      if (!input) return null;
+      try {
+        const ledger = await api.managerRoundWorkerRuns(input.id);
+        setCachedSnapshot(
+          writeManagerOrchestrationCache({
+            workerRuns: ledger,
+            workerRunsRoundId: input.id,
+          }) ?? cachedSnapshot(),
+        );
+        return ledger;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const visibleWorkerRuns = createMemo(() => {
+    const current = workerRuns();
+    if (current) return current;
+    const cached = cachedSnapshot();
+    const round = activeRound();
+    return cached?.workerRunsRoundId && cached.workerRunsRoundId === round?.id
+      ? cached.workerRuns
+      : null;
   });
 
   const scheduleEventRefresh = (includeHygiene = false) => {
@@ -226,6 +262,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
+          workerRuns={visibleWorkerRuns()?.runs ?? []}
           hygiene={visibleHygiene()}
           state={managerState()}
           hygieneLoading={sessionHygiene.loading}

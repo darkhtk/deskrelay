@@ -5978,11 +5978,13 @@ body.manager-orchestration-resizing {
   grid-column: 2;
 }
 .manager-agent-table,
+.manager-worker-runs,
 .manager-artifact-list {
   display: grid;
   gap: 1px;
 }
 .manager-agent-row,
+.manager-worker-run-row,
 .manager-artifact-row {
   align-items: center;
   display: grid;
@@ -6000,6 +6002,43 @@ body.manager-orchestration-resizing {
   color: var(--text-faint);
   font-size: 10px;
   text-transform: uppercase;
+}
+.manager-worker-run-row {
+  color: var(--text-muted);
+  font-size: 12px;
+  grid-template-columns:
+    minmax(110px, 1.1fr) minmax(72px, 0.6fr) minmax(72px, 0.6fr) minmax(86px, 0.7fr)
+    minmax(140px, 1.4fr);
+}
+.manager-worker-run-row-head {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-worker-run-row-problem {
+  color: var(--warning);
+}
+.manager-worker-run-main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.manager-worker-run-main strong {
+  color: var(--text);
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-worker-run-main small,
+.manager-worker-run-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-worker-run-main small {
+  color: var(--text-faint);
 }
 .manager-agent-role {
   color: var(--text);
@@ -6704,6 +6743,13 @@ body.manager-orchestration-resizing {
   }
   .manager-agent-row > span:last-child {
     display: none;
+  }
+  .manager-worker-run-row {
+    grid-template-columns: minmax(90px, 1fr) minmax(70px, 0.6fr) minmax(0, 1fr);
+  }
+  .manager-worker-run-row > span:nth-child(4),
+  .manager-worker-run-row > span:nth-child(5) {
+    grid-column: 3;
   }
   .manager-timeline-item,
   .manager-artifact-row,

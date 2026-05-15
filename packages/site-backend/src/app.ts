@@ -76,6 +76,9 @@ import {
   type ManagerWorkerCheckResult,
   type ManagerWorkerListResponse,
   type ManagerWorkerProfile,
+  type ManagerWorkerRun,
+  type ManagerWorkerRunIntegrity,
+  type ManagerWorkerRunLedgerResponse,
   type UpdateState,
   diagnosticStepFromCheck,
   normalizeDiagnosticStep,
@@ -386,6 +389,22 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         now: new Date(),
       });
       return c.json(response);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.get("/api/manager/worker-runs", async (c) => {
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      return c.json(
+        await buildManagerWorkerRunLedger({
+          orchestrationStore: managerOrchestrationStore,
+          taskStore: managerTaskStore,
+          limit: clampListLimit(c.req.query("limit")),
+          now: new Date(),
+        }),
+      );
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
     }
@@ -808,6 +827,26 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     );
     if (!report) return c.json({ error: "unknown round" }, 404);
     return c.json(report);
+  });
+
+  app.get("/api/manager/rounds/:id/worker-runs", async (c) => {
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      const roundId = c.req.param("id");
+      const round = await managerOrchestrationStore.getRound(roundId);
+      if (!round) return c.json({ error: "unknown round" }, 404);
+      return c.json(
+        await buildManagerWorkerRunLedger({
+          orchestrationStore: managerOrchestrationStore,
+          taskStore: managerTaskStore,
+          roundId,
+          limit: clampListLimit(c.req.query("limit")),
+          now: new Date(),
+        }),
+      );
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
   });
 
   app.post("/api/manager/rounds/:id/acknowledge", async (c) => {
@@ -1844,6 +1883,11 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/worker-runs",
+    description: "Read the worker run ledger across recent manager worker tasks.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/events/recent",
     description: "Replay recent manager state-change events after an optional sequence number.",
   },
@@ -1938,6 +1982,11 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "GET",
     path: "/api/manager/rounds/:id/report",
     description: "Read a round report with agents and worker task results.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/rounds/:id/worker-runs",
+    description: "Read the worker run ledger scoped to one orchestration round.",
   },
   {
     method: "POST",
@@ -2224,6 +2273,7 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "manager.assistant-chat",
       "manager.orchestration-agents",
       "manager.orchestration-rounds",
+      "manager.worker-runs",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -2782,6 +2832,258 @@ async function buildManagerRoundReport(
     tasks: tasks.map(sanitizeManagerTaskForAssistant),
     summary: managerRoundSummary(round, agents, tasks),
   };
+}
+
+interface ManagerWorkerRunLedgerInput {
+  orchestrationStore: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  roundId?: string;
+  limit: number;
+  now: Date;
+}
+
+async function buildManagerWorkerRunLedger(
+  input: ManagerWorkerRunLedgerInput,
+): Promise<ManagerWorkerRunLedgerResponse> {
+  const [tasks, agents, rounds] = await Promise.all([
+    input.taskStore.list(500),
+    input.orchestrationStore.listAgents(),
+    input.orchestrationStore.listRounds(),
+  ]);
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const roundById = new Map(rounds.map((round) => [round.id, round]));
+  const agentByTaskId = new Map<string, ManagerAgent>();
+  for (const agent of agents) {
+    if (agent.taskId) agentByTaskId.set(agent.taskId, agent);
+  }
+  const scopedRound = input.roundId ? roundById.get(input.roundId) : undefined;
+  const selected = new Map<string, ManagerWorkerRun>();
+
+  for (const task of tasks) {
+    if (task.kind !== "run-worker") continue;
+    const agent = findManagerWorkerAgent(task, agents, agentByTaskId);
+    const round = findManagerWorkerRound(task, agent, scopedRound, roundById, rounds);
+    if (input.roundId && round?.id !== input.roundId && !scopedRound?.taskIds.includes(task.id)) {
+      continue;
+    }
+    const run = managerWorkerRunFromTask(task, agent, round);
+    selected.set(run.id, run);
+  }
+
+  if (scopedRound) {
+    for (const taskId of scopedRound.taskIds) {
+      if (selected.has(`task:${taskId}`)) continue;
+      const task = taskById.get(taskId);
+      if (task?.kind === "run-worker") {
+        const agent = findManagerWorkerAgent(task, agents, agentByTaskId);
+        selected.set(`task:${task.id}`, managerWorkerRunFromTask(task, agent, scopedRound));
+        continue;
+      }
+      const agent = agentByTaskId.get(taskId);
+      selected.set(
+        `missing-task:${taskId}`,
+        managerWorkerRunFromMissingTask(taskId, agent, scopedRound, input.now),
+      );
+    }
+
+    for (const agentId of scopedRound.agentIds) {
+      const agent = agentById.get(agentId);
+      if (!agent?.taskId) continue;
+      if (selected.has(`task:${agent.taskId}`) || selected.has(`missing-task:${agent.taskId}`)) {
+        continue;
+      }
+      selected.set(
+        `missing-task:${agent.taskId}`,
+        managerWorkerRunFromMissingTask(agent.taskId, agent, scopedRound, input.now),
+      );
+    }
+  } else {
+    for (const agent of agents) {
+      if (!agent.taskId || taskById.has(agent.taskId)) continue;
+      const round = agent.roundId ? roundById.get(agent.roundId) : undefined;
+      selected.set(
+        `missing-task:${agent.taskId}`,
+        managerWorkerRunFromMissingTask(agent.taskId, agent, round, input.now),
+      );
+    }
+  }
+
+  const runs = [...selected.values()]
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+    .slice(0, input.limit);
+  return {
+    generatedAt: input.now.toISOString(),
+    ...(input.roundId ? { roundId: input.roundId } : {}),
+    runs,
+    summary: summarizeManagerWorkerRuns(runs),
+  };
+}
+
+function findManagerWorkerAgent(
+  task: ManagerTask,
+  agents: ManagerAgent[],
+  agentByTaskId: Map<string, ManagerAgent>,
+): ManagerAgent | undefined {
+  const params = isRecord(task.params) ? task.params : {};
+  const agentId = typeof params.agentId === "string" ? params.agentId : undefined;
+  return (
+    (agentId ? agents.find((agent) => agent.id === agentId) : undefined) ??
+    agentByTaskId.get(task.id) ??
+    agents.find((agent) => agent.taskId === task.id)
+  );
+}
+
+function findManagerWorkerRound(
+  task: ManagerTask,
+  agent: ManagerAgent | undefined,
+  scopedRound: ManagerRound | undefined,
+  roundById: Map<string, ManagerRound>,
+  rounds: ManagerRound[],
+): ManagerRound | undefined {
+  if (scopedRound?.taskIds.includes(task.id) || scopedRound?.agentIds.includes(agent?.id ?? "")) {
+    return scopedRound;
+  }
+  const params = isRecord(task.params) ? task.params : {};
+  const roundId =
+    typeof params.roundId === "string" && params.roundId.trim()
+      ? params.roundId.trim()
+      : agent?.roundId;
+  return (
+    (roundId ? roundById.get(roundId) : undefined) ??
+    rounds.find((round) => round.taskIds.includes(task.id)) ??
+    (agent ? rounds.find((round) => round.agentIds.includes(agent.id)) : undefined)
+  );
+}
+
+function managerWorkerRunFromTask(
+  task: ManagerTask,
+  agent: ManagerAgent | undefined,
+  round: ManagerRound | undefined,
+): ManagerWorkerRun {
+  const params = isRecord(task.params) ? task.params : {};
+  const result = isRecord(task.result) ? task.result : {};
+  const profile = stringValue(result.profile) ?? stringValue(params.profile);
+  const sessionId = managerWorkerSessionId(task) ?? agent?.sessionId;
+  const integrity = managerWorkerRunIntegrity({ task, agent, round, profile, sessionId });
+  const durationMs = numberValue(result.durationMs);
+  const exitCode = numberValue(result.exitCode);
+  const timedOut = booleanValue(result.timedOut);
+  const stdoutTruncated = booleanValue(result.stdoutTruncated);
+  const stderrTruncated = booleanValue(result.stderrTruncated);
+  const command = stringValue(result.command);
+  const cwd = stringValue(result.cwd) ?? stringValue(params.cwd);
+  const outputPreview = managerWorkerResultText(task);
+  const run: ManagerWorkerRun = {
+    id: `task:${task.id}`,
+    status: task.state,
+    integrity,
+    dryRun: task.dryRun,
+    requestedBy: task.requestedBy,
+    taskId: task.id,
+    ...(round?.id ? { roundId: round.id } : {}),
+    ...(agent?.id ? { agentId: agent.id } : {}),
+    ...(agent?.role ? { agentRole: agent.role } : {}),
+    ...(agent?.label ? { agentLabel: agent.label } : {}),
+    ...(profile ? { profile } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(command ? { command } : {}),
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    ...(task.startedAt ? { startedAt: task.startedAt } : {}),
+    ...(task.completedAt ? { completedAt: task.completedAt } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(timedOut !== undefined ? { timedOut } : {}),
+    ...(stdoutTruncated !== undefined ? { stdoutTruncated } : {}),
+    ...(stderrTruncated !== undefined ? { stderrTruncated } : {}),
+    ...(outputPreview ? { outputPreview } : {}),
+    ...(task.error ? { error: task.error } : {}),
+  };
+  return run;
+}
+
+function managerWorkerRunFromMissingTask(
+  taskId: string,
+  agent: ManagerAgent | undefined,
+  round: ManagerRound | undefined,
+  now: Date,
+): ManagerWorkerRun {
+  const updatedAt = agent?.updatedAt ?? round?.updatedAt ?? now.toISOString();
+  return {
+    id: `missing-task:${taskId}`,
+    status: "missing",
+    integrity: ["missing-task"],
+    dryRun: false,
+    taskId,
+    ...(round?.id ? { roundId: round.id } : {}),
+    ...(agent?.id ? { agentId: agent.id } : {}),
+    ...(agent?.role ? { agentRole: agent.role } : {}),
+    ...(agent?.label ? { agentLabel: agent.label } : {}),
+    ...(agent?.profile ? { profile: agent.profile } : {}),
+    ...(agent?.cwd ? { cwd: agent.cwd } : {}),
+    ...(agent?.sessionId ? { sessionId: agent.sessionId } : {}),
+    createdAt: updatedAt,
+    updatedAt,
+    ...(agent?.lastError ? { error: agent.lastError } : { error: "worker task record is missing" }),
+  };
+}
+
+function managerWorkerRunIntegrity(input: {
+  task: ManagerTask;
+  agent: ManagerAgent | undefined;
+  round: ManagerRound | undefined;
+  profile: string | undefined;
+  sessionId: string | undefined;
+}): ManagerWorkerRunIntegrity[] {
+  const issues: ManagerWorkerRunIntegrity[] = [];
+  const params = isRecord(input.task.params) ? input.task.params : {};
+  if (stringValue(params.agentId) && !input.agent) issues.push("missing-agent");
+  if (stringValue(params.roundId) && !input.round) issues.push("orphan-task");
+  if (input.agent?.status === "stale") issues.push("stale-agent");
+  if (input.task.id.startsWith("spawn-failed-") || input.task.error?.includes("dispatch spawn")) {
+    issues.push("synthetic-failure");
+  }
+  if (
+    !input.sessionId &&
+    !input.task.dryRun &&
+    input.task.state === "succeeded" &&
+    input.profile === "claude-code"
+  ) {
+    issues.push("missing-session");
+  }
+  return issues.length > 0 ? issues : ["ok"];
+}
+
+function summarizeManagerWorkerRuns(runs: ManagerWorkerRun[]) {
+  return {
+    total: runs.length,
+    running: runs.filter((run) =>
+      ["pending", "running", "waiting_for_device", "restart_required"].includes(run.status),
+    ).length,
+    succeeded: runs.filter((run) => run.status === "succeeded").length,
+    failed: runs.filter((run) => run.status === "failed").length,
+    blocked: runs.filter((run) => run.status === "blocked").length,
+    stale: runs.filter((run) => run.integrity.includes("stale-agent")).length,
+    missing: runs.filter((run) => run.status === "missing").length,
+    withSession: runs.filter((run) => run.sessionId).length,
+    withoutSession: runs.filter((run) => !run.sessionId).length,
+    integrityIssues: runs.filter((run) => run.integrity.length > 1 || !run.integrity.includes("ok"))
+      .length,
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 interface ManagerAcknowledgeInput {

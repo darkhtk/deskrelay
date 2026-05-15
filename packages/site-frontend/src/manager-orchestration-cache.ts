@@ -3,6 +3,7 @@ import type {
   ManagerRound,
   ManagerRoundReportResponse,
   ManagerSessionHygieneReport,
+  ManagerWorkerRunLedgerResponse,
 } from "@deskrelay/shared";
 import { MANAGER_ORCHESTRATION_CACHE_PREFIX, browserCacheKey } from "./browser-cache.ts";
 
@@ -11,6 +12,8 @@ export interface ManagerOrchestrationCacheSnapshot {
   rounds: ManagerRound[];
   report: ManagerRoundReportResponse | null;
   reportRoundId: string | null;
+  workerRuns: ManagerWorkerRunLedgerResponse | null;
+  workerRunsRoundId: string | null;
   hygiene: ManagerSessionHygieneReport | null;
   cachedAt: number;
 }
@@ -36,6 +39,9 @@ export function readManagerOrchestrationCache(): ManagerOrchestrationCacheSnapsh
       rounds: parsed.rounds as ManagerRound[],
       report: (parsed.report as ManagerRoundReportResponse | null | undefined) ?? null,
       reportRoundId: typeof parsed.reportRoundId === "string" ? parsed.reportRoundId : null,
+      workerRuns: (parsed.workerRuns as ManagerWorkerRunLedgerResponse | null | undefined) ?? null,
+      workerRunsRoundId:
+        typeof parsed.workerRunsRoundId === "string" ? parsed.workerRunsRoundId : null,
       hygiene: (parsed.hygiene as ManagerSessionHygieneReport | null | undefined) ?? null,
       cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : 0,
     };
@@ -57,6 +63,12 @@ export function writeManagerOrchestrationCache(
         "reportRoundId" in patch
           ? (patch.reportRoundId ?? null)
           : (previous?.reportRoundId ?? null),
+      workerRuns:
+        "workerRuns" in patch ? (patch.workerRuns ?? null) : (previous?.workerRuns ?? null),
+      workerRunsRoundId:
+        "workerRunsRoundId" in patch
+          ? (patch.workerRunsRoundId ?? null)
+          : (previous?.workerRunsRoundId ?? null),
       hygiene: "hygiene" in patch ? (patch.hygiene ?? null) : (previous?.hygiene ?? null),
       cachedAt: Date.now(),
     };

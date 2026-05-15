@@ -49,6 +49,7 @@ import type {
   ManagerWorkerCheckResult,
   ManagerWorkerListResponse,
   ManagerWorkerProfile,
+  ManagerWorkerRunLedgerResponse,
   UpdateState,
 } from "@deskrelay/shared";
 
@@ -415,6 +416,7 @@ export type {
   ManagerAssistantStatusReportResponse,
   ManagerStateViewResponse,
   ManagerWorkerCheckResult,
+  ManagerWorkerRunLedgerResponse,
   ManagerWorkerProfile,
 };
 
@@ -634,6 +636,11 @@ export const api = {
       acknowledgedBy: "browser",
       ...(reason ? { reason } : {}),
     }),
+  managerWorkerRuns: (limit?: number) =>
+    request<ManagerWorkerRunLedgerResponse>(
+      "GET",
+      `/api/manager/worker-runs${typeof limit === "number" ? `?limit=${limit}` : ""}`,
+    ),
   managerEventsRecent: (afterSeq?: number) =>
     request<ManagerEventListResponse>(
       "GET",
@@ -720,6 +727,13 @@ export const api = {
     request<ManagerRoundReportResponse>(
       "GET",
       `/api/manager/rounds/${encodeURIComponent(id)}/report`,
+    ),
+  managerRoundWorkerRuns: (id: string, limit?: number) =>
+    request<ManagerWorkerRunLedgerResponse>(
+      "GET",
+      `/api/manager/rounds/${encodeURIComponent(id)}/worker-runs${
+        typeof limit === "number" ? `?limit=${limit}` : ""
+      }`,
     ),
   acknowledgeManagerRound: (id: string, reason?: string) =>
     request<ManagerRound>("POST", `/api/manager/rounds/${encodeURIComponent(id)}/acknowledge`, {

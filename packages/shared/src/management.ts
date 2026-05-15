@@ -229,6 +229,65 @@ export interface ManagerTaskListResponse {
   tasks: ManagerTask[];
 }
 
+export type ManagerWorkerRunStatus = ManagerTaskState | "missing";
+
+export type ManagerWorkerRunIntegrity =
+  | "ok"
+  | "missing-task"
+  | "missing-agent"
+  | "orphan-task"
+  | "stale-agent"
+  | "synthetic-failure"
+  | "missing-session";
+
+export interface ManagerWorkerRun {
+  id: string;
+  status: ManagerWorkerRunStatus;
+  integrity: ManagerWorkerRunIntegrity[];
+  dryRun: boolean;
+  requestedBy?: ManagerTaskRequestedBy;
+  taskId?: string;
+  roundId?: string;
+  agentId?: string;
+  agentRole?: string;
+  agentLabel?: string;
+  profile?: string;
+  cwd?: string;
+  sessionId?: string;
+  command?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  exitCode?: number;
+  timedOut?: boolean;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+  outputPreview?: string;
+  error?: string;
+}
+
+export interface ManagerWorkerRunLedgerSummary {
+  total: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  blocked: number;
+  stale: number;
+  missing: number;
+  withSession: number;
+  withoutSession: number;
+  integrityIssues: number;
+}
+
+export interface ManagerWorkerRunLedgerResponse {
+  generatedAt: string;
+  roundId?: string;
+  runs: ManagerWorkerRun[];
+  summary: ManagerWorkerRunLedgerSummary;
+}
+
 export interface ManagerAuditLogResponse {
   entries: ManagerTask[];
 }

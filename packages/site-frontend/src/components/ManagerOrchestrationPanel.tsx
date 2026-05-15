@@ -6,6 +6,7 @@ import type {
   ManagerSessionHygieneReport,
   ManagerStateViewResponse,
   ManagerTask,
+  ManagerWorkerRun,
 } from "@deskrelay/shared";
 import {
   type Component,
@@ -29,6 +30,7 @@ interface ManagerOrchestrationPanelProps {
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
+  workerRuns?: ManagerWorkerRun[] | undefined;
   hygiene?: ManagerSessionHygieneReport | null | undefined;
   hygieneLoading?: boolean | undefined;
   hygieneCleanupBusy?: boolean | undefined;
@@ -198,6 +200,9 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               onRefresh={props.onRefreshState}
               onRetryTask={props.onRetryTask}
             />
+          </OrchestrationSection>
+          <OrchestrationSection title="Worker runs" class="manager-section-worker-runs">
+            <WorkerRunsView runs={props.workerRuns ?? []} />
           </OrchestrationSection>
           <OrchestrationSection title="Worker flow" class="manager-section-flow">
             <MermaidFlowView
@@ -436,6 +441,57 @@ const CurrentStateView: Component<{
     </div>
   );
 };
+
+const WorkerRunsView: Component<{ runs: ManagerWorkerRun[] }> = (props) => (
+  <div class="manager-worker-runs" aria-label="worker run ledger">
+    <div class="manager-worker-run-row manager-worker-run-row-head">
+      <span>Worker</span>
+      <span>Status</span>
+      <span>Session</span>
+      <span>Result</span>
+      <span>Signal</span>
+    </div>
+    <For each={props.runs.slice(0, 12)}>
+      {(run) => (
+        <div
+          class="manager-worker-run-row"
+          classList={{
+            "manager-worker-run-row-problem":
+              run.integrity.some((item) => item !== "ok") ||
+              ["failed", "blocked", "missing"].includes(run.status),
+          }}
+        >
+          <span class="manager-worker-run-main">
+            <strong>{run.agentRole ?? run.agentLabel ?? run.profile ?? "worker"}</strong>
+            <small title={run.cwd ?? ""}>
+              {clip(run.cwd ?? run.profile ?? run.taskId ?? "", 42)}
+            </small>
+          </span>
+          <span class={`manager-agent-status manager-agent-status-${statusTone(run.status)}`}>
+            {statusLabel(run.status)}
+          </span>
+          <span title={run.sessionId ?? run.taskId ?? ""}>
+            {run.sessionId
+              ? shortId(run.sessionId)
+              : run.taskId
+                ? `task ${shortId(run.taskId)}`
+                : "-"}
+          </span>
+          <span title={workerRunResultTitle(run)}>{workerRunResultLabel(run)}</span>
+          <span title={run.error || run.outputPreview || run.integrity.join(", ")}>
+            {workerRunSignal(run)}
+          </span>
+        </div>
+      )}
+    </For>
+    <Show when={props.runs.length > 12}>
+      <p class="manager-orchestration-empty">{props.runs.length - 12} older worker runs hidden.</p>
+    </Show>
+    <Show when={props.runs.length === 0}>
+      <p class="manager-orchestration-empty">No worker runs recorded for this round yet.</p>
+    </Show>
+  </div>
+);
 
 const AgentsView: Component<{ agents: ManagerAgent[] }> = (props) => (
   <div class="manager-agent-table" aria-label="orchestration agents">
@@ -1089,6 +1145,36 @@ function statusLabel(status: string | undefined): string {
   }
 }
 
+function workerRunResultLabel(run: ManagerWorkerRun): string {
+  if (run.status === "missing") return "missing task";
+  if (run.timedOut) return "timeout";
+  if (typeof run.exitCode === "number") {
+    return `exit ${run.exitCode}${run.durationMs ? ` · ${formatDuration(run.durationMs)}` : ""}`;
+  }
+  if (run.durationMs) return formatDuration(run.durationMs);
+  if (run.completedAt) return formatTime(run.completedAt);
+  if (run.startedAt) return `started ${formatTime(run.startedAt)}`;
+  return "-";
+}
+
+function workerRunResultTitle(run: ManagerWorkerRun): string {
+  return [
+    run.command ? `command: ${run.command}` : "",
+    run.startedAt ? `started: ${run.startedAt}` : "",
+    run.completedAt ? `completed: ${run.completedAt}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function workerRunSignal(run: ManagerWorkerRun): string {
+  const issues = run.integrity.filter((item) => item !== "ok");
+  if (issues.length > 0) return issues.join(", ");
+  if (run.error) return clip(run.error, 64);
+  if (run.outputPreview) return clip(run.outputPreview, 64);
+  return "ok";
+}
+
 function formatFreshness(state: ManagerStateViewResponse | null | undefined): string | undefined {
   if (!state?.freshness) return undefined;
   if (state.freshness.stale) return "signal stale";
@@ -1096,6 +1182,15 @@ function formatFreshness(state: ManagerStateViewResponse | null | undefined): st
     return `updated ${formatRelativeDuration(state.freshness.ageMs)} ago`;
   }
   return "updated now";
+}
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms)) return "-";
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${Math.round(seconds % 60)}s`;
 }
 
 function formatRelativeDuration(ms: number): string {
