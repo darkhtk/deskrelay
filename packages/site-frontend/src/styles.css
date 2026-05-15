@@ -5793,7 +5793,19 @@ dialog.approval-modal-root,
   padding: 2px 14px 12px;
 }
 .manager-orchestration-panel-standalone .manager-orchestration-body {
+  align-content: start;
+  grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
   padding: 4px 16px 16px;
+}
+.manager-section-overview,
+.manager-section-sequence {
+  grid-column: 1 / -1;
+}
+.manager-section-agents,
+.manager-section-timeline,
+.manager-section-artifacts,
+.manager-section-hygiene {
+  align-content: start;
 }
 .manager-orchestration-resize-handle {
   align-items: center;
@@ -5931,6 +5943,45 @@ body.manager-orchestration-resizing {
 }
 .manager-timeline-blocked span {
   color: var(--danger);
+}
+.manager-mermaid-sequence {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.manager-mermaid-render {
+  color: var(--text);
+  min-height: 220px;
+  min-width: 0;
+  overflow: auto;
+}
+.manager-mermaid-svg {
+  min-width: 1120px;
+}
+.manager-mermaid-svg svg {
+  display: block;
+  height: auto;
+  max-width: none;
+  min-width: 1120px;
+  width: auto;
+}
+.manager-mermaid-source {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.manager-mermaid-source summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.manager-mermaid-source pre {
+  color: var(--text-muted);
+  font-family: var(--mono-font);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre;
 }
 .manager-flow {
   display: grid;
@@ -6510,6 +6561,23 @@ body.manager-orchestration-resizing {
   }
   .manager-orchestration-panel-standalone.manager-orchestration-panel-expanded {
     height: auto;
+  }
+  .manager-orchestration-panel-standalone .manager-orchestration-body {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: 10px;
+  }
+  .manager-section-overview,
+  .manager-section-sequence {
+    grid-column: auto;
+  }
+  .manager-mermaid-render {
+    min-height: 180px;
+  }
+  .manager-mermaid-svg {
+    min-width: 980px;
+  }
+  .manager-mermaid-svg svg {
+    min-width: 980px;
   }
   .manager-orchestration-panel-head {
     align-items: center;

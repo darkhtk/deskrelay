@@ -6,7 +6,16 @@ import type {
   ManagerSessionHygieneReport,
   ManagerTask,
 } from "@deskrelay/shared";
-import { type Component, For, type JSX, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  type Component,
+  For,
+  type JSX,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 
 type Tone = "neutral" | "running" | "done" | "blocked";
 
@@ -138,22 +147,22 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
 
       <Show when={isExpanded()}>
         <div class="manager-orchestration-body">
-          <OrchestrationSection title="Overview">
+          <OrchestrationSection title="Overview" class="manager-section-overview">
             <OverviewView round={activeRound()} agents={agents()} tasks={tasks()} />
           </OrchestrationSection>
-          <OrchestrationSection title="Agents">
+          <OrchestrationSection title="Worker sequence" class="manager-section-sequence">
+            <MermaidSequenceView round={activeRound()} agents={agents()} tasks={tasks()} />
+          </OrchestrationSection>
+          <OrchestrationSection title="Agents" class="manager-section-agents">
             <AgentsView agents={agents()} />
           </OrchestrationSection>
-          <OrchestrationSection title="Timeline">
+          <OrchestrationSection title="Timeline" class="manager-section-timeline">
             <TimelineView entries={timeline()} />
           </OrchestrationSection>
-          <OrchestrationSection title="Flow">
-            <FlowView round={activeRound()} agents={agents()} />
-          </OrchestrationSection>
-          <OrchestrationSection title="Artifacts">
+          <OrchestrationSection title="Artifacts" class="manager-section-artifacts">
             <ArtifactsView artifacts={artifacts()} />
           </OrchestrationSection>
-          <OrchestrationSection title="Hygiene">
+          <OrchestrationSection title="Hygiene" class="manager-section-hygiene">
             <HygieneView
               report={props.hygiene}
               loading={props.hygieneLoading}
@@ -177,8 +186,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   );
 };
 
-const OrchestrationSection: Component<{ title: string; children: JSX.Element }> = (props) => (
-  <section class="manager-orchestration-section" aria-label={props.title}>
+const OrchestrationSection: Component<{ title: string; class?: string; children: JSX.Element }> = (
+  props,
+) => (
+  <section
+    class={`manager-orchestration-section ${props.class ?? ""}`.trim()}
+    aria-label={props.title}
+  >
     <h4>{props.title}</h4>
     {props.children}
   </section>
@@ -284,39 +298,89 @@ const TimelineView: Component<{ entries: TimelineEntry[] }> = (props) => (
   </ol>
 );
 
-const FlowView: Component<{ round: ManagerRound | undefined; agents: ManagerAgent[] }> = (
-  props,
-) => (
-  <div class="manager-flow" aria-label="agent flow visualization">
-    <div class="manager-flow-spine">
-      <div class="manager-flow-node manager-flow-node-manager">
-        <strong>Manager</strong>
-        <span>supervisor</span>
-      </div>
-      <div class="manager-flow-edge" />
-      <div class={`manager-flow-node manager-flow-node-${statusTone(props.round?.status)}`}>
-        <strong>{props.round?.title ?? "Round"}</strong>
-        <span>{statusLabel(props.round?.status)}</span>
-      </div>
+const MermaidSequenceView: Component<{
+  round: ManagerRound | undefined;
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+}> = (props) => {
+  const source = createMemo(() =>
+    buildWorkerSequenceDiagram(props.round, props.agents, props.tasks),
+  );
+  return (
+    <div class="manager-mermaid-sequence">
+      <MermaidDiagram source={source()} />
+      <details class="manager-mermaid-source">
+        <summary>Mermaid source</summary>
+        <pre>{source()}</pre>
+      </details>
     </div>
-    <div class="manager-flow-branches">
-      <For each={props.agents.slice(0, 12)}>
-        {(agent) => (
-          <div class={`manager-flow-agent manager-flow-agent-${statusTone(agent.status)}`}>
-            <span class="manager-flow-connector" />
-            <div class="manager-flow-node">
-              <strong>{agent.role}</strong>
-              <span>{statusLabel(agent.status)}</span>
-            </div>
-          </div>
-        )}
-      </For>
-      <Show when={props.agents.length === 0}>
-        <p class="manager-orchestration-empty">No agents yet.</p>
+  );
+};
+
+const MermaidDiagram: Component<{ source: string }> = (props) => {
+  const [svg, setSvg] = createSignal("");
+  const [error, setError] = createSignal<string | null>(null);
+  let renderId = 0;
+
+  createEffect(() => {
+    const source = props.source;
+    const currentId = ++renderId;
+    setSvg("");
+    setError(null);
+    void renderMermaid(source, currentId);
+  });
+
+  async function renderMermaid(source: string, currentId: number) {
+    try {
+      const mermaidModule = await import("mermaid");
+      const mermaid = mermaidModule.default;
+      const dark = globalThis.document?.documentElement.dataset.theme === "dark";
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: dark ? "dark" : "base",
+        themeVariables: {
+          background: "transparent",
+          fontFamily: "inherit",
+          primaryColor: dark ? "#2f2f2f" : "#f6f5f2",
+          primaryTextColor: dark ? "#f4f4f4" : "#1f1e1b",
+          primaryBorderColor: dark ? "#525252" : "#d6d1c8",
+          lineColor: dark ? "#8a8580" : "#8d867b",
+          actorBorder: dark ? "#6f6a63" : "#c9c1b7",
+          actorBkg: dark ? "#262626" : "#fbfaf8",
+          actorTextColor: dark ? "#f4f4f4" : "#1f1e1b",
+          signalColor: dark ? "#f4f4f4" : "#1f1e1b",
+          signalTextColor: dark ? "#f4f4f4" : "#1f1e1b",
+          noteBkgColor: dark ? "#2a2521" : "#fff6df",
+          noteTextColor: dark ? "#f4f4f4" : "#1f1e1b",
+          noteBorderColor: dark ? "#8c6a46" : "#e0b875",
+        },
+      });
+      const result = await mermaid.render(`manager-sequence-${currentId}`, source);
+      if (currentId !== renderId) return;
+      setSvg(result.svg);
+    } catch (err) {
+      if (currentId !== renderId) return;
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div class="manager-mermaid-render" aria-label="worker sequence diagram">
+      <Show
+        when={!error()}
+        fallback={<p class="manager-orchestration-empty">Mermaid render failed: {error()}</p>}
+      >
+        <Show
+          when={svg()}
+          fallback={<p class="manager-orchestration-empty">Rendering worker sequence...</p>}
+        >
+          {(html) => <div class="manager-mermaid-svg" innerHTML={html()} />}
+        </Show>
       </Show>
     </div>
-  </div>
-);
+  );
+};
 
 const ArtifactsView: Component<{ artifacts: ArtifactEntry[] }> = (props) => (
   <div class="manager-artifact-list">
@@ -471,6 +535,95 @@ function summarizeTotals(agents: ManagerAgent[]) {
       .length,
     blocked: agents.filter((agent) => ["blocked", "failed", "stale"].includes(agent.status)).length,
   };
+}
+
+function buildWorkerSequenceDiagram(
+  round: ManagerRound | undefined,
+  agents: ManagerAgent[],
+  tasks: ManagerTask[],
+): string {
+  const visibleAgents = agents.slice(0, 10);
+  const lines = ["sequenceDiagram", "    autonumber", "    participant Manager as Manager"];
+  for (const [index, agent] of visibleAgents.entries()) {
+    lines.push(`    participant W${index + 1} as ${mermaidText(workerLabel(agent), 34)}`);
+  }
+
+  if (!round && visibleAgents.length === 0) {
+    lines.push("    Note over Manager: No orchestration round is active yet");
+    return lines.join("\n");
+  }
+
+  if (round) {
+    lines.push(`    Note over Manager: ${mermaidText(round.title, 72)}`);
+    if (round.objective) {
+      lines.push(`    Note over Manager: ${mermaidText(round.objective, 96)}`);
+    }
+  }
+
+  for (const [index, agent] of visibleAgents.entries()) {
+    const alias = `W${index + 1}`;
+    const task = tasks.find((candidate) => candidate.id === agent.taskId);
+    const firstStep = task?.steps[0];
+    const lastStep = task?.steps[task.steps.length - 1];
+    const assignment =
+      agent.lastInstruction ||
+      firstStep?.summary ||
+      task?.kind ||
+      `status ${statusLabel(agent.status)}`;
+    lines.push(`    Manager->>${alias}: ${mermaidText(assignment, 82)}`);
+    lines.push(
+      `    Note over ${alias}: ${mermaidText(
+        `${agent.profile} · ${statusLabel(agent.status)} · ${formatTime(agent.updatedAt)}`,
+        82,
+      )}`,
+    );
+    if (lastStep) {
+      lines.push(
+        `    ${alias}-->>Manager: ${mermaidText(
+          `${lastStep.label} · ${statusLabel(lastStep.status)} · ${lastStep.summary}`,
+          92,
+        )}`,
+      );
+    } else {
+      lines.push(
+        `    ${alias}-->>Manager: ${mermaidText(
+          agent.lastError || agent.lastOutput || statusLabel(agent.status),
+          92,
+        )}`,
+      );
+    }
+    if (["blocked", "failed", "stale"].includes(agent.status)) {
+      lines.push(`    Manager-->>${alias}: ${mermaidText("needs review or recovery", 48)}`);
+    }
+  }
+
+  const unassignedTasks = tasks.filter((task) => !agents.some((agent) => agent.taskId === task.id));
+  for (const task of unassignedTasks.slice(0, 4)) {
+    lines.push(
+      `    Manager->>Manager: ${mermaidText(
+        `${task.kind} · ${statusLabel(task.state)} · ${task.error || task.steps.at(-1)?.summary || ""}`,
+        92,
+      )}`,
+    );
+  }
+
+  if (agents.length > visibleAgents.length) {
+    lines.push(
+      `    Note over Manager: ${agents.length - visibleAgents.length} more workers hidden`,
+    );
+  }
+  if (round?.summary) {
+    lines.push(`    Note over Manager: ${mermaidText(round.summary, 96)}`);
+  }
+  if (round?.error) {
+    lines.push(`    Note over Manager: ${mermaidText(round.error, 96)}`);
+  }
+
+  return lines.join("\n");
+}
+
+function workerLabel(agent: ManagerAgent): string {
+  return agent.label && agent.label !== agent.role ? `${agent.role} ${agent.label}` : agent.role;
 }
 
 function buildTimeline(
@@ -676,6 +829,15 @@ function clip(value: string | undefined, max: number): string {
   const text = value?.replace(/\s+/g, " ").trim() ?? "";
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1)}...`;
+}
+
+function mermaidText(value: string | undefined, max: number): string {
+  const text = clip(value, max)
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[#:;{}<>"'`|[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || "-";
 }
 
 function shortId(value: string): string {
