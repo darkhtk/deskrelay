@@ -80,10 +80,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const currentState = createMemo(() => props.state?.current ?? null);
   const freshnessLabel = createMemo(() => formatFreshness(props.state));
   const activeIssueCount = createMemo(
-    () =>
-      props.state?.counts.blockers ??
-      props.state?.blockers.length ??
-      (totals().blocked > 0 ? totals().blocked : 0),
+    () => props.state?.counts.blockers ?? props.state?.blockers.length ?? 0,
   );
 
   onCleanup(() => {
