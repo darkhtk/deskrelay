@@ -22,6 +22,7 @@ interface ManagerOrchestrationPanelProps {
   hygiene?: ManagerSessionHygieneReport | null | undefined;
   hygieneLoading?: boolean | undefined;
   hygieneCleanupBusy?: boolean | undefined;
+  standalone?: boolean | undefined;
   onRefreshHygiene?: (() => void) | undefined;
   onCleanupHygiene?: (() => void) | undefined;
 }
@@ -44,6 +45,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const [expanded, setExpanded] = createSignal(false);
   const [panelHeight, setPanelHeight] = createSignal(readPanelHeight());
   let stopResize: (() => void) | undefined;
+  const isExpanded = () => Boolean(props.standalone) || expanded();
   const activeRound = createMemo(() => pickActiveRound(props.rounds));
   const agents = createMemo(() => {
     const round = activeRound();
@@ -62,7 +64,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   });
 
   const startResize = (event: PointerEvent) => {
-    if (!expanded()) return;
+    if (!isExpanded() || props.standalone) return;
     event.preventDefault();
     stopResize?.();
     const startY = event.clientY;
@@ -91,16 +93,22 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   return (
     <section
       class="manager-orchestration-panel"
-      classList={{ "manager-orchestration-panel-expanded": expanded() }}
+      classList={{
+        "manager-orchestration-panel-expanded": isExpanded(),
+        "manager-orchestration-panel-standalone": Boolean(props.standalone),
+      }}
       aria-label="orchestration progress"
       style={{ "--manager-orchestration-panel-height": `${panelHeight()}px` } as JSX.CSSProperties}
     >
       <header class="manager-orchestration-panel-head">
+        <Show when={!props.standalone}>
         <button
           type="button"
           class="manager-orchestration-title"
-          aria-expanded={expanded()}
-          onClick={() => setExpanded((current) => !current)}
+          aria-expanded={isExpanded()}
+          onClick={() => {
+            if (!props.standalone) setExpanded((current) => !current);
+          }}
         >
           <span
             class={`manager-status-dot manager-status-dot-${statusTone(activeRound()?.status)}`}
@@ -117,17 +125,19 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           <span>running {totals().running}</span>
           <span>blocked {totals().blocked}</span>
         </div>
-        <button
-          type="button"
-          class="manager-orchestration-expand"
-          aria-expanded={expanded()}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {expanded() ? "Hide" : "Details"}
-        </button>
+        <Show when={!props.standalone}>
+          <button
+            type="button"
+            class="manager-orchestration-expand"
+            aria-expanded={isExpanded()}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {isExpanded() ? "Hide" : "Details"}
+          </button>
+        </Show>
       </header>
 
-      <Show when={expanded()}>
+      <Show when={isExpanded()}>
         <div class="manager-orchestration-body">
           <OrchestrationSection title="Overview">
             <OverviewView round={activeRound()} agents={agents()} tasks={tasks()} />
@@ -161,6 +171,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           title="높이 조절"
           onPointerDown={startResize}
         />
+        </Show>
       </Show>
     </section>
   );

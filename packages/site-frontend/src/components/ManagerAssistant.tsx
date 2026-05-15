@@ -60,6 +60,7 @@ const INITIAL_EVENT: ClaudeStreamEvent = {
 interface ManagerAssistantProps {
   context?: ManagerAssistantChatContext | null;
   devices?: Device[];
+  showOrchestrationPanel?: boolean;
 }
 
 interface ManagerRuntime {
@@ -514,7 +515,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   return (
     <div class="manager-assistant manager-assistant-chat">
-      <Show when={orchestrationStatus()}>
+      <Show when={props.showOrchestrationPanel !== false && orchestrationStatus()}>
         <ManagerOrchestrationPanel
           rounds={orchestration()?.rounds ?? []}
           agents={orchestration()?.agents ?? []}
