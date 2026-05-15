@@ -2367,6 +2367,110 @@ describe("ChatView device refresh bridge", () => {
     });
   });
 
+  test("keeps the visible transcript when a selected session refresh fails", async () => {
+    setBrowserCacheEnabled(false);
+    let readCount = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${DEV.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.0-test",
+              loadedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          method?: string;
+          params?: Record<string, unknown>;
+        };
+        if (body.method === "sessions.list") {
+          return new Response(
+            JSON.stringify({
+              result: [
+                {
+                  sessionId: "sess_keep_visible",
+                  cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+                  title: "Reliable session",
+                  modifiedAt: "2026-04-30T00:00:00.000Z",
+                  fileSize: 1024,
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (body.method === "sessions.read") {
+          readCount += 1;
+          if (readCount > 1) {
+            throw new Error("network changed");
+          }
+          return new Response(
+            JSON.stringify({
+              result: {
+                sessionId: "sess_keep_visible",
+                cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+                events: [
+                  {
+                    type: "assistant",
+                    message: { role: "assistant", content: "still visible" },
+                  },
+                ],
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Reliable session");
+    });
+    const row = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Reliable session"),
+    ) as HTMLButtonElement | undefined;
+    if (!row) throw new Error("session row missing");
+
+    fireEvent.click(row);
+    await waitFor(() => {
+      expect(container.textContent).toContain("still visible");
+      expect(readCount).toBe(1);
+    });
+
+    fireEvent.click(row);
+    await waitFor(() => {
+      expect(readCount).toBe(2);
+      expect(container.textContent).toContain("still visible");
+      expect(container.textContent).not.toContain("network changed");
+    });
+  });
+
   test("waits for the run SSE stream and scrolls composer sends/live CLI events into view", async () => {
     localStorage.setItem(`cr:device:${DEV.id}:defaultCwd`, "C:\\Users\\darkh\\Projects\\deskrelay");
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {

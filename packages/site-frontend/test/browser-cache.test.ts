@@ -34,6 +34,7 @@ describe("browser cache preferences", () => {
   });
 
   test("only reads and writes cached values when cache is enabled", () => {
+    setBrowserCacheEnabled(false);
     expect(writeBrowserCacheValue("cr.usage-cache:test", { ok: true })).toBe(false);
     expect(readBrowserCacheValue("cr.usage-cache:test", 1000)).toBeUndefined();
 
