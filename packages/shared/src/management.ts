@@ -421,6 +421,92 @@ export interface ManagerRoundReportResponse {
   summary: string;
 }
 
+export type ManagerStateViewTone = "idle" | "running" | "warning" | "error";
+export type ManagerStateViewSource = "round" | "task" | "status" | "system";
+
+export interface ManagerStateRoundSummary {
+  id: string;
+  title: string;
+  objective: string;
+  status: ManagerRoundStatus;
+  updatedAt: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  summary?: string;
+  error?: string;
+  counts: {
+    agents: number;
+    completedAgents: number;
+    runningAgents: number;
+    blockedAgents: number;
+    tasks: number;
+    completedTasks: number;
+    runningTasks: number;
+    blockedTasks: number;
+    failedTasks: number;
+  };
+}
+
+export interface ManagerStateTaskSummary {
+  id: string;
+  kind: ManagerTaskKind;
+  state: ManagerTaskState;
+  requestedBy: ManagerTaskRequestedBy;
+  updatedAt: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  targetId?: string;
+  targetLabel?: string;
+  roundId?: string;
+  agentId?: string;
+  agentRole?: string;
+  stale: boolean;
+  staleReason?: string;
+  error?: string;
+}
+
+export interface ManagerStateBlocker {
+  id: string;
+  kind: "task" | "round" | "agent";
+  severity: "warning" | "error";
+  message: string;
+  detail?: string;
+  taskId?: string;
+  roundId?: string;
+  agentId?: string;
+}
+
+export interface ManagerStateViewResponse {
+  generatedAt: string;
+  status: {
+    tone: ManagerStateViewTone;
+    source: ManagerStateViewSource;
+    message: string;
+    detail?: string;
+  };
+  counts: {
+    rounds: number;
+    activeRounds: number;
+    agents: number;
+    runningAgents: number;
+    blockedAgents: number;
+    tasks: number;
+    runningTasks: number;
+    blockedTasks: number;
+    failedTasks: number;
+    staleTasks: number;
+    blockers: number;
+  };
+  activeRound?: ManagerStateRoundSummary;
+  recentRounds: ManagerStateRoundSummary[];
+  runningTasks: ManagerStateTaskSummary[];
+  staleTasks: ManagerStateTaskSummary[];
+  blockers: ManagerStateBlocker[];
+  latestStatus?: ManagerAssistantStatusReport;
+}
+
 export interface ManagerAssistantConversationState {
   generatedAt: string;
   conversationId: string;

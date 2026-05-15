@@ -57,6 +57,10 @@ import {
   type ManagerSessionHygieneCleanupResponse,
   type ManagerSessionHygieneItem,
   type ManagerSessionHygieneReport,
+  type ManagerStateBlocker,
+  type ManagerStateRoundSummary,
+  type ManagerStateTaskSummary,
+  type ManagerStateViewResponse,
   type ManagerSystemSummary,
   type ManagerTask,
   type ManagerTaskKind,
@@ -346,6 +350,24 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return c.json(response, 201);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.get("/api/manager/state", async (c) => {
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
+      const statusReports = await readManagerAssistantStatusReports(repoRoot, 1);
+      return c.json(
+        await buildManagerStateView({
+          taskStore: managerTaskStore,
+          orchestrationStore: managerOrchestrationStore,
+          latestStatus: statusReports.latest,
+          now: new Date(),
+        }),
+      );
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
     }
   });
 
