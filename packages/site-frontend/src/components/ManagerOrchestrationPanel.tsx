@@ -41,7 +41,9 @@ interface ManagerOrchestrationPanelProps {
   actionBusy?: boolean | undefined;
   standalone?: boolean | undefined;
   onAcknowledgeFailures?: (() => void) | undefined;
+  onAcknowledgeRound?: ((roundId: string) => void) | undefined;
   onCancelTask?: ((taskId: string) => void) | undefined;
+  onRepairRound?: ((roundId: string) => void) | undefined;
   onRefreshState?: (() => void) | undefined;
   onRetryTask?: ((taskId: string) => void) | undefined;
   onRefreshHygiene?: (() => void) | undefined;
@@ -204,7 +206,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             />
           </OrchestrationSection>
           <OrchestrationSection title="Round health" class="manager-section-health">
-            <RoundHealthGateView health={props.health} />
+            <RoundHealthGateView
+              health={props.health}
+              busy={props.actionBusy || props.acknowledgeBusy}
+              onAcknowledgeRound={props.onAcknowledgeRound}
+              onRepairRound={props.onRepairRound}
+              onRetryTask={props.onRetryTask}
+            />
           </OrchestrationSection>
           <OrchestrationSection title="Worker runs" class="manager-section-worker-runs">
             <WorkerRunsView runs={props.workerRuns ?? []} />
@@ -449,6 +457,10 @@ const CurrentStateView: Component<{
 
 const RoundHealthGateView: Component<{
   health?: ManagerRoundHealthGate | null | undefined;
+  busy?: boolean | undefined;
+  onAcknowledgeRound?: ((roundId: string) => void) | undefined;
+  onRepairRound?: ((roundId: string) => void) | undefined;
+  onRetryTask?: ((taskId: string) => void) | undefined;
 }> = (props) => {
   const issues = createMemo(() => props.health?.issues ?? []);
   return (
@@ -504,6 +516,14 @@ const RoundHealthGateView: Component<{
                       <Show when={issue.detail}>
                         {(detail) => <small>{clip(detail(), 160)}</small>}
                       </Show>
+                      <HealthIssueAction
+                        issue={issue}
+                        roundId={health().roundId}
+                        busy={props.busy}
+                        onAcknowledgeRound={props.onAcknowledgeRound}
+                        onRepairRound={props.onRepairRound}
+                        onRetryTask={props.onRetryTask}
+                      />
                     </li>
                   )}
                 </For>
@@ -513,6 +533,43 @@ const RoundHealthGateView: Component<{
         )}
       </Show>
     </div>
+  );
+};
+
+const HealthIssueAction: Component<{
+  issue: ManagerRoundHealthGate["issues"][number];
+  roundId: string;
+  busy?: boolean | undefined;
+  onAcknowledgeRound?: ((roundId: string) => void) | undefined;
+  onRepairRound?: ((roundId: string) => void) | undefined;
+  onRetryTask?: ((taskId: string) => void) | undefined;
+}> = (props) => {
+  const label = createMemo(() => healthIssueActionLabel(props.issue));
+  const disabled = createMemo(() => {
+    if (props.busy) return true;
+    if (props.issue.action === "retry-worker") return !props.issue.taskId || !props.onRetryTask;
+    if (props.issue.action === "repair-round") return !props.onRepairRound;
+    if (props.issue.action === "acknowledge") return !props.onAcknowledgeRound;
+    return true;
+  });
+  const run = () => {
+    if (disabled()) return;
+    if (props.issue.action === "retry-worker" && props.issue.taskId) {
+      props.onRetryTask?.(props.issue.taskId);
+    } else if (props.issue.action === "repair-round") {
+      props.onRepairRound?.(props.roundId);
+    } else if (props.issue.action === "acknowledge") {
+      props.onAcknowledgeRound?.(props.roundId);
+    }
+  };
+  return (
+    <Show when={label()}>
+      {(text) => (
+        <button type="button" disabled={disabled()} onClick={run}>
+          {text()}
+        </button>
+      )}
+    </Show>
   );
 };
 
@@ -1180,6 +1237,19 @@ function roundHealthTone(status: ManagerRoundHealthGate["status"] | undefined): 
       return "blocked";
     default:
       return "neutral";
+  }
+}
+
+function healthIssueActionLabel(issue: ManagerRoundHealthGate["issues"][number]): string {
+  switch (issue.action) {
+    case "retry-worker":
+      return "Retry";
+    case "repair-round":
+      return "Repair";
+    case "acknowledge":
+      return "Acknowledge";
+    default:
+      return "";
   }
 }
 

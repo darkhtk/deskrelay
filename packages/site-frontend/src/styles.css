@@ -6027,7 +6027,7 @@ body.manager-orchestration-resizing {
   align-items: baseline;
   display: grid;
   gap: 8px;
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: 52px minmax(0, 1fr) auto;
 }
 .manager-round-health-issues span {
   color: var(--warning);
@@ -6042,7 +6042,21 @@ body.manager-orchestration-resizing {
 }
 .manager-round-health-issues small {
   color: var(--text-faint);
-  grid-column: 2;
+  grid-column: 2 / span 2;
+}
+.manager-round-health-issues button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.manager-round-health-issues button:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 .manager-agent-table,
 .manager-worker-runs,

@@ -268,10 +268,36 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     setManagerActionBusy(true);
     try {
       await api.retryManagerTask(taskId);
+      const round = activeRound();
+      if (round) await api.repairManagerRound(round.id);
       mutateManagerState(await api.managerState());
       setRefreshSeq((seq) => seq + 1);
     } finally {
       setManagerActionBusy(false);
+    }
+  }
+
+  async function repairManagerRound(roundId: string) {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    try {
+      await api.repairManagerRound(roundId);
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setManagerActionBusy(false);
+    }
+  }
+
+  async function acknowledgeManagerRound(roundId: string) {
+    if (acknowledgeBusy()) return;
+    setAcknowledgeBusy(true);
+    try {
+      await api.acknowledgeManagerRound(roundId, "acknowledged from round health gate");
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setAcknowledgeBusy(false);
     }
   }
 
@@ -309,7 +335,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
           onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
+          onAcknowledgeRound={(roundId) => void acknowledgeManagerRound(roundId)}
           onCancelTask={(taskId) => void cancelManagerTask(taskId)}
+          onRepairRound={(roundId) => void repairManagerRound(roundId)}
           onRefreshState={() => void refreshManagerStateNow()}
           onRetryTask={(taskId) => void retryManagerTask(taskId)}
         />

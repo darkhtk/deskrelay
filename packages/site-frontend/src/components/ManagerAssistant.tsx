@@ -712,12 +712,44 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     setError(null);
     try {
       await api.retryManagerTask(taskId);
+      const round = activeOrchestrationRound();
+      if (round) await api.repairManagerRound(round.id);
       mutateManagerState(await api.managerState());
       setStatusReportSeq((seq) => seq + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setManagerActionBusy(false);
+    }
+  };
+
+  const repairManagerRound = async (roundId: string) => {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    setError(null);
+    try {
+      await api.repairManagerRound(roundId);
+      mutateManagerState(await api.managerState());
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManagerActionBusy(false);
+    }
+  };
+
+  const acknowledgeManagerRound = async (roundId: string) => {
+    if (acknowledgeBusy()) return;
+    setAcknowledgeBusy(true);
+    setError(null);
+    try {
+      await api.acknowledgeManagerRound(roundId, "acknowledged from round health gate");
+      mutateManagerState(await api.managerState());
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAcknowledgeBusy(false);
     }
   };
 
@@ -758,7 +790,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
           onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
+          onAcknowledgeRound={(roundId) => void acknowledgeManagerRound(roundId)}
           onCancelTask={(taskId) => void cancelManagerTask(taskId)}
+          onRepairRound={(roundId) => void repairManagerRound(roundId)}
           onRefreshState={() => void refreshManagerStateNow()}
           onRetryTask={(taskId) => void retryManagerTask(taskId)}
         />

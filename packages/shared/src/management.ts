@@ -337,6 +337,13 @@ export interface ManagerRoundHealthGateResponse {
   gate: ManagerRoundHealthGate;
 }
 
+export interface ManagerRoundRepairResponse {
+  round: ManagerRound;
+  gate: ManagerRoundHealthGate;
+  changed: boolean;
+  changes: string[];
+}
+
 export interface ManagerAuditLogResponse {
   entries: ManagerTask[];
 }

@@ -51,6 +51,7 @@ import {
   type ManagerRoundHealthGateResponse,
   type ManagerRoundHealthIssue,
   type ManagerRoundListResponse,
+  type ManagerRoundRepairResponse,
   type ManagerRoundReportResponse,
   type ManagerRoundStatus,
   type ManagerRouteCapability,
@@ -860,6 +861,25 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       if (!round) return c.json({ error: "unknown round" }, 404);
       return c.json(
         await buildManagerRoundHealthGate({
+          orchestrationStore: managerOrchestrationStore,
+          taskStore: managerTaskStore,
+          round,
+          now: new Date(),
+        }),
+      );
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/api/manager/rounds/:id/repair", async (c) => {
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      const roundId = c.req.param("id");
+      const round = await managerOrchestrationStore.getRound(roundId);
+      if (!round) return c.json({ error: "unknown round" }, 404);
+      return c.json(
+        await repairManagerRoundEvidence({
           orchestrationStore: managerOrchestrationStore,
           taskStore: managerTaskStore,
           round,
@@ -2017,6 +2037,11 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "POST",
+    path: "/api/manager/rounds/:id/repair",
+    description: "Reconcile one orchestration round with existing worker evidence.",
+  },
+  {
+    method: "POST",
     path: "/api/manager/rounds/:id/acknowledge",
     description: "Acknowledge a failed or blocked orchestration round without deleting history.",
   },
@@ -2302,6 +2327,7 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "manager.orchestration-rounds",
       "manager.worker-runs",
       "manager.round-health-gate",
+      "manager.round-repair",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -2974,10 +3000,11 @@ async function buildManagerRoundHealthGate(
   ]);
   const presentAgents = agents.filter(isPresent);
   const missingAgentIds = input.round.agentIds.filter((_, index) => !agents[index]);
+  const healthRuns = selectManagerRoundHealthRuns(ledger.runs);
   const issues = buildManagerRoundHealthIssues(
     input.round,
     presentAgents,
-    ledger.runs,
+    healthRuns,
     missingAgentIds,
   );
   const hasBlocked = issues.some((issue) => issue.severity === "blocked");
@@ -2985,9 +3012,11 @@ async function buildManagerRoundHealthGate(
   const status =
     hasBlocked || ["blocked", "failed", "cancelled"].includes(input.round.status)
       ? "blocked"
-      : hasWarning || ledger.summary.running > 0 || isManagerRoundInProgress(input.round.status)
+      : hasWarning ||
+          healthRuns.some((run) => isManagerWorkerRunActive(run.status)) ||
+          isManagerRoundInProgress(input.round.status)
         ? "warning"
-        : ledger.summary.total === 0 && presentAgents.length === 0
+        : healthRuns.length === 0 && presentAgents.length === 0
           ? "unknown"
           : "healthy";
   const gate: ManagerRoundHealthGate = {
@@ -2995,20 +3024,140 @@ async function buildManagerRoundHealthGate(
     roundId: input.round.id,
     status,
     title: input.round.title,
-    summary: managerRoundHealthSummary(status, issues, ledger.summary.total),
+    summary: managerRoundHealthSummary(status, issues, healthRuns.length),
     expectedAgents: input.round.agentIds.length,
     expectedTasks: Math.max(
       input.round.taskIds.length,
       presentAgents.filter((agent) => agent.taskId).length,
     ),
-    actualRuns: ledger.summary.total,
-    completedRuns: ledger.summary.succeeded,
-    runningRuns: ledger.summary.running,
-    blockedRuns: ledger.summary.failed + ledger.summary.blocked,
-    missingRuns: ledger.summary.missing,
+    actualRuns: healthRuns.length,
+    completedRuns: healthRuns.filter((run) => run.status === "succeeded").length,
+    runningRuns: healthRuns.filter((run) => isManagerWorkerRunActive(run.status)).length,
+    blockedRuns: healthRuns.filter((run) => run.status === "failed" || run.status === "blocked")
+      .length,
+    missingRuns: healthRuns.filter((run) => run.status === "missing").length,
     issues,
   };
   return { gate };
+}
+
+async function repairManagerRoundEvidence(
+  input: ManagerRoundHealthGateInput,
+): Promise<ManagerRoundRepairResponse> {
+  const syncedAgents = await syncManagerAgentsWithTasks(input.orchestrationStore, input.taskStore);
+  const latestRound = (await input.orchestrationStore.getRound(input.round.id)) ?? input.round;
+  const [tasks, ledger] = await Promise.all([
+    input.taskStore.list(500),
+    buildManagerWorkerRunLedger({
+      orchestrationStore: input.orchestrationStore,
+      taskStore: input.taskStore,
+      roundId: latestRound.id,
+      limit: 500,
+      now: input.now,
+    }),
+  ]);
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const agentById = new Map(syncedAgents.map((agent) => [agent.id, agent]));
+  const healthRuns = selectManagerRoundHealthRuns(ledger.runs);
+  const healthTaskIds = healthRuns
+    .map((run) => run.taskId)
+    .filter(isPresent)
+    .filter((id) => taskById.has(id));
+  const validRoundAgentIds = latestRound.agentIds.filter((id) => agentById.has(id));
+  const validRoundTaskIds = latestRound.taskIds.filter((id) => taskById.has(id));
+  const nextAgentIds = uniqueStrings([
+    ...validRoundAgentIds,
+    ...healthRuns.map((run) => run.agentId).filter(isPresent),
+  ]);
+  const nextTaskIds = uniqueStrings([...validRoundTaskIds, ...healthTaskIds]);
+  const changes: string[] = [];
+  const removedAgents = latestRound.agentIds.length - validRoundAgentIds.length;
+  const removedTasks = latestRound.taskIds.length - validRoundTaskIds.length;
+  if (removedAgents > 0) changes.push(`removed ${removedAgents} missing agent reference(s)`);
+  if (removedTasks > 0) changes.push(`removed ${removedTasks} missing task reference(s)`);
+  const addedTasks = nextTaskIds.filter((id) => !latestRound.taskIds.includes(id)).length;
+  if (addedTasks > 0) changes.push(`linked ${addedTasks} discovered worker task(s)`);
+
+  for (const run of healthRuns) {
+    if (!run.agentId || !run.taskId) continue;
+    const agent = agentById.get(run.agentId);
+    if (!agent) continue;
+    const task = taskById.get(run.taskId);
+    const nextStatus =
+      task && run.status !== "missing"
+        ? managerAgentStatusFromTaskState(task.state)
+        : ("stale" satisfies ManagerAgentStatus);
+    const patch: {
+      taskId?: string;
+      sessionId?: string;
+      status?: ManagerAgentStatus;
+      lastError?: string;
+      lastHeartbeatAt?: string;
+      lastOutputAt?: string;
+      lastOutput?: string;
+    } = {};
+    if (agent.taskId !== run.taskId) patch.taskId = run.taskId;
+    if (run.sessionId && agent.sessionId !== run.sessionId) patch.sessionId = run.sessionId;
+    if (agent.status !== nextStatus) patch.status = nextStatus;
+    if (task?.updatedAt && agent.lastHeartbeatAt !== task.updatedAt)
+      patch.lastHeartbeatAt = task.updatedAt;
+    if (task?.completedAt && agent.lastOutputAt !== task.completedAt)
+      patch.lastOutputAt = task.completedAt;
+    if ((task?.error ?? "") !== (agent.lastError ?? "")) patch.lastError = task?.error ?? "";
+    const output = task ? managerWorkerResultText(task) : "";
+    if (output && output !== agent.lastOutput) patch.lastOutput = output;
+    if (Object.keys(patch).length > 0) {
+      await input.orchestrationStore.updateAgent(agent.id, patch);
+      changes.push(`updated ${agent.role} agent from latest worker evidence`);
+    }
+  }
+
+  const status = managerRoundStatusFromHealthRuns(latestRound, healthRuns, nextAgentIds.length);
+  const patch: {
+    agentIds?: string[];
+    taskIds?: string[];
+    status?: ManagerRoundStatus;
+    completedAt?: string;
+    summary?: string;
+    error?: string;
+  } = {};
+  if (nextAgentIds.join("\u0000") !== latestRound.agentIds.join("\u0000"))
+    patch.agentIds = nextAgentIds;
+  if (nextTaskIds.join("\u0000") !== latestRound.taskIds.join("\u0000"))
+    patch.taskIds = nextTaskIds;
+  if (status !== latestRound.status) {
+    patch.status = status;
+    if (status === "completed") {
+      patch.completedAt = latestRound.completedAt ?? input.now.toISOString();
+      patch.summary = `${healthRuns.length} worker run(s) completed.`;
+      patch.error = "";
+    } else if (status === "blocked") {
+      patch.completedAt = latestRound.completedAt ?? input.now.toISOString();
+      patch.summary = "Round repair found incomplete or failed worker evidence.";
+      patch.error = patch.summary;
+    } else if (status === "running") {
+      patch.completedAt = "";
+      patch.summary = "Round repair found active worker evidence.";
+      patch.error = "";
+    }
+    changes.push(`set round status to ${status}`);
+  }
+  const updated =
+    Object.keys(patch).length > 0
+      ? ((await input.orchestrationStore.updateRound(latestRound.id, patch)) ?? latestRound)
+      : latestRound;
+  const gate = (
+    await buildManagerRoundHealthGate({
+      ...input,
+      round: updated,
+    })
+  ).gate;
+  return {
+    round: updated,
+    gate,
+    changed: changes.length > 0,
+    changes,
+  };
 }
 
 function buildManagerRoundHealthIssues(
@@ -3200,6 +3349,51 @@ function managerRoundHealthSummary(
 
 function isManagerRoundInProgress(status: ManagerRoundStatus): boolean {
   return ["planned", "dispatching", "running", "collecting", "reviewing"].includes(status);
+}
+
+function selectManagerRoundHealthRuns(runs: ManagerWorkerRun[]): ManagerWorkerRun[] {
+  const selected = new Map<string, ManagerWorkerRun>();
+  for (const run of runs) {
+    const key = run.agentId ? `agent:${run.agentId}` : run.taskId ? `task:${run.taskId}` : run.id;
+    if (selected.has(key)) continue;
+    selected.set(key, run);
+  }
+  return [...selected.values()];
+}
+
+function isManagerWorkerRunActive(status: ManagerWorkerRun["status"]): boolean {
+  return (
+    status === "pending" ||
+    status === "running" ||
+    status === "waiting_for_device" ||
+    status === "restart_required"
+  );
+}
+
+function managerRoundStatusFromHealthRuns(
+  round: ManagerRound,
+  runs: ManagerWorkerRun[],
+  expectedAgents: number,
+): ManagerRoundStatus {
+  if (runs.length === 0) {
+    return round.status === "completed" ? "blocked" : round.status;
+  }
+  if (
+    runs.some(
+      (run) =>
+        run.status === "missing" ||
+        run.status === "failed" ||
+        run.status === "blocked" ||
+        run.integrity.some((issue) => issue !== "ok" && issue !== "missing-session"),
+    )
+  ) {
+    return "blocked";
+  }
+  if (runs.some((run) => isManagerWorkerRunActive(run.status))) return "running";
+  const succeeded = runs.filter((run) => run.status === "succeeded").length;
+  if (expectedAgents > 0 && succeeded >= expectedAgents) return "completed";
+  if (round.status === "completed") return "blocked";
+  return round.status;
 }
 
 function findManagerWorkerAgent(

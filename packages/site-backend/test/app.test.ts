@@ -662,6 +662,11 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "POST /api/manager/rounds/:id/repair",
+          authedRequest("POST", "/api/manager/rounds/missing/repair"),
+          [404],
+        ],
+        [
           "POST /api/manager/rounds/:id/acknowledge",
           authedRequest("POST", "/api/manager/rounds/missing/acknowledge"),
           [404],
@@ -2274,6 +2279,107 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(healthBody.gate?.status).toBe("blocked");
     expect(healthBody.gate?.missingRuns).toBe(1);
     expect(healthBody.gate?.issues?.map((issue) => issue.code)).toContain("worker-missing");
+
+    const repair = await app.fetch(authedRequest("POST", `/api/manager/rounds/${round.id}/repair`));
+    expect(repair.status).toBe(200);
+    const repairBody = (await repair.json()) as {
+      changed?: boolean;
+      changes?: string[];
+      round?: { taskIds?: string[] };
+      gate?: { status?: string; missingRuns?: number };
+    };
+    expect(repairBody.changed).toBe(true);
+    expect(repairBody.changes?.join("\n")).toContain("missing task reference");
+    expect(repairBody.round?.taskIds ?? []).not.toContain("missing-task-001");
+    expect(repairBody.gate?.status).toBe("blocked");
+    expect(repairBody.gate?.missingRuns).toBe(1);
+  });
+
+  test("manager round repair uses latest worker evidence instead of stale failed attempts", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+      managerOrchestrationStore,
+    });
+    const round = await managerOrchestrationStore.createRound({
+      title: "R-retry-ledger",
+      objective: "Latest successful retry should clear old failed evidence.",
+    });
+    const agent = await managerOrchestrationStore.createAgent({
+      role: "verifier",
+      label: "Verifier",
+      profile: "echo",
+      roundId: round.id,
+    });
+    const failed = await managerTaskStore.create({
+      kind: "run-worker",
+      dryRun: false,
+      requestedBy: "manager-assistant",
+      params: {
+        agentId: agent.id,
+        agentRole: agent.role,
+        profile: agent.profile,
+        roundId: round.id,
+      },
+      steps: [],
+    });
+    await managerTaskStore.update(failed.id, {
+      state: "failed",
+      startedAt: "2026-05-01T00:00:00.000Z",
+      completedAt: "2026-05-01T00:00:01.000Z",
+      error: "synthetic failure before retry",
+    });
+    await managerOrchestrationStore.updateAgent(agent.id, {
+      status: "failed",
+      taskId: failed.id,
+      lastError: "synthetic failure before retry",
+    });
+    await managerOrchestrationStore.updateRound(round.id, {
+      status: "failed",
+      agentIds: [agent.id],
+      taskIds: [failed.id],
+      error: "synthetic failure before retry",
+    });
+
+    const blocked = await app.fetch(authedRequest("GET", `/api/manager/rounds/${round.id}/health`));
+    expect(blocked.status).toBe(200);
+    const blockedBody = (await blocked.json()) as { gate?: { status?: string } };
+    expect(blockedBody.gate?.status).toBe("blocked");
+
+    const retry = await managerTaskStore.create({
+      kind: "run-worker",
+      dryRun: false,
+      requestedBy: "manager-assistant",
+      params: {
+        agentId: agent.id,
+        agentRole: agent.role,
+        profile: agent.profile,
+        roundId: round.id,
+      },
+      steps: [],
+    });
+    await managerTaskStore.update(retry.id, {
+      state: "succeeded",
+      startedAt: "2026-05-01T00:01:00.000Z",
+      completedAt: "2026-05-01T00:01:04.000Z",
+      result: { stdout: "retry ok", sessionId: "worker-session-retry" },
+    });
+
+    const repair = await app.fetch(authedRequest("POST", `/api/manager/rounds/${round.id}/repair`));
+    expect(repair.status).toBe(200);
+    const repairBody = (await repair.json()) as {
+      round?: { status?: string; taskIds?: string[]; error?: string };
+      gate?: { status?: string; blockedRuns?: number; completedRuns?: number };
+    };
+    expect(repairBody.round?.status).toBe("completed");
+    expect(repairBody.round?.taskIds ?? []).toContain(retry.id);
+    expect(repairBody.round?.error ?? "").toBe("");
+    expect(repairBody.gate?.status).toBe("healthy");
+    expect(repairBody.gate?.blockedRuns).toBe(0);
+    expect(repairBody.gate?.completedRuns).toBe(1);
   });
 
   test("manager orchestration reuses role agents and resumes worker sessions across rounds", async () => {
