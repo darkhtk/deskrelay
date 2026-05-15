@@ -14,6 +14,7 @@ import {
   onCleanup,
 } from "solid-js";
 import { type Device, api } from "../api.ts";
+import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
 import { ManagerAssistant } from "./ManagerAssistant.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 
@@ -32,6 +33,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 ) => {
   const [refreshSeq, setRefreshSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
+  let eventRefreshTimer: number | undefined;
 
   const [orchestration] = createResource(
     () => refreshSeq(),
@@ -73,9 +75,32 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     },
   );
 
+  const scheduleEventRefresh = (includeHygiene = false) => {
+    if (eventRefreshTimer !== undefined) return;
+    eventRefreshTimer = window.setTimeout(() => {
+      eventRefreshTimer = undefined;
+      setRefreshSeq((seq) => seq + 1);
+      if (includeHygiene) void refetchSessionHygiene();
+    }, 250);
+  };
+
+  createManagerEventSubscription({
+    onEvent(event) {
+      if (isManagerOrchestrationEvent(event)) {
+        scheduleEventRefresh();
+      } else if (event.type === "hygiene.updated") {
+        scheduleEventRefresh(true);
+      }
+    },
+  });
+
   createEffect(() => {
-    const timer = window.setInterval(() => setRefreshSeq((seq) => seq + 1), 5000);
+    const timer = window.setInterval(() => setRefreshSeq((seq) => seq + 1), 30_000);
     onCleanup(() => window.clearInterval(timer));
+  });
+
+  onCleanup(() => {
+    if (eventRefreshTimer !== undefined) window.clearTimeout(eventRefreshTimer);
   });
 
   async function cleanupSessionHygiene() {

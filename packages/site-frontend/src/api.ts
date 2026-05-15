@@ -16,6 +16,8 @@ import type {
   ManagerAssistantStreamEvent,
   ManagerCapabilities,
   ManagerDeviceActions,
+  ManagerEvent,
+  ManagerEventListResponse,
   ManagerInstallStatus,
   ManagerLogResponse,
   ManagerNetworkStatus,
@@ -622,6 +624,11 @@ export const api = {
     ),
   postManagerAssistantStatus: (input: ManagerAssistantStatusReportInput) =>
     request<ManagerAssistantStatusReportResponse>("POST", "/api/manager/assistant/status", input),
+  managerEventsRecent: (afterSeq?: number) =>
+    request<ManagerEventListResponse>(
+      "GET",
+      `/api/manager/events/recent${typeof afterSeq === "number" ? `?afterSeq=${afterSeq}` : ""}`,
+    ),
   managerSessionRead: (input: ManagerSessionReadRequest) =>
     request<ManagerSessionReadResponse>("POST", "/api/manager/sessions/read", input),
   managerSessionHygiene: () =>
@@ -930,6 +937,67 @@ export const api = {
         if (data) {
           try {
             yield JSON.parse(data);
+          } catch {
+            // skip malformed frames
+          }
+        }
+      }
+    }
+  },
+
+  async *streamManagerEvents(
+    options: {
+      signal?: AbortSignal;
+      afterSeq?: number;
+      lastEventId?: string;
+      onOpen?: () => void;
+    } = {},
+  ): AsyncGenerator<ManagerEvent, void, void> {
+    const headers: Record<string, string> = { accept: "text/event-stream" };
+    const token = getToken();
+    if (token) headers.authorization = `Bearer ${token}`;
+    if (options.lastEventId) headers["last-event-id"] = options.lastEventId;
+    const qs = new URLSearchParams();
+    if (typeof options.afterSeq === "number") qs.set("afterSeq", String(options.afterSeq));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const init: RequestInit = { headers };
+    if (options.signal) init.signal = options.signal;
+    const res = await fetch(`${resolveBaseUrl()}/api/manager/events/stream${suffix}`, init);
+    if (!res.ok) {
+      throw new ApiError(`Manager event stream failed (${res.status})`, res.status);
+    }
+    const reader = res.body?.getReader();
+    if (!reader) return;
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let opened = false;
+    const markOpen = () => {
+      if (opened) return;
+      opened = true;
+      options.onOpen?.();
+    };
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      while (true) {
+        const normalized = buffer.replace(/\r\n/g, "\n");
+        const blank = normalized.indexOf("\n\n");
+        if (blank === -1) break;
+        const block = normalized.slice(0, blank);
+        buffer = normalized.slice(blank + 2);
+        markOpen();
+        const data = block
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice("data:".length).replace(/^ /, ""))
+          .join("\n");
+        if (data) {
+          try {
+            const parsed = JSON.parse(data) as ManagerEvent;
+            if (typeof parsed.seq === "number" && typeof parsed.type === "string") {
+              yield parsed;
+            }
           } catch {
             // skip malformed frames
           }

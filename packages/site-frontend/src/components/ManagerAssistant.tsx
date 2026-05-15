@@ -23,6 +23,7 @@ import {
   api,
 } from "../api.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
+import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
 import { Composer } from "./Composer.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 import { Transcript } from "./Transcript.tsx";
@@ -87,6 +88,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
   let transcriptScroller: HTMLDivElement | undefined;
   let statusReportTimer: number | undefined;
+  let eventRefreshTimer: number | undefined;
 
   const serverDevice = createMemo(() => {
     const devices = props.devices ?? [];
@@ -301,13 +303,33 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   createEffect(() => {
     busy();
     if (statusReportTimer !== undefined) window.clearInterval(statusReportTimer);
-    const intervalMs = busy() ? 2_500 : 10_000;
+    const intervalMs = busy() ? 5_000 : 30_000;
     statusReportTimer = window.setInterval(() => setStatusReportSeq((seq) => seq + 1), intervalMs);
+  });
+
+  const scheduleManagerEventRefresh = (includeHygiene = false) => {
+    if (eventRefreshTimer !== undefined) return;
+    eventRefreshTimer = window.setTimeout(() => {
+      eventRefreshTimer = undefined;
+      setStatusReportSeq((seq) => seq + 1);
+      if (includeHygiene) void refetchSessionHygiene();
+    }, 250);
+  };
+
+  createManagerEventSubscription({
+    onEvent(event) {
+      if (event.type === "assistant.status" || isManagerOrchestrationEvent(event)) {
+        scheduleManagerEventRefresh();
+      } else if (event.type === "hygiene.updated") {
+        scheduleManagerEventRefresh(true);
+      }
+    },
   });
 
   onCleanup(() => {
     transcriptScroller = undefined;
     if (statusReportTimer !== undefined) window.clearInterval(statusReportTimer);
+    if (eventRefreshTimer !== undefined) window.clearTimeout(eventRefreshTimer);
   });
 
   const readyError = createMemo(() => {
