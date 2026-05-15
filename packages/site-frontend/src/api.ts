@@ -30,6 +30,7 @@ import type {
   ManagerRoundCreateRequest,
   ManagerRoundDispatchRequest,
   ManagerRoundDispatchResponse,
+  ManagerRoundHealthGateResponse,
   ManagerRoundListResponse,
   ManagerRoundReportResponse,
   ManagerSecurityBoundary,
@@ -416,6 +417,7 @@ export type {
   ManagerAssistantStatusReportResponse,
   ManagerStateViewResponse,
   ManagerWorkerCheckResult,
+  ManagerRoundHealthGateResponse,
   ManagerWorkerRunLedgerResponse,
   ManagerWorkerProfile,
 };
@@ -734,6 +736,11 @@ export const api = {
       `/api/manager/rounds/${encodeURIComponent(id)}/worker-runs${
         typeof limit === "number" ? `?limit=${limit}` : ""
       }`,
+    ),
+  managerRoundHealth: (id: string) =>
+    request<ManagerRoundHealthGateResponse>(
+      "GET",
+      `/api/manager/rounds/${encodeURIComponent(id)}/health`,
     ),
   acknowledgeManagerRound: (id: string, reason?: string) =>
     request<ManagerRound>("POST", `/api/manager/rounds/${encodeURIComponent(id)}/acknowledge`, {

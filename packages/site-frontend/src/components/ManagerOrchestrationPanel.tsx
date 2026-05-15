@@ -1,6 +1,7 @@
 import type {
   ManagerAgent,
   ManagerRound,
+  ManagerRoundHealthGate,
   ManagerRoundReportResponse,
   ManagerSessionHygieneItem,
   ManagerSessionHygieneReport,
@@ -30,6 +31,7 @@ interface ManagerOrchestrationPanelProps {
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
+  health?: ManagerRoundHealthGate | null | undefined;
   workerRuns?: ManagerWorkerRun[] | undefined;
   hygiene?: ManagerSessionHygieneReport | null | undefined;
   hygieneLoading?: boolean | undefined;
@@ -200,6 +202,9 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               onRefresh={props.onRefreshState}
               onRetryTask={props.onRetryTask}
             />
+          </OrchestrationSection>
+          <OrchestrationSection title="Round health" class="manager-section-health">
+            <RoundHealthGateView health={props.health} />
           </OrchestrationSection>
           <OrchestrationSection title="Worker runs" class="manager-section-worker-runs">
             <WorkerRunsView runs={props.workerRuns ?? []} />
@@ -437,6 +442,75 @@ const CurrentStateView: Component<{
             )}
           </For>
         </ul>
+      </Show>
+    </div>
+  );
+};
+
+const RoundHealthGateView: Component<{
+  health?: ManagerRoundHealthGate | null | undefined;
+}> = (props) => {
+  const issues = createMemo(() => props.health?.issues ?? []);
+  return (
+    <div class="manager-round-health" aria-label="round health gate">
+      <Show
+        when={props.health}
+        fallback={
+          <p class="manager-orchestration-empty">
+            No round health gate yet. Select or dispatch a round to verify worker evidence.
+          </p>
+        }
+      >
+        {(health) => (
+          <>
+            <div class="manager-round-health-head">
+              <span
+                class={`manager-status-dot manager-status-dot-${roundHealthTone(health().status)}`}
+              />
+              <strong>{health().status}</strong>
+              <span>{health().summary}</span>
+            </div>
+            <dl class="manager-round-health-grid">
+              <div>
+                <dt>Expected</dt>
+                <dd>
+                  {health().expectedAgents} agents · {health().expectedTasks} tasks
+                </dd>
+              </div>
+              <div>
+                <dt>Runs</dt>
+                <dd>
+                  {health().completedRuns}/{health().actualRuns} complete
+                </dd>
+              </div>
+              <div>
+                <dt>Active</dt>
+                <dd>
+                  {health().runningRuns} running · {health().blockedRuns} blocked
+                </dd>
+              </div>
+              <div>
+                <dt>Missing</dt>
+                <dd>{health().missingRuns}</dd>
+              </div>
+            </dl>
+            <Show when={issues().length > 0}>
+              <ul class="manager-round-health-issues">
+                <For each={issues().slice(0, 6)}>
+                  {(issue) => (
+                    <li>
+                      <span>{issue.severity}</span>
+                      <strong>{issue.message}</strong>
+                      <Show when={issue.detail}>
+                        {(detail) => <small>{clip(detail(), 160)}</small>}
+                      </Show>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </>
+        )}
       </Show>
     </div>
   );
@@ -1091,6 +1165,19 @@ function currentStateTone(tone: ManagerStateViewResponse["current"]["tone"] | un
       return "blocked";
     case "idle":
       return "neutral";
+    default:
+      return "neutral";
+  }
+}
+
+function roundHealthTone(status: ManagerRoundHealthGate["status"] | undefined): Tone {
+  switch (status) {
+    case "healthy":
+      return "done";
+    case "warning":
+      return "running";
+    case "blocked":
+      return "blocked";
     default:
       return "neutral";
   }

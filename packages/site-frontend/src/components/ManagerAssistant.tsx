@@ -2,6 +2,7 @@ import type {
   ManagerAgent,
   ManagerAssistantChatContext,
   ManagerRound,
+  ManagerRoundHealthGateResponse,
   ManagerSessionHygieneReport,
   ManagerWorkerRunLedgerResponse,
 } from "@deskrelay/shared";
@@ -162,6 +163,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             ...next,
             report: null,
             reportRoundId: null,
+            roundHealth: null,
+            roundHealthRoundId: null,
             workerRuns: null,
             workerRunsRoundId: null,
             hygiene: null,
@@ -380,6 +383,39 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     const round = activeOrchestrationRound();
     return cached?.workerRunsRoundId && cached.workerRunsRoundId === round?.id
       ? cached.workerRuns
+      : null;
+  });
+
+  const [roundHealth] = createResource(
+    () => {
+      const round = activeOrchestrationRound();
+      const seq = statusReportSeq();
+      return round ? { id: round.id, seq } : null;
+    },
+    async (input): Promise<ManagerRoundHealthGateResponse | null> => {
+      if (!input) return null;
+      try {
+        const health = await api.managerRoundHealth(input.id);
+        setCachedOrchestrationSnapshot(
+          writeManagerOrchestrationCache({
+            roundHealth: health,
+            roundHealthRoundId: input.id,
+          }) ?? cachedOrchestrationSnapshot(),
+        );
+        return health;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const visibleRoundHealth = createMemo(() => {
+    const current = roundHealth();
+    if (current) return current;
+    const cached = cachedOrchestrationSnapshot();
+    const round = activeOrchestrationRound();
+    return cached?.roundHealthRoundId && cached.roundHealthRoundId === round?.id
+      ? cached.roundHealth
       : null;
   });
 
@@ -711,6 +747,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
+          health={visibleRoundHealth()?.gate}
           workerRuns={visibleWorkerRuns()?.runs ?? []}
           hygiene={visibleSessionHygiene()}
           state={managerState()}

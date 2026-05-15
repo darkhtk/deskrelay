@@ -288,6 +288,55 @@ export interface ManagerWorkerRunLedgerResponse {
   summary: ManagerWorkerRunLedgerSummary;
 }
 
+export type ManagerRoundHealthStatus = "healthy" | "warning" | "blocked" | "unknown";
+export type ManagerRoundHealthIssueSeverity = "warning" | "blocked";
+export type ManagerRoundHealthIssueCode =
+  | "no-round"
+  | "no-agents"
+  | "missing-agent"
+  | "agent-without-task"
+  | "task-without-agent"
+  | "worker-running"
+  | "worker-failed"
+  | "worker-blocked"
+  | "worker-missing"
+  | "worker-timeout"
+  | "worker-integrity"
+  | "missing-session"
+  | "round-failed"
+  | "round-completed-incomplete";
+
+export interface ManagerRoundHealthIssue {
+  code: ManagerRoundHealthIssueCode;
+  severity: ManagerRoundHealthIssueSeverity;
+  message: string;
+  detail?: string;
+  agentId?: string;
+  taskId?: string;
+  role?: string;
+  action?: "wait" | "retry-worker" | "inspect-worker" | "repair-round" | "acknowledge";
+}
+
+export interface ManagerRoundHealthGate {
+  generatedAt: string;
+  roundId: string;
+  status: ManagerRoundHealthStatus;
+  title: string;
+  summary: string;
+  expectedAgents: number;
+  expectedTasks: number;
+  actualRuns: number;
+  completedRuns: number;
+  runningRuns: number;
+  blockedRuns: number;
+  missingRuns: number;
+  issues: ManagerRoundHealthIssue[];
+}
+
+export interface ManagerRoundHealthGateResponse {
+  gate: ManagerRoundHealthGate;
+}
+
 export interface ManagerAuditLogResponse {
   entries: ManagerTask[];
 }

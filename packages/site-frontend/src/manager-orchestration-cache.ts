@@ -1,6 +1,7 @@
 import type {
   ManagerAgent,
   ManagerRound,
+  ManagerRoundHealthGateResponse,
   ManagerRoundReportResponse,
   ManagerSessionHygieneReport,
   ManagerWorkerRunLedgerResponse,
@@ -12,6 +13,8 @@ export interface ManagerOrchestrationCacheSnapshot {
   rounds: ManagerRound[];
   report: ManagerRoundReportResponse | null;
   reportRoundId: string | null;
+  roundHealth: ManagerRoundHealthGateResponse | null;
+  roundHealthRoundId: string | null;
   workerRuns: ManagerWorkerRunLedgerResponse | null;
   workerRunsRoundId: string | null;
   hygiene: ManagerSessionHygieneReport | null;
@@ -39,6 +42,10 @@ export function readManagerOrchestrationCache(): ManagerOrchestrationCacheSnapsh
       rounds: parsed.rounds as ManagerRound[],
       report: (parsed.report as ManagerRoundReportResponse | null | undefined) ?? null,
       reportRoundId: typeof parsed.reportRoundId === "string" ? parsed.reportRoundId : null,
+      roundHealth:
+        (parsed.roundHealth as ManagerRoundHealthGateResponse | null | undefined) ?? null,
+      roundHealthRoundId:
+        typeof parsed.roundHealthRoundId === "string" ? parsed.roundHealthRoundId : null,
       workerRuns: (parsed.workerRuns as ManagerWorkerRunLedgerResponse | null | undefined) ?? null,
       workerRunsRoundId:
         typeof parsed.workerRunsRoundId === "string" ? parsed.workerRunsRoundId : null,
@@ -63,6 +70,12 @@ export function writeManagerOrchestrationCache(
         "reportRoundId" in patch
           ? (patch.reportRoundId ?? null)
           : (previous?.reportRoundId ?? null),
+      roundHealth:
+        "roundHealth" in patch ? (patch.roundHealth ?? null) : (previous?.roundHealth ?? null),
+      roundHealthRoundId:
+        "roundHealthRoundId" in patch
+          ? (patch.roundHealthRoundId ?? null)
+          : (previous?.roundHealthRoundId ?? null),
       workerRuns:
         "workerRuns" in patch ? (patch.workerRuns ?? null) : (previous?.workerRuns ?? null),
       workerRunsRoundId:

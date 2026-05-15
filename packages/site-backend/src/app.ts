@@ -47,6 +47,9 @@ import {
   type ManagerRoundCreateRequest,
   type ManagerRoundDispatchRequest,
   type ManagerRoundDispatchResponse,
+  type ManagerRoundHealthGate,
+  type ManagerRoundHealthGateResponse,
+  type ManagerRoundHealthIssue,
   type ManagerRoundListResponse,
   type ManagerRoundReportResponse,
   type ManagerRoundStatus,
@@ -841,6 +844,25 @@ export function createSiteApp(options: SiteAppOptions): Hono {
           taskStore: managerTaskStore,
           roundId,
           limit: clampListLimit(c.req.query("limit")),
+          now: new Date(),
+        }),
+      );
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.get("/api/manager/rounds/:id/health", async (c) => {
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      const roundId = c.req.param("id");
+      const round = await managerOrchestrationStore.getRound(roundId);
+      if (!round) return c.json({ error: "unknown round" }, 404);
+      return c.json(
+        await buildManagerRoundHealthGate({
+          orchestrationStore: managerOrchestrationStore,
+          taskStore: managerTaskStore,
+          round,
           now: new Date(),
         }),
       );
@@ -1989,6 +2011,11 @@ const SITE_ROUTE_CAPABILITIES = [
     description: "Read the worker run ledger scoped to one orchestration round.",
   },
   {
+    method: "GET",
+    path: "/api/manager/rounds/:id/health",
+    description: "Read the health gate that judges whether one orchestration round is trustworthy.",
+  },
+  {
     method: "POST",
     path: "/api/manager/rounds/:id/acknowledge",
     description: "Acknowledge a failed or blocked orchestration round without deleting history.",
@@ -2274,6 +2301,7 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "manager.orchestration-agents",
       "manager.orchestration-rounds",
       "manager.worker-runs",
+      "manager.round-health-gate",
       "devices",
       "device.proxy",
       "diagnostics",
@@ -2918,6 +2946,260 @@ async function buildManagerWorkerRunLedger(
     runs,
     summary: summarizeManagerWorkerRuns(runs),
   };
+}
+
+interface ManagerRoundHealthGateInput {
+  orchestrationStore: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  round: ManagerRound;
+  now: Date;
+}
+
+async function buildManagerRoundHealthGate(
+  input: ManagerRoundHealthGateInput,
+): Promise<ManagerRoundHealthGateResponse> {
+  const [agents, ledger] = await Promise.all([
+    Promise.all(
+      input.round.agentIds.map((id) =>
+        syncManagerAgentWithTask(input.orchestrationStore, input.taskStore, id),
+      ),
+    ),
+    buildManagerWorkerRunLedger({
+      orchestrationStore: input.orchestrationStore,
+      taskStore: input.taskStore,
+      roundId: input.round.id,
+      limit: 500,
+      now: input.now,
+    }),
+  ]);
+  const presentAgents = agents.filter(isPresent);
+  const missingAgentIds = input.round.agentIds.filter((_, index) => !agents[index]);
+  const issues = buildManagerRoundHealthIssues(
+    input.round,
+    presentAgents,
+    ledger.runs,
+    missingAgentIds,
+  );
+  const hasBlocked = issues.some((issue) => issue.severity === "blocked");
+  const hasWarning = issues.some((issue) => issue.severity === "warning");
+  const status =
+    hasBlocked || ["blocked", "failed", "cancelled"].includes(input.round.status)
+      ? "blocked"
+      : hasWarning || ledger.summary.running > 0 || isManagerRoundInProgress(input.round.status)
+        ? "warning"
+        : ledger.summary.total === 0 && presentAgents.length === 0
+          ? "unknown"
+          : "healthy";
+  const gate: ManagerRoundHealthGate = {
+    generatedAt: input.now.toISOString(),
+    roundId: input.round.id,
+    status,
+    title: input.round.title,
+    summary: managerRoundHealthSummary(status, issues, ledger.summary.total),
+    expectedAgents: input.round.agentIds.length,
+    expectedTasks: Math.max(
+      input.round.taskIds.length,
+      presentAgents.filter((agent) => agent.taskId).length,
+    ),
+    actualRuns: ledger.summary.total,
+    completedRuns: ledger.summary.succeeded,
+    runningRuns: ledger.summary.running,
+    blockedRuns: ledger.summary.failed + ledger.summary.blocked,
+    missingRuns: ledger.summary.missing,
+    issues,
+  };
+  return { gate };
+}
+
+function buildManagerRoundHealthIssues(
+  round: ManagerRound,
+  agents: ManagerAgent[],
+  runs: ManagerWorkerRun[],
+  missingAgentIds: string[],
+): ManagerRoundHealthIssue[] {
+  const issues: ManagerRoundHealthIssue[] = [];
+  if (round.agentIds.length === 0) {
+    issues.push({
+      code: "no-agents",
+      severity: "warning",
+      message: "No worker agents are attached to this round.",
+      action: "repair-round",
+    });
+  }
+  for (const agentId of missingAgentIds) {
+    issues.push({
+      code: "missing-agent",
+      severity: "blocked",
+      message: "Round references a missing worker agent.",
+      agentId,
+      action: "repair-round",
+    });
+  }
+  const taskIdsWithRuns = new Set(runs.map((run) => run.taskId).filter(isPresent));
+  for (const agent of agents) {
+    if (!agent.taskId && round.status !== "planned") {
+      issues.push({
+        code: "agent-without-task",
+        severity: "blocked",
+        message: `${agent.role} agent has no worker task.`,
+        agentId: agent.id,
+        role: agent.role,
+        action: "repair-round",
+      });
+    }
+    if (agent.taskId && !taskIdsWithRuns.has(agent.taskId)) {
+      issues.push({
+        code: "agent-without-task",
+        severity: "blocked",
+        message: `${agent.role} agent points at a missing worker task.`,
+        agentId: agent.id,
+        taskId: agent.taskId,
+        role: agent.role,
+        action: "inspect-worker",
+      });
+    }
+  }
+  for (const run of runs) {
+    if (run.status === "failed") {
+      issues.push(
+        managerRoundRunIssue(run, "worker-failed", "blocked", "Worker failed.", "retry-worker"),
+      );
+    } else if (run.status === "blocked") {
+      issues.push(
+        managerRoundRunIssue(
+          run,
+          "worker-blocked",
+          "blocked",
+          "Worker is blocked.",
+          "retry-worker",
+        ),
+      );
+    } else if (run.status === "missing") {
+      issues.push(
+        managerRoundRunIssue(
+          run,
+          "worker-missing",
+          "blocked",
+          "Worker task record is missing.",
+          "repair-round",
+        ),
+      );
+    } else if (run.timedOut) {
+      issues.push(
+        managerRoundRunIssue(run, "worker-timeout", "blocked", "Worker timed out.", "retry-worker"),
+      );
+    } else if (
+      ["pending", "running", "waiting_for_device", "restart_required"].includes(run.status)
+    ) {
+      issues.push(
+        managerRoundRunIssue(run, "worker-running", "warning", "Worker is still running.", "wait"),
+      );
+    }
+    const integrityIssues = run.integrity.filter((item) => item !== "ok");
+    for (const item of integrityIssues) {
+      const severity = item === "missing-session" ? "warning" : "blocked";
+      issues.push(
+        managerRoundRunIssue(
+          run,
+          item === "missing-session" ? "missing-session" : "worker-integrity",
+          severity,
+          managerWorkerIntegrityMessage(item),
+          item === "missing-session" ? "inspect-worker" : "repair-round",
+        ),
+      );
+    }
+  }
+  if (["blocked", "failed", "cancelled"].includes(round.status)) {
+    issues.push({
+      code: "round-failed",
+      severity: "blocked",
+      message: `Round status is ${round.status}.`,
+      ...(round.error || round.summary ? { detail: round.error || round.summary } : {}),
+      action: "acknowledge",
+    });
+  }
+  if (round.status === "completed") {
+    const incompleteAgents = agents.filter((agent) => agent.status !== "completed");
+    const incompleteRuns = runs.filter((run) => run.status !== "succeeded");
+    if (incompleteAgents.length > 0 || incompleteRuns.length > 0) {
+      issues.push({
+        code: "round-completed-incomplete",
+        severity: "blocked",
+        message: "Round is marked completed but some agents or workers are not complete.",
+        detail: `${incompleteAgents.length} agent(s), ${incompleteRuns.length} worker run(s) incomplete.`,
+        action: "repair-round",
+      });
+    }
+  }
+  return dedupeManagerRoundHealthIssues(issues);
+}
+
+function managerRoundRunIssue(
+  run: ManagerWorkerRun,
+  code: ManagerRoundHealthIssue["code"],
+  severity: ManagerRoundHealthIssue["severity"],
+  message: string,
+  action: ManagerRoundHealthIssue["action"],
+): ManagerRoundHealthIssue {
+  return {
+    code,
+    severity,
+    message: run.agentRole ? `${run.agentRole}: ${message}` : message,
+    ...(run.error || run.outputPreview ? { detail: run.error || run.outputPreview } : {}),
+    ...(run.agentId ? { agentId: run.agentId } : {}),
+    ...(run.taskId ? { taskId: run.taskId } : {}),
+    ...(run.agentRole ? { role: run.agentRole } : {}),
+    ...(action ? { action } : {}),
+  };
+}
+
+function managerWorkerIntegrityMessage(issue: ManagerWorkerRunIntegrity): string {
+  switch (issue) {
+    case "missing-task":
+      return "Linked worker task is missing.";
+    case "missing-agent":
+      return "Worker task points at a missing agent.";
+    case "orphan-task":
+      return "Worker task points at a missing round.";
+    case "stale-agent":
+      return "Agent is stale.";
+    case "synthetic-failure":
+      return "Dispatch created a synthetic failure task.";
+    case "missing-session":
+      return "Claude worker completed without a session id.";
+    default:
+      return "Worker integrity issue detected.";
+  }
+}
+
+function dedupeManagerRoundHealthIssues(
+  issues: ManagerRoundHealthIssue[],
+): ManagerRoundHealthIssue[] {
+  const seen = new Set<string>();
+  const out: ManagerRoundHealthIssue[] = [];
+  for (const issue of issues) {
+    const key = [issue.code, issue.agentId ?? "", issue.taskId ?? "", issue.message].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(issue);
+  }
+  return out.slice(0, 20);
+}
+
+function managerRoundHealthSummary(
+  status: ManagerRoundHealthGate["status"],
+  issues: ManagerRoundHealthIssue[],
+  runCount: number,
+): string {
+  if (status === "healthy") return `${runCount} worker run(s) verified.`;
+  if (status === "unknown") return "No worker evidence is available yet.";
+  const blocked = issues.filter((issue) => issue.severity === "blocked").length;
+  const warnings = issues.filter((issue) => issue.severity === "warning").length;
+  return `${blocked} blocker(s), ${warnings} warning(s).`;
+}
+
+function isManagerRoundInProgress(status: ManagerRoundStatus): boolean {
+  return ["planned", "dispatching", "running", "collecting", "reviewing"].includes(status);
 }
 
 function findManagerWorkerAgent(

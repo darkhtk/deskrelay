@@ -657,6 +657,11 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/rounds/:id/health",
+          authedRequest("GET", "/api/manager/rounds/missing/health"),
+          [404],
+        ],
+        [
           "POST /api/manager/rounds/:id/acknowledge",
           authedRequest("POST", "/api/manager/rounds/missing/acknowledge"),
           [404],
@@ -2192,6 +2197,25 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(ledgerBody.runs?.some((run) => run.outputPreview?.includes("protocol report"))).toBe(
         true,
       );
+
+      const health = await app.fetch(
+        authedRequest("GET", `/api/manager/rounds/${created.round?.id}/health`),
+      );
+      expect(health.status).toBe(200);
+      const healthBody = (await health.json()) as {
+        gate?: {
+          status?: string;
+          expectedAgents?: number;
+          actualRuns?: number;
+          completedRuns?: number;
+          issues?: unknown[];
+        };
+      };
+      expect(healthBody.gate?.status).toBe("healthy");
+      expect(healthBody.gate?.expectedAgents).toBe(3);
+      expect(healthBody.gate?.actualRuns).toBe(3);
+      expect(healthBody.gate?.completedRuns).toBe(3);
+      expect(healthBody.gate?.issues).toHaveLength(0);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -2241,6 +2265,15 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(body.runs?.[0]?.agentRole).toBe("verifier");
     expect(body.runs?.[0]?.integrity).toContain("missing-task");
     expect(body.runs?.[0]?.error).toContain("task vanished");
+
+    const health = await app.fetch(authedRequest("GET", `/api/manager/rounds/${round.id}/health`));
+    expect(health.status).toBe(200);
+    const healthBody = (await health.json()) as {
+      gate?: { status?: string; missingRuns?: number; issues?: Array<{ code?: string }> };
+    };
+    expect(healthBody.gate?.status).toBe("blocked");
+    expect(healthBody.gate?.missingRuns).toBe(1);
+    expect(healthBody.gate?.issues?.map((issue) => issue.code)).toContain("worker-missing");
   });
 
   test("manager orchestration reuses role agents and resumes worker sessions across rounds", async () => {
