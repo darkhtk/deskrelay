@@ -542,14 +542,19 @@ function buildWorkerSequenceDiagram(
   agents: ManagerAgent[],
   tasks: ManagerTask[],
 ): string {
-  const visibleAgents = agents.slice(0, 10);
+  const activeAgents = agents.filter((agent) => isSequenceRelevantAgent(agent, round));
+  const visibleAgents = activeAgents.slice(0, 10);
+  const hiddenIdleCount = agents.length - activeAgents.length;
   const lines = ["sequenceDiagram", "    autonumber", "    participant Manager as Manager"];
   for (const [index, agent] of visibleAgents.entries()) {
     lines.push(`    participant W${index + 1} as ${mermaidText(workerLabel(agent), 34)}`);
   }
 
   if (!round && visibleAgents.length === 0) {
-    lines.push("    Note over Manager: No orchestration round is active yet");
+    lines.push("    Note over Manager: No active worker signal yet");
+    if (hiddenIdleCount > 0) {
+      lines.push(`    Note over Manager: ${hiddenIdleCount} idle workers hidden`);
+    }
     return lines.join("\n");
   }
 
@@ -597,10 +602,13 @@ function buildWorkerSequenceDiagram(
     }
   }
 
-  if (agents.length > visibleAgents.length) {
+  if (activeAgents.length > visibleAgents.length) {
     lines.push(
-      `    Note over Manager: ${agents.length - visibleAgents.length} more workers hidden`,
+      `    Note over Manager: ${activeAgents.length - visibleAgents.length} more active workers hidden`,
     );
+  }
+  if (hiddenIdleCount > 0) {
+    lines.push(`    Note over Manager: ${hiddenIdleCount} idle workers hidden`);
   }
   if (round?.summary) {
     lines.push(`    Note over Manager: ${mermaidText(round.summary, 96)}`);
@@ -614,6 +622,14 @@ function buildWorkerSequenceDiagram(
 
 function workerLabel(agent: ManagerAgent): string {
   return agent.label && agent.label !== agent.role ? `${agent.role} ${agent.label}` : agent.role;
+}
+
+function isSequenceRelevantAgent(agent: ManagerAgent, round: ManagerRound | undefined): boolean {
+  if (agent.status === "idle") return false;
+  if (agent.taskId) return true;
+  if (agent.lastInstruction || agent.lastOutput || agent.lastError) return true;
+  if (round && (agent.roundId === round.id || round.agentIds.includes(agent.id))) return true;
+  return false;
 }
 
 function buildTimeline(
