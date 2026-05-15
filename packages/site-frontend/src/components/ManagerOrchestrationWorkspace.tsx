@@ -4,7 +4,15 @@ import type {
   ManagerRound,
   ManagerSessionHygieneReport,
 } from "@deskrelay/shared";
-import { type Component, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
+import {
+  type Component,
+  type JSX,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 import { type Device, api } from "../api.ts";
 import { ManagerAssistant } from "./ManagerAssistant.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
@@ -85,9 +93,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   return (
     <div
       class="manager-workspace"
-      style={{ "--assistant-width": `${props.assistantWidth}px` }}
+      style={{ "--assistant-width": `${props.assistantWidth}px` } as JSX.CSSProperties}
     >
-      <section class="manager-workspace-board" aria-label="오케스트레이션 작업판">
+      <section class="manager-workspace-board" aria-label="Orchestration workspace">
         <ManagerOrchestrationPanel
           standalone
           rounds={orchestration()?.rounds ?? []}
@@ -100,7 +108,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onCleanupHygiene={() => void cleanupSessionHygiene()}
         />
       </section>
-      <aside class="manager-workspace-assistant" aria-label="관리 Assistant">
+      <aside class="manager-workspace-assistant" aria-label="Manager Assistant">
         <div
           class="assistant-resize-handle"
           classList={{
@@ -109,13 +117,13 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           }}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Assistant 창 크기 조절"
+          aria-label="Resize Assistant panel"
           tabIndex={0}
           onPointerDown={props.onAssistantResizePointerDown}
           onKeyDown={props.onAssistantResizeKeyDown}
         />
         <ManagerAssistant
-          context={props.context}
+          context={props.context ?? null}
           devices={props.devices ?? []}
           showOrchestrationPanel={false}
         />

@@ -101,7 +101,6 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       style={{ "--manager-orchestration-panel-height": `${panelHeight()}px` } as JSX.CSSProperties}
     >
       <header class="manager-orchestration-panel-head">
-        <Show when={!props.standalone}>
         <button
           type="button"
           class="manager-orchestration-title"
@@ -164,13 +163,14 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             />
           </OrchestrationSection>
         </div>
-        <button
-          type="button"
-          class="manager-orchestration-resize-handle"
-          aria-label="Resize orchestration panel"
-          title="높이 조절"
-          onPointerDown={startResize}
-        />
+        <Show when={!props.standalone}>
+          <button
+            type="button"
+            class="manager-orchestration-resize-handle"
+            aria-label="Resize orchestration panel"
+            title="Resize height"
+            onPointerDown={startResize}
+          />
         </Show>
       </Show>
     </section>

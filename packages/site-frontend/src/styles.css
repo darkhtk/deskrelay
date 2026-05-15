@@ -2354,6 +2354,13 @@ body.assistant-resizing * {
   gap: 10px;
   min-height: 32px;
 }
+.main-panel-switch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
 .chat-view-switch-button {
   flex: 0 0 auto;
   min-width: 0;
@@ -5611,6 +5618,38 @@ dialog.approval-modal-root,
   height: 100%;
   gap: 0;
 }
+.manager-workspace {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) var(--assistant-width, 380px);
+  min-height: 0;
+  min-width: 0;
+}
+.manager-workspace-board,
+.manager-workspace-assistant {
+  min-height: 0;
+  min-width: 0;
+}
+.manager-workspace-board {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.manager-workspace-assistant {
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-left: 16px;
+  position: relative;
+}
+.manager-workspace-assistant .manager-assistant {
+  flex: 1 1 auto;
+  height: 100%;
+}
+.manager-workspace-assistant .assistant-resize-handle {
+  left: -8px;
+}
 .manager-orchestration-status {
   align-items: center;
   border-bottom: 1px solid var(--border-subtle);
@@ -5644,8 +5683,16 @@ dialog.approval-modal-root,
   flex-direction: column;
   min-height: 0;
 }
+.manager-orchestration-panel-standalone {
+  border-bottom: 0;
+  flex: 1 1 auto;
+  height: auto;
+}
 .manager-orchestration-panel-expanded {
   height: var(--manager-orchestration-panel-height, 280px);
+}
+.manager-orchestration-panel-standalone.manager-orchestration-panel-expanded {
+  height: auto;
 }
 .manager-orchestration-panel-head {
   align-items: center;
@@ -5670,6 +5717,9 @@ dialog.approval-modal-root,
   font: inherit;
   padding: 0;
   text-align: left;
+}
+.manager-orchestration-panel-standalone .manager-orchestration-title {
+  cursor: default;
 }
 .manager-orchestration-title strong {
   overflow: hidden;
@@ -5741,6 +5791,9 @@ dialog.approval-modal-root,
   min-height: 0;
   overflow: auto;
   padding: 2px 14px 12px;
+}
+.manager-orchestration-panel-standalone .manager-orchestration-body {
+  padding: 4px 16px 16px;
 }
 .manager-orchestration-resize-handle {
   align-items: center;
@@ -6437,8 +6490,26 @@ body.manager-orchestration-resizing {
   .signed-in {
     grid-template-columns: minmax(0, 1fr);
   }
+  .main-panel-switch {
+    gap: 10px;
+  }
+  .manager-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(220px, 0.95fr) minmax(260px, 1.05fr);
+  }
+  .manager-workspace-assistant {
+    border-left: 0;
+    border-top: 1px solid var(--border-subtle);
+    padding-left: 0;
+  }
+  .manager-workspace-assistant .assistant-resize-handle {
+    display: none;
+  }
   .manager-orchestration-panel-expanded {
     height: min(var(--manager-orchestration-panel-height, 280px), 70vh);
+  }
+  .manager-orchestration-panel-standalone.manager-orchestration-panel-expanded {
+    height: auto;
   }
   .manager-orchestration-panel-head {
     align-items: center;
