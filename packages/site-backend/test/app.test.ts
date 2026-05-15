@@ -1311,12 +1311,21 @@ describe("manager task API", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       status?: { tone?: string; source?: string; message?: string };
+      current?: { status?: string; actions?: string[]; taskId?: string };
+      freshness?: { source?: string; stale?: boolean; lastSignalAt?: string };
       staleTasks?: Array<{ id?: string; stale?: boolean }>;
       activeRound?: { id?: string };
     };
     expect(body.status?.tone).toBe("warning");
     expect(body.status?.source).toBe("task");
     expect(body.status?.message).toContain("needs attention");
+    expect(body.current?.status).toBe("stale");
+    expect(body.current?.taskId).toBe(task.id);
+    expect(body.current?.actions).toContain("refresh");
+    expect(body.current?.actions).toContain("acknowledge");
+    expect(body.freshness?.source).toBe("poll");
+    expect(body.freshness?.stale).toBe(false);
+    expect(body.freshness?.lastSignalAt).toBeTruthy();
     expect(body.staleTasks?.[0]?.id).toBe(task.id);
     expect(body.staleTasks?.[0]?.stale).toBe(true);
     expect(body.activeRound?.id).toBe(round.id);
@@ -1369,9 +1378,14 @@ describe("manager task API", () => {
     expect(before.status).toBe(200);
     const beforeBody = (await before.json()) as {
       status?: { tone?: string };
+      current?: { status?: string; actions?: string[]; taskId?: string };
       counts?: { blockers?: number; blockedAgents?: number; failedTasks?: number };
     };
     expect(beforeBody.status?.tone).toBe("error");
+    expect(beforeBody.current?.status).toBe("failed");
+    expect(beforeBody.current?.taskId).toBe(task.id);
+    expect(beforeBody.current?.actions).toContain("retry");
+    expect(beforeBody.current?.actions).toContain("acknowledge");
     expect(beforeBody.counts?.blockers).toBeGreaterThanOrEqual(3);
     expect(beforeBody.counts?.blockedAgents).toBe(1);
     expect(beforeBody.counts?.failedTasks).toBe(1);
@@ -1397,6 +1411,7 @@ describe("manager task API", () => {
     expect(after.status).toBe(200);
     const afterBody = (await after.json()) as {
       status?: { tone?: string; message?: string };
+      current?: { status?: string; actionable?: boolean; actions?: string[] };
       counts?: { blockers?: number; blockedAgents?: number; failedTasks?: number };
       blockers?: unknown[];
       recentRounds?: Array<{ id?: string; acknowledgedAt?: string }>;
@@ -1404,6 +1419,9 @@ describe("manager task API", () => {
     };
     expect(afterBody.status?.tone).toBe("idle");
     expect(afterBody.status?.message).toBe("Manager is ready");
+    expect(afterBody.current?.status).toBe("idle");
+    expect(afterBody.current?.actionable).toBe(false);
+    expect(afterBody.current?.actions).toEqual([]);
     expect(afterBody.counts?.blockers).toBe(0);
     expect(afterBody.counts?.blockedAgents).toBe(0);
     expect(afterBody.counts?.failedTasks).toBe(0);

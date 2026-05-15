@@ -866,17 +866,19 @@ function managerStatusFromReport(
 function managerStatusFromState(
   state: ManagerStateViewResponse | null | undefined,
 ): ManagerVisibleStatus | null {
-  if (!state?.status) return null;
+  if (!state?.current) return null;
   const tone: ManagerVisibleStatus["tone"] =
-    state.status.tone === "running"
+    state.current.tone === "running"
       ? "thinking"
-      : state.status.tone === "warning" || state.status.tone === "error"
+      : state.current.tone === "warning" || state.current.tone === "error"
         ? "warning"
         : "ready";
+  const freshnessDetail = state.freshness?.stale ? "manager signal is stale" : undefined;
+  const detail = [state.current.detail, freshnessDetail].filter(Boolean).join(" · ");
   return {
     tone,
-    main: state.status.message,
-    ...(state.status.detail ? { detail: state.status.detail } : {}),
+    main: state.current.title,
+    ...(detail ? { detail } : {}),
   };
 }
 

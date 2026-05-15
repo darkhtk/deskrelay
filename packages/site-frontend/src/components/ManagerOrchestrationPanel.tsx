@@ -73,6 +73,8 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const timeline = createMemo(() => buildTimeline(activeRound(), agents(), tasks()));
   const artifacts = createMemo(() => buildArtifacts(agents(), tasks()));
   const totals = createMemo(() => summarizeTotals(agents()));
+  const currentState = createMemo(() => props.state?.current ?? null);
+  const freshnessLabel = createMemo(() => formatFreshness(props.state));
   const activeIssueCount = createMemo(
     () =>
       props.state?.counts.blockers ??
@@ -131,17 +133,25 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           }}
         >
           <span
-            class={`manager-status-dot manager-status-dot-${statusTone(activeRound()?.status)}`}
+            class={`manager-status-dot manager-status-dot-${currentStateTone(currentState()?.tone) ?? statusTone(activeRound()?.status)}`}
           />
-          <strong>{activeRound()?.title ?? "Agent orchestration"}</strong>
-          <Show when={activeRound()}>
-            {(round) => <span class="manager-status-pill">{statusLabel(round().status)}</span>}
+          <strong>{currentState()?.title ?? activeRound()?.title ?? "Agent orchestration"}</strong>
+          <Show when={currentState()} fallback={<RoundStatusPill round={activeRound()} />}>
+            {(current) => <span class="manager-status-pill">{current().status}</span>}
           </Show>
         </button>
         <div class="manager-orchestration-summary">
-          <span>
-            {totals().completed}/{totals().total} agents done
-          </span>
+          <Show
+            when={props.state}
+            fallback={
+              <span>
+                {totals().completed}/{totals().total} agents done
+              </span>
+            }
+          >
+            <span>{currentState()?.kind ?? "manager"}</span>
+          </Show>
+          <Show when={freshnessLabel()}>{(label) => <span>{label()}</span>}</Show>
           <span>running {totals().running}</span>
           <span>blocked {totals().blocked}</span>
         </div>
@@ -218,6 +228,12 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
     </section>
   );
 };
+
+const RoundStatusPill: Component<{ round: ManagerRound | undefined }> = (props) => (
+  <Show when={props.round}>
+    {(round) => <span class="manager-status-pill">{statusLabel(round().status)}</span>}
+  </Show>
+);
 
 const OrchestrationSection: Component<{ title: string; class?: string; children: JSX.Element }> = (
   props,
@@ -879,6 +895,20 @@ function statusTone(status: string | undefined): Tone {
   }
 }
 
+function currentStateTone(tone: ManagerStateViewResponse["current"]["tone"] | undefined): Tone {
+  switch (tone) {
+    case "running":
+      return "running";
+    case "warning":
+    case "error":
+      return "blocked";
+    case "idle":
+      return "neutral";
+    default:
+      return "neutral";
+  }
+}
+
 function hygieneTone(item: ManagerSessionHygieneItem): Tone {
   if (item.action === "cleanup") return "blocked";
   if (item.category === "current_manager") return "done";
@@ -921,9 +951,30 @@ function statusLabel(status: string | undefined): string {
       return "restart required";
     case "succeeded":
       return "succeeded";
+    case "acknowledged":
+      return "acknowledged";
     default:
       return status ?? "unknown";
   }
+}
+
+function formatFreshness(state: ManagerStateViewResponse | null | undefined): string | undefined {
+  if (!state?.freshness) return undefined;
+  if (state.freshness.stale) return "signal stale";
+  if (typeof state.freshness.ageMs === "number") {
+    return `updated ${formatRelativeDuration(state.freshness.ageMs)} ago`;
+  }
+  return "updated now";
+}
+
+function formatRelativeDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 5) return "now";
+  if (seconds < 90) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 90) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h`;
 }
 
 function formatHygieneCategory(value: string): string {

@@ -433,6 +433,40 @@ export interface ManagerRoundReportResponse {
 
 export type ManagerStateViewTone = "idle" | "running" | "warning" | "error";
 export type ManagerStateViewSource = "round" | "task" | "agent" | "status" | "system";
+export type ManagerStateCurrentKind = "idle" | "manager" | "worker" | "round" | "task" | "agent";
+export type ManagerStateCurrentStatus =
+  | "idle"
+  | "running"
+  | "waiting"
+  | "blocked"
+  | "failed"
+  | "stale"
+  | "acknowledged";
+export type ManagerStateCurrentAction = "details" | "acknowledge" | "retry" | "cancel" | "refresh";
+
+export interface ManagerStateFreshness {
+  source: "poll" | "event" | "cache";
+  lastRefreshAt: string;
+  lastSignalAt?: string;
+  ageMs?: number;
+  stale: boolean;
+}
+
+export interface ManagerStateCurrent {
+  kind: ManagerStateCurrentKind;
+  status: ManagerStateCurrentStatus;
+  tone: ManagerStateViewTone;
+  source: ManagerStateViewSource;
+  title: string;
+  detail?: string;
+  startedAt?: string;
+  updatedAt?: string;
+  taskId?: string;
+  agentId?: string;
+  roundId?: string;
+  actionable: boolean;
+  actions: ManagerStateCurrentAction[];
+}
 
 export interface ManagerStateRoundSummary {
   id: string;
@@ -504,6 +538,8 @@ export interface ManagerAcknowledgeResponse {
 
 export interface ManagerStateViewResponse {
   generatedAt: string;
+  freshness: ManagerStateFreshness;
+  current: ManagerStateCurrent;
   status: {
     tone: ManagerStateViewTone;
     source: ManagerStateViewSource;

@@ -2984,17 +2984,28 @@ async function buildManagerStateView(
     (task) => task.state === "blocked",
   ).length;
   const failedTasks = unacknowledgedTaskSummaries.filter((task) => task.state === "failed").length;
-  const status = managerStateStatus({
+  const current = managerStateCurrent({
     activeRound,
     latestStatus: input.latestStatus,
     runningTasks,
     staleTasks,
     blockers,
     runningAgents,
-    failedTasks,
+    now: input.now,
+  });
+  const status = managerStateStatusFromCurrent(current);
+  const freshness = managerStateFreshness({
+    latestStatus: input.latestStatus,
+    tasks: taskSummaries,
+    rounds: roundSummaries,
+    agents,
+    current,
+    now: input.now,
   });
   return {
     generatedAt: input.now.toISOString(),
+    freshness,
+    current,
     status,
     counts: {
       rounds: rounds.length,
@@ -3163,81 +3174,220 @@ function buildManagerStateBlockers(input: {
   return blockers.slice(0, 20);
 }
 
-function managerStateStatus(input: {
+function managerStateCurrent(input: {
   activeRound?: ManagerStateRoundSummary | undefined;
   latestStatus?: ManagerAssistantStatusReport | undefined;
   runningTasks: ManagerStateTaskSummary[];
   staleTasks: ManagerStateTaskSummary[];
   blockers: ManagerStateBlocker[];
   runningAgents: number;
-  failedTasks: number;
-}): ManagerStateViewResponse["status"] {
+  now: Date;
+}): ManagerStateViewResponse["current"] {
+  const runningTask = input.runningTasks[0];
+  const hasUnacknowledgedIssue = input.blockers.length > 0 || input.staleTasks.length > 0;
+  const activeRoundIsRunning =
+    input.activeRound &&
+    ["planned", "dispatching", "running", "collecting", "reviewing"].includes(
+      input.activeRound.status,
+    ) &&
+    !hasUnacknowledgedIssue;
+  if (activeRoundIsRunning && input.activeRound) {
+    const status: ManagerStateViewResponse["current"]["status"] =
+      input.activeRound.status === "blocked"
+        ? "blocked"
+        : input.activeRound.status === "failed"
+          ? "failed"
+          : input.activeRound.status === "reviewing" || input.activeRound.status === "collecting"
+            ? "waiting"
+            : "running";
+    return {
+      kind: "round",
+      status,
+      tone: status === "blocked" || status === "failed" ? "warning" : "running",
+      source: "round",
+      title: input.activeRound.title,
+      detail: `${input.runningAgents} agents running, ${input.runningTasks.length} tasks active`,
+      ...(input.activeRound.startedAt ? { startedAt: input.activeRound.startedAt } : {}),
+      updatedAt: input.activeRound.updatedAt,
+      roundId: input.activeRound.id,
+      actionable: true,
+      actions:
+        status === "blocked" || status === "failed"
+          ? ["details", "acknowledge"]
+          : ["details", "cancel"],
+    };
+  }
+  if (runningTask && !hasUnacknowledgedIssue) {
+    const waiting = runningTask.state === "waiting_for_device";
+    return {
+      kind: runningTask.kind === "run-worker" ? "worker" : "manager",
+      status: waiting ? "waiting" : "running",
+      tone: "running",
+      source: "task",
+      title: waiting ? `${runningTask.kind} is waiting` : `${runningTask.kind} is running`,
+      ...(runningTask.targetLabel || runningTask.agentRole
+        ? { detail: runningTask.targetLabel ?? runningTask.agentRole }
+        : {}),
+      ...(runningTask.startedAt ? { startedAt: runningTask.startedAt } : {}),
+      updatedAt: runningTask.updatedAt,
+      taskId: runningTask.id,
+      ...(runningTask.agentId ? { agentId: runningTask.agentId } : {}),
+      ...(runningTask.roundId ? { roundId: runningTask.roundId } : {}),
+      actionable: true,
+      actions: ["details", "cancel"],
+    };
+  }
   const errorBlocker = input.blockers.find((blocker) => blocker.severity === "error");
   if (errorBlocker) {
     return {
+      kind: errorBlocker.kind,
+      status: "failed",
       tone: "error",
       source: errorBlocker.kind,
-      message: errorBlocker.message,
+      title: errorBlocker.message,
       ...(errorBlocker.detail ? { detail: errorBlocker.detail } : {}),
+      ...(errorBlocker.taskId ? { taskId: errorBlocker.taskId } : {}),
+      ...(errorBlocker.agentId ? { agentId: errorBlocker.agentId } : {}),
+      ...(errorBlocker.roundId ? { roundId: errorBlocker.roundId } : {}),
+      actionable: true,
+      actions: errorBlocker.taskId
+        ? ["details", "retry", "acknowledge"]
+        : ["details", "acknowledge"],
     };
   }
   if (input.staleTasks.length > 0) {
     const task = input.staleTasks[0] as ManagerStateTaskSummary;
     return {
+      kind: task.kind === "run-worker" ? "worker" : "manager",
+      status: "stale",
       tone: "warning",
       source: "task",
-      message: `${task.kind} task needs attention`,
+      title: `${task.kind} task needs attention`,
       ...(task.staleReason ? { detail: task.staleReason } : {}),
+      ...(task.startedAt ? { startedAt: task.startedAt } : {}),
+      updatedAt: task.updatedAt,
+      taskId: task.id,
+      ...(task.agentId ? { agentId: task.agentId } : {}),
+      ...(task.roundId ? { roundId: task.roundId } : {}),
+      actionable: true,
+      actions: ["details", "refresh", "acknowledge"],
     };
   }
   const warningBlocker = input.blockers.find((blocker) => blocker.severity === "warning");
   if (warningBlocker) {
     return {
+      kind: warningBlocker.kind,
+      status: "blocked",
       tone: "warning",
       source: warningBlocker.kind,
-      message: warningBlocker.message,
+      title: warningBlocker.message,
       ...(warningBlocker.detail ? { detail: warningBlocker.detail } : {}),
-    };
-  }
-  if (input.runningTasks.length > 0 || input.runningAgents > 0) {
-    const round = input.activeRound;
-    return {
-      tone: "running",
-      source: round ? "round" : "task",
-      message: round ? `${round.title} is running` : "Manager task is running",
-      detail: `${input.runningAgents} agents running, ${input.runningTasks.length} tasks active`,
-    };
-  }
-  if (input.activeRound && !isManagerRoundTerminalState(input.activeRound.status)) {
-    return {
-      tone: "running",
-      source: "round",
-      message: `${input.activeRound.title} is ${input.activeRound.status}`,
+      ...(warningBlocker.taskId ? { taskId: warningBlocker.taskId } : {}),
+      ...(warningBlocker.agentId ? { agentId: warningBlocker.agentId } : {}),
+      ...(warningBlocker.roundId ? { roundId: warningBlocker.roundId } : {}),
+      actionable: true,
+      actions: warningBlocker.taskId
+        ? ["details", "retry", "acknowledge"]
+        : ["details", "acknowledge"],
     };
   }
   if (input.latestStatus && input.latestStatus.level !== "success") {
+    const tone =
+      input.latestStatus.level === "warning" || input.latestStatus.level === "error"
+        ? "warning"
+        : "idle";
     return {
-      tone:
-        input.latestStatus.level === "warning" || input.latestStatus.level === "error"
-          ? "warning"
-          : "idle",
+      kind: "manager",
+      status: tone === "warning" ? "blocked" : "idle",
+      tone,
       source: "status",
-      message: input.latestStatus.message,
+      title: input.latestStatus.message,
       ...(input.latestStatus.detail ? { detail: input.latestStatus.detail } : {}),
+      updatedAt: input.latestStatus.createdAt,
+      actionable: tone === "warning",
+      actions: tone === "warning" ? ["details", "refresh"] : ["details"],
     };
   }
   if (input.activeRound) {
     return {
+      kind: "round",
+      status: input.activeRound.acknowledgedAt ? "acknowledged" : "idle",
       tone: "idle",
       source: "round",
-      message: `${input.activeRound.title} is ${input.activeRound.status}`,
+      title: input.activeRound.title,
+      detail: `round ${input.activeRound.status}`,
+      updatedAt: input.activeRound.updatedAt,
+      roundId: input.activeRound.id,
+      actionable: false,
+      actions: ["details"],
     };
   }
   return {
+    kind: "idle",
+    status: "idle",
     tone: "idle",
     source: "system",
-    message: "Manager is ready",
+    title: "Manager is ready",
+    updatedAt: input.now.toISOString(),
+    actionable: false,
+    actions: [],
   };
+}
+
+function managerStateStatusFromCurrent(
+  current: ManagerStateViewResponse["current"],
+): ManagerStateViewResponse["status"] {
+  return {
+    tone: current.tone,
+    source: current.source,
+    message: current.title,
+    ...(current.detail ? { detail: current.detail } : {}),
+  };
+}
+
+function managerStateFreshness(input: {
+  latestStatus?: ManagerAssistantStatusReport | undefined;
+  tasks: ManagerStateTaskSummary[];
+  rounds: ManagerStateRoundSummary[];
+  agents: ManagerAgent[];
+  current: ManagerStateViewResponse["current"];
+  now: Date;
+}): ManagerStateViewResponse["freshness"] {
+  const lastSignalAt = latestManagerStateSignalAt(input);
+  const ageMs = lastSignalAt ? Math.max(0, input.now.getTime() - Date.parse(lastSignalAt)) : 0;
+  const shouldRequireFreshSignal =
+    input.current.status === "running" || input.current.status === "waiting";
+  return {
+    source: "poll",
+    lastRefreshAt: input.now.toISOString(),
+    ...(lastSignalAt ? { lastSignalAt } : {}),
+    ...(lastSignalAt ? { ageMs } : {}),
+    stale: Boolean(shouldRequireFreshSignal && lastSignalAt && ageMs > 120_000),
+  };
+}
+
+function latestManagerStateSignalAt(input: {
+  latestStatus?: ManagerAssistantStatusReport | undefined;
+  tasks: ManagerStateTaskSummary[];
+  rounds: ManagerStateRoundSummary[];
+  agents: ManagerAgent[];
+}): string | undefined {
+  const candidates = [
+    input.latestStatus?.createdAt,
+    ...input.tasks.map((task) => task.updatedAt),
+    ...input.rounds.map((round) => round.updatedAt),
+    ...input.agents.map((agent) => agent.updatedAt),
+  ].filter((value): value is string => Boolean(value));
+  let latest: string | undefined;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of candidates) {
+    const time = Date.parse(candidate);
+    if (Number.isFinite(time) && time > latestMs) {
+      latest = candidate;
+      latestMs = time;
+    }
+  }
+  return latest;
 }
 
 function managerTaskStaleReason(task: ManagerTask, nowMs: number): string | undefined {
