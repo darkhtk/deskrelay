@@ -2454,7 +2454,16 @@ async function dispatchManagerRound(
   }
 
   await input.store.updateRound(input.round.id, { status: "running" });
-  const results = await Promise.all(
+  // F-R49-X: switch from Promise.all to Promise.allSettled so a single
+  // spawn rejection no longer collapses the entire dispatch. Each
+  // rejected entry synthesizes a failed-task record so the response
+  // reports ALL N assignments, not a truncated subset.
+  for (const { agent, assignment } of assignments.value) {
+    console.log(
+      `dispatch_intent round=${input.round.id} agent=${agent.id} role=${agent.role} label=${assignment.label ?? agent.label ?? ""}`,
+    );
+  }
+  const settled = await Promise.allSettled(
     assignments.value.map(async ({ agent, assignment }) =>
       runManagerAgentMessage({
         agent,
@@ -2477,6 +2486,52 @@ async function dispatchManagerRound(
       }),
     ),
   );
+  const results = settled.map((entry, index) => {
+    if (entry.status === "fulfilled") return entry.value;
+    const { agent, assignment } = assignments.value[index]!;
+    const errMsg =
+      entry.reason instanceof Error
+        ? entry.reason.message
+        : typeof entry.reason === "string"
+          ? entry.reason
+          : "spawn rejected";
+    const failedTask: ManagerTask = {
+      id: `spawn-failed-${agent.id}-${Date.now()}`,
+      kind: "run-worker",
+      targetLabel: assignment.label ?? agent.label ?? "Claude Code worker",
+      params: {
+        profile: assignment.profile ?? "claude-code",
+        prompt: assignment.prompt,
+        ...(assignment.cwd ? { cwd: assignment.cwd } : {}),
+        agentId: agent.id,
+        agentRole: agent.role,
+        roundId: input.round.id,
+      },
+      state: "failed",
+      dryRun: input.request.dryRun ?? false,
+      requestedBy: "manager-assistant",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [],
+      result: {
+        profile: "claude-code",
+        command: "",
+        cwd: assignment.cwd ?? "",
+        exitCode: 1,
+        timedOut: false,
+        durationMs: 0,
+        stdout: "",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      },
+      error: `dispatch spawn rejected: ${errMsg}`,
+    };
+    console.log(
+      `dispatch_intent round=${input.round.id} agent=${agent.id} role=${agent.role} SPAWN_REJECTED: ${errMsg}`,
+    );
+    return { agent, task: failedTask };
+  });
   const agents = results.map((result) => result.agent);
   const tasks = results.map((result) => result.task);
   const nextStatus = managerRoundStatusFromTasks(tasks);
