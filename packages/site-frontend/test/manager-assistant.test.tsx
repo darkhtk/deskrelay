@@ -225,7 +225,7 @@ describe("ManagerAssistant", () => {
       expect(document.body.textContent).toContain("Overview");
       expect(document.body.textContent).toContain("Agents");
       expect(document.body.textContent).toContain("Timeline");
-      expect(document.body.textContent).toContain("Flow");
+      expect(document.body.textContent).toContain("Worker flow");
       expect(document.body.textContent).toContain("Artifacts");
       expect(document.body.textContent).toContain("Hygiene");
       expect(document.body.textContent).toContain("architect");

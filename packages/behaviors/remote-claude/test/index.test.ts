@@ -220,12 +220,14 @@ describe("remote-claude behavior chat request", () => {
       apiBase?: string;
       token?: string;
       repoRoot?: string;
+      workspaceScope?: string;
     };
     expect(observed.permissionMode).toBe("bypassPermissions");
     expect(observed.hasManagerPrompt).toBe(true);
     expect(observed.apiBase).toBe("http://site.local");
     expect(observed.token).toBe("site-token");
     expect(observed.repoRoot).toBe("C:\\repo");
+    expect(observed.workspaceScope).toBe("unrestricted");
   });
 
   test("interrupting the active run cancels queued follow-ups", async () => {

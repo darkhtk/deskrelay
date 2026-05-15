@@ -30,7 +30,7 @@ describe("Transcript (Solid)", () => {
     expect(screen.getByText("hello world")).toBeInTheDocument();
   });
 
-  test("renders a tool_use Bash block with command + tool icon", () => {
+  test("keeps transient tool activity out of the visible transcript", () => {
     const { container } = render(() => (
       <Transcript
         events={ev({
@@ -48,8 +48,9 @@ describe("Transcript (Solid)", () => {
         } as ClaudeStreamEvent)}
       />
     ));
-    expect(container.querySelector(".tool-bash")).toBeTruthy();
-    expect(container.textContent).toContain("ls -la");
+    expect(container.querySelector(".tool-bash")).toBeNull();
+    expect(container.textContent).not.toContain("ls -la");
+    expect(container.textContent).toContain(t("tx.empty"));
   });
 
   test("session strip appears once on system init", () => {

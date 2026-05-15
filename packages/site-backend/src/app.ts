@@ -1391,6 +1391,9 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     qs.set("path", c.req.query("path") ?? "");
     const cwd = c.req.query("cwd") ?? "";
     if (cwd) qs.set("cwd", cwd);
+    if (c.req.query("workspaceScope") === "unrestricted") {
+      qs.set("workspaceScope", "unrestricted");
+    }
     return proxyBinary(
       fetchImpl,
       `${device.daemonUrl}/files/preview?${qs.toString()}`,
@@ -4812,6 +4815,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Site token is available only as the `DESKRELAY_SITE_TOKEN` environment variable.",
     "- Manager API base URL is also available as `DESKRELAY_MANAGER_API_BASE`.",
     "- Repository root is also available as `DESKRELAY_REPOSITORY_ROOT`.",
+    "- Manager filesystem scope is `unrestricted`; it is also available as `DESKRELAY_MANAGER_WORKSPACE_SCOPE`.",
     "",
     "## API Usage",
     "",
@@ -4827,8 +4831,9 @@ function buildManagedManagerAssistantInstructions(input: {
     "- For POST, PUT, PATCH, or DELETE calls with JSON bodies, prefer `--body-file <request.json>` over inline shell JSON when quoting is not trivial.",
     "- The manager API helper reads `DESKRELAY_MANAGER_API_BASE` and `DESKRELAY_SITE_TOKEN` from the environment. Do not manually assemble Authorization headers in Bash or PowerShell unless the helper cannot satisfy the task.",
     "- Do not treat a device registry `connectionState: online` value as proof that the server can reach that connector. For operational decisions, confirm with `/api/devices/:id/doctor`, `/process/status`, or the specific API needed for the task.",
-    "When verifying generated files, call `/api/devices/:id/fs/list?includeFiles=1` for the target directory. The default list is directory-only for the cwd picker.",
-    "Use `/api/devices/:id/files/preview` for guarded image or UTF-8 text/Markdown previews. If a file type is unsupported, report that limitation rather than claiming the file was read.",
+    "- The manager is not constrained by the user's configured workspace roots. For manager-owned filesystem inspection, call `/api/devices/:id/fs/list?workspaceScope=unrestricted&includeFiles=1`. For manager-owned directory creation, include `{ \"workspaceScope\": \"unrestricted\" }` in `/api/devices/:id/fs/mkdir` bodies. For manager-owned file preview, call `/api/devices/:id/files/preview?workspaceScope=unrestricted` with the path and optional cwd query params.",
+    "When verifying generated files, call `/api/devices/:id/fs/list?workspaceScope=unrestricted&includeFiles=1` for the target directory. The default list is directory-only for the cwd picker.",
+    "Use `/api/devices/:id/files/preview?workspaceScope=unrestricted` for manager-owned guarded image or UTF-8 text/Markdown previews. If a file type is unsupported, report that limitation rather than claiming the file was read.",
     "Avoid calling `POST /api/manager/assistant/chat` or `POST /api/manager/assistant/chat/stream` from inside the assistant unless you are deliberately testing the assistant endpoint.",
     "",
     "## Tool and Shell Policy",
@@ -8210,6 +8215,7 @@ async function prepareBehaviorRequestBodyForProxy(
     managerRepoRoot: repoRoot,
     managerInstructionsPath: workspace.instructionsPath,
     managerSiteToken: input.options.token ?? "",
+    managerWorkspaceScope: "unrestricted",
     permissionMode: "bypassPermissions",
     securityProfile: "relaxed",
     ...(requestSessionId

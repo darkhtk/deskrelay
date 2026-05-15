@@ -1797,6 +1797,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(instructions).toContain("Use lazy reads");
       expect(instructions).toContain("selected/current conversation");
       expect(instructions).toContain("sessions.read");
+      expect(instructions).toContain("workspaceScope=unrestricted");
       expect(instructions).toContain("includeFiles=1");
       expect(instructions).toContain("UTF-8 text/Markdown previews");
       expect(instructions).toContain("## Autonomous Supervision Loop");
@@ -3871,6 +3872,7 @@ describe("daemon proxy", () => {
       expect(forwarded.params?.managerSiteToken).toBe(TOKEN);
       expect(forwarded.params?.managerApiBaseUrl).toBe("http://site.local");
       expect(forwarded.params?.managerRepoRoot).toBe(cwd);
+      expect(forwarded.params?.managerWorkspaceScope).toBe("unrestricted");
       expect(forwarded.params?.managerInstructionsPath).toBe(
         join(cwd, ".deskrelay", "manager-assistant", "CLAUDE.md"),
       );
@@ -4012,6 +4014,7 @@ describe("daemon proxy", () => {
       expect(url.pathname).toBe("/files/preview");
       expect(url.searchParams.get("path")).toBe("shot.png");
       expect(url.searchParams.get("cwd")).toBe("C:\\repo");
+      expect(url.searchParams.get("workspaceScope")).toBe("unrestricted");
       return new Response(png, {
         status: 200,
         headers: {
@@ -4027,7 +4030,7 @@ describe("daemon proxy", () => {
         "GET",
         `/api/devices/${id}/files/preview?path=${encodeURIComponent(
           "shot.png",
-        )}&cwd=${encodeURIComponent("C:\\repo")}`,
+        )}&cwd=${encodeURIComponent("C:\\repo")}&workspaceScope=unrestricted`,
       ),
     );
 

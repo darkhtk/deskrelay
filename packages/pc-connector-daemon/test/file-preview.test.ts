@@ -148,6 +148,31 @@ describe("previewFile", () => {
       await daemon.stop();
     }
   });
+
+  test("daemon route can preview manager-scoped files outside restricted roots", async () => {
+    const file = join(outside, "manager-notes.md");
+    await writeFile(file, "manager scope\n", "utf8");
+    const daemon = new Daemon({ port: 0, authToken: TEST_AUTH_TOKEN, workspaceRoots: roots });
+    const listening = daemon.start();
+    const baseUrl = `http://${listening.host}:${listening.port}/files/preview?path=${encodeURIComponent(
+      file,
+    )}`;
+    try {
+      const restricted = await fetch(baseUrl, {
+        headers: { authorization: `Bearer ${TEST_AUTH_TOKEN}` },
+      });
+      expect(restricted.status).toBe(403);
+
+      const unrestricted = await fetch(`${baseUrl}&workspaceScope=unrestricted`, {
+        headers: { authorization: `Bearer ${TEST_AUTH_TOKEN}` },
+      });
+      expect(unrestricted.status).toBe(200);
+      expect(unrestricted.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+      expect(await unrestricted.text()).toBe("manager scope\n");
+    } finally {
+      await daemon.stop();
+    }
+  });
 });
 
 async function expectPreviewCode(

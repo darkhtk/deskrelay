@@ -10,8 +10,7 @@
 // wire) so migration callers can use either.
 
 import { escapeHtml, renderMarkdown } from "./message-renderer.ts";
-import type { ClaudePermissionMode, ToolResultContentBlock } from "./stream-contract.ts";
-import { renderToolResult, renderToolUse } from "./tool-renderers.ts";
+import type { ClaudePermissionMode } from "./stream-contract.ts";
 
 interface SessionMeta {
   sessionId?: string | undefined;
@@ -29,13 +28,9 @@ interface ExitMeta {
 }
 
 interface MessageBlock {
-  kind: "text" | "tool_use" | "tool_result" | "thinking" | "image";
+  kind: "text" | "thinking" | "image";
   // text / thinking
   text?: string | undefined;
-  // tool_use
-  entryId?: string | undefined;
-  // tool_use / tool_result / image — opaque payload per kind
-  payload?: unknown;
   source?: unknown;
   name?: string | undefined;
   size?: number | undefined;
@@ -262,17 +257,11 @@ export class TranscriptModel {
         thinking?: string;
         source?: unknown;
         size?: unknown;
-        tool_use_id?: string;
-        content?: string | ToolResultContentBlock[];
-        is_error?: boolean;
       };
       if (block.type === "text" && typeof block.text === "string") {
         blocks.push({ kind: "text", text: block.text });
-      } else if (block.type === "tool_use" && typeof block.id === "string") {
-        const entryId = `tu-${cursor ?? ""}-${block.id || blocks.length}`;
-        blocks.push({ kind: "tool_use", entryId, payload: block });
-      } else if (block.type === "tool_result") {
-        blocks.push({ kind: "tool_result", payload: block });
+      } else if (block.type === "tool_use" || block.type === "tool_result") {
+        continue;
       } else if (
         block.type === "thinking" &&
         typeof block.thinking === "string" &&
@@ -389,20 +378,6 @@ export class TranscriptModel {
       return `<figure class="block-image"><img src="${escapeAttr(
         src,
       )}" alt="${escapeAttr(name)}" loading="lazy" />${caption}</figure>`;
-    }
-    if (block.kind === "tool_use") {
-      const payload = block.payload as { id?: string; name?: string; input?: unknown };
-      return `<div class="block-tool-use" data-tool-use-id="${escapeHtml(
-        payload?.id ?? "",
-      )}">${renderToolUse({
-        type: "tool_use",
-        id: payload.id ?? "",
-        name: payload.name ?? "",
-        ...(payload.input !== undefined ? { input: payload.input as Record<string, unknown> } : {}),
-      })}</div>`;
-    }
-    if (block.kind === "tool_result") {
-      return renderToolResult(block.payload as Parameters<typeof renderToolResult>[0]);
     }
     return "";
   }

@@ -98,7 +98,7 @@ describe("TranscriptModel — assistant + user messages", () => {
     expect(m.render()).toContain("hello as a string");
   });
 
-  test("tool_use block is captured with id + name", () => {
+  test("transient tool activity is ignored", () => {
     const m = new TranscriptModel();
     m.ingestEvent({
       type: "assistant",
@@ -106,8 +106,30 @@ describe("TranscriptModel — assistant + user messages", () => {
         content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: "pwd" } }],
       },
     });
+    m.ingestEvent({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: "tu_1", content: "C:\\repo" }],
+      },
+    });
+    expect(m.entries).toHaveLength(0);
+    expect(m.render()).toBe("");
+  });
+
+  test("visible text is kept when mixed with transient tool activity", () => {
+    const m = new TranscriptModel();
+    m.ingestEvent({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "I checked it." },
+          { type: "tool_use", id: "tu_1", name: "Read", input: { file_path: "a.ts" } },
+        ],
+      },
+    });
+    expect(m.entries).toHaveLength(1);
     if (m.entries[0]?.kind === "message") {
-      expect(m.entries[0].blocks[0]?.kind).toBe("tool_use");
+      expect(m.entries[0].blocks).toEqual([{ kind: "text", text: "I checked it." }]);
     }
   });
 

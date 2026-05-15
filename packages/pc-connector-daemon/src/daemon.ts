@@ -956,7 +956,10 @@ export class Daemon {
     const path = url.searchParams.get("path") ?? "";
     const cwd = url.searchParams.get("cwd") ?? "";
     try {
-      const result = await previewFile({ path, cwd }, this.#workspaceRoots);
+      const result = await previewFile(
+        { path, cwd },
+        fsWorkspaceRootsForScope(this.#workspaceRoots, url.searchParams.get("workspaceScope")),
+      );
       return new Response(bytesToArrayBuffer(result.bytes), {
         status: 200,
         headers: {

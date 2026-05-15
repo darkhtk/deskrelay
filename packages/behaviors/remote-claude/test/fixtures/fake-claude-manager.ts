@@ -12,6 +12,7 @@ const observed = {
   apiBase: process.env.DESKRELAY_MANAGER_API_BASE ?? null,
   token: process.env.DESKRELAY_SITE_TOKEN ?? null,
   repoRoot: process.env.DESKRELAY_REPOSITORY_ROOT ?? null,
+  workspaceScope: process.env.DESKRELAY_MANAGER_WORKSPACE_SCOPE ?? null,
 };
 
 const lines = [

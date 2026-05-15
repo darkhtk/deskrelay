@@ -23,6 +23,10 @@ import {
   type ManagerStateViewResponse,
   api,
 } from "../api.ts";
+import {
+  claudeEventForTranscript,
+  describeCliActionFromClaudeEvent,
+} from "../claude/cli-action.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
 import {
@@ -344,7 +348,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   createEffect(() => {
     const transcript = loadedTranscript();
     if (runIds().length > 0) return;
-    setEvents(transcript?.events ?? []);
+    setEvents(visibleClaudeEvents(transcript?.events ?? []));
     queueMicrotask(scrollToBottomIfPinned);
   });
 
@@ -417,6 +421,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   function scrollToBottomIfPinned() {
     if (!transcriptScroller || !transcriptAtBottom()) return;
     transcriptScroller.scrollTop = transcriptScroller.scrollHeight;
+  }
+
+  function visibleClaudeEvents(nextEvents: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
+    return nextEvents.flatMap((event) => {
+      const visible = claudeEventForTranscript(event);
+      return visible ? [visible] : [];
+    });
   }
 
   const appendEvent = (event: ClaudeStreamEvent) => {
@@ -771,12 +782,6 @@ function userTranscriptEvent(text: string): ClaudeStreamEvent {
   };
 }
 
-function claudeEventForTranscript(input: unknown): ClaudeStreamEvent | null {
-  if (!input || typeof input !== "object") return null;
-  const event = input as ClaudeStreamEvent;
-  return typeof event.type === "string" ? event : null;
-}
-
 function sessionIdFromClaudeEvent(event: ClaudeStreamEvent | null): string | null {
   if (!event || event.type !== "system" || (event as { subtype?: unknown }).subtype !== "init") {
     return null;
@@ -811,8 +816,8 @@ function managerStatusFromEnvelope(
   }
   if (kind === "run.started") return { tone: "thinking", main: "Assistant 실행 중" };
   if (kind === "claude.event") {
-    const event = claudeEventForTranscript(content);
-    if (containsToolUse(event)) return { tone: "thinking", main: "도구 실행 중" };
+    const action = describeCliActionFromClaudeEvent(content);
+    if (action) return { tone: "thinking", main: action };
     return { tone: "thinking", main: "응답 수신 중" };
   }
   if (kind === "claude.stderr") {
@@ -842,7 +847,7 @@ function managerStatusFromReport(
 function managerStatusFromState(
   state: ManagerStateViewResponse | null | undefined,
 ): ManagerVisibleStatus | null {
-  if (!state) return null;
+  if (!state?.status) return null;
   const tone: ManagerVisibleStatus["tone"] =
     state.status.tone === "running"
       ? "thinking"
@@ -854,18 +859,6 @@ function managerStatusFromState(
     main: state.status.message,
     ...(state.status.detail ? { detail: state.status.detail } : {}),
   };
-}
-
-function containsToolUse(event: ClaudeStreamEvent | null): boolean {
-  if (!event || event.type !== "assistant") return false;
-  const message = (event as { message?: unknown }).message;
-  if (!message || typeof message !== "object") return false;
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) return false;
-  return content.some(
-    (block) =>
-      block && typeof block === "object" && (block as { type?: unknown }).type === "tool_use",
-  );
 }
 
 function runErrorMessage(content: unknown): string {
