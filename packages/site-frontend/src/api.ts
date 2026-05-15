@@ -36,6 +36,7 @@ import type {
   ManagerSessionHygieneCleanupRequest,
   ManagerSessionHygieneCleanupResponse,
   ManagerSessionHygieneReport,
+  ManagerStateViewResponse,
   ManagerSystemSummary,
   ManagerTask,
   ManagerTaskLogResponse,
@@ -410,6 +411,7 @@ export type {
   ManagerAssistantStatusReport,
   ManagerAssistantStatusReportInput,
   ManagerAssistantStatusReportResponse,
+  ManagerStateViewResponse,
   ManagerWorkerCheckResult,
   ManagerWorkerProfile,
 };
@@ -624,6 +626,7 @@ export const api = {
     ),
   postManagerAssistantStatus: (input: ManagerAssistantStatusReportInput) =>
     request<ManagerAssistantStatusReportResponse>("POST", "/api/manager/assistant/status", input),
+  managerState: () => request<ManagerStateViewResponse>("GET", "/api/manager/state"),
   managerEventsRecent: (afterSeq?: number) =>
     request<ManagerEventListResponse>(
       "GET",

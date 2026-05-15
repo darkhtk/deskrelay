@@ -10,6 +10,7 @@ import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
 } from "../src/device-update-queue-store.ts";
+import { createInMemoryManagerOrchestrationStore } from "../src/manager-orchestration-store.ts";
 import { createInMemoryManagerTaskStore } from "../src/manager-task-store.ts";
 
 const TOKEN = "test-token";
@@ -547,6 +548,7 @@ describe("API route inventory", () => {
           }),
           [201],
         ],
+        ["GET /api/manager/state", authedRequest("GET", "/api/manager/state")],
         [
           "GET /api/manager/events/recent",
           authedRequest("GET", "/api/manager/events/recent?afterSeq=0"),
@@ -1239,6 +1241,65 @@ describe("manager task API", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test("manager state view surfaces stale worker tasks", async () => {
+    const oldNow = () => new Date("2020-01-01T00:00:00.000Z");
+    const managerTaskStore = createInMemoryManagerTaskStore({ now: oldNow });
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore({ now: oldNow });
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+      managerOrchestrationStore,
+      managerAssistant: { cwd: mkdtempSync(join(tmpdir(), "deskrelay-manager-state-")) },
+    });
+
+    expect((await app.fetch(authedRequest("GET", "/api/manager/tasks"))).status).toBe(200);
+
+    const round = await managerOrchestrationStore.createRound({
+      objective: "Verify stale worker visibility.",
+      title: "R-stale",
+    });
+    const agent = await managerOrchestrationStore.createAgent({
+      role: "verifier",
+      label: "Verifier",
+      roundId: round.id,
+    });
+    const task = await managerTaskStore.create({
+      kind: "run-worker",
+      dryRun: true,
+      requestedBy: "manager-assistant",
+      params: { timeoutMs: 600_000 },
+      steps: [],
+    });
+    await managerTaskStore.update(task.id, {
+      state: "running",
+      startedAt: oldNow().toISOString(),
+    });
+    await managerOrchestrationStore.updateAgent(agent.id, {
+      status: "running",
+      taskId: task.id,
+    });
+    await managerOrchestrationStore.updateRound(round.id, {
+      status: "running",
+      agentIds: [agent.id],
+      taskIds: [task.id],
+    });
+
+    const res = await app.fetch(authedRequest("GET", "/api/manager/state"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status?: { tone?: string; source?: string; message?: string };
+      staleTasks?: Array<{ id?: string; stale?: boolean }>;
+      activeRound?: { id?: string };
+    };
+    expect(body.status?.tone).toBe("warning");
+    expect(body.status?.source).toBe("task");
+    expect(body.status?.message).toContain("needs attention");
+    expect(body.staleTasks?.[0]?.id).toBe(task.id);
+    expect(body.staleTasks?.[0]?.stale).toBe(true);
+    expect(body.activeRound?.id).toBe(round.id);
   });
 
   test("manager event APIs replay and stream status changes", async () => {

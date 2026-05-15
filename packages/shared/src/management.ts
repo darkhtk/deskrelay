@@ -422,7 +422,7 @@ export interface ManagerRoundReportResponse {
 }
 
 export type ManagerStateViewTone = "idle" | "running" | "warning" | "error";
-export type ManagerStateViewSource = "round" | "task" | "status" | "system";
+export type ManagerStateViewSource = "round" | "task" | "agent" | "status" | "system";
 
 export interface ManagerStateRoundSummary {
   id: string;

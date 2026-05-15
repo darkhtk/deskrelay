@@ -1755,6 +1755,11 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/state",
+    description: "Read the live manager state view used by the UI.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/events/recent",
     description: "Replay recent manager state-change events after an optional sequence number.",
   },
@@ -2552,6 +2557,327 @@ async function buildManagerRoundReport(
     tasks: tasks.map(sanitizeManagerTaskForAssistant),
     summary: managerRoundSummary(round, agents, tasks),
   };
+}
+
+interface ManagerStateViewInput {
+  taskStore: ManagerTaskStore;
+  orchestrationStore: ManagerOrchestrationStore;
+  latestStatus?: ManagerAssistantStatusReport | undefined;
+  now: Date;
+}
+
+async function buildManagerStateView(
+  input: ManagerStateViewInput,
+): Promise<ManagerStateViewResponse> {
+  const [rounds, agents, tasks] = await Promise.all([
+    input.orchestrationStore.listRounds(),
+    input.orchestrationStore.listAgents(),
+    input.taskStore.list(500),
+  ]);
+  const nowMs = input.now.getTime();
+  const taskSummaries = tasks.map((task) => summarizeManagerStateTask(task, agents, rounds, nowMs));
+  const staleTasks = taskSummaries.filter((task) => task.stale).slice(0, 20);
+  const runningTasks = taskSummaries
+    .filter((task) => !isManagerTaskTerminalState(task.state))
+    .slice(0, 20);
+  const roundSummaries = rounds.map((round) => summarizeManagerStateRound(round, agents, tasks));
+  const activeRound =
+    roundSummaries.find((round) =>
+      ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
+        round.status,
+      ),
+    ) ?? roundSummaries[0];
+  const blockers = buildManagerStateBlockers({
+    rounds: roundSummaries,
+    agents,
+    tasks: taskSummaries,
+  });
+  const runningAgents = agents.filter((agent) =>
+    ["assigned", "running", "waiting"].includes(agent.status),
+  ).length;
+  const blockedAgents = agents.filter((agent) =>
+    ["blocked", "failed", "stale"].includes(agent.status),
+  ).length;
+  const blockedTasks = taskSummaries.filter((task) => task.state === "blocked").length;
+  const failedTasks = taskSummaries.filter((task) => task.state === "failed").length;
+  const status = managerStateStatus({
+    activeRound,
+    latestStatus: input.latestStatus,
+    runningTasks,
+    staleTasks,
+    blockers,
+    runningAgents,
+    failedTasks,
+  });
+  return {
+    generatedAt: input.now.toISOString(),
+    status,
+    counts: {
+      rounds: rounds.length,
+      activeRounds: roundSummaries.filter((round) => !isManagerRoundTerminalState(round.status))
+        .length,
+      agents: agents.length,
+      runningAgents,
+      blockedAgents,
+      tasks: tasks.length,
+      runningTasks: runningTasks.length,
+      blockedTasks,
+      failedTasks,
+      staleTasks: staleTasks.length,
+      blockers: blockers.length,
+    },
+    ...(activeRound ? { activeRound } : {}),
+    recentRounds: roundSummaries.slice(0, 10),
+    runningTasks,
+    staleTasks,
+    blockers,
+    ...(input.latestStatus ? { latestStatus: input.latestStatus } : {}),
+  };
+}
+
+function summarizeManagerStateRound(
+  round: ManagerRound,
+  agents: ManagerAgent[],
+  tasks: ManagerTask[],
+): ManagerStateRoundSummary {
+  const agentIds = new Set(round.agentIds);
+  const roundAgents = agents.filter(
+    (agent) => agent.roundId === round.id || agentIds.has(agent.id),
+  );
+  const taskIds = new Set(round.taskIds);
+  const agentTaskIds = new Set(
+    roundAgents.map((agent) => agent.taskId).filter((id): id is string => Boolean(id)),
+  );
+  const roundTasks = tasks.filter((task) => taskIds.has(task.id) || agentTaskIds.has(task.id));
+  return {
+    id: round.id,
+    title: round.title,
+    objective: round.objective,
+    status: round.status,
+    updatedAt: round.updatedAt,
+    createdAt: round.createdAt,
+    ...(round.startedAt ? { startedAt: round.startedAt } : {}),
+    ...(round.completedAt ? { completedAt: round.completedAt } : {}),
+    ...(round.summary ? { summary: round.summary } : {}),
+    ...(round.error ? { error: round.error } : {}),
+    counts: {
+      agents: roundAgents.length,
+      completedAgents: roundAgents.filter((agent) => agent.status === "completed").length,
+      runningAgents: roundAgents.filter((agent) =>
+        ["assigned", "running", "waiting"].includes(agent.status),
+      ).length,
+      blockedAgents: roundAgents.filter((agent) =>
+        ["blocked", "failed", "stale"].includes(agent.status),
+      ).length,
+      tasks: roundTasks.length,
+      completedTasks: roundTasks.filter((task) => task.state === "succeeded").length,
+      runningTasks: roundTasks.filter((task) => !isManagerTaskTerminalState(task.state)).length,
+      blockedTasks: roundTasks.filter((task) => task.state === "blocked").length,
+      failedTasks: roundTasks.filter((task) => task.state === "failed").length,
+    },
+  };
+}
+
+function summarizeManagerStateTask(
+  task: ManagerTask,
+  agents: ManagerAgent[],
+  rounds: ManagerRound[],
+  nowMs: number,
+): ManagerStateTaskSummary {
+  const agent = agents.find((item) => item.taskId === task.id);
+  const round =
+    (agent?.roundId ? rounds.find((item) => item.id === agent.roundId) : undefined) ??
+    rounds.find((item) => item.taskIds.includes(task.id));
+  const staleReason = managerTaskStaleReason(task, nowMs);
+  return {
+    id: task.id,
+    kind: task.kind,
+    state: task.state,
+    requestedBy: task.requestedBy,
+    updatedAt: task.updatedAt,
+    createdAt: task.createdAt,
+    ...(task.startedAt ? { startedAt: task.startedAt } : {}),
+    ...(task.completedAt ? { completedAt: task.completedAt } : {}),
+    ...(task.targetId ? { targetId: task.targetId } : {}),
+    ...(task.targetLabel ? { targetLabel: task.targetLabel } : {}),
+    ...(round?.id ? { roundId: round.id } : {}),
+    ...(agent?.id ? { agentId: agent.id } : {}),
+    ...(agent?.role ? { agentRole: String(agent.role) } : {}),
+    stale: Boolean(staleReason),
+    ...(staleReason ? { staleReason } : {}),
+    ...(task.error ? { error: task.error } : {}),
+  };
+}
+
+function buildManagerStateBlockers(input: {
+  rounds: ManagerStateRoundSummary[];
+  agents: ManagerAgent[];
+  tasks: ManagerStateTaskSummary[];
+}): ManagerStateBlocker[] {
+  const blockers: ManagerStateBlocker[] = [];
+  for (const task of input.tasks) {
+    if (task.stale) {
+      blockers.push({
+        id: `task-stale:${task.id}`,
+        kind: "task",
+        severity: "warning",
+        message: `${task.kind} task is stale`,
+        ...(task.staleReason ? { detail: task.staleReason } : {}),
+        taskId: task.id,
+        ...(task.roundId ? { roundId: task.roundId } : {}),
+        ...(task.agentId ? { agentId: task.agentId } : {}),
+      });
+    } else if (task.state === "failed" || task.state === "blocked") {
+      blockers.push({
+        id: `task-${task.state}:${task.id}`,
+        kind: "task",
+        severity: task.state === "failed" ? "error" : "warning",
+        message: `${task.kind} task ${task.state}`,
+        ...(task.error ? { detail: task.error } : {}),
+        taskId: task.id,
+        ...(task.roundId ? { roundId: task.roundId } : {}),
+        ...(task.agentId ? { agentId: task.agentId } : {}),
+      });
+    }
+  }
+  for (const agent of input.agents) {
+    if (!["blocked", "failed", "stale"].includes(agent.status)) continue;
+    blockers.push({
+      id: `agent-${agent.status}:${agent.id}`,
+      kind: "agent",
+      severity: agent.status === "failed" ? "error" : "warning",
+      message: `${agent.role} agent ${agent.status}`,
+      ...(agent.lastError ? { detail: agent.lastError } : {}),
+      agentId: agent.id,
+      ...(agent.roundId ? { roundId: agent.roundId } : {}),
+      ...(agent.taskId ? { taskId: agent.taskId } : {}),
+    });
+  }
+  for (const round of input.rounds) {
+    if (round.status !== "blocked" && round.status !== "failed") continue;
+    blockers.push({
+      id: `round-${round.status}:${round.id}`,
+      kind: "round",
+      severity: round.status === "failed" ? "error" : "warning",
+      message: `${round.title} ${round.status}`,
+      ...(round.error ? { detail: round.error } : {}),
+      roundId: round.id,
+    });
+  }
+  return blockers.slice(0, 20);
+}
+
+function managerStateStatus(input: {
+  activeRound?: ManagerStateRoundSummary | undefined;
+  latestStatus?: ManagerAssistantStatusReport | undefined;
+  runningTasks: ManagerStateTaskSummary[];
+  staleTasks: ManagerStateTaskSummary[];
+  blockers: ManagerStateBlocker[];
+  runningAgents: number;
+  failedTasks: number;
+}): ManagerStateViewResponse["status"] {
+  const errorBlocker = input.blockers.find((blocker) => blocker.severity === "error");
+  if (errorBlocker) {
+    return {
+      tone: "error",
+      source: errorBlocker.kind,
+      message: errorBlocker.message,
+      ...(errorBlocker.detail ? { detail: errorBlocker.detail } : {}),
+    };
+  }
+  if (input.staleTasks.length > 0) {
+    const task = input.staleTasks[0] as ManagerStateTaskSummary;
+    return {
+      tone: "warning",
+      source: "task",
+      message: `${task.kind} task needs attention`,
+      ...(task.staleReason ? { detail: task.staleReason } : {}),
+    };
+  }
+  const warningBlocker = input.blockers.find((blocker) => blocker.severity === "warning");
+  if (warningBlocker) {
+    return {
+      tone: "warning",
+      source: warningBlocker.kind,
+      message: warningBlocker.message,
+      ...(warningBlocker.detail ? { detail: warningBlocker.detail } : {}),
+    };
+  }
+  if (input.runningTasks.length > 0 || input.runningAgents > 0) {
+    const round = input.activeRound;
+    return {
+      tone: "running",
+      source: round ? "round" : "task",
+      message: round ? `${round.title} is running` : "Manager task is running",
+      detail: `${input.runningAgents} agents running, ${input.runningTasks.length} tasks active`,
+    };
+  }
+  if (input.activeRound && !isManagerRoundTerminalState(input.activeRound.status)) {
+    return {
+      tone: "running",
+      source: "round",
+      message: `${input.activeRound.title} is ${input.activeRound.status}`,
+    };
+  }
+  if (input.latestStatus && input.latestStatus.level !== "success") {
+    return {
+      tone:
+        input.latestStatus.level === "warning" || input.latestStatus.level === "error"
+          ? "warning"
+          : "idle",
+      source: "status",
+      message: input.latestStatus.message,
+      ...(input.latestStatus.detail ? { detail: input.latestStatus.detail } : {}),
+    };
+  }
+  if (input.activeRound) {
+    return {
+      tone: "idle",
+      source: "round",
+      message: `${input.activeRound.title} is ${input.activeRound.status}`,
+    };
+  }
+  return {
+    tone: "idle",
+    source: "system",
+    message: "Manager is ready",
+  };
+}
+
+function managerTaskStaleReason(task: ManagerTask, nowMs: number): string | undefined {
+  if (isManagerTaskTerminalState(task.state)) return undefined;
+  const reference = Date.parse(task.startedAt ?? task.updatedAt ?? task.createdAt);
+  if (!Number.isFinite(reference)) return undefined;
+  const elapsedMs = nowMs - reference;
+  const thresholdMs = managerTaskStaleThresholdMs(task);
+  if (elapsedMs <= thresholdMs) return undefined;
+  return `no terminal update for ${formatManagerDuration(elapsedMs)}`;
+}
+
+function managerTaskStaleThresholdMs(task: ManagerTask): number {
+  const timeoutMs = managerTaskTimeoutMs(task);
+  if (timeoutMs > 0) return timeoutMs + 60_000;
+  if (task.kind === "run-worker") return DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS + 60_000;
+  return 30 * 60_000;
+}
+
+function managerTaskTimeoutMs(task: ManagerTask): number {
+  const raw = task.params?.timeoutMs;
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+function isManagerRoundTerminalState(state: ManagerRoundStatus): boolean {
+  return state === "completed" || state === "failed" || state === "cancelled";
+}
+
+function formatManagerDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 90) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 90) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainderMinutes = minutes % 60;
+  return remainderMinutes > 0 ? `${hours}h ${remainderMinutes}m` : `${hours}h`;
 }
 
 function managerAgentStatusFromTaskState(state: ManagerTaskState): ManagerAgentStatus {

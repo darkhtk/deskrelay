@@ -20,6 +20,7 @@ import {
   type Device,
   type ManagerAssistantStatusReport,
   type ManagerAssistantStatusReportResponse,
+  type ManagerStateViewResponse,
   api,
 } from "../api.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
@@ -126,6 +127,16 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       }
     },
   );
+  const [managerState] = createResource(
+    () => statusReportSeq(),
+    async (): Promise<ManagerStateViewResponse | null> => {
+      try {
+        return await api.managerState();
+      } catch {
+        return null;
+      }
+    },
+  );
   const [orchestration] = createResource(
     () => statusReportSeq(),
     async (): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
@@ -223,10 +234,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   const visibleEvents = createMemo(() => (events().length > 0 ? events() : [INITIAL_EVENT]));
   const busy = createMemo(() => runIds().length > 0);
+  const liveStateStatus = createMemo(() => managerStatusFromState(managerState()));
   const latestReportStatus = createMemo(() => managerStatusFromReport(statusReports()?.latest));
   const visibleStatus = createMemo<ManagerVisibleStatus>(() => {
     const currentStatus = status();
     if (currentStatus) return currentStatus;
+    const stateStatus = liveStateStatus();
+    if (stateStatus) return stateStatus;
     const reportStatus = latestReportStatus();
     if (reportStatus) return reportStatus;
     if (!serverDevice()) {
@@ -775,6 +789,23 @@ function managerStatusFromReport(
     tone,
     main: `${prefix}${report.message}`,
     ...(detailParts.length ? { detail: detailParts.join(" · ") } : {}),
+  };
+}
+
+function managerStatusFromState(
+  state: ManagerStateViewResponse | null | undefined,
+): ManagerVisibleStatus | null {
+  if (!state) return null;
+  const tone: ManagerVisibleStatus["tone"] =
+    state.status.tone === "running"
+      ? "thinking"
+      : state.status.tone === "warning" || state.status.tone === "error"
+        ? "warning"
+        : "ready";
+  return {
+    tone,
+    main: state.status.message,
+    ...(state.status.detail ? { detail: state.status.detail } : {}),
   };
 }
 
