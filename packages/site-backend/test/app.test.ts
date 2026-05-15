@@ -2515,6 +2515,29 @@ process.stdin.on("end", () => {
     expect(((await security.json()) as { devices?: unknown[] }).devices).toHaveLength(1);
   });
 
+  test("manager system summary does not probe remote device install status", async () => {
+    setup.registry.register({
+      daemonUrl: DAEMON_URL,
+      authToken: "daemon-token",
+      label: "slow-remote",
+    });
+    setup.setMockResponse((req) => {
+      throw new Error(`system summary should not call ${req.url}`);
+    });
+
+    const summary = await setup.app.fetch(authedRequest("GET", "/api/manager/system/summary"));
+    expect(summary.status).toBe(200);
+    const body = (await summary.json()) as {
+      devices?: unknown[];
+      update?: { items?: Array<{ scope?: string; state?: string; reason?: string }> };
+    };
+    expect(body.devices).toHaveLength(1);
+    expect(setup.calls).toHaveLength(0);
+    expect(body.update?.items?.find((item) => item.scope === "device")).toMatchObject({
+      state: "not_checked",
+    });
+  });
+
   test("manager update status falls back to legacy daemon status when install status is missing", async () => {
     const device = setup.registry.register({
       daemonUrl: DAEMON_URL,

@@ -2488,7 +2488,9 @@ async function dispatchManagerRound(
   );
   const results = settled.map((entry, index) => {
     if (entry.status === "fulfilled") return entry.value;
-    const { agent, assignment } = assignments.value[index]!;
+    const assignmentResult = assignments.value[index];
+    if (!assignmentResult) throw new Error("manager round assignment result index mismatch");
+    const { agent, assignment } = assignmentResult;
     const errMsg =
       entry.reason instanceof Error
         ? entry.reason.message
@@ -5680,6 +5682,7 @@ async function buildManagerUpdatePlan(input: {
   build: DeskRelayBuildInfo;
   fetchImpl?: NonNullable<SiteAppOptions["fetchImpl"]>;
   localToken?: string | undefined;
+  probeDevices?: boolean;
 }): Promise<ManagerUpdatePlan> {
   const generatedAt = new Date().toISOString();
   const items: ManagerUpdatePlan["items"] = [];
@@ -5722,6 +5725,10 @@ async function buildManagerUpdatePlan(input: {
     : [];
   for (const device of input.registry.list()) {
     const queued = queueEntries.find((entry) => entry.deviceId === device.id);
+    if (input.probeDevices === false) {
+      items.push(managerUpdatePlanItemWithoutDeviceProbe(device, queued));
+      continue;
+    }
     const installStatus = input.fetchImpl
       ? await buildDeviceInstallStatus(
           input.fetchImpl,
@@ -5804,6 +5811,51 @@ async function buildManagerUpdatePlan(input: {
       severity,
       message: `${items.length} update target(s) inspected.`,
     },
+  };
+}
+
+function managerUpdatePlanItemWithoutDeviceProbe(
+  device: Device,
+  queued: StoredDeviceUpdateEntry | undefined,
+): ManagerUpdatePlan["items"][number] {
+  const queuedState = queued?.state;
+  const queueIsActive =
+    queuedState === "pending_until_device_online" ||
+    queuedState === "queued" ||
+    queuedState === "running";
+  if (queueIsActive && queued) {
+    return {
+      scope: "device",
+      targetId: device.id,
+      targetLabel: device.label,
+      action: queuedState === "running" ? "blocked" : "queue",
+      state: queuedState,
+      reason:
+        queued.warning ||
+        queued.error ||
+        (queuedState === "running"
+          ? "Connector update is already running."
+          : `Queued update state: ${queuedState}.`),
+    };
+  }
+  if (queuedState === "restart_required" || queuedState === "failed") {
+    return {
+      scope: "device",
+      targetId: device.id,
+      targetLabel: device.label,
+      action: queuedState === "restart_required" ? "restart" : "update",
+      state: queuedState,
+      reason: queued?.warning || queued?.error || `Queued update state: ${queuedState}.`,
+    };
+  }
+  return {
+    scope: "device",
+    targetId: device.id,
+    targetLabel: device.label,
+    action: "unknown",
+    state: "not_checked",
+    reason:
+      "Quick system summary does not probe connector update status. Use update status to check this device.",
   };
 }
 
@@ -5941,6 +5993,7 @@ async function buildManagerSystemSummary(input: {
       build: input.build,
       fetchImpl: input.fetchImpl,
       localToken: input.localToken,
+      probeDevices: false,
     }),
     analyzeLastRegistrationFailure(input.options.installReportStore),
     input.store.list(5),
