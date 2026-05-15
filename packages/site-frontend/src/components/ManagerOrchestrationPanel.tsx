@@ -597,16 +597,6 @@ function buildWorkerSequenceDiagram(
     }
   }
 
-  const unassignedTasks = tasks.filter((task) => !agents.some((agent) => agent.taskId === task.id));
-  for (const task of unassignedTasks.slice(0, 4)) {
-    lines.push(
-      `    Manager->>Manager: ${mermaidText(
-        `${task.kind} · ${statusLabel(task.state)} · ${task.error || task.steps.at(-1)?.summary || ""}`,
-        92,
-      )}`,
-    );
-  }
-
   if (agents.length > visibleAgents.length) {
     lines.push(
       `    Note over Manager: ${agents.length - visibleAgents.length} more workers hidden`,
