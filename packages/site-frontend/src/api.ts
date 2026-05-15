@@ -604,6 +604,17 @@ export const api = {
   },
   selfProcessStatus: () => request<ManagerProcessStatus>("GET", "/api/self/process/status"),
   restartSelfProcess: () => request<ManagerRestartResult>("POST", "/api/self/process/restart"),
+  browserPresence: (clientId: string) =>
+    request<{ activeClients: number; clientId: string; generatedAt: string }>(
+      "POST",
+      "/api/self/browser/presence",
+      { clientId },
+    ),
+  browserRefresh: () =>
+    request<{ accepted: boolean; activeClients: number; eventSeq: number; generatedAt: string }>(
+      "POST",
+      "/api/self/browser/refresh",
+    ),
   selfNetworkStatus: () => request<ManagerNetworkStatus>("GET", "/api/self/network/status"),
   selfInstallStatus: () => request<ManagerInstallStatus>("GET", "/api/self/install/status"),
   selfSecurityBoundary: () =>

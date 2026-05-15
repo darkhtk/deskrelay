@@ -142,10 +142,35 @@ Write-Host ""
 Write-Host "Use Tailscale or LAN URLs only. Do not expose connector ports to the public internet."
 
 if (-not $NoOpenBrowser) {
+  $refreshedExistingBrowser = $false
   try {
-    Start-Process $localFrontendUrl
-    Write-Host "Opened DeskRelay in the default browser: $localFrontendUrl"
+    $headers = @{}
+    if ($env:CR_SITE_TOKEN) {
+      $headers["Authorization"] = "Bearer $env:CR_SITE_TOKEN"
+    }
+    $refresh = Invoke-RestMethod `
+      -Method Post `
+      -Uri "$localFrontendUrl/api/self/browser/refresh" `
+      -Headers $headers `
+      -TimeoutSec 5
+    $activeClients = 0
+    if ($null -ne $refresh.activeClients) {
+      $activeClients = [int]$refresh.activeClients
+    }
+    if ($activeClients -gt 0) {
+      $refreshedExistingBrowser = $true
+      Write-Host "Refreshed existing DeskRelay browser tab: $localFrontendUrl"
+    }
   } catch {
-    Write-Host "Could not open the default browser automatically. Open this URL manually: $localFrontendUrl"
+    $refreshedExistingBrowser = $false
+  }
+
+  if (-not $refreshedExistingBrowser) {
+    try {
+      Start-Process $localFrontendUrl
+      Write-Host "Opened DeskRelay in the default browser: $localFrontendUrl"
+    } catch {
+      Write-Host "Could not open the default browser automatically. Open this URL manually: $localFrontendUrl"
+    }
   }
 }

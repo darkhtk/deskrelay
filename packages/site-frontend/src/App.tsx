@@ -87,6 +87,7 @@ import {
   showSessionUsageMeter,
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
+import { createManagerEventSubscription } from "./manager-events.ts";
 
 type SettingsTab =
   | "general"
@@ -138,6 +139,10 @@ const INSTRUCTION_SOURCE_LABELS: Record<ClaudeInstructionSource["scope"], string
   projectClaude: ".claude 프로젝트",
   local: "개인 로컬",
 };
+const BROWSER_CLIENT_ID_KEY = "cr.browser-client-id";
+const LAST_BROWSER_REFRESH_EVENT_KEY = "cr.last-browser-refresh-event";
+const BROWSER_PRESENCE_INTERVAL_MS = 15_000;
+const BROWSER_REFRESH_EVENT_MAX_AGE_MS = 10_000;
 
 const HELP_SECTIONS: Array<{
   title: string;
@@ -318,6 +323,36 @@ function consumeSiteTokenFromUrl(): string | null {
   return token;
 }
 
+function browserPresenceClientId(): string {
+  if (typeof localStorage === "undefined") return `browser-${Math.random().toString(36).slice(2)}`;
+  try {
+    const existing = localStorage.getItem(BROWSER_CLIENT_ID_KEY)?.trim();
+    if (existing) return existing;
+    const random =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `browser-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+    localStorage.setItem(BROWSER_CLIENT_ID_KEY, random);
+    return random;
+  } catch {
+    return `browser-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+  }
+}
+
+function shouldHandleBrowserRefreshEvent(event: { id: string; generatedAt: string }): boolean {
+  const generatedAt = Date.parse(event.generatedAt);
+  if (!Number.isFinite(generatedAt) || Date.now() - generatedAt > BROWSER_REFRESH_EVENT_MAX_AGE_MS) {
+    return false;
+  }
+  try {
+    if (sessionStorage.getItem(LAST_BROWSER_REFRESH_EVENT_KEY) === event.id) return false;
+    sessionStorage.setItem(LAST_BROWSER_REFRESH_EVENT_KEY, event.id);
+  } catch {
+    // If sessionStorage is unavailable, the event age gate still prevents stale replay loops.
+  }
+  return true;
+}
+
 function nextWeekResetLabel(): string {
   const reset = new Date();
   const day = reset.getDay();
@@ -414,6 +449,7 @@ export const App: Component = () => {
   const initialToken = consumeSiteTokenFromUrl() ?? getToken();
   const [localToken, setLocalToken] = createSignal<string | null>(initialToken);
   const hasAccess = () => Boolean(localToken());
+  const browserClientId = browserPresenceClientId();
 
   const handleTokenLogin = async (value: string) => {
     const previousToken = getToken();
@@ -513,6 +549,25 @@ export const App: Component = () => {
 
   createEffect(() => {
     document.documentElement.style.setProperty("--chat-font-size", `${chatFontSize()}px`);
+  });
+
+  createEffect(() => {
+    if (!hasAccess()) return;
+    const announcePresence = () => {
+      void api.browserPresence(browserClientId).catch(() => undefined);
+    };
+    announcePresence();
+    const timer = window.setInterval(announcePresence, BROWSER_PRESENCE_INTERVAL_MS);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  createManagerEventSubscription({
+    enabled: hasAccess,
+    onEvent(event) {
+      if (event.type !== "browser.refresh") return;
+      if (!shouldHandleBrowserRefreshEvent(event)) return;
+      void hardRefreshApp();
+    },
   });
 
   const notifyDevicesChanged = () => {

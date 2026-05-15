@@ -88,7 +88,6 @@ import {
   type InstructionEditorHeaderState,
   InstructionsWorkspace,
 } from "./InstructionsWorkspace.tsx";
-import { ManagerAssistant } from "./ManagerAssistant.tsx";
 import { ManagerOrchestrationWorkspace } from "./ManagerOrchestrationWorkspace.tsx";
 import { NewChatCard } from "./NewChatCard.tsx";
 import { OfflineHint, daemonOfflineBannerMessage, isDaemonOfflineMessage } from "./OfflineHint.tsx";
@@ -799,7 +798,6 @@ type SettingsOpenOptions = {
   deviceId?: string | null;
 };
 
-type ChatViewMode = "chat" | "split" | "assistant";
 type MainPanelMode = "chat" | "instructions" | "orchestration";
 
 type DeviceSelectionRequest = {
@@ -1838,9 +1836,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [draftConversationId, setDraftConversationId] = createSignal(createDraftConversationId());
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = createSignal(false);
-  const [mainChatOpen, setMainChatOpen] = createSignal(true);
-  const [assistantOpen, setAssistantOpen] = createSignal(false);
-  const [mobileChatViewport, setMobileChatViewport] = createSignal(isMobileSidebarViewport());
   const [sidebarWidth, setSidebarWidth] = createSignal(readSidebarWidth());
   const [sidebarResizing, setSidebarResizing] = createSignal(false);
   const [sidebarResizeWillCollapse, setSidebarResizeWillCollapse] = createSignal(false);
@@ -2175,58 +2170,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     });
   }
 
-  const showAssistantInChat = () =>
-    assistantOpen() && mobileChatViewport() && mainPanelMode() === "chat";
-  const showAssistantDock = () =>
-    assistantOpen() && !mobileChatViewport() && mainPanelMode() === "chat";
-  const chatPanelCollapsed = () =>
-    !mainChatOpen() && showAssistantDock() && mainPanelMode() === "chat";
-
-  const currentChatViewMode = (): ChatViewMode => {
-    if (!assistantOpen()) return "chat";
-    if (mobileChatViewport() || chatPanelCollapsed()) return "assistant";
-    return "split";
-  };
-
-  const availableChatViewModes = (): ChatViewMode[] =>
-    mobileChatViewport() ? ["chat", "assistant"] : ["chat", "split", "assistant"];
-
-  function chatViewModeLabel(mode: ChatViewMode): string {
-    if (mode === "chat") return "Chat";
-    if (mode === "split") return "Split";
-    return "AI";
-  }
-
-  function setChatViewMode(mode: ChatViewMode) {
-    setMainPanelMode("chat");
-    if (mode === "chat") {
-      setMainChatOpen(true);
-      setAssistantOpen(false);
-      return;
-    }
-    if (mode === "split" && !mobileChatViewport()) {
-      setMainChatOpen(true);
-      setAssistantOpen(true);
-      return;
-    }
-    setMainChatOpen(false);
-    setAssistantOpen(true);
-    if (isMobileSidebarViewport()) {
-      setSidebarOpen(false);
-    }
-  }
-
-  createEffect(() => {
-    if (!showAssistantDock() && !mobileChatViewport()) setMainChatOpen(true);
-  });
-
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    const media = window.matchMedia("(max-width: 720px)");
-    const updateMobileViewport = () => setMobileChatViewport(media.matches);
-    updateMobileViewport();
-    media.addEventListener("change", updateMobileViewport);
-    onCleanup(() => media.removeEventListener("change", updateMobileViewport));
-  }
+  const chatPanelCollapsed = () => false;
 
   function commitSidebarWidth(value: number) {
     const next = clampSidebarWidth(value);
@@ -2306,7 +2250,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   function beginAssistantResize(event: PointerEvent) {
     if (isMobileSidebarViewport()) return;
     event.preventDefault();
-    setAssistantOpen(true);
     clearAssistantResizeListeners();
 
     const startX = event.clientX;
@@ -2320,7 +2263,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (rawWidth < ASSISTANT_MIN_WIDTH - ASSISTANT_COLLAPSE_DRAG_THRESHOLD) {
         closedDuringDrag = true;
         commitAssistantWidth(ASSISTANT_MIN_WIDTH);
-        setAssistantOpen(false);
         setAssistantResizing(false);
         setAssistantResizeWillClose(false);
         clearAssistantResizeListeners();
@@ -2337,7 +2279,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       if (closedDuringDrag) return;
       if (rawWidth < ASSISTANT_MIN_WIDTH - ASSISTANT_COLLAPSE_DRAG_THRESHOLD) {
         commitAssistantWidth(ASSISTANT_MIN_WIDTH);
-        setAssistantOpen(false);
         return;
       }
       commitAssistantWidth(rawWidth);
@@ -2397,7 +2338,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       event.preventDefault();
       if (assistantWidth() <= ASSISTANT_MIN_WIDTH) {
         commitAssistantWidth(ASSISTANT_MIN_WIDTH);
-        setAssistantOpen(false);
         return;
       }
       commitAssistantWidth(assistantWidth() - step);
@@ -2428,7 +2368,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   function openInstructionsWorkspace() {
-    setAssistantOpen(false);
     setMainPanelMode("instructions");
     if (isMobileSidebarViewport()) setSidebarOpen(false);
   }
@@ -2439,8 +2378,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
   function openOrchestrationWorkspace() {
     setMainPanelMode("orchestration");
-    setAssistantOpen(false);
-    setMainChatOpen(true);
     if (isMobileSidebarViewport()) setSidebarOpen(false);
   }
 
@@ -3364,7 +3301,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     <section
       class="signed-in"
       classList={{
-        "assistant-panel-open": showAssistantDock(),
         "main-chat-collapsed": chatPanelCollapsed(),
       }}
       id="signed-in-pane"
@@ -4040,7 +3976,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                     aria-pressed={mainPanelMode() !== "orchestration"}
                     onClick={openChatWorkspace}
                   >
-                    채팅
+                    일반채팅
                   </button>
                   <button
                     type="button"
@@ -4052,24 +3988,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                     작업판
                   </button>
                 </div>
-                <Show when={mainPanelMode() === "chat"}>
-                  <div class="chat-view-switch" aria-label="Chat view mode">
-                    <For each={availableChatViewModes()}>
-                      {(mode) => (
-                        <button
-                          type="button"
-                          class="chat-view-switch-button"
-                          classList={{ active: currentChatViewMode() === mode }}
-                          aria-pressed={currentChatViewMode() === mode}
-                          title={chatViewModeLabel(mode)}
-                          onClick={() => setChatViewMode(mode)}
-                        >
-                          {chatViewModeLabel(mode)}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </Show>
               </>
             }
           >
@@ -4123,10 +4041,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                 <Show
                   when={mainPanelMode() === "orchestration"}
                   fallback={
-                    <Show
-                      when={showAssistantInChat()}
-                      fallback={
-                        <>
+                    <>
                           <div
                             ref={transcriptScroller}
                             class="transcript"
@@ -4265,16 +4180,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                               }
                             />
                           </div>
-                        </>
-                      }
-                    >
-                      <div class="chat-assistant-mobile">
-                        <ManagerAssistant
-                          context={managerAssistantContext()}
-                          devices={devices() ?? []}
-                        />
-                      </div>
-                    </Show>
+                    </>
                   }
                 >
                   <ManagerOrchestrationWorkspace
@@ -4312,44 +4218,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           <div class="chat-collapsed-placeholder" aria-hidden="true" />
         </Show>
       </section>
-
-      <Show when={showAssistantDock()}>
-        <aside class="chat-assistant-dock" aria-label={t("chat.manager-assistant.open")}>
-          <div class="chat-view-switch assistant-dock-view-switch" aria-label="Chat view mode">
-            <For each={availableChatViewModes()}>
-              {(mode) => (
-                <button
-                  type="button"
-                  class="chat-view-switch-button"
-                  classList={{ active: currentChatViewMode() === mode }}
-                  aria-pressed={currentChatViewMode() === mode}
-                  title={chatViewModeLabel(mode)}
-                  onClick={() => setChatViewMode(mode)}
-                >
-                  {chatViewModeLabel(mode)}
-                </button>
-              )}
-            </For>
-          </div>
-          <div
-            class="assistant-resize-handle"
-            classList={{
-              "is-dragging": assistantResizing(),
-              "will-close": assistantResizeWillClose(),
-            }}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Assistant 창 크기 조절"
-            aria-valuemin={ASSISTANT_MIN_WIDTH}
-            aria-valuemax={ASSISTANT_MAX_WIDTH}
-            aria-valuenow={assistantWidth()}
-            tabIndex={0}
-            onPointerDown={beginAssistantResize}
-            onKeyDown={handleAssistantResizeKeyDown}
-          />
-          <ManagerAssistant context={managerAssistantContext()} devices={devices() ?? []} />
-        </aside>
-      </Show>
 
       {/* Refresh devices when nothing has loaded yet ??runs once on mount. */}
       <Show when={!effectiveDeviceId()}>

@@ -1055,6 +1055,7 @@ export type ManagerEventInput =
   | { type: "task.updated"; task: ManagerTask }
   | { type: "assistant.status"; report: ManagerAssistantStatusReport }
   | { type: "hygiene.updated"; report: ManagerSessionHygieneReport }
+  | { type: "browser.refresh"; activeClients: number }
   | { type: "heartbeat" };
 
 export type ManagerEvent = ManagerEventInput & {

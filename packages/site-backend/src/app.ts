@@ -208,6 +208,7 @@ const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
 const MANAGER_ORCHESTRATION_FILE = "orchestration-state.json";
 const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
+const BROWSER_CLIENT_TTL_MS = 45_000;
 
 export function createSiteApp(options: SiteAppOptions): Hono {
   const app = new Hono();
@@ -238,9 +239,17 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     managerOrchestrationStore,
     build,
   ).catch(() => undefined);
+  const browserClients = new Map<string, number>();
 
   async function ensureManagerRuntimeRecovered(): Promise<void> {
     await managerRuntimeRecovery;
+  }
+
+  function activeBrowserClientCount(now = Date.now()): number {
+    for (const [clientId, lastSeen] of browserClients.entries()) {
+      if (now - lastSeen > BROWSER_CLIENT_TTL_MS) browserClients.delete(clientId);
+    }
+    return browserClients.size;
   }
 
   app.get("/healthz", (c) =>
@@ -286,6 +295,31 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.get("/api/manager/events/stream", (c) => {
     const afterSeq = parseManagerEventSeq(c.req.query("afterSeq") ?? c.req.header("Last-Event-ID"));
     return streamManagerEvents(managerEventBus, afterSeq);
+  });
+
+  app.post("/api/self/browser/presence", async (c) => {
+    const input = (await c.req.json().catch(() => ({}))) as { clientId?: unknown };
+    const clientId =
+      typeof input.clientId === "string" ? input.clientId.trim().slice(0, 128) : "";
+    if (!clientId) return c.json({ error: "clientId is required" }, 400);
+    const now = Date.now();
+    browserClients.set(clientId, now);
+    return c.json({
+      activeClients: activeBrowserClientCount(now),
+      clientId,
+      generatedAt: new Date(now).toISOString(),
+    });
+  });
+
+  app.post("/api/self/browser/refresh", (c) => {
+    const activeClients = activeBrowserClientCount();
+    const event = managerEventBus.emit({ type: "browser.refresh", activeClients });
+    return c.json({
+      accepted: true,
+      activeClients,
+      eventSeq: event.seq,
+      generatedAt: event.generatedAt,
+    });
   });
 
   app.get("/api/manager/assistant/workspace", async (c) => {
@@ -1937,6 +1971,16 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "GET",
     path: "/api/manager/events/stream",
     description: "Stream manager state-change events with Last-Event-ID resume support.",
+  },
+  {
+    method: "POST",
+    path: "/api/self/browser/presence",
+    description: "Record that a DeskRelay browser tab is currently active.",
+  },
+  {
+    method: "POST",
+    path: "/api/self/browser/refresh",
+    description: "Ask active DeskRelay browser tabs to hard refresh instead of opening a new tab.",
   },
   {
     method: "POST",

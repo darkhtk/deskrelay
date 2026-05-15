@@ -565,6 +565,14 @@ describe("API route inventory", () => {
           authedRequest("GET", "/api/manager/events/recent?afterSeq=0"),
         ],
         [
+          "POST /api/self/browser/presence",
+          authedRequest("POST", "/api/self/browser/presence", { clientId: "route-inventory" }),
+        ],
+        [
+          "POST /api/self/browser/refresh",
+          authedRequest("POST", "/api/self/browser/refresh"),
+        ],
+        [
           "POST /api/manager/sessions/read",
           authedRequest("POST", "/api/manager/sessions/read", {
             deviceId,
@@ -1591,6 +1599,40 @@ describe("manager task API", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test("browser refresh API emits only for currently active browser clients", async () => {
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+    });
+
+    const firstRefresh = await app.fetch(authedRequest("POST", "/api/self/browser/refresh"));
+    expect(firstRefresh.status).toBe(200);
+    expect((await firstRefresh.json()) as { activeClients?: number }).toMatchObject({
+      activeClients: 0,
+    });
+
+    const presence = await app.fetch(
+      authedRequest("POST", "/api/self/browser/presence", { clientId: "browser-1" }),
+    );
+    expect(presence.status).toBe(200);
+    expect((await presence.json()) as { activeClients?: number }).toMatchObject({
+      activeClients: 1,
+    });
+
+    const secondRefresh = await app.fetch(authedRequest("POST", "/api/self/browser/refresh"));
+    expect(secondRefresh.status).toBe(200);
+    const secondBody = (await secondRefresh.json()) as { activeClients?: number; eventSeq?: number };
+    expect(secondBody).toMatchObject({ activeClients: 1, eventSeq: 2 });
+
+    const recent = await app.fetch(authedRequest("GET", "/api/manager/events/recent"));
+    expect(recent.status).toBe(200);
+    const recentBody = (await recent.json()) as { events?: Array<{ type?: string }> };
+    expect(recentBody.events?.map((event) => event.type)).toEqual([
+      "browser.refresh",
+      "browser.refresh",
+    ]);
   });
 
   test("manager assistant conversation state persists the active Claude session", async () => {

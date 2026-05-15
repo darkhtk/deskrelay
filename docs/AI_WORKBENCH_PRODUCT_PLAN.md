@@ -195,6 +195,7 @@ Work items:
 
 - Make the install wizard classify the current machine as server, registered device, unregistered device, or browser-only client.
 - Strengthen the other-PC installer so it handles Git, Bun, Tailscale detection, firewall checks, stale connector cleanup, and browser opening.
+- If the browser already has an active DeskRelay tab, refresh that tab through the server event API instead of opening another tab.
 - Add structured installer reports for every step: detected, fixed, skipped, failed, and next action.
 - Keep server URL, Site token, and registration command in one generated source of truth.
 - Ensure device removal also explains what remains on the target PC and how to uninstall it.
@@ -335,12 +336,12 @@ Tests:
 
 ## Immediate Next Steps
 
-1. Fix manager summary and diagnostics so unreachable remote devices cannot stall quick server status APIs.
-2. Add a compact manager worker session table that exposes role, cwd, session id, and last output time.
-3. Add a cleanup action for stale running agents whose process is no longer alive.
-4. Move orchestration visualization toward a vertical state graph instead of noisy sequence history.
-5. Add a virtual regression test for one orchestration loop: create round, dispatch two workers, capture session ids, dispatch next round, verify reuse.
-6. Harden the other-PC registration wizard around stale connector and token mismatch cases.
+1. Finish offline-device update durability: persist desired connector update state and retry when the device becomes reachable.
+2. Add Tailscale and Windows Firewall status as separate backend diagnosis steps, but show only failed or actionable rows in the UI.
+3. Add failure report retention: keep recent N reports, collapse repeated failures from the same PC, and expose a cleanup command.
+4. Add virtual UI regression coverage for browser refresh, orchestration event replay, slash command scrolling, attachments, and cached mobile reload.
+5. Harden stale connector cleanup so the installer can classify "port occupied by old DeskRelay" separately from "port occupied by unknown process".
+6. Keep refining the orchestration workspace toward current-state vertical graphs and stable worker-session evidence.
 
 ## Non-Goals For Now
 
