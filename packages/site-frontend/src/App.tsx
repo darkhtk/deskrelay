@@ -1671,21 +1671,6 @@ const GeneralSettings: Component<{
         <p class="settings-card-help">
           현재 브라우저에 로드된 대화를 파일로 저장합니다. 서버에는 내보내기 파일을 만들지 않습니다.
         </p>
-        <Show
-          when={currentConversationExport()}
-          fallback={
-            <p class="settings-card-help">
-              내보낼 대화가 없습니다. 세션을 선택하거나 메시지를 보낸 뒤 사용할 수 있습니다.
-            </p>
-          }
-        >
-          {(snapshot) => (
-            <p class="settings-card-help">
-              대상: {snapshot().title || snapshot().sessionId || "새 채팅"} · 이벤트{" "}
-              {snapshot().events.length}개
-            </p>
-          )}
-        </Show>
         <div class="settings-row">
           <button
             type="button"
