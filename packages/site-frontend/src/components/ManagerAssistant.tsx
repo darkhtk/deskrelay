@@ -23,6 +23,7 @@ import {
   type ManagerAssistantStatusReport,
   type ManagerAssistantStatusReportResponse,
   type ManagerStateViewResponse,
+  type ManagerTaskObservationResponse,
   api,
 } from "../api.ts";
 import {
@@ -99,6 +100,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
   const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
   const [managerActionBusy, setManagerActionBusy] = createSignal(false);
+  const [observeBusy, setObserveBusy] = createSignal(false);
+  const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [cachedOrchestrationSnapshot, setCachedOrchestrationSnapshot] = createSignal(
     readManagerOrchestrationCache(),
   );
@@ -723,6 +726,51 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     }
   };
 
+  const inspectManagerTask = async (taskId: string) => {
+    if (observeBusy()) return;
+    setObserveBusy(true);
+    setError(null);
+    try {
+      setObservedTask(await api.managerTaskObservation(taskId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setObserveBusy(false);
+    }
+  };
+
+  const runUpdateAll = async () => {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    setError(null);
+    try {
+      const task = await api.managerUpdateAll({ requestedBy: "browser" });
+      setObservedTask(await api.managerTaskObservation(task.id));
+      mutateManagerState(await api.managerState());
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManagerActionBusy(false);
+    }
+  };
+
+  const repairRegistration = async () => {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    setError(null);
+    try {
+      const task = await api.managerRegistrationRepair({ requestedBy: "browser" });
+      setObservedTask(await api.managerTaskObservation(task.id));
+      mutateManagerState(await api.managerState());
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManagerActionBusy(false);
+    }
+  };
+
   const repairManagerRound = async (roundId: string) => {
     if (managerActionBusy()) return;
     setManagerActionBusy(true);
@@ -783,6 +831,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           workerRuns={visibleWorkerRuns()?.runs ?? []}
           hygiene={visibleSessionHygiene()}
           state={managerState()}
+          observedTask={observedTask()}
+          observeBusy={observeBusy()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
           acknowledgeBusy={acknowledgeBusy()}
@@ -792,9 +842,12 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
           onAcknowledgeRound={(roundId) => void acknowledgeManagerRound(roundId)}
           onCancelTask={(taskId) => void cancelManagerTask(taskId)}
+          onInspectTask={(taskId) => void inspectManagerTask(taskId)}
           onRepairRound={(roundId) => void repairManagerRound(roundId)}
+          onRepairRegistration={() => void repairRegistration()}
           onRefreshState={() => void refreshManagerStateNow()}
           onRetryTask={(taskId) => void retryManagerTask(taskId)}
+          onRunUpdateAll={() => void runUpdateAll()}
         />
       </Show>
       <div

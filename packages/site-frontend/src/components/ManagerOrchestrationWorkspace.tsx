@@ -5,6 +5,7 @@ import type {
   ManagerRoundHealthGateResponse,
   ManagerSessionHygieneReport,
   ManagerStateViewResponse,
+  ManagerTaskObservationResponse,
   ManagerWorkerRunLedgerResponse,
 } from "@deskrelay/shared";
 import {
@@ -42,6 +43,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
   const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
   const [managerActionBusy, setManagerActionBusy] = createSignal(false);
+  const [observeBusy, setObserveBusy] = createSignal(false);
+  const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   let eventRefreshTimer: number | undefined;
 
@@ -263,6 +266,42 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function inspectManagerTask(taskId: string) {
+    if (observeBusy()) return;
+    setObserveBusy(true);
+    try {
+      setObservedTask(await api.managerTaskObservation(taskId));
+    } finally {
+      setObserveBusy(false);
+    }
+  }
+
+  async function runUpdateAll() {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    try {
+      const task = await api.managerUpdateAll({ requestedBy: "browser" });
+      setObservedTask(await api.managerTaskObservation(task.id));
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setManagerActionBusy(false);
+    }
+  }
+
+  async function repairRegistration() {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    try {
+      const task = await api.managerRegistrationRepair({ requestedBy: "browser" });
+      setObservedTask(await api.managerTaskObservation(task.id));
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setManagerActionBusy(false);
+    }
+  }
+
   async function retryManagerTask(taskId: string) {
     if (managerActionBusy()) return;
     setManagerActionBusy(true);
@@ -328,6 +367,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           workerRuns={visibleWorkerRuns()?.runs ?? []}
           hygiene={visibleHygiene()}
           state={managerState()}
+          observedTask={observedTask()}
+          observeBusy={observeBusy()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
           acknowledgeBusy={acknowledgeBusy()}
@@ -337,9 +378,12 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
           onAcknowledgeRound={(roundId) => void acknowledgeManagerRound(roundId)}
           onCancelTask={(taskId) => void cancelManagerTask(taskId)}
+          onInspectTask={(taskId) => void inspectManagerTask(taskId)}
           onRepairRound={(roundId) => void repairManagerRound(roundId)}
+          onRepairRegistration={() => void repairRegistration()}
           onRefreshState={() => void refreshManagerStateNow()}
           onRetryTask={(taskId) => void retryManagerTask(taskId)}
+          onRunUpdateAll={() => void runUpdateAll()}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">

@@ -7,6 +7,7 @@ import type {
   ManagerSessionHygieneReport,
   ManagerStateViewResponse,
   ManagerTask,
+  ManagerTaskObservationResponse,
   ManagerWorkerRun,
 } from "@deskrelay/shared";
 import {
@@ -37,15 +38,20 @@ interface ManagerOrchestrationPanelProps {
   hygieneLoading?: boolean | undefined;
   hygieneCleanupBusy?: boolean | undefined;
   state?: ManagerStateViewResponse | null | undefined;
+  observedTask?: ManagerTaskObservationResponse | null | undefined;
+  observeBusy?: boolean | undefined;
   acknowledgeBusy?: boolean | undefined;
   actionBusy?: boolean | undefined;
   standalone?: boolean | undefined;
   onAcknowledgeFailures?: (() => void) | undefined;
   onAcknowledgeRound?: ((roundId: string) => void) | undefined;
   onCancelTask?: ((taskId: string) => void) | undefined;
+  onInspectTask?: ((taskId: string) => void) | undefined;
   onRepairRound?: ((roundId: string) => void) | undefined;
+  onRepairRegistration?: (() => void) | undefined;
   onRefreshState?: (() => void) | undefined;
   onRetryTask?: ((taskId: string) => void) | undefined;
+  onRunUpdateAll?: (() => void) | undefined;
   onRefreshHygiene?: (() => void) | undefined;
   onCleanupHygiene?: (() => void) | undefined;
 }
@@ -83,6 +89,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const timeline = createMemo(() => buildTimeline(activeRound(), agents(), tasks()));
   const artifacts = createMemo(() => buildArtifacts(agents(), tasks()));
   const totals = createMemo(() => summarizeTotals(agents()));
+  const runTotals = createMemo(() => summarizeWorkerRunTotals(props.workerRuns ?? []));
   const currentState = createMemo(() => props.state?.current ?? null);
   const freshnessLabel = createMemo(() => formatFreshness(props.state));
   const activeIssueCount = createMemo(
@@ -161,6 +168,9 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           <Show when={freshnessLabel()}>{(label) => <span>{label()}</span>}</Show>
           <span>running {totals().running}</span>
           <span>blocked {totals().blocked}</span>
+          <span>
+            runs {runTotals().active}/{runTotals().total}
+          </span>
         </div>
         <Show when={activeIssueCount() > 0 && Boolean(props.onAcknowledgeFailures)}>
           <button
@@ -201,8 +211,11 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               busy={props.actionBusy || props.acknowledgeBusy}
               onAcknowledge={props.onAcknowledgeFailures}
               onCancelTask={props.onCancelTask}
+              onInspectTask={props.onInspectTask}
+              onRepairRegistration={props.onRepairRegistration}
               onRefresh={props.onRefreshState}
               onRetryTask={props.onRetryTask}
+              onRunUpdateAll={props.onRunUpdateAll}
             />
           </OrchestrationSection>
           <OrchestrationSection title="Round health" class="manager-section-health">
@@ -210,12 +223,24 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               health={props.health}
               busy={props.actionBusy || props.acknowledgeBusy}
               onAcknowledgeRound={props.onAcknowledgeRound}
+              onInspectTask={props.onInspectTask}
               onRepairRound={props.onRepairRound}
               onRetryTask={props.onRetryTask}
             />
           </OrchestrationSection>
+          <Show when={props.observedTask}>
+            {(observation) => (
+              <OrchestrationSection title="Task observation" class="manager-section-observation">
+                <TaskObservationView observation={observation()} busy={props.observeBusy} />
+              </OrchestrationSection>
+            )}
+          </Show>
           <OrchestrationSection title="Worker runs" class="manager-section-worker-runs">
-            <WorkerRunsView runs={props.workerRuns ?? []} />
+            <WorkerRunsView
+              runs={props.workerRuns ?? []}
+              busy={props.observeBusy || props.actionBusy}
+              onInspectTask={props.onInspectTask}
+            />
           </OrchestrationSection>
           <OrchestrationSection title="Worker flow" class="manager-section-flow">
             <MermaidFlowView
@@ -340,12 +365,35 @@ const CurrentStateView: Component<{
   busy: boolean | undefined;
   onAcknowledge: (() => void) | undefined;
   onCancelTask: ((taskId: string) => void) | undefined;
+  onInspectTask: ((taskId: string) => void) | undefined;
+  onRepairRegistration: (() => void) | undefined;
   onRefresh: (() => void) | undefined;
   onRetryTask: ((taskId: string) => void) | undefined;
+  onRunUpdateAll: (() => void) | undefined;
 }> = (props) => {
   const current = createMemo(() => props.state?.current ?? null);
   const blockers = createMemo(() => props.state?.blockers ?? []);
   const taskId = createMemo(() => current()?.taskId);
+  const recoveryText = createMemo(() =>
+    [
+      current()?.title,
+      current()?.detail,
+      ...blockers().flatMap((blocker) => [blocker.message, blocker.detail]),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase(),
+  );
+  const showUpdateRecovery = createMemo(
+    () =>
+      Boolean(props.onRunUpdateAll) &&
+      /\b(update|version|drift)\b|connector mismatch|connector update/.test(recoveryText()),
+  );
+  const showRegistrationRecovery = createMemo(
+    () =>
+      Boolean(props.onRepairRegistration) &&
+      /\b(registration|register|pairing|pair|site token|daemon token|token)\b/.test(recoveryText()),
+  );
   return (
     <div class="manager-current-state">
       <Show
@@ -415,6 +463,18 @@ const CurrentStateView: Component<{
                   Retry
                 </button>
               </Show>
+              <Show when={Boolean(taskId() && props.onInspectTask)}>
+                <button
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() => {
+                    const id = taskId();
+                    if (id) props.onInspectTask?.(id);
+                  }}
+                >
+                  Inspect
+                </button>
+              </Show>
               <Show
                 when={Boolean(item().actions.includes("cancel") && taskId() && props.onCancelTask)}
               >
@@ -432,6 +492,24 @@ const CurrentStateView: Component<{
               <Show when={item().actions.includes("acknowledge") && props.onAcknowledge}>
                 <button type="button" disabled={props.busy} onClick={() => props.onAcknowledge?.()}>
                   Acknowledge
+                </button>
+              </Show>
+              <Show when={showUpdateRecovery()}>
+                <button
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() => props.onRunUpdateAll?.()}
+                >
+                  Update all
+                </button>
+              </Show>
+              <Show when={showRegistrationRecovery()}>
+                <button
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() => props.onRepairRegistration?.()}
+                >
+                  Repair registration
                 </button>
               </Show>
             </div>
@@ -459,6 +537,7 @@ const RoundHealthGateView: Component<{
   health?: ManagerRoundHealthGate | null | undefined;
   busy?: boolean | undefined;
   onAcknowledgeRound?: ((roundId: string) => void) | undefined;
+  onInspectTask?: ((taskId: string) => void) | undefined;
   onRepairRound?: ((roundId: string) => void) | undefined;
   onRetryTask?: ((taskId: string) => void) | undefined;
 }> = (props) => {
@@ -521,6 +600,7 @@ const RoundHealthGateView: Component<{
                         roundId={health().roundId}
                         busy={props.busy}
                         onAcknowledgeRound={props.onAcknowledgeRound}
+                        onInspectTask={props.onInspectTask}
                         onRepairRound={props.onRepairRound}
                         onRetryTask={props.onRetryTask}
                       />
@@ -541,6 +621,7 @@ const HealthIssueAction: Component<{
   roundId: string;
   busy?: boolean | undefined;
   onAcknowledgeRound?: ((roundId: string) => void) | undefined;
+  onInspectTask?: ((taskId: string) => void) | undefined;
   onRepairRound?: ((roundId: string) => void) | undefined;
   onRetryTask?: ((taskId: string) => void) | undefined;
 }> = (props) => {
@@ -548,6 +629,7 @@ const HealthIssueAction: Component<{
   const disabled = createMemo(() => {
     if (props.busy) return true;
     if (props.issue.action === "retry-worker") return !props.issue.taskId || !props.onRetryTask;
+    if (props.issue.action === "inspect-worker") return !props.issue.taskId || !props.onInspectTask;
     if (props.issue.action === "repair-round") return !props.onRepairRound;
     if (props.issue.action === "acknowledge") return !props.onAcknowledgeRound;
     return true;
@@ -556,6 +638,8 @@ const HealthIssueAction: Component<{
     if (disabled()) return;
     if (props.issue.action === "retry-worker" && props.issue.taskId) {
       props.onRetryTask?.(props.issue.taskId);
+    } else if (props.issue.action === "inspect-worker" && props.issue.taskId) {
+      props.onInspectTask?.(props.issue.taskId);
     } else if (props.issue.action === "repair-round") {
       props.onRepairRound?.(props.roundId);
     } else if (props.issue.action === "acknowledge") {
@@ -573,7 +657,53 @@ const HealthIssueAction: Component<{
   );
 };
 
-const WorkerRunsView: Component<{ runs: ManagerWorkerRun[] }> = (props) => (
+const TaskObservationView: Component<{
+  observation: ManagerTaskObservationResponse;
+  busy?: boolean | undefined;
+}> = (props) => (
+  <div class="manager-task-observation" aria-label="manager task observation">
+    <div class="manager-task-observation-head">
+      <span
+        class={`manager-status-dot manager-status-dot-${statusTone(props.observation.task.state)}`}
+      />
+      <strong>{props.observation.summary}</strong>
+      <span>{props.observation.terminal ? "terminal" : "active"}</span>
+      <Show when={props.busy}>
+        <span>loading</span>
+      </Show>
+    </div>
+    <dl class="manager-task-observation-grid">
+      <div>
+        <dt>Task</dt>
+        <dd>{shortId(props.observation.task.id)}</dd>
+      </div>
+      <div>
+        <dt>Kind</dt>
+        <dd>{props.observation.task.kind}</dd>
+      </div>
+      <div>
+        <dt>State</dt>
+        <dd>{props.observation.task.state}</dd>
+      </div>
+      <div>
+        <dt>Next</dt>
+        <dd>{props.observation.nextRead}</dd>
+      </div>
+    </dl>
+    <Show when={props.observation.task.error}>
+      {(error) => <p class="manager-task-observation-error">{error()}</p>}
+    </Show>
+    <Show when={props.observation.log.lines.length > 0}>
+      <pre>{props.observation.log.lines.slice(-8).join("\n")}</pre>
+    </Show>
+  </div>
+);
+
+const WorkerRunsView: Component<{
+  runs: ManagerWorkerRun[];
+  busy?: boolean | undefined;
+  onInspectTask?: ((taskId: string) => void) | undefined;
+}> = (props) => (
   <div class="manager-worker-runs" aria-label="worker run ledger">
     <div class="manager-worker-run-row manager-worker-run-row-head">
       <span>Worker</span>
@@ -609,8 +739,22 @@ const WorkerRunsView: Component<{ runs: ManagerWorkerRun[] }> = (props) => (
                 : "-"}
           </span>
           <span title={workerRunResultTitle(run)}>{workerRunResultLabel(run)}</span>
-          <span title={run.error || run.outputPreview || run.integrity.join(", ")}>
+          <span
+            class="manager-worker-run-signal"
+            title={run.error || run.outputPreview || run.integrity.join(", ")}
+          >
             {workerRunSignal(run)}
+            <Show when={run.taskId && Boolean(props.onInspectTask)}>
+              <button
+                type="button"
+                disabled={props.busy}
+                onClick={() => {
+                  if (run.taskId) props.onInspectTask?.(run.taskId);
+                }}
+              >
+                Inspect
+              </button>
+            </Show>
           </span>
         </div>
       )}
@@ -907,6 +1051,15 @@ function summarizeTotals(agents: ManagerAgent[]) {
     running: agents.filter((agent) => ["assigned", "running", "waiting"].includes(agent.status))
       .length,
     blocked: agents.filter((agent) => ["blocked", "failed", "stale"].includes(agent.status)).length,
+  };
+}
+
+function summarizeWorkerRunTotals(runs: ManagerWorkerRun[]) {
+  return {
+    total: runs.length,
+    active: runs.filter((run) =>
+      ["pending", "running", "waiting_for_device", "restart_required"].includes(run.status),
+    ).length,
   };
 }
 
@@ -1244,6 +1397,8 @@ function healthIssueActionLabel(issue: ManagerRoundHealthGate["issues"][number])
   switch (issue.action) {
     case "retry-worker":
       return "Retry";
+    case "inspect-worker":
+      return "Inspect";
     case "repair-round":
       return "Repair";
     case "acknowledge":

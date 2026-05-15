@@ -2063,6 +2063,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       );
       expect(run.status).toBe(202);
       const body = (await run.json()) as {
+        id?: string;
         kind?: string;
         state?: string;
         result?: { stdout?: string; command?: string };
@@ -2073,6 +2074,23 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(body.params?.prompt).toBe("hello worker");
       expect(body.result?.stdout).toContain("hello worker");
       expect(body.result?.command).toContain("<prompt>");
+
+      const observation = await app.fetch(
+        authedRequest("GET", `/api/manager/tasks/${body.id}/observe`),
+      );
+      expect(observation.status).toBe(200);
+      const observed = (await observation.json()) as {
+        summary?: string;
+        terminal?: boolean;
+        task?: { kind?: string; state?: string; result?: { stdout?: string } };
+        log?: { lines?: string[] };
+      };
+      expect(observed.terminal).toBe(true);
+      expect(observed.task?.kind).toBe("run-worker");
+      expect(observed.task?.state).toBe("succeeded");
+      expect(observed.summary).toContain("run-worker completed");
+      expect(observed.task?.result?.stdout).toContain("hello worker");
+      expect(observed.log?.lines?.join("\n")).toContain("worker.completed");
 
       const unknown = await app.fetch(
         authedRequest("POST", "/api/manager/workers/run", {

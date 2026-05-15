@@ -417,6 +417,7 @@ export type {
   ManagerAssistantStatusReportInput,
   ManagerAssistantStatusReportResponse,
   ManagerStateViewResponse,
+  ManagerTaskObservationResponse,
   ManagerWorkerCheckResult,
   ManagerRoundHealthGateResponse,
   ManagerRoundRepairResponse,

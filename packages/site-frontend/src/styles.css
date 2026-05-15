@@ -6058,6 +6058,57 @@ body.manager-orchestration-resizing {
   color: var(--text-faint);
   cursor: default;
 }
+.manager-task-observation {
+  color: var(--text-muted);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.manager-task-observation-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.manager-task-observation-head strong {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-task-observation-grid {
+  display: grid;
+  gap: 8px 18px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+.manager-task-observation-grid dt {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-task-observation-grid dd {
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-task-observation-error {
+  color: var(--danger);
+  margin: 0;
+}
+.manager-task-observation pre {
+  background: var(--surface-subtle);
+  border-radius: 6px;
+  color: var(--text-muted);
+  margin: 0;
+  max-height: 130px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
 .manager-agent-table,
 .manager-worker-runs,
 .manager-artifact-list {
@@ -6120,6 +6171,24 @@ body.manager-orchestration-resizing {
 }
 .manager-worker-run-main small {
   color: var(--text-faint);
+}
+.manager-worker-run-signal {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+.manager-worker-run-signal button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.manager-worker-run-signal button:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 .manager-agent-role {
   color: var(--text);
