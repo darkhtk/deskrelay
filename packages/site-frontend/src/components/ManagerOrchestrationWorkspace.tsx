@@ -39,6 +39,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [refreshSeq, setRefreshSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
   const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
+  const [managerActionBusy, setManagerActionBusy] = createSignal(false);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   let eventRefreshTimer: number | undefined;
 
@@ -84,7 +85,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     },
   );
 
-  const [managerState] = createResource(
+  const [managerState, { mutate: mutateManagerState }] = createResource(
     () => refreshSeq(),
     async (): Promise<ManagerStateViewResponse | null> => {
       try {
@@ -170,11 +171,47 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     setAcknowledgeBusy(true);
     try {
       await api.acknowledgeManagerState("cleared from orchestration workspace");
+      mutateManagerState(await api.managerState());
       setRefreshSeq((seq) => seq + 1);
     } catch {
       // The assistant panel will keep showing the current blockers until the next successful refresh.
     } finally {
       setAcknowledgeBusy(false);
+    }
+  }
+
+  async function refreshManagerStateNow() {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    try {
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setManagerActionBusy(false);
+    }
+  }
+
+  async function retryManagerTask(taskId: string) {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    try {
+      await api.retryManagerTask(taskId);
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setManagerActionBusy(false);
+    }
+  }
+
+  async function cancelManagerTask(taskId: string) {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    try {
+      await api.cancelManagerTask(taskId);
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setManagerActionBusy(false);
     }
   }
 
@@ -194,9 +231,13 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
           acknowledgeBusy={acknowledgeBusy()}
+          actionBusy={managerActionBusy()}
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
           onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
+          onCancelTask={(taskId) => void cancelManagerTask(taskId)}
+          onRefreshState={() => void refreshManagerStateNow()}
+          onRetryTask={(taskId) => void retryManagerTask(taskId)}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">

@@ -5885,6 +5885,98 @@ body.manager-orchestration-resizing {
   color: var(--text);
   font-size: 18px;
 }
+.manager-current-state {
+  color: var(--text-muted);
+  display: grid;
+  gap: 10px;
+}
+.manager-current-state-head,
+.manager-current-state-actions,
+.manager-current-state-ids {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.manager-current-state-head strong {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-current-state-grid {
+  display: grid;
+  gap: 8px 18px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+.manager-current-state-grid div {
+  min-width: 0;
+}
+.manager-current-state-grid dt {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-current-state-grid dd {
+  color: var(--text-muted);
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-current-state-detail {
+  margin: 0;
+}
+.manager-current-state-ids span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-current-state-actions button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 9px;
+}
+.manager-current-state-actions button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.manager-current-blockers {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.manager-current-blockers li {
+  align-items: baseline;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+.manager-current-blockers span {
+  color: var(--danger);
+  font-size: 11px;
+}
+.manager-current-blockers strong {
+  color: var(--text);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-current-blockers small {
+  color: var(--text-faint);
+  grid-column: 2;
+}
 .manager-agent-table,
 .manager-artifact-list {
   display: grid;
@@ -6597,6 +6689,7 @@ body.manager-orchestration-resizing {
     display: none;
   }
   .manager-overview-grid,
+  .manager-current-state-grid,
   .manager-flow {
     grid-template-columns: 1fr;
   }

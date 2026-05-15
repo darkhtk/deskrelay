@@ -34,8 +34,12 @@ interface ManagerOrchestrationPanelProps {
   hygieneCleanupBusy?: boolean | undefined;
   state?: ManagerStateViewResponse | null | undefined;
   acknowledgeBusy?: boolean | undefined;
+  actionBusy?: boolean | undefined;
   standalone?: boolean | undefined;
   onAcknowledgeFailures?: (() => void) | undefined;
+  onCancelTask?: ((taskId: string) => void) | undefined;
+  onRefreshState?: (() => void) | undefined;
+  onRetryTask?: ((taskId: string) => void) | undefined;
   onRefreshHygiene?: (() => void) | undefined;
   onCleanupHygiene?: (() => void) | undefined;
 }
@@ -188,6 +192,16 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               hiddenAgentCount={hiddenAgentCount()}
             />
           </OrchestrationSection>
+          <OrchestrationSection title="Current state" class="manager-section-current">
+            <CurrentStateView
+              state={props.state}
+              busy={props.actionBusy || props.acknowledgeBusy}
+              onAcknowledge={props.onAcknowledgeFailures}
+              onCancelTask={props.onCancelTask}
+              onRefresh={props.onRefreshState}
+              onRetryTask={props.onRetryTask}
+            />
+          </OrchestrationSection>
           <OrchestrationSection title="Worker flow" class="manager-section-flow">
             <MermaidFlowView
               round={activeRound()}
@@ -302,6 +316,126 @@ const OverviewView: Component<{
           </Show>
         </p>
       </div>
+    </div>
+  );
+};
+
+const CurrentStateView: Component<{
+  state: ManagerStateViewResponse | null | undefined;
+  busy: boolean | undefined;
+  onAcknowledge: (() => void) | undefined;
+  onCancelTask: ((taskId: string) => void) | undefined;
+  onRefresh: (() => void) | undefined;
+  onRetryTask: ((taskId: string) => void) | undefined;
+}> = (props) => {
+  const current = createMemo(() => props.state?.current ?? null);
+  const blockers = createMemo(() => props.state?.blockers ?? []);
+  const taskId = createMemo(() => current()?.taskId);
+  return (
+    <div class="manager-current-state">
+      <Show
+        when={current()}
+        fallback={<p class="manager-orchestration-empty">No manager state is loaded yet.</p>}
+      >
+        {(item) => (
+          <>
+            <div class="manager-current-state-head">
+              <span
+                class={`manager-status-dot manager-status-dot-${currentStateTone(item().tone)}`}
+              />
+              <strong>{item().title}</strong>
+              <span class="manager-status-pill">{item().status}</span>
+            </div>
+            <dl class="manager-current-state-grid">
+              <div>
+                <dt>Kind</dt>
+                <dd>{item().kind}</dd>
+              </div>
+              <div>
+                <dt>Source</dt>
+                <dd>{item().source}</dd>
+              </div>
+              <Show when={item().updatedAt}>
+                {(updatedAt) => (
+                  <div>
+                    <dt>Updated</dt>
+                    <dd>{formatTime(updatedAt())}</dd>
+                  </div>
+                )}
+              </Show>
+              <Show when={props.state?.freshness}>
+                {(freshness) => (
+                  <div>
+                    <dt>Signal</dt>
+                    <dd>{freshness().stale ? "stale" : formatFreshness(props.state)}</dd>
+                  </div>
+                )}
+              </Show>
+            </dl>
+            <Show when={item().detail}>
+              {(detail) => <p class="manager-current-state-detail">{detail()}</p>}
+            </Show>
+            <div class="manager-current-state-ids">
+              <Show when={item().roundId}>{(id) => <span>round {shortId(id())}</span>}</Show>
+              <Show when={item().agentId}>{(id) => <span>agent {shortId(id())}</span>}</Show>
+              <Show when={item().taskId}>{(id) => <span>task {shortId(id())}</span>}</Show>
+            </div>
+            <div class="manager-current-state-actions">
+              <Show when={item().actions.includes("refresh") && props.onRefresh}>
+                <button type="button" disabled={props.busy} onClick={() => props.onRefresh?.()}>
+                  Refresh
+                </button>
+              </Show>
+              <Show
+                when={Boolean(item().actions.includes("retry") && taskId() && props.onRetryTask)}
+              >
+                <button
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() => {
+                    const id = taskId();
+                    if (id) props.onRetryTask?.(id);
+                  }}
+                >
+                  Retry
+                </button>
+              </Show>
+              <Show
+                when={Boolean(item().actions.includes("cancel") && taskId() && props.onCancelTask)}
+              >
+                <button
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() => {
+                    const id = taskId();
+                    if (id) props.onCancelTask?.(id);
+                  }}
+                >
+                  Cancel
+                </button>
+              </Show>
+              <Show when={item().actions.includes("acknowledge") && props.onAcknowledge}>
+                <button type="button" disabled={props.busy} onClick={() => props.onAcknowledge?.()}>
+                  Acknowledge
+                </button>
+              </Show>
+            </div>
+          </>
+        )}
+      </Show>
+      <Show when={blockers().length > 0}>
+        <ul class="manager-current-blockers">
+          <For each={blockers().slice(0, 5)}>
+            {(blocker) => (
+              <li>
+                <span>{blocker.severity}</span>
+                <strong>{blocker.message}</strong>
+                <Show when={blocker.detail}>{(detail) => <small>{detail()}</small>}</Show>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
     </div>
   );
 };

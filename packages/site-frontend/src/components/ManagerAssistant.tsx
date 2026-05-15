@@ -96,6 +96,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [statusReportSeq, setStatusReportSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
   const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
+  const [managerActionBusy, setManagerActionBusy] = createSignal(false);
   const [cachedOrchestrationSnapshot, setCachedOrchestrationSnapshot] = createSignal(
     readManagerOrchestrationCache(),
   );
@@ -139,7 +140,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       }
     },
   );
-  const [managerState] = createResource(
+  const [managerState, { mutate: mutateManagerState }] = createResource(
     () => statusReportSeq(),
     async (): Promise<ManagerStateViewResponse | null> => {
       try {
@@ -610,11 +611,56 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     setError(null);
     try {
       await api.acknowledgeManagerState("cleared from orchestration panel");
+      mutateManagerState(await api.managerState());
       setStatusReportSeq((seq) => seq + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setAcknowledgeBusy(false);
+    }
+  };
+
+  const refreshManagerStateNow = async () => {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    setError(null);
+    try {
+      mutateManagerState(await api.managerState());
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManagerActionBusy(false);
+    }
+  };
+
+  const retryManagerTask = async (taskId: string) => {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    setError(null);
+    try {
+      await api.retryManagerTask(taskId);
+      mutateManagerState(await api.managerState());
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManagerActionBusy(false);
+    }
+  };
+
+  const cancelManagerTask = async (taskId: string) => {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    setError(null);
+    try {
+      await api.cancelManagerTask(taskId);
+      mutateManagerState(await api.managerState());
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManagerActionBusy(false);
     }
   };
 
@@ -634,9 +680,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
           acknowledgeBusy={acknowledgeBusy()}
+          actionBusy={managerActionBusy()}
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
           onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
+          onCancelTask={(taskId) => void cancelManagerTask(taskId)}
+          onRefreshState={() => void refreshManagerStateNow()}
+          onRetryTask={(taskId) => void retryManagerTask(taskId)}
         />
       </Show>
       <div
