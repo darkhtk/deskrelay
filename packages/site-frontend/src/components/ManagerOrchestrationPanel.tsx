@@ -373,27 +373,20 @@ const CurrentStateView: Component<{
 }> = (props) => {
   const current = createMemo(() => props.state?.current ?? null);
   const blockers = createMemo(() => props.state?.blockers ?? []);
+  const recoveryActions = createMemo(() => props.state?.recoveryActions ?? []);
   const taskId = createMemo(() => current()?.taskId);
-  const recoveryText = createMemo(() =>
-    [
-      current()?.title,
-      current()?.detail,
-      ...blockers().flatMap((blocker) => [blocker.message, blocker.detail]),
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase(),
-  );
-  const showUpdateRecovery = createMemo(
-    () =>
-      Boolean(props.onRunUpdateAll) &&
-      /\b(update|version|drift)\b|connector mismatch|connector update/.test(recoveryText()),
-  );
-  const showRegistrationRecovery = createMemo(
-    () =>
-      Boolean(props.onRepairRegistration) &&
-      /\b(registration|register|pairing|pair|site token|daemon token|token)\b/.test(recoveryText()),
-  );
+  const runRecoveryAction = (id: ManagerStateViewResponse["recoveryActions"][number]["id"]) => {
+    if (id === "update-all") props.onRunUpdateAll?.();
+    if (id === "repair-registration") props.onRepairRegistration?.();
+  };
+  const canRunRecoveryAction = (
+    action: ManagerStateViewResponse["recoveryActions"][number],
+  ): boolean => {
+    if (!action.enabled) return false;
+    if (action.id === "update-all") return Boolean(props.onRunUpdateAll);
+    if (action.id === "repair-registration") return Boolean(props.onRepairRegistration);
+    return false;
+  };
   return (
     <div class="manager-current-state">
       <Show
@@ -494,25 +487,31 @@ const CurrentStateView: Component<{
                   Acknowledge
                 </button>
               </Show>
-              <Show when={showUpdateRecovery()}>
-                <button
-                  type="button"
-                  disabled={props.busy}
-                  onClick={() => props.onRunUpdateAll?.()}
-                >
-                  Update all
-                </button>
-              </Show>
-              <Show when={showRegistrationRecovery()}>
-                <button
-                  type="button"
-                  disabled={props.busy}
-                  onClick={() => props.onRepairRegistration?.()}
-                >
-                  Repair registration
-                </button>
-              </Show>
+              <For each={recoveryActions()}>
+                {(action) => (
+                  <button
+                    type="button"
+                    disabled={props.busy || !canRunRecoveryAction(action)}
+                    title={action.reason}
+                    onClick={() => runRecoveryAction(action.id)}
+                  >
+                    {action.label}
+                  </button>
+                )}
+              </For>
             </div>
+            <Show when={recoveryActions().length > 0}>
+              <ul class="manager-current-recovery">
+                <For each={recoveryActions()}>
+                  {(action) => (
+                    <li>
+                      <strong>{action.label}</strong>
+                      <small>{action.reason}</small>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
           </>
         )}
       </Show>
@@ -660,44 +659,68 @@ const HealthIssueAction: Component<{
 const TaskObservationView: Component<{
   observation: ManagerTaskObservationResponse;
   busy?: boolean | undefined;
-}> = (props) => (
-  <div class="manager-task-observation" aria-label="manager task observation">
-    <div class="manager-task-observation-head">
-      <span
-        class={`manager-status-dot manager-status-dot-${statusTone(props.observation.task.state)}`}
-      />
-      <strong>{props.observation.summary}</strong>
-      <span>{props.observation.terminal ? "terminal" : "active"}</span>
-      <Show when={props.busy}>
-        <span>loading</span>
+}> = (props) => {
+  const steps = createMemo(() => props.observation.log.steps.slice(-6));
+  const resultPreview = createMemo(() => taskResultPreview(props.observation.log.result));
+  return (
+    <div class="manager-task-observation" aria-label="manager task observation">
+      <div class="manager-task-observation-head">
+        <span
+          class={`manager-status-dot manager-status-dot-${statusTone(props.observation.task.state)}`}
+        />
+        <strong>{props.observation.summary}</strong>
+        <span>{props.observation.terminal ? "terminal" : "active"}</span>
+        <Show when={props.busy}>
+          <span>loading</span>
+        </Show>
+      </div>
+      <dl class="manager-task-observation-grid">
+        <div>
+          <dt>Task</dt>
+          <dd>{shortId(props.observation.task.id)}</dd>
+        </div>
+        <div>
+          <dt>Kind</dt>
+          <dd>{props.observation.task.kind}</dd>
+        </div>
+        <div>
+          <dt>State</dt>
+          <dd>{props.observation.task.state}</dd>
+        </div>
+        <div>
+          <dt>Next</dt>
+          <dd>{props.observation.nextRead}</dd>
+        </div>
+      </dl>
+      <Show when={props.observation.task.error}>
+        {(error) => <p class="manager-task-observation-error">{error()}</p>}
+      </Show>
+      <Show when={steps().length > 0}>
+        <ol class="manager-task-observation-steps">
+          <For each={steps()}>
+            {(step) => (
+              <li>
+                <span>{step.status}</span>
+                <strong>{step.label}</strong>
+                <Show when={step.summary}>{(summary) => <small>{summary()}</small>}</Show>
+              </li>
+            )}
+          </For>
+        </ol>
+      </Show>
+      <Show when={resultPreview()}>
+        {(preview) => (
+          <pre aria-label="task result preview" class="manager-task-observation-result">
+            {preview()}
+          </pre>
+        )}
+      </Show>
+      <Show when={props.observation.log.lines.length > 0}>
+        <pre>{props.observation.log.lines.slice(-8).join("\n")}</pre>
       </Show>
     </div>
-    <dl class="manager-task-observation-grid">
-      <div>
-        <dt>Task</dt>
-        <dd>{shortId(props.observation.task.id)}</dd>
-      </div>
-      <div>
-        <dt>Kind</dt>
-        <dd>{props.observation.task.kind}</dd>
-      </div>
-      <div>
-        <dt>State</dt>
-        <dd>{props.observation.task.state}</dd>
-      </div>
-      <div>
-        <dt>Next</dt>
-        <dd>{props.observation.nextRead}</dd>
-      </div>
-    </dl>
-    <Show when={props.observation.task.error}>
-      {(error) => <p class="manager-task-observation-error">{error()}</p>}
-    </Show>
-    <Show when={props.observation.log.lines.length > 0}>
-      <pre>{props.observation.log.lines.slice(-8).join("\n")}</pre>
-    </Show>
-  </div>
-);
+  );
+};
 
 const WorkerRunsView: Component<{
   runs: ManagerWorkerRun[];
@@ -1341,6 +1364,16 @@ function collectArtifactPaths(text: string): string[] {
   return [...paths];
 }
 
+function taskResultPreview(result: unknown): string {
+  if (result === undefined || result === null) return "";
+  try {
+    const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+    return clipBlock(text ?? "", 1800);
+  } catch {
+    return clipBlock(String(result), 1800);
+  }
+}
+
 function statusTone(status: string | undefined): Tone {
   switch (status) {
     case "completed":
@@ -1549,6 +1582,12 @@ function clip(value: string | undefined, max: number): string {
   const text = value?.replace(/\s+/g, " ").trim() ?? "";
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1)}...`;
+}
+
+function clipBlock(value: string, max: number): string {
+  const text = value.trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
 }
 
 function mermaidText(value: string | undefined, max: number): string {

@@ -1347,6 +1347,73 @@ describe("manager task API", () => {
     expect(body.activeRound?.id).toBe(round.id);
   });
 
+  test("manager state view exposes structured recovery actions", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+    });
+    const updateTask = await managerTaskStore.create({
+      kind: "update-device",
+      targetId: "dev_update",
+      targetLabel: "Remote PC",
+      dryRun: true,
+      requestedBy: "browser",
+      steps: [],
+    });
+    await managerTaskStore.update(updateTask.id, {
+      state: "failed",
+      error: "connector update timed out",
+    });
+
+    const state = await app.fetch(authedRequest("GET", "/api/manager/state"));
+    expect(state.status).toBe(200);
+    const body = (await state.json()) as {
+      recoveryActions?: Array<{ id?: string; taskKind?: string; enabled?: boolean }>;
+    };
+    expect(body.recoveryActions).toContainEqual(
+      expect.objectContaining({ id: "update-all", taskKind: "update-all", enabled: true }),
+    );
+
+    const registrationStore = createInMemoryManagerTaskStore();
+    const registrationApp = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore: registrationStore,
+    });
+    const branchTask = await registrationStore.create({
+      kind: "update-device",
+      targetId: "dev_branch",
+      targetLabel: "Branch PC",
+      dryRun: true,
+      requestedBy: "browser",
+      steps: [],
+    });
+    await registrationStore.update(branchTask.id, {
+      state: "failed",
+      error: "connector updated main instead of api-ai-assistant. Re-run the registration command.",
+    });
+
+    const registrationState = await registrationApp.fetch(
+      authedRequest("GET", "/api/manager/state"),
+    );
+    expect(registrationState.status).toBe(200);
+    const registrationBody = (await registrationState.json()) as {
+      recoveryActions?: Array<{ id?: string; taskKind?: string; enabled?: boolean }>;
+    };
+    expect(registrationBody.recoveryActions).toContainEqual(
+      expect.objectContaining({
+        id: "repair-registration",
+        taskKind: "repair-registration",
+        enabled: true,
+      }),
+    );
+    expect(registrationBody.recoveryActions?.map((action) => action.id) ?? []).not.toContain(
+      "update-all",
+    );
+  });
+
   test("manager state acknowledgement clears old failures without deleting history", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();

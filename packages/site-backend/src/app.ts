@@ -3752,6 +3752,11 @@ async function buildManagerStateView(
     agents,
     tasks: taskSummaries,
   });
+  const recoveryActions = buildManagerStateRecoveryActions({
+    tasks: unacknowledgedTaskSummaries,
+    blockers,
+    latestStatus: input.latestStatus,
+  });
   const runningAgents = agents.filter((agent) =>
     ["assigned", "running", "waiting"].includes(agent.status),
   ).length;
@@ -3805,6 +3810,7 @@ async function buildManagerStateView(
     runningTasks,
     staleTasks,
     blockers,
+    recoveryActions,
     ...(input.latestStatus ? { latestStatus: input.latestStatus } : {}),
   };
 }
@@ -3950,6 +3956,68 @@ function buildManagerStateBlockers(input: {
     });
   }
   return blockers.slice(0, 20);
+}
+
+function buildManagerStateRecoveryActions(input: {
+  tasks: ManagerStateTaskSummary[];
+  blockers: ManagerStateBlocker[];
+  latestStatus?: ManagerAssistantStatusReport | undefined;
+}): ManagerStateViewResponse["recoveryActions"] {
+  const problemTasks = input.tasks.filter(
+    (task) =>
+      task.stale ||
+      task.state === "failed" ||
+      task.state === "blocked" ||
+      task.state === "waiting_for_device" ||
+      task.state === "restart_required",
+  );
+  const recoveryText = [
+    input.latestStatus?.message,
+    input.latestStatus?.detail,
+    ...input.blockers.flatMap((blocker) => [blocker.message, blocker.detail]),
+    ...problemTasks.flatMap((task) => [task.kind, task.state, task.error, task.staleReason]),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+
+  const hasRegistrationProblem =
+    problemTasks.some((task) => task.kind === "repair-registration") ||
+    /\b(registration|register|pairing|pair|site token|daemon token)\b/.test(recoveryText) ||
+    recoveryText.includes("registration_required") ||
+    recoveryText.includes("branch_mismatch") ||
+    recoveryText.includes("re-run the registration command");
+  const hasUpdateProblem =
+    problemTasks.some(
+      (task) =>
+        task.kind === "update-all" ||
+        task.kind === "update-server" ||
+        task.kind === "update-device",
+    ) ||
+    /\b(update|version|drift)\b/.test(recoveryText) ||
+    recoveryText.includes("connector mismatch") ||
+    recoveryText.includes("connector update");
+
+  const actions: ManagerStateViewResponse["recoveryActions"] = [];
+  if (hasRegistrationProblem) {
+    actions.push({
+      id: "repair-registration",
+      label: "Repair registration",
+      reason: "A registration or token problem needs the connector registration flow.",
+      taskKind: "repair-registration",
+      enabled: true,
+    });
+  }
+  if (hasUpdateProblem && !hasRegistrationProblem) {
+    actions.push({
+      id: "update-all",
+      label: "Update all",
+      reason: "An update task failed or a version mismatch is active.",
+      taskKind: "update-all",
+      enabled: true,
+    });
+  }
+  return actions;
 }
 
 function managerStateCurrent(input: {

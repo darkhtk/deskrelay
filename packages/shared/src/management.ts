@@ -558,6 +558,15 @@ export type ManagerStateCurrentStatus =
   | "stale"
   | "acknowledged";
 export type ManagerStateCurrentAction = "details" | "acknowledge" | "retry" | "cancel" | "refresh";
+export type ManagerStateRecoveryActionId = "update-all" | "repair-registration";
+
+export interface ManagerStateRecoveryAction {
+  id: ManagerStateRecoveryActionId;
+  label: string;
+  reason: string;
+  taskKind: ManagerTaskKind;
+  enabled: boolean;
+}
 
 export interface ManagerStateFreshness {
   source: "poll" | "event" | "cache";
@@ -679,6 +688,7 @@ export interface ManagerStateViewResponse {
   runningTasks: ManagerStateTaskSummary[];
   staleTasks: ManagerStateTaskSummary[];
   blockers: ManagerStateBlocker[];
+  recoveryActions: ManagerStateRecoveryAction[];
   latestStatus?: ManagerAssistantStatusReport;
 }
 

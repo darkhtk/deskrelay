@@ -5948,6 +5948,28 @@ body.manager-orchestration-resizing {
   color: var(--text-faint);
   cursor: default;
 }
+.manager-current-recovery {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.manager-current-recovery li {
+  align-items: baseline;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+.manager-current-recovery strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.manager-current-recovery small {
+  color: var(--text-faint);
+  min-width: 0;
+}
 .manager-current-blockers {
   display: grid;
   gap: 6px;
@@ -6098,6 +6120,31 @@ body.manager-orchestration-resizing {
 .manager-task-observation-error {
   color: var(--danger);
   margin: 0;
+}
+.manager-task-observation-steps {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.manager-task-observation-steps li {
+  align-items: baseline;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 54px minmax(90px, max-content) minmax(0, 1fr);
+}
+.manager-task-observation-steps span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-task-observation-steps strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.manager-task-observation-steps small {
+  color: var(--text-faint);
+  min-width: 0;
 }
 .manager-task-observation pre {
   background: var(--surface-subtle);
