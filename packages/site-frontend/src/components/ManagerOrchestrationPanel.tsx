@@ -4,6 +4,7 @@ import type {
   ManagerRoundReportResponse,
   ManagerSessionHygieneItem,
   ManagerSessionHygieneReport,
+  ManagerStateViewResponse,
   ManagerTask,
 } from "@deskrelay/shared";
 import {
@@ -31,7 +32,10 @@ interface ManagerOrchestrationPanelProps {
   hygiene?: ManagerSessionHygieneReport | null | undefined;
   hygieneLoading?: boolean | undefined;
   hygieneCleanupBusy?: boolean | undefined;
+  state?: ManagerStateViewResponse | null | undefined;
+  acknowledgeBusy?: boolean | undefined;
   standalone?: boolean | undefined;
+  onAcknowledgeFailures?: (() => void) | undefined;
   onRefreshHygiene?: (() => void) | undefined;
   onCleanupHygiene?: (() => void) | undefined;
 }
@@ -69,6 +73,12 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const timeline = createMemo(() => buildTimeline(activeRound(), agents(), tasks()));
   const artifacts = createMemo(() => buildArtifacts(agents(), tasks()));
   const totals = createMemo(() => summarizeTotals(agents()));
+  const activeIssueCount = createMemo(
+    () =>
+      props.state?.counts.blockers ??
+      props.state?.blockers.length ??
+      (totals().blocked > 0 ? totals().blocked : 0),
+  );
 
   onCleanup(() => {
     stopResize?.();
@@ -135,6 +145,17 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           <span>running {totals().running}</span>
           <span>blocked {totals().blocked}</span>
         </div>
+        <Show when={activeIssueCount() > 0 && Boolean(props.onAcknowledgeFailures)}>
+          <button
+            type="button"
+            class="manager-orchestration-ack"
+            disabled={props.acknowledgeBusy}
+            onClick={() => props.onAcknowledgeFailures?.()}
+            title="Keep the history but clear acknowledged failures from current state"
+          >
+            {props.acknowledgeBusy ? "Acknowledging" : "Acknowledge"}
+          </button>
+        </Show>
         <Show when={!props.standalone}>
           <button
             type="button"
@@ -513,12 +534,13 @@ const HygieneItemRow: Component<{ item: ManagerSessionHygieneItem }> = (props) =
 );
 
 function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
+  const unacknowledged = rounds.filter((round) => !round.acknowledgedAt);
   return (
-    rounds.find((round) =>
+    unacknowledged.find((round) =>
       ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
         round.status,
       ),
-    ) ?? rounds[0]
+    ) ?? unacknowledged[0]
   );
 }
 

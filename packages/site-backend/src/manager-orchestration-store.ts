@@ -30,6 +30,9 @@ export type ManagerAgentPatch = Partial<
     | "lastError"
     | "lastHeartbeatAt"
     | "lastOutputAt"
+    | "acknowledgedAt"
+    | "acknowledgedBy"
+    | "acknowledgedReason"
   >
 >;
 
@@ -45,6 +48,9 @@ export type ManagerRoundPatch = Partial<
     | "completedAt"
     | "summary"
     | "error"
+    | "acknowledgedAt"
+    | "acknowledgedBy"
+    | "acknowledgedReason"
   >
 >;
 
@@ -293,6 +299,9 @@ function normalizeAgent(input: unknown): ManagerAgent | null {
   const lastError = nonEmptyString(input.lastError);
   const lastHeartbeatAt = nonEmptyString(input.lastHeartbeatAt);
   const lastOutputAt = nonEmptyString(input.lastOutputAt);
+  const acknowledgedAt = nonEmptyString(input.acknowledgedAt);
+  const acknowledgedBy = nonEmptyString(input.acknowledgedBy);
+  const acknowledgedReason = nonEmptyString(input.acknowledgedReason);
   return {
     id: input.id,
     role: input.role,
@@ -308,6 +317,9 @@ function normalizeAgent(input: unknown): ManagerAgent | null {
     ...(lastError ? { lastError } : {}),
     ...(lastHeartbeatAt ? { lastHeartbeatAt } : {}),
     ...(lastOutputAt ? { lastOutputAt } : {}),
+    ...(acknowledgedAt ? { acknowledgedAt } : {}),
+    ...(acknowledgedBy ? { acknowledgedBy } : {}),
+    ...(acknowledgedReason ? { acknowledgedReason } : {}),
     createdAt,
     updatedAt: nonEmptyString(input.updatedAt) ?? createdAt,
   };
@@ -322,6 +334,9 @@ function normalizeRound(input: unknown): ManagerRound | null {
   const completedAt = nonEmptyString(input.completedAt);
   const summary = nonEmptyString(input.summary);
   const error = nonEmptyString(input.error);
+  const acknowledgedAt = nonEmptyString(input.acknowledgedAt);
+  const acknowledgedBy = nonEmptyString(input.acknowledgedBy);
+  const acknowledgedReason = nonEmptyString(input.acknowledgedReason);
   return {
     id: input.id,
     title: nonEmptyString(input.title) ?? "Orchestration round",
@@ -335,6 +350,9 @@ function normalizeRound(input: unknown): ManagerRound | null {
     ...(completedAt ? { completedAt } : {}),
     ...(summary ? { summary } : {}),
     ...(error ? { error } : {}),
+    ...(acknowledgedAt ? { acknowledgedAt } : {}),
+    ...(acknowledgedBy ? { acknowledgedBy } : {}),
+    ...(acknowledgedReason ? { acknowledgedReason } : {}),
   };
 }
 

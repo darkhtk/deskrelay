@@ -95,6 +95,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [status, setStatus] = createSignal<ManagerVisibleStatus | null>(null);
   const [statusReportSeq, setStatusReportSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
+  const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
   const [cachedOrchestrationSnapshot, setCachedOrchestrationSnapshot] = createSignal(
     readManagerOrchestrationCache(),
   );
@@ -603,6 +604,20 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     }
   };
 
+  const acknowledgeManagerFailures = async () => {
+    if (acknowledgeBusy()) return;
+    setAcknowledgeBusy(true);
+    setError(null);
+    try {
+      await api.acknowledgeManagerState("cleared from orchestration panel");
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAcknowledgeBusy(false);
+    }
+  };
+
   const runOrchestrationPreset = () => {
     void send(ORCHESTRATION_PRESET_PROMPT);
   };
@@ -615,10 +630,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
           hygiene={visibleSessionHygiene()}
+          state={managerState()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
+          acknowledgeBusy={acknowledgeBusy()}
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
+          onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
         />
       </Show>
       <div
@@ -730,12 +748,13 @@ function summarizeOrchestration(
 }
 
 function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
+  const unacknowledged = rounds.filter((round) => !round.acknowledgedAt);
   return (
-    rounds.find((round) =>
+    unacknowledged.find((round) =>
       ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
         round.status,
       ),
-    ) ?? rounds[0]
+    ) ?? unacknowledged[0]
   );
 }
 

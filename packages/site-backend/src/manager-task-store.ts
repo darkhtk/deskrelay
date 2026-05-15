@@ -26,7 +26,16 @@ export type ManagerTaskCreateInput = Pick<
 export type ManagerTaskPatch = Partial<
   Pick<
     ManagerTask,
-    "state" | "targetLabel" | "startedAt" | "completedAt" | "steps" | "result" | "error"
+    | "state"
+    | "targetLabel"
+    | "startedAt"
+    | "completedAt"
+    | "steps"
+    | "result"
+    | "error"
+    | "acknowledgedAt"
+    | "acknowledgedBy"
+    | "acknowledgedReason"
   >
 >;
 
@@ -200,6 +209,11 @@ function normalizeStoredTask(input: unknown): ManagerTask | null {
     steps: Array.isArray(input.steps) ? input.steps.map(normalizeStoredStep).filter(isPresent) : [],
     ...(input.result !== undefined ? { result: input.result } : {}),
     ...(typeof input.error === "string" ? { error: input.error } : {}),
+    ...(typeof input.acknowledgedAt === "string" ? { acknowledgedAt: input.acknowledgedAt } : {}),
+    ...(typeof input.acknowledgedBy === "string" ? { acknowledgedBy: input.acknowledgedBy } : {}),
+    ...(typeof input.acknowledgedReason === "string"
+      ? { acknowledgedReason: input.acknowledgedReason }
+      : {}),
   };
 }
 

@@ -9,6 +9,7 @@ import {
   type DiagnosticSeverity,
   type DiagnosticStep,
   MANAGER_API_VERSION,
+  type ManagerAcknowledgeResponse,
   type ManagerAgent,
   type ManagerAgentCreateRequest,
   type ManagerAgentListResponse,
@@ -373,6 +374,23 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
   });
 
+  app.post("/api/manager/state/acknowledge", async (c) => {
+    const parsed = await parseManagerAcknowledgeRequest(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      const response = await acknowledgeManagerStateFailures({
+        taskStore: managerTaskStore,
+        orchestrationStore: managerOrchestrationStore,
+        input: parsed.value,
+        now: new Date(),
+      });
+      return c.json(response);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
   app.post("/api/manager/sessions/read", async (c) => {
     let body: unknown;
     try {
@@ -525,6 +543,26 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       sanitizeManagerTaskForAssistant(completed),
       completed.state === "blocked" ? 409 : 202,
     );
+  });
+
+  app.post("/api/manager/tasks/:id/acknowledge", async (c) => {
+    const parsed = await parseManagerAcknowledgeRequest(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const task = await managerTaskStore.get(c.req.param("id"));
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    const acknowledged = await acknowledgeManagerTask(
+      managerTaskStore,
+      task,
+      parsed.value,
+      new Date(),
+    );
+    if (!acknowledged.ok) {
+      return c.json(
+        { error: acknowledged.error, task: sanitizeManagerTaskForAssistant(task) },
+        409,
+      );
+    }
+    return c.json(sanitizeManagerTaskForAssistant(acknowledged.task));
   });
 
   app.get("/api/manager/tasks/:id", async (c) => {
@@ -681,6 +719,21 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     });
   });
 
+  app.post("/api/manager/agents/:id/acknowledge", async (c) => {
+    const parsed = await parseManagerAcknowledgeRequest(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const agent = await managerOrchestrationStore.getAgent(c.req.param("id"));
+    if (!agent) return c.json({ error: "unknown agent" }, 404);
+    const acknowledged = await acknowledgeManagerAgent(
+      managerOrchestrationStore,
+      agent,
+      parsed.value,
+      new Date(),
+    );
+    if (!acknowledged.ok) return c.json({ error: acknowledged.error, agent }, 409);
+    return c.json(acknowledged.agent);
+  });
+
   app.get("/api/manager/rounds", async (c) => {
     await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
     const response: ManagerRoundListResponse = {
@@ -755,6 +808,21 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     );
     if (!report) return c.json({ error: "unknown round" }, 404);
     return c.json(report);
+  });
+
+  app.post("/api/manager/rounds/:id/acknowledge", async (c) => {
+    const parsed = await parseManagerAcknowledgeRequest(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const round = await managerOrchestrationStore.getRound(c.req.param("id"));
+    if (!round) return c.json({ error: "unknown round" }, 404);
+    const acknowledged = await acknowledgeManagerRound(
+      managerOrchestrationStore,
+      round,
+      parsed.value,
+      new Date(),
+    );
+    if (!acknowledged.ok) return c.json({ error: acknowledged.error, round }, 409);
+    return c.json(acknowledged.round);
   });
 
   app.get("/api/manager/audit-log", async (c) => {
@@ -1724,6 +1792,11 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "POST",
+    path: "/api/manager/tasks/:id/acknowledge",
+    description: "Acknowledge a failed, blocked, or stale manager task without deleting history.",
+  },
+  {
+    method: "POST",
     path: "/api/manager/assistant/chat",
     description: "Send a message to the server-local DeskRelay assistant CLI.",
   },
@@ -1762,6 +1835,12 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "GET",
     path: "/api/manager/state",
     description: "Read the live manager state view used by the UI.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/state/acknowledge",
+    description:
+      "Acknowledge current manager failure signals so stale incidents stop driving status.",
   },
   {
     method: "GET",
@@ -1836,6 +1915,11 @@ const SITE_ROUTE_CAPABILITIES = [
     description: "Cancel or mark one orchestration agent as stopped.",
   },
   {
+    method: "POST",
+    path: "/api/manager/agents/:id/acknowledge",
+    description: "Acknowledge a failed, blocked, or stale orchestration agent.",
+  },
+  {
     method: "GET",
     path: "/api/manager/rounds",
     description: "List orchestration rounds.",
@@ -1854,6 +1938,11 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "GET",
     path: "/api/manager/rounds/:id/report",
     description: "Read a round report with agents and worker task results.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/rounds/:id/acknowledge",
+    description: "Acknowledge a failed or blocked orchestration round without deleting history.",
   },
   {
     method: "GET",
@@ -2422,6 +2511,9 @@ async function runManagerAgentMessage(
     ...(roundId ? { roundId } : {}),
     lastInstruction: prompt,
     lastError: "",
+    acknowledgedAt: "",
+    acknowledgedBy: "",
+    acknowledgedReason: "",
   });
   const task = await createAndRunManagerTask({
     request: {
@@ -2479,6 +2571,9 @@ async function dispatchManagerRound(
   await input.store.updateRound(input.round.id, {
     status: "dispatching",
     startedAt: input.round.startedAt ?? startedAt,
+    acknowledgedAt: "",
+    acknowledgedBy: "",
+    acknowledgedReason: "",
   });
   const assignments = await resolveRoundAssignments(input);
   if (!assignments.ok) {
@@ -2492,7 +2587,12 @@ async function dispatchManagerRound(
     return { round: blocked, agents: [], tasks: [] };
   }
 
-  await input.store.updateRound(input.round.id, { status: "running" });
+  await input.store.updateRound(input.round.id, {
+    status: "running",
+    acknowledgedAt: "",
+    acknowledgedBy: "",
+    acknowledgedReason: "",
+  });
   // F-R49-X: switch from Promise.all to Promise.allSettled so a single
   // spawn rejection no longer collapses the entire dispatch. Each
   // rejected entry synthesizes a failed-task record so the response
@@ -2684,6 +2784,161 @@ async function buildManagerRoundReport(
   };
 }
 
+interface ManagerAcknowledgeInput {
+  acknowledgedBy: string;
+  reason?: string;
+}
+
+async function parseManagerAcknowledgeRequest(req: { text(): Promise<string> }): Promise<
+  { ok: true; value: ManagerAcknowledgeInput } | { ok: false; error: string }
+> {
+  let body: unknown = {};
+  try {
+    const text = await req.text();
+    body = text.trim() ? JSON.parse(text) : {};
+  } catch {
+    return { ok: false, error: "invalid JSON body" };
+  }
+  if (!isRecord(body)) return { ok: false, error: "body must be an object" };
+  const acknowledgedBy =
+    typeof body.acknowledgedBy === "string" && body.acknowledgedBy.trim()
+      ? body.acknowledgedBy.trim().slice(0, 80)
+      : "browser";
+  const reason =
+    typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim().slice(0, 500)
+      : undefined;
+  return {
+    ok: true,
+    value: {
+      acknowledgedBy,
+      ...(reason ? { reason } : {}),
+    },
+  };
+}
+
+async function acknowledgeManagerStateFailures(input: {
+  taskStore: ManagerTaskStore;
+  orchestrationStore: ManagerOrchestrationStore;
+  input: ManagerAcknowledgeInput;
+  now: Date;
+}): Promise<ManagerAcknowledgeResponse> {
+  const nowMs = input.now.getTime();
+  const [tasks, agents, rounds] = await Promise.all([
+    input.taskStore.list(500),
+    input.orchestrationStore.listAgents(),
+    input.orchestrationStore.listRounds(),
+  ]);
+  const acknowledgedTasks: ManagerTask[] = [];
+  const acknowledgedAgents: ManagerAgent[] = [];
+  const acknowledgedRounds: ManagerRound[] = [];
+  for (const task of tasks) {
+    if (!isManagerTaskAcknowledgable(task, nowMs) || task.acknowledgedAt) continue;
+    const acknowledged = await acknowledgeManagerTask(
+      input.taskStore,
+      task,
+      input.input,
+      input.now,
+    );
+    if (acknowledged.ok) acknowledgedTasks.push(acknowledged.task);
+  }
+  for (const agent of agents) {
+    if (!isManagerAgentAcknowledgable(agent) || agent.acknowledgedAt) continue;
+    const acknowledged = await acknowledgeManagerAgent(
+      input.orchestrationStore,
+      agent,
+      input.input,
+      input.now,
+    );
+    if (acknowledged.ok) acknowledgedAgents.push(acknowledged.agent);
+  }
+  for (const round of rounds) {
+    if (!isManagerRoundAcknowledgable(round) || round.acknowledgedAt) continue;
+    const acknowledged = await acknowledgeManagerRound(
+      input.orchestrationStore,
+      round,
+      input.input,
+      input.now,
+    );
+    if (acknowledged.ok) acknowledgedRounds.push(acknowledged.round);
+  }
+  return {
+    generatedAt: input.now.toISOString(),
+    tasks: acknowledgedTasks.map(sanitizeManagerTaskForAssistant),
+    agents: acknowledgedAgents,
+    rounds: acknowledgedRounds,
+  };
+}
+
+async function acknowledgeManagerTask(
+  store: ManagerTaskStore,
+  task: ManagerTask,
+  input: ManagerAcknowledgeInput,
+  now: Date,
+): Promise<{ ok: true; task: ManagerTask } | { ok: false; error: string }> {
+  if (!isManagerTaskAcknowledgable(task, now.getTime())) {
+    return { ok: false, error: "task has no failed, blocked, or stale state to acknowledge" };
+  }
+  const updated = await store.update(task.id, managerAcknowledgePatch(input, now));
+  if (!updated) return { ok: false, error: "unknown task" };
+  return { ok: true, task: updated };
+}
+
+async function acknowledgeManagerAgent(
+  store: ManagerOrchestrationStore,
+  agent: ManagerAgent,
+  input: ManagerAcknowledgeInput,
+  now: Date,
+): Promise<{ ok: true; agent: ManagerAgent } | { ok: false; error: string }> {
+  if (!isManagerAgentAcknowledgable(agent)) {
+    return { ok: false, error: "agent has no blocked, failed, or stale state to acknowledge" };
+  }
+  const updated = await store.updateAgent(agent.id, managerAcknowledgePatch(input, now));
+  if (!updated) return { ok: false, error: "unknown agent" };
+  return { ok: true, agent: updated };
+}
+
+async function acknowledgeManagerRound(
+  store: ManagerOrchestrationStore,
+  round: ManagerRound,
+  input: ManagerAcknowledgeInput,
+  now: Date,
+): Promise<{ ok: true; round: ManagerRound } | { ok: false; error: string }> {
+  if (!isManagerRoundAcknowledgable(round)) {
+    return { ok: false, error: "round has no blocked or failed state to acknowledge" };
+  }
+  const updated = await store.updateRound(round.id, managerAcknowledgePatch(input, now));
+  if (!updated) return { ok: false, error: "unknown round" };
+  return { ok: true, round: updated };
+}
+
+function managerAcknowledgePatch(
+  input: ManagerAcknowledgeInput,
+  now: Date,
+): { acknowledgedAt: string; acknowledgedBy: string; acknowledgedReason?: string } {
+  return {
+    acknowledgedAt: now.toISOString(),
+    acknowledgedBy: input.acknowledgedBy,
+    ...(input.reason ? { acknowledgedReason: input.reason } : {}),
+  };
+}
+
+function isManagerTaskAcknowledgable(task: ManagerTask, nowMs: number): boolean {
+  return (
+    task.state === "failed" ||
+    task.state === "blocked" ||
+    Boolean(managerTaskStaleReason(task, nowMs))
+  );
+}
+
+function isManagerAgentAcknowledgable(agent: ManagerAgent): boolean {
+  return agent.status === "blocked" || agent.status === "failed" || agent.status === "stale";
+}
+
+function isManagerRoundAcknowledgable(round: ManagerRound): boolean {
+  return round.status === "blocked" || round.status === "failed";
+}
+
 interface ManagerStateViewInput {
   taskStore: ManagerTaskStore;
   orchestrationStore: ManagerOrchestrationStore;
@@ -2701,17 +2956,19 @@ async function buildManagerStateView(
   ]);
   const nowMs = input.now.getTime();
   const taskSummaries = tasks.map((task) => summarizeManagerStateTask(task, agents, rounds, nowMs));
-  const staleTasks = taskSummaries.filter((task) => task.stale).slice(0, 20);
+  const unacknowledgedTaskSummaries = taskSummaries.filter((task) => !task.acknowledgedAt);
+  const staleTasks = unacknowledgedTaskSummaries.filter((task) => task.stale).slice(0, 20);
   const runningTasks = taskSummaries
     .filter((task) => !isManagerTaskTerminalState(task.state))
     .slice(0, 20);
   const roundSummaries = rounds.map((round) => summarizeManagerStateRound(round, agents, tasks));
+  const unacknowledgedRoundSummaries = roundSummaries.filter((round) => !round.acknowledgedAt);
   const activeRound =
-    roundSummaries.find((round) =>
+    unacknowledgedRoundSummaries.find((round) =>
       ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
         round.status,
       ),
-    ) ?? roundSummaries[0];
+    ) ?? unacknowledgedRoundSummaries[0];
   const blockers = buildManagerStateBlockers({
     rounds: roundSummaries,
     agents,
@@ -2720,11 +2977,13 @@ async function buildManagerStateView(
   const runningAgents = agents.filter((agent) =>
     ["assigned", "running", "waiting"].includes(agent.status),
   ).length;
-  const blockedAgents = agents.filter((agent) =>
-    ["blocked", "failed", "stale"].includes(agent.status),
+  const blockedAgents = agents.filter(
+    (agent) => ["blocked", "failed", "stale"].includes(agent.status) && !agent.acknowledgedAt,
   ).length;
-  const blockedTasks = taskSummaries.filter((task) => task.state === "blocked").length;
-  const failedTasks = taskSummaries.filter((task) => task.state === "failed").length;
+  const blockedTasks = unacknowledgedTaskSummaries.filter(
+    (task) => task.state === "blocked",
+  ).length;
+  const failedTasks = unacknowledgedTaskSummaries.filter((task) => task.state === "failed").length;
   const status = managerStateStatus({
     activeRound,
     latestStatus: input.latestStatus,
@@ -2739,8 +2998,9 @@ async function buildManagerStateView(
     status,
     counts: {
       rounds: rounds.length,
-      activeRounds: roundSummaries.filter((round) => !isManagerRoundTerminalState(round.status))
-        .length,
+      activeRounds: roundSummaries.filter(
+        (round) => !isManagerRoundTerminalState(round.status) && !round.acknowledgedAt,
+      ).length,
       agents: agents.length,
       runningAgents,
       blockedAgents,
@@ -2785,20 +3045,25 @@ function summarizeManagerStateRound(
     ...(round.completedAt ? { completedAt: round.completedAt } : {}),
     ...(round.summary ? { summary: round.summary } : {}),
     ...(round.error ? { error: round.error } : {}),
+    ...(round.acknowledgedAt ? { acknowledgedAt: round.acknowledgedAt } : {}),
+    ...(round.acknowledgedBy ? { acknowledgedBy: round.acknowledgedBy } : {}),
+    ...(round.acknowledgedReason ? { acknowledgedReason: round.acknowledgedReason } : {}),
     counts: {
       agents: roundAgents.length,
       completedAgents: roundAgents.filter((agent) => agent.status === "completed").length,
       runningAgents: roundAgents.filter((agent) =>
         ["assigned", "running", "waiting"].includes(agent.status),
       ).length,
-      blockedAgents: roundAgents.filter((agent) =>
-        ["blocked", "failed", "stale"].includes(agent.status),
+      blockedAgents: roundAgents.filter(
+        (agent) => ["blocked", "failed", "stale"].includes(agent.status) && !agent.acknowledgedAt,
       ).length,
       tasks: roundTasks.length,
       completedTasks: roundTasks.filter((task) => task.state === "succeeded").length,
       runningTasks: roundTasks.filter((task) => !isManagerTaskTerminalState(task.state)).length,
-      blockedTasks: roundTasks.filter((task) => task.state === "blocked").length,
-      failedTasks: roundTasks.filter((task) => task.state === "failed").length,
+      blockedTasks: roundTasks.filter((task) => task.state === "blocked" && !task.acknowledgedAt)
+        .length,
+      failedTasks: roundTasks.filter((task) => task.state === "failed" && !task.acknowledgedAt)
+        .length,
     },
   };
 }
@@ -2831,6 +3096,9 @@ function summarizeManagerStateTask(
     stale: Boolean(staleReason),
     ...(staleReason ? { staleReason } : {}),
     ...(task.error ? { error: task.error } : {}),
+    ...(task.acknowledgedAt ? { acknowledgedAt: task.acknowledgedAt } : {}),
+    ...(task.acknowledgedBy ? { acknowledgedBy: task.acknowledgedBy } : {}),
+    ...(task.acknowledgedReason ? { acknowledgedReason: task.acknowledgedReason } : {}),
   };
 }
 
@@ -2841,6 +3109,7 @@ function buildManagerStateBlockers(input: {
 }): ManagerStateBlocker[] {
   const blockers: ManagerStateBlocker[] = [];
   for (const task of input.tasks) {
+    if (task.acknowledgedAt) continue;
     if (task.stale) {
       blockers.push({
         id: `task-stale:${task.id}`,
@@ -2866,6 +3135,7 @@ function buildManagerStateBlockers(input: {
     }
   }
   for (const agent of input.agents) {
+    if (agent.acknowledgedAt) continue;
     if (!["blocked", "failed", "stale"].includes(agent.status)) continue;
     blockers.push({
       id: `agent-${agent.status}:${agent.id}`,
@@ -2879,6 +3149,7 @@ function buildManagerStateBlockers(input: {
     });
   }
   for (const round of input.rounds) {
+    if (round.acknowledgedAt) continue;
     if (round.status !== "blocked" && round.status !== "failed") continue;
     blockers.push({
       id: `round-${round.status}:${round.id}`,

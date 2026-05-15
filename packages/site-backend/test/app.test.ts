@@ -517,6 +517,12 @@ describe("API route inventory", () => {
           [202],
         ],
         [
+          "POST /api/manager/tasks/:id/acknowledge",
+          authedRequest("POST", `/api/manager/tasks/${failedTask.id}/acknowledge`, {
+            reason: "route inventory",
+          }),
+        ],
+        [
           "GET /api/manager/tasks/:id",
           authedRequest("GET", `/api/manager/tasks/${pendingTask.id}`),
         ],
@@ -549,6 +555,10 @@ describe("API route inventory", () => {
           [201],
         ],
         ["GET /api/manager/state", authedRequest("GET", "/api/manager/state")],
+        [
+          "POST /api/manager/state/acknowledge",
+          authedRequest("POST", "/api/manager/state/acknowledge", { reason: "route inventory" }),
+        ],
         [
           "GET /api/manager/events/recent",
           authedRequest("GET", "/api/manager/events/recent?afterSeq=0"),
@@ -617,6 +627,11 @@ describe("API route inventory", () => {
           authedRequest("POST", "/api/manager/agents/missing/stop"),
           [404],
         ],
+        [
+          "POST /api/manager/agents/:id/acknowledge",
+          authedRequest("POST", "/api/manager/agents/missing/acknowledge"),
+          [404],
+        ],
         ["GET /api/manager/rounds", authedRequest("GET", "/api/manager/rounds")],
         [
           "POST /api/manager/rounds",
@@ -633,6 +648,11 @@ describe("API route inventory", () => {
         [
           "GET /api/manager/rounds/:id/report",
           authedRequest("GET", "/api/manager/rounds/missing/report"),
+          [404],
+        ],
+        [
+          "POST /api/manager/rounds/:id/acknowledge",
+          authedRequest("POST", "/api/manager/rounds/missing/acknowledge"),
           [404],
         ],
         [
@@ -1300,6 +1320,123 @@ describe("manager task API", () => {
     expect(body.staleTasks?.[0]?.id).toBe(task.id);
     expect(body.staleTasks?.[0]?.stale).toBe(true);
     expect(body.activeRound?.id).toBe(round.id);
+  });
+
+  test("manager state acknowledgement clears old failures without deleting history", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+      managerOrchestrationStore,
+    });
+
+    const round = await managerOrchestrationStore.createRound({
+      title: "R-failed",
+      objective: "Exercise acknowledgement hygiene.",
+    });
+    const agent = await managerOrchestrationStore.createAgent({
+      role: "verifier",
+      label: "Verifier",
+      roundId: round.id,
+    });
+    const task = await managerTaskStore.create({
+      kind: "run-worker",
+      dryRun: true,
+      requestedBy: "manager-assistant",
+      params: { agentId: agent.id, roundId: round.id },
+      steps: [],
+    });
+    await managerTaskStore.update(task.id, {
+      state: "failed",
+      error: "synthetic worker failure",
+      completedAt: new Date(0).toISOString(),
+    });
+    await managerOrchestrationStore.updateAgent(agent.id, {
+      status: "failed",
+      taskId: task.id,
+      lastError: "synthetic worker failure",
+    });
+    await managerOrchestrationStore.updateRound(round.id, {
+      status: "failed",
+      agentIds: [agent.id],
+      taskIds: [task.id],
+      error: "round failed",
+    });
+
+    const before = await app.fetch(authedRequest("GET", "/api/manager/state"));
+    expect(before.status).toBe(200);
+    const beforeBody = (await before.json()) as {
+      status?: { tone?: string };
+      counts?: { blockers?: number; blockedAgents?: number; failedTasks?: number };
+    };
+    expect(beforeBody.status?.tone).toBe("error");
+    expect(beforeBody.counts?.blockers).toBeGreaterThanOrEqual(3);
+    expect(beforeBody.counts?.blockedAgents).toBe(1);
+    expect(beforeBody.counts?.failedTasks).toBe(1);
+
+    const ack = await app.fetch(
+      authedRequest("POST", "/api/manager/state/acknowledge", {
+        reason: "operator reviewed stale failure",
+      }),
+    );
+    expect(ack.status).toBe(200);
+    const ackBody = (await ack.json()) as {
+      tasks?: Array<{ id?: string; acknowledgedAt?: string; acknowledgedReason?: string }>;
+      agents?: Array<{ id?: string; acknowledgedAt?: string }>;
+      rounds?: Array<{ id?: string; acknowledgedAt?: string }>;
+    };
+    expect(ackBody.tasks?.[0]?.id).toBe(task.id);
+    expect(typeof ackBody.tasks?.[0]?.acknowledgedAt).toBe("string");
+    expect(ackBody.tasks?.[0]?.acknowledgedReason).toBe("operator reviewed stale failure");
+    expect(ackBody.agents?.[0]?.id).toBe(agent.id);
+    expect(ackBody.rounds?.[0]?.id).toBe(round.id);
+
+    const after = await app.fetch(authedRequest("GET", "/api/manager/state"));
+    expect(after.status).toBe(200);
+    const afterBody = (await after.json()) as {
+      status?: { tone?: string; message?: string };
+      counts?: { blockers?: number; blockedAgents?: number; failedTasks?: number };
+      blockers?: unknown[];
+      recentRounds?: Array<{ id?: string; acknowledgedAt?: string }>;
+      staleTasks?: unknown[];
+    };
+    expect(afterBody.status?.tone).toBe("idle");
+    expect(afterBody.status?.message).toBe("Manager is ready");
+    expect(afterBody.counts?.blockers).toBe(0);
+    expect(afterBody.counts?.blockedAgents).toBe(0);
+    expect(afterBody.counts?.failedTasks).toBe(0);
+    expect(afterBody.blockers).toEqual([]);
+    expect(afterBody.staleTasks).toEqual([]);
+    expect(typeof afterBody.recentRounds?.[0]?.acknowledgedAt).toBe("string");
+
+    const storedTask = await managerTaskStore.get(task.id);
+    expect(storedTask?.state).toBe("failed");
+    expect(typeof storedTask?.acknowledgedAt).toBe("string");
+  });
+
+  test("manager acknowledgement rejects active work", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+    });
+    const task = await managerTaskStore.create({
+      kind: "diagnose",
+      dryRun: true,
+      requestedBy: "browser",
+      steps: [],
+    });
+
+    const ack = await app.fetch(
+      authedRequest("POST", `/api/manager/tasks/${task.id}/acknowledge`, {
+        reason: "should not be accepted",
+      }),
+    );
+    expect(ack.status).toBe(409);
+    expect((await managerTaskStore.get(task.id))?.acknowledgedAt).toBeUndefined();
   });
 
   test("manager event APIs replay and stream status changes", async () => {

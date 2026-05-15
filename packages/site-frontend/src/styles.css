@@ -5731,7 +5731,8 @@ dialog.approval-modal-root,
   flex: 0 0 auto;
   font-size: 11px;
 }
-.manager-orchestration-expand {
+.manager-orchestration-expand,
+.manager-orchestration-ack {
   background: transparent;
   border: 0;
   color: var(--text-faint);
@@ -5741,7 +5742,15 @@ dialog.approval-modal-root,
   font-size: 11px;
   padding: 2px 0;
 }
-.manager-orchestration-expand:hover {
+.manager-orchestration-ack {
+  color: var(--accent);
+}
+.manager-orchestration-ack:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.manager-orchestration-expand:hover,
+.manager-orchestration-ack:not(:disabled):hover {
   color: var(--text-muted);
 }
 .manager-status-dot {

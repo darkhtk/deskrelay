@@ -220,6 +220,9 @@ export interface ManagerTask {
   steps: DiagnosticStep[];
   result?: unknown;
   error?: string;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  acknowledgedReason?: string;
 }
 
 export interface ManagerTaskListResponse {
@@ -338,6 +341,9 @@ export interface ManagerAgent {
   lastOutputAt?: string;
   createdAt: string;
   updatedAt: string;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  acknowledgedReason?: string;
 }
 
 export interface ManagerAgentCreateRequest {
@@ -391,6 +397,9 @@ export interface ManagerRound {
   completedAt?: string;
   summary?: string;
   error?: string;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  acknowledgedReason?: string;
 }
 
 export interface ManagerRoundCreateRequest {
@@ -436,6 +445,9 @@ export interface ManagerStateRoundSummary {
   completedAt?: string;
   summary?: string;
   error?: string;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  acknowledgedReason?: string;
   counts: {
     agents: number;
     completedAgents: number;
@@ -466,6 +478,9 @@ export interface ManagerStateTaskSummary {
   stale: boolean;
   staleReason?: string;
   error?: string;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  acknowledgedReason?: string;
 }
 
 export interface ManagerStateBlocker {
@@ -477,6 +492,14 @@ export interface ManagerStateBlocker {
   taskId?: string;
   roundId?: string;
   agentId?: string;
+  acknowledgedAt?: string;
+}
+
+export interface ManagerAcknowledgeResponse {
+  generatedAt: string;
+  tasks: ManagerTask[];
+  agents: ManagerAgent[];
+  rounds: ManagerRound[];
 }
 
 export interface ManagerStateViewResponse {

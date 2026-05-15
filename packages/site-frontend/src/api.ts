@@ -1,6 +1,7 @@
 import type {
   DiagnosticReport,
   DiagnosticStep,
+  ManagerAcknowledgeResponse,
   ManagerAgent,
   ManagerAgentCreateRequest,
   ManagerAgentListResponse,
@@ -408,6 +409,7 @@ export interface BrowserClientContext {
 
 export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
 export type {
+  ManagerAcknowledgeResponse,
   ManagerAssistantStatusReport,
   ManagerAssistantStatusReportInput,
   ManagerAssistantStatusReportResponse,
@@ -627,6 +629,11 @@ export const api = {
   postManagerAssistantStatus: (input: ManagerAssistantStatusReportInput) =>
     request<ManagerAssistantStatusReportResponse>("POST", "/api/manager/assistant/status", input),
   managerState: () => request<ManagerStateViewResponse>("GET", "/api/manager/state"),
+  acknowledgeManagerState: (reason?: string) =>
+    request<ManagerAcknowledgeResponse>("POST", "/api/manager/state/acknowledge", {
+      acknowledgedBy: "browser",
+      ...(reason ? { reason } : {}),
+    }),
   managerEventsRecent: (afterSeq?: number) =>
     request<ManagerEventListResponse>(
       "GET",
@@ -656,6 +663,11 @@ export const api = {
   cancelManagerTask: (id: string) =>
     request<ManagerTask>("POST", `/api/manager/tasks/${id}/cancel`),
   retryManagerTask: (id: string) => request<ManagerTask>("POST", `/api/manager/tasks/${id}/retry`),
+  acknowledgeManagerTask: (id: string, reason?: string) =>
+    request<ManagerTask>("POST", `/api/manager/tasks/${id}/acknowledge`, {
+      acknowledgedBy: "browser",
+      ...(reason ? { reason } : {}),
+    }),
   createManagerTask: (input: ManagerTaskRequest) =>
     request<ManagerTask>("POST", "/api/manager/tasks", input),
   managerWorkers: () => request<ManagerWorkerListResponse>("GET", "/api/manager/workers"),
@@ -690,6 +702,11 @@ export const api = {
       "POST",
       `/api/manager/agents/${encodeURIComponent(id)}/stop`,
     ),
+  acknowledgeManagerAgent: (id: string, reason?: string) =>
+    request<ManagerAgent>("POST", `/api/manager/agents/${encodeURIComponent(id)}/acknowledge`, {
+      acknowledgedBy: "browser",
+      ...(reason ? { reason } : {}),
+    }),
   managerRounds: () => request<ManagerRoundListResponse>("GET", "/api/manager/rounds"),
   createManagerRound: (input: ManagerRoundCreateRequest) =>
     request<{ round: ManagerRound; agents: ManagerAgent[] }>("POST", "/api/manager/rounds", input),
@@ -704,6 +721,11 @@ export const api = {
       "GET",
       `/api/manager/rounds/${encodeURIComponent(id)}/report`,
     ),
+  acknowledgeManagerRound: (id: string, reason?: string) =>
+    request<ManagerRound>("POST", `/api/manager/rounds/${encodeURIComponent(id)}/acknowledge`, {
+      acknowledgedBy: "browser",
+      ...(reason ? { reason } : {}),
+    }),
   managerAuditLog: (limit?: number) =>
     request<{ entries: ManagerTask[] }>(
       "GET",

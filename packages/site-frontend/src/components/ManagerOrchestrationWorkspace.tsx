@@ -3,6 +3,7 @@ import type {
   ManagerAssistantChatContext,
   ManagerRound,
   ManagerSessionHygieneReport,
+  ManagerStateViewResponse,
 } from "@deskrelay/shared";
 import {
   type Component,
@@ -37,6 +38,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 ) => {
   const [refreshSeq, setRefreshSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
+  const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   let eventRefreshTimer: number | undefined;
 
@@ -76,6 +78,17 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
         const hygiene = await api.managerSessionHygiene();
         setCachedSnapshot(writeManagerOrchestrationCache({ hygiene }) ?? cachedSnapshot());
         return hygiene;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const [managerState] = createResource(
+    () => refreshSeq(),
+    async (): Promise<ManagerStateViewResponse | null> => {
+      try {
+        return await api.managerState();
       } catch {
         return null;
       }
@@ -152,6 +165,19 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function acknowledgeManagerFailures() {
+    if (acknowledgeBusy()) return;
+    setAcknowledgeBusy(true);
+    try {
+      await api.acknowledgeManagerState("cleared from orchestration workspace");
+      setRefreshSeq((seq) => seq + 1);
+    } catch {
+      // The assistant panel will keep showing the current blockers until the next successful refresh.
+    } finally {
+      setAcknowledgeBusy(false);
+    }
+  }
+
   return (
     <div
       class="manager-workspace"
@@ -164,10 +190,13 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
           hygiene={visibleHygiene()}
+          state={managerState()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
+          acknowledgeBusy={acknowledgeBusy()}
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
+          onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">
@@ -195,11 +224,12 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 };
 
 function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
+  const unacknowledged = rounds.filter((round) => !round.acknowledgedAt);
   return (
-    rounds.find((round) =>
+    unacknowledged.find((round) =>
       ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
         round.status,
       ),
-    ) ?? rounds[0]
+    ) ?? unacknowledged[0]
   );
 }
