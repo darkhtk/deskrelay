@@ -5684,8 +5684,9 @@ dialog.approval-modal-root,
   background: var(--surface);
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) minmax(220px, 0.36fr);
+  grid-template-areas: "assistant board";
+  grid-template-columns: minmax(300px, var(--assistant-width, 380px)) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
 }
@@ -5698,15 +5699,17 @@ dialog.approval-modal-root,
   background: var(--surface);
   display: flex;
   flex-direction: column;
+  grid-area: board;
   overflow: hidden;
 }
 .manager-workspace-assistant {
   background: var(--surface);
   border-left: 0;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 0;
   contain: layout paint;
   display: flex;
   flex-direction: column;
+  grid-area: assistant;
   overflow: hidden;
   padding-left: 0;
   padding-top: 10px;
@@ -7105,13 +7108,37 @@ body.manager-orchestration-resizing {
     gap: 10px;
   }
   .manager-workspace {
+    grid-template-areas:
+      "board"
+      "assistant";
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(220px, 0.95fr) minmax(260px, 1.05fr);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
   .manager-workspace-assistant {
     border-left: 0;
     border-top: 1px solid var(--border-subtle);
+    flex: 0 0 auto;
+    min-height: 124px;
     padding-left: 0;
+    padding-top: 0;
+  }
+  .manager-workspace-assistant:focus-within {
+    height: min(52vh, 460px);
+  }
+  .manager-workspace-assistant:not(:focus-within) {
+    height: auto;
+  }
+  .manager-workspace-assistant:not(:focus-within) .manager-assistant-transcript {
+    display: none;
+  }
+  .manager-workspace-assistant:not(:focus-within) .manager-assistant-error {
+    display: none;
+  }
+  .manager-workspace-assistant:not(:focus-within) .scroll-to-bottom-button {
+    display: none;
+  }
+  .manager-workspace-assistant:not(:focus-within) .manager-assistant-composer {
+    margin-top: auto;
   }
   .manager-workspace-assistant .assistant-resize-handle {
     display: none;
