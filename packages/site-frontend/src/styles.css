@@ -5975,6 +5975,9 @@ dialog.approval-modal-root,
 .manager-orchestration-tab-panel-single {
   grid-template-columns: minmax(0, 1fr);
 }
+.manager-section-overview {
+  grid-column: 1 / -1;
+}
 .manager-section-timeline,
 .manager-section-artifacts,
 .manager-section-hygiene {
@@ -6021,39 +6024,77 @@ body.manager-orchestration-resizing {
   font-weight: 650;
   margin: 0;
 }
-.manager-overview-grid {
+.manager-command-board {
   display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(4, minmax(72px, 1fr));
-}
-.manager-overview-main,
-.manager-overview-stat {
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.85fr);
   min-width: 0;
 }
-.manager-overview-main {
-  grid-column: span 2;
+.manager-command-hero {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
-.manager-overview-main:first-child {
-  grid-column: 1 / -1;
+.manager-command-kicker {
+  align-items: center;
+  color: var(--text-faint);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 8px;
 }
-.manager-overview-main p {
+.manager-command-hero h3 {
+  color: var(--text);
+  font-size: clamp(20px, 2vw, 30px);
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.15;
+  margin: 0;
+}
+.manager-command-hero p,
+.manager-command-decision p {
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.45;
-  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
 }
-.manager-overview-label,
-.manager-overview-stat span {
+.manager-command-metrics {
+  align-content: start;
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+.manager-command-metric {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 0;
+}
+.manager-command-metric span,
+.manager-overview-label {
   color: var(--text-faint);
   font-size: 10px;
+  text-transform: uppercase;
 }
-.manager-overview-stat {
+.manager-command-metric strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1;
+}
+.manager-command-decision {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 12px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  padding-top: 10px;
+}
+.manager-command-decision > div {
   display: grid;
   gap: 3px;
-}
-.manager-overview-stat strong {
-  color: var(--text);
-  font-size: 18px;
+  min-width: 0;
 }
 .manager-overview-next p {
   color: var(--text);
@@ -6385,15 +6426,30 @@ body.manager-orchestration-resizing {
   padding: 5px 0;
 }
 .manager-agent-row {
-  grid-template-columns: minmax(72px, 0.8fr) minmax(70px, 0.7fr) minmax(160px, 2fr) minmax(
-      48px,
-      0.5fr
-    );
+  border-left: 2px solid transparent;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+  grid-template-columns:
+    minmax(120px, 0.9fr) minmax(84px, 0.55fr) minmax(160px, 1fr) minmax(220px, 1.7fr)
+    minmax(72px, 0.45fr);
+  min-height: 42px;
+  padding-left: 8px;
 }
 .manager-agent-row-head {
+  border-top: 0;
   color: var(--text-faint);
   font-size: 10px;
+  min-height: auto;
   text-transform: uppercase;
+}
+.manager-agent-row-running {
+  border-left: 2px solid var(--warning);
+}
+.manager-agent-row-done {
+  border-left: 2px solid var(--success);
+}
+.manager-agent-row-blocked {
+  border-left: 2px solid var(--danger);
 }
 .manager-worker-run-row {
   color: var(--text-muted);
@@ -6452,7 +6508,20 @@ body.manager-orchestration-resizing {
 }
 .manager-agent-role {
   color: var(--text);
+  display: grid;
   font-weight: 650;
+  gap: 2px;
+  min-width: 0;
+}
+.manager-agent-role small,
+.manager-agent-work time {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 400;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .manager-agent-work,
 .manager-agent-task,
@@ -6461,11 +6530,33 @@ body.manager-orchestration-resizing {
   font-size: 12px;
 }
 .manager-agent-work,
+.manager-agent-task,
 .manager-artifact-path {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.manager-agent-work {
+  display: grid;
+  gap: 2px;
+}
+.manager-agent-action {
+  min-width: 0;
+}
+.manager-agent-action button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.manager-agent-action button:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 .manager-timeline {
   display: grid;
@@ -6607,6 +6698,11 @@ body.manager-orchestration-resizing {
 }
 .manager-artifact-row {
   grid-template-columns: minmax(140px, 1.4fr) minmax(80px, 0.7fr) minmax(70px, 0.5fr) 70px;
+}
+.manager-artifact-row-head {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
 }
 .manager-hygiene {
   display: grid;
@@ -7215,15 +7311,15 @@ body.manager-orchestration-resizing {
   .manager-orchestration-summary {
     display: none;
   }
-  .manager-overview-grid,
+  .manager-command-board,
   .manager-current-state-grid,
   .manager-round-health-grid,
   .manager-flow {
     grid-template-columns: 1fr;
   }
-  .manager-overview-main,
-  .manager-overview-main:first-child {
-    grid-column: auto;
+  .manager-command-decision,
+  .manager-command-metrics {
+    grid-template-columns: 1fr;
   }
   .manager-agent-lanes {
     grid-template-columns: 1fr;
@@ -7235,9 +7331,9 @@ body.manager-orchestration-resizing {
     grid-template-columns: 14px minmax(0, 1fr);
   }
   .manager-agent-row {
-    grid-template-columns: minmax(64px, 0.7fr) minmax(64px, 0.6fr) minmax(120px, 1.5fr);
+    grid-template-columns: minmax(78px, 0.8fr) minmax(64px, 0.6fr) minmax(112px, 1fr) 62px;
   }
-  .manager-agent-row > span:last-child {
+  .manager-agent-row > span:nth-child(4) {
     display: none;
   }
   .manager-worker-run-row {

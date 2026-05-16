@@ -292,7 +292,11 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
 
             <Show when={activeTab() === "agents"}>
               <OrchestrationSection title="Agent Theater" class="manager-section-agents">
-                <AgentsView agents={agents()} />
+                <AgentsView
+                  agents={agents()}
+                  busy={props.actionBusy || props.observeBusy}
+                  onInspectTask={props.onInspectTask}
+                />
               </OrchestrationSection>
             </Show>
 
@@ -336,7 +340,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             <Show when={activeTab() === "runs"}>
               <Show when={props.observedTask}>
                 {(observation) => (
-                  <OrchestrationSection title="Task observation" class="manager-section-observation">
+                  <OrchestrationSection
+                    title="Task observation"
+                    class="manager-section-observation"
+                  >
                     <TaskObservationView observation={observation()} busy={props.observeBusy} />
                   </OrchestrationSection>
                 )}
@@ -414,6 +421,15 @@ const OverviewView: Component<{
   hiddenAgentCount: number;
 }> = (props) => {
   const totals = createMemo(() => summarizeTotals(props.agents));
+  const artifacts = createMemo(() => buildArtifacts(props.agents, props.tasks));
+  const lastUpdatedAt = createMemo(() => {
+    const values = [
+      props.round?.updatedAt,
+      ...props.agents.map((agent) => agent.updatedAt),
+      ...props.tasks.map((task) => task.updatedAt),
+    ].filter(Boolean) as string[];
+    return values.sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+  });
   const blocker = createMemo(
     () =>
       props.agents.find((agent) => agent.status === "blocked" || agent.status === "failed") ?? null,
@@ -437,52 +453,65 @@ const OverviewView: Component<{
     return "Dispatch agents or ask the manager to plan the next round.";
   });
   return (
-    <div class="manager-overview-grid">
-      <div class="manager-overview-main">
-        <span class="manager-overview-label">Objective</span>
+    <div class="manager-command-board">
+      <div class="manager-command-hero">
+        <div class="manager-command-kicker">
+          <span
+            class={`manager-status-dot manager-status-dot-${statusTone(props.round?.status)}`}
+          />
+          <span>{props.round ? statusLabel(props.round.status) : "no round"}</span>
+          <Show when={lastUpdatedAt()}>
+            {(updatedAt) => <time>last update {formatTime(updatedAt())}</time>}
+          </Show>
+        </div>
+        <h3>{props.round?.title ?? "Agent orchestration"}</h3>
         <p>{props.round?.objective || "No round objective is available yet."}</p>
       </div>
-      <div class="manager-overview-stat">
-        <span>Agents</span>
-        <strong>{totals().total}</strong>
+      <div class="manager-command-metrics" aria-label="orchestration metrics">
+        <div class="manager-command-metric">
+          <span>Agents</span>
+          <strong>{totals().total}</strong>
+        </div>
+        <div class="manager-command-metric">
+          <span>Done</span>
+          <strong>{totals().completed}</strong>
+        </div>
+        <div class="manager-command-metric">
+          <span>Blocked</span>
+          <strong>{totals().blocked}</strong>
+        </div>
+        <div class="manager-command-metric">
+          <span>Artifacts</span>
+          <strong>{artifacts().length}</strong>
+        </div>
       </div>
-      <div class="manager-overview-stat">
-        <span>Done</span>
-        <strong>{totals().completed}</strong>
-      </div>
-      <div class="manager-overview-stat">
-        <span>Running</span>
-        <strong>{totals().running}</strong>
-      </div>
-      <div class="manager-overview-stat">
-        <span>Blocked</span>
-        <strong>{totals().blocked}</strong>
-      </div>
-      <div class="manager-overview-main">
-        <span class="manager-overview-label">Current signal</span>
-        <p>
-          <Show
-            when={blocker()}
-            fallback={[
-              props.tasks.length > 0
-                ? `${props.tasks.length} task records collected.`
-                : "No active blocker detected.",
-              props.hiddenAgentCount > 0 ? `${props.hiddenAgentCount} quiet agents hidden.` : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            {(agent) =>
-              `${agent().role} agent needs attention: ${
-                agent().lastError || statusLabel(agent().status)
-              }`
-            }
-          </Show>
-        </p>
-      </div>
-      <div class="manager-overview-main manager-overview-next">
-        <span class="manager-overview-label">Next action</span>
-        <p>{nextAction()}</p>
+      <div class="manager-command-decision">
+        <div>
+          <span class="manager-overview-label">Current signal</span>
+          <p>
+            <Show
+              when={blocker()}
+              fallback={[
+                props.tasks.length > 0
+                  ? `${props.tasks.length} task records collected.`
+                  : "No active blocker detected.",
+                props.hiddenAgentCount > 0 ? `${props.hiddenAgentCount} quiet agents hidden.` : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {(agent) =>
+                `${agent().role} agent needs attention: ${
+                  agent().lastError || statusLabel(agent().status)
+                }`
+              }
+            </Show>
+          </p>
+        </div>
+        <div>
+          <span class="manager-overview-label">Next action</span>
+          <p>{nextAction()}</p>
+        </div>
       </div>
     </div>
   );
@@ -919,29 +948,58 @@ const WorkerRunsView: Component<{
   </div>
 );
 
-const AgentsView: Component<{ agents: ManagerAgent[] }> = (props) => (
-  <div class="manager-agent-lanes" aria-label="orchestration agents">
+const AgentsView: Component<{
+  agents: ManagerAgent[];
+  busy?: boolean | undefined;
+  onInspectTask?: ((taskId: string) => void) | undefined;
+}> = (props) => (
+  <div class="manager-agent-table" aria-label="orchestration agents">
+    <div class="manager-agent-row manager-agent-row-head">
+      <span>Role</span>
+      <span>Status</span>
+      <span>Current task</span>
+      <span>Last reply</span>
+      <span>Action</span>
+    </div>
     <For each={props.agents}>
       {(agent) => (
-        <article class={`manager-agent-lane manager-agent-lane-${statusTone(agent.status)}`}>
-          <header class="manager-agent-lane-head">
-            <span class="manager-agent-role">{agent.role}</span>
-            <span class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}>
-              {statusLabel(agent.status)}
-            </span>
-          </header>
-          <p
+        <div class={`manager-agent-row manager-agent-row-${statusTone(agent.status)}`}>
+          <span class="manager-agent-role" title={`${agent.label} · ${agent.profile}`}>
+            {agent.role}
+            <small>{clip(agent.profile, 28)}</small>
+          </span>
+          <span class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}>
+            {statusLabel(agent.status)}
+          </span>
+          <span class="manager-agent-task" title={agent.taskId ?? agent.lastInstruction ?? ""}>
+            {agent.taskId
+              ? `task ${shortId(agent.taskId)}`
+              : clip(agent.lastInstruction, 68) || "-"}
+          </span>
+          <span
             class="manager-agent-work"
             title={agent.lastError || agent.lastOutput || agent.lastInstruction || ""}
           >
-            {clip(agent.lastError || agent.lastOutput || agent.lastInstruction || "Idle", 180)}
-          </p>
-          <footer class="manager-agent-lane-foot">
-            <span title={agent.profile}>profile {clip(agent.profile, 28)}</span>
-            <span>task {agent.taskId ? shortId(agent.taskId) : "-"}</span>
-            <time>{formatTime(agent.updatedAt)}</time>
-          </footer>
-        </article>
+            {clip(
+              agent.lastError || agent.lastOutput || agent.lastInstruction || "No reply yet",
+              92,
+            )}
+            <time>{formatTime(agent.lastOutputAt ?? agent.updatedAt)}</time>
+          </span>
+          <span class="manager-agent-action">
+            <Show when={agent.taskId} fallback={<span>-</span>}>
+              {(taskId) => (
+                <button
+                  type="button"
+                  disabled={props.busy || !props.onInspectTask}
+                  onClick={() => props.onInspectTask?.(taskId())}
+                >
+                  Inspect
+                </button>
+              )}
+            </Show>
+          </span>
+        </div>
       )}
     </For>
     <Show when={props.agents.length === 0}>
@@ -1054,6 +1112,12 @@ const MermaidDiagram: Component<{ source: string }> = (props) => {
 
 const ArtifactsView: Component<{ artifacts: ArtifactEntry[] }> = (props) => (
   <div class="manager-artifact-list">
+    <div class="manager-artifact-row manager-artifact-row-head">
+      <span>File</span>
+      <span>Owner</span>
+      <span>Status</span>
+      <span>Updated</span>
+    </div>
     <For each={props.artifacts}>
       {(artifact) => (
         <div class="manager-artifact-row">
