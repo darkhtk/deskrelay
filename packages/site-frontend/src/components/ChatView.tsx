@@ -2259,7 +2259,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
 
     const handleMove = (moveEvent: PointerEvent) => {
       moveEvent.preventDefault();
-      rawWidth = startWidth + startX - moveEvent.clientX;
+      rawWidth = startWidth + moveEvent.clientX - startX;
       if (rawWidth < ASSISTANT_MIN_WIDTH - ASSISTANT_COLLAPSE_DRAG_THRESHOLD) {
         closedDuringDrag = true;
         commitAssistantWidth(ASSISTANT_MIN_WIDTH);
@@ -2336,16 +2336,12 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       : ASSISTANT_RESIZE_KEYBOARD_STEP;
     if (event.key === "ArrowRight") {
       event.preventDefault();
-      if (assistantWidth() <= ASSISTANT_MIN_WIDTH) {
-        commitAssistantWidth(ASSISTANT_MIN_WIDTH);
-        return;
-      }
-      commitAssistantWidth(assistantWidth() - step);
+      commitAssistantWidth(assistantWidth() + step);
       return;
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      commitAssistantWidth(assistantWidth() + step);
+      commitAssistantWidth(assistantWidth() - step);
       return;
     }
     if (event.key === "Home") {

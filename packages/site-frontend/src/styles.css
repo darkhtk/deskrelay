@@ -5722,7 +5722,9 @@ dialog.approval-modal-root,
   min-width: 0;
 }
 .manager-workspace-assistant .assistant-resize-handle {
-  display: none;
+  display: block;
+  left: auto;
+  right: -8px;
 }
 .manager-orchestration-status {
   align-items: center;
