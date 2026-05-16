@@ -706,6 +706,75 @@ export interface ManagerArtifactResponse {
   artifact: ManagerArtifact;
 }
 
+export type ManagerProtocolFileStatus = "present" | "missing" | "too_large" | "error";
+
+export type ManagerProtocolFileRole =
+  | "orchestration"
+  | "agents"
+  | "protocol"
+  | "locks"
+  | "tasks"
+  | "state"
+  | "failures"
+  | "project"
+  | "other";
+
+export interface ManagerProtocolFile {
+  path: string;
+  role: ManagerProtocolFileRole;
+  status: ManagerProtocolFileStatus;
+  sizeBytes?: number;
+  modifiedAt?: string;
+  excerpt?: string;
+  error?: string;
+}
+
+export interface ManagerProtocolChange {
+  summary: string;
+  decisionId?: string;
+  roundId?: string;
+  changedAt: string;
+}
+
+export interface ManagerProtocolState {
+  projectId: string;
+  version: string;
+  activeRules: string[];
+  files: ManagerProtocolFile[];
+  latestChange?: ManagerProtocolChange;
+  scannedAt: string;
+  warnings: string[];
+}
+
+export interface ManagerProtocolMetadata {
+  projectId: string;
+  version: string;
+  activeRules: string[];
+  latestChange?: ManagerProtocolChange;
+  updatedAt: string;
+}
+
+export interface ManagerProtocolScanRequest {
+  includeExcerpt?: boolean;
+  limit?: number;
+}
+
+export interface ManagerProtocolUpdateRequest {
+  version?: string;
+  activeRules?: string[];
+  latestChange?: {
+    summary: string;
+    decisionId?: string;
+    roundId?: string;
+  } | null;
+}
+
+export interface ManagerProtocolResponse {
+  generatedAt: string;
+  projectId: string;
+  protocol: ManagerProtocolState;
+}
+
 export type ManagerProjectOverviewTone = "idle" | "running" | "success" | "warning" | "error";
 
 export type ManagerProjectNextActionKind =
@@ -1131,6 +1200,7 @@ export interface ManagerAssistantChatContext {
   projectDecisions?: string[];
   projectBlockers?: string[];
   projectArtifacts?: string[];
+  projectProtocol?: string[];
   projectWarnings?: string[];
 }
 
@@ -1397,6 +1467,7 @@ export type ManagerEventInput =
   | { type: "blocker.updated"; blocker: ManagerBlocker }
   | { type: "artifact.created"; artifact: ManagerArtifact }
   | { type: "artifact.updated"; artifact: ManagerArtifact }
+  | { type: "protocol.updated"; protocol: ManagerProtocolMetadata }
   | { type: "round.created"; round: ManagerRound }
   | { type: "round.updated"; round: ManagerRound }
   | { type: "agent.created"; agent: ManagerAgent }

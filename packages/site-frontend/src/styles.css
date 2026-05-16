@@ -7053,6 +7053,56 @@ body.manager-orchestration-resizing {
   font-size: 12px;
   margin-bottom: 6px;
 }
+.manager-protocol-view,
+.manager-protocol-editor {
+  display: grid;
+  gap: 10px;
+}
+.manager-protocol-editor {
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 10px;
+}
+.manager-protocol-editor label {
+  display: grid;
+  gap: 4px;
+}
+.manager-protocol-editor label > span {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-protocol-change-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.4fr);
+}
+.manager-protocol-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.manager-protocol-warnings {
+  color: var(--warning);
+  display: grid;
+  font-size: 12px;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+.manager-protocol-excerpt summary {
+  cursor: pointer;
+}
+.manager-protocol-excerpt pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
 .manager-hygiene {
   display: grid;
   gap: 10px;

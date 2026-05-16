@@ -14,6 +14,7 @@ import type {
   ManagerRoundPatch,
 } from "./manager-orchestration-store.ts";
 import type { ManagerProjectStore } from "./manager-project-store.ts";
+import type { ManagerProtocolStore } from "./manager-protocol-store.ts";
 import type { ManagerTaskPatch, ManagerTaskStore } from "./manager-task-store.ts";
 
 export type ManagerEventListener = (event: ManagerEvent) => void;
@@ -240,6 +241,22 @@ export function withManagerArtifactEvents(
       const artifact = await store.update(projectId, id, patch);
       if (artifact) bus.emit({ type: "artifact.updated", artifact });
       return artifact;
+    },
+  };
+}
+
+export function withManagerProtocolEvents(
+  store: ManagerProtocolStore,
+  bus: ManagerEventBus,
+): ManagerProtocolStore {
+  return {
+    get(projectId) {
+      return store.get(projectId);
+    },
+    async update(projectId, patch) {
+      const protocol = await store.update(projectId, patch);
+      bus.emit({ type: "protocol.updated", protocol });
+      return protocol;
     },
   };
 }

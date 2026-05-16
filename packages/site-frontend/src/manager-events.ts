@@ -74,6 +74,7 @@ export function isManagerOrchestrationEvent(event: ManagerEvent): boolean {
     event.type === "blocker.updated" ||
     event.type === "artifact.created" ||
     event.type === "artifact.updated" ||
+    event.type === "protocol.updated" ||
     event.type === "round.created" ||
     event.type === "round.updated" ||
     event.type === "agent.created" ||

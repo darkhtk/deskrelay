@@ -15,6 +15,7 @@ import { createInMemoryManagerBlockerStore } from "../src/manager-blocker-store.
 import { createInMemoryManagerDecisionStore } from "../src/manager-decision-store.ts";
 import { createInMemoryManagerOrchestrationStore } from "../src/manager-orchestration-store.ts";
 import { createInMemoryManagerProjectStore } from "../src/manager-project-store.ts";
+import { createInMemoryManagerProtocolStore } from "../src/manager-protocol-store.ts";
 import { createInMemoryManagerTaskStore } from "../src/manager-task-store.ts";
 
 const TOKEN = "test-token";
@@ -70,6 +71,7 @@ function makeApp(
     managerBlockerStore: createInMemoryManagerBlockerStore(),
     managerDecisionStore: createInMemoryManagerDecisionStore(),
     managerProjectStore: createInMemoryManagerProjectStore(),
+    managerProtocolStore: createInMemoryManagerProtocolStore(),
     ...options,
   });
   return {
@@ -727,6 +729,23 @@ describe("API route inventory", () => {
           "PATCH /api/manager/projects/:id/artifacts/:artifactId",
           authedRequest("PATCH", "/api/manager/projects/missing/artifacts/missing", {
             status: "obsolete",
+          }),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/protocol",
+          authedRequest("GET", "/api/manager/projects/missing/protocol"),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/protocol/scan",
+          authedRequest("POST", "/api/manager/projects/missing/protocol/scan", {}),
+          [404],
+        ],
+        [
+          "PATCH /api/manager/projects/:id/protocol",
+          authedRequest("PATCH", "/api/manager/projects/missing/protocol", {
+            version: "v1",
           }),
           [404],
         ],
@@ -2759,6 +2778,110 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(rescanBody.artifacts?.map((artifact) => artifact.path)).toEqual(["src/game.ts"]);
     expect(rescanBody.inactive?.[0]).toEqual(
       expect.objectContaining({ path: "PROTOCOL.md", status: "obsolete" }),
+    );
+  });
+
+  test("manager project protocol scan exposes missing files and stores protocol state", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-protocol-"));
+    writeFileSync(
+      join(cwd, "PROTOCOL.md"),
+      "# Protocol\n\n- Workers must report blockers.\n",
+      "utf8",
+    );
+    writeFileSync(join(cwd, "TASKS.md"), "# Tasks\n", "utf8");
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const managerProtocolStore = createInMemoryManagerProtocolStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerProjectStore,
+      managerProtocolStore,
+    });
+
+    const projectCreate = await app.fetch(
+      authedRequest("POST", "/api/manager/projects", {
+        name: "Protocol Project",
+        cwd,
+        goal: "track orchestration rules",
+      }),
+    );
+    expect(projectCreate.status).toBe(201);
+    const projectBody = (await projectCreate.json()) as { project?: { id?: string } };
+    const projectId = projectBody.project?.id ?? "";
+    expect(projectId).toBeTruthy();
+
+    const first = await app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/protocol`),
+    );
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as {
+      protocol?: {
+        version?: string;
+        warnings?: string[];
+        files?: Array<{ path?: string; status?: string; excerpt?: string }>;
+      };
+    };
+    expect(firstBody.protocol?.version).toBe("unversioned");
+    expect(firstBody.protocol?.files?.find((file) => file.path === "PROTOCOL.md")?.status).toBe(
+      "present",
+    );
+    expect(firstBody.protocol?.files?.find((file) => file.path === "AGENTS.md")?.status).toBe(
+      "missing",
+    );
+    expect(
+      firstBody.protocol?.files?.find((file) => file.path === "PROTOCOL.md")?.excerpt,
+    ).toContain("Workers must report blockers");
+    expect(firstBody.protocol?.warnings).toContain(
+      "Protocol files exist, but the latest protocol change is not recorded.",
+    );
+
+    const patch = await app.fetch(
+      authedRequest("PATCH", `/api/manager/projects/${projectId}/protocol`, {
+        version: "v3",
+        activeRules: ["Workers report blockers", "Protocol changes link to decisions"],
+        latestChange: {
+          summary: "Pinned R3 protocol rules",
+          decisionId: "decision_1",
+          roundId: "round_1",
+        },
+      }),
+    );
+    expect(patch.status).toBe(200);
+    const patched = (await patch.json()) as {
+      protocol?: {
+        version?: string;
+        activeRules?: string[];
+        latestChange?: { summary?: string; decisionId?: string; roundId?: string };
+        warnings?: string[];
+      };
+    };
+    expect(patched.protocol?.version).toBe("v3");
+    expect(patched.protocol?.activeRules).toEqual([
+      "Workers report blockers",
+      "Protocol changes link to decisions",
+    ]);
+    expect(patched.protocol?.latestChange).toEqual(
+      expect.objectContaining({
+        summary: "Pinned R3 protocol rules",
+        decisionId: "decision_1",
+        roundId: "round_1",
+      }),
+    );
+    expect(patched.protocol?.warnings).not.toContain(
+      "Protocol files exist, but the latest protocol change is not recorded.",
+    );
+
+    const scanWithoutExcerpt = await app.fetch(
+      authedRequest("POST", `/api/manager/projects/${projectId}/protocol/scan`, {
+        includeExcerpt: false,
+      }),
+    );
+    expect(scanWithoutExcerpt.status).toBe(200);
+    const scanBody = (await scanWithoutExcerpt.json()) as {
+      protocol?: { files?: Array<{ path?: string; excerpt?: string }> };
+    };
+    expect(scanBody.protocol?.files?.find((file) => file.path === "PROTOCOL.md")?.excerpt).toBe(
+      undefined,
     );
   });
 

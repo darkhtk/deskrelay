@@ -416,6 +416,7 @@ function managerBrowserContextLines(value: unknown): string[] {
   appendManagerBrowserContextList(lines, "active project decisions", input.projectDecisions);
   appendManagerBrowserContextList(lines, "open project blockers", input.projectBlockers);
   appendManagerBrowserContextList(lines, "active project artifacts", input.projectArtifacts);
+  appendManagerBrowserContextList(lines, "project protocol state", input.projectProtocol);
   appendManagerBrowserContextList(lines, "project context warnings", input.projectWarnings);
   return lines;
 }

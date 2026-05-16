@@ -73,6 +73,12 @@ import {
   type ManagerProjectResponse,
   type ManagerProjectStatus,
   type ManagerProjectUpdateRequest,
+  type ManagerProtocolFile,
+  type ManagerProtocolFileRole,
+  type ManagerProtocolResponse,
+  type ManagerProtocolScanRequest,
+  type ManagerProtocolState,
+  type ManagerProtocolUpdateRequest,
   type ManagerRegistrationDiagnosis,
   type ManagerRound,
   type ManagerRoundAgentAssignment,
@@ -164,6 +170,7 @@ import {
   withManagerDecisionEvents,
   withManagerOrchestrationEvents,
   withManagerProjectEvents,
+  withManagerProtocolEvents,
   withManagerTaskEvents,
 } from "./manager-event-bus.ts";
 import {
@@ -174,6 +181,10 @@ import {
   type ManagerProjectStore,
   createJsonManagerProjectStore,
 } from "./manager-project-store.ts";
+import {
+  type ManagerProtocolStore,
+  createJsonManagerProtocolStore,
+} from "./manager-protocol-store.ts";
 import { type ManagerTaskStore, createInMemoryManagerTaskStore } from "./manager-task-store.ts";
 import type {
   SelfServerAutostartController,
@@ -208,6 +219,7 @@ export interface SiteAppOptions {
   managerDecisionStore?: ManagerDecisionStore;
   managerBlockerStore?: ManagerBlockerStore;
   managerArtifactStore?: ManagerArtifactStore;
+  managerProtocolStore?: ManagerProtocolStore;
   managerAssistant?: ManagerAssistantOptions;
   managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
@@ -245,6 +257,7 @@ interface ManagerAssistantContextStores {
   decisionStore: ManagerDecisionStore;
   blockerStore: ManagerBlockerStore;
   artifactStore: ManagerArtifactStore;
+  protocolStore: ManagerProtocolStore;
 }
 
 export interface ManagerAssistantWorkspaceResponse {
@@ -280,8 +293,24 @@ const MANAGER_PROJECTS_DIR = ".deskrelay/manager-projects";
 const MANAGER_DECISIONS_DIR = ".deskrelay/manager-decisions";
 const MANAGER_BLOCKERS_DIR = ".deskrelay/manager-blockers";
 const MANAGER_ARTIFACTS_DIR = ".deskrelay/manager-artifacts";
+const MANAGER_PROTOCOLS_DIR = ".deskrelay/manager-protocols";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
+const MANAGER_PROTOCOL_CORE_FILES: Array<{
+  file: string;
+  role: ManagerProtocolFileRole;
+}> = [
+  { file: "ORCHESTRATION.md", role: "orchestration" },
+  { file: "AGENTS.md", role: "agents" },
+  { file: "PROTOCOL.md", role: "protocol" },
+  { file: "LOCKS.md", role: "locks" },
+  { file: "TASKS.md", role: "tasks" },
+  { file: "STATE.md", role: "state" },
+  { file: "FAILURES.md", role: "failures" },
+  { file: "PROJECT.md", role: "project" },
+];
+const MANAGER_PROTOCOL_MAX_FILE_BYTES = 200_000;
+const MANAGER_PROTOCOL_EXCERPT_CHARS = 1_600;
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
 const MANAGER_ORCHESTRATION_FILE = "orchestration-state.json";
 const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
@@ -322,6 +351,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       createJsonManagerArtifactStore(join(managerRepoRoot, MANAGER_ARTIFACTS_DIR)),
     managerEventBus,
   );
+  const managerProtocolStore = withManagerProtocolEvents(
+    options.managerProtocolStore ??
+      createJsonManagerProtocolStore(join(managerRepoRoot, MANAGER_PROTOCOLS_DIR)),
+    managerEventBus,
+  );
   const managerOrchestrationStore = withManagerOrchestrationEvents(
     options.managerOrchestrationStore ??
       createJsonManagerOrchestrationStore(
@@ -335,6 +369,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     decisionStore: managerDecisionStore,
     blockerStore: managerBlockerStore,
     artifactStore: managerArtifactStore,
+    protocolStore: managerProtocolStore,
   };
   const managerRuntimeRecovery = recoverStaleManagerRuntimeState(
     managerTaskStore,
@@ -833,6 +868,70 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const response: ManagerArtifactResponse = {
       generatedAt: new Date().toISOString(),
       artifact,
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/projects/:id/protocol", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const response: ManagerProtocolResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      protocol: await buildManagerProjectProtocolState({
+        project,
+        protocolStore: managerProtocolStore,
+        includeExcerpt: true,
+      }),
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/protocol/scan", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown = {};
+    try {
+      const text = await c.req.text();
+      body = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProtocolScanRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const response: ManagerProtocolResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      protocol: await buildManagerProjectProtocolState({
+        project,
+        protocolStore: managerProtocolStore,
+        includeExcerpt: parsed.value.includeExcerpt ?? true,
+        ...(parsed.value.limit !== undefined ? { limit: parsed.value.limit } : {}),
+      }),
+    };
+    return c.json(response);
+  });
+
+  app.patch("/api/manager/projects/:id/protocol", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProtocolUpdateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    await managerProtocolStore.update(project.id, parsed.value);
+    const response: ManagerProtocolResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      protocol: await buildManagerProjectProtocolState({
+        project,
+        protocolStore: managerProtocolStore,
+        includeExcerpt: true,
+      }),
     };
     return c.json(response);
   });
@@ -2431,6 +2530,21 @@ const SITE_ROUTE_CAPABILITIES = [
     path: "/api/manager/projects/:id/artifacts/:artifactId",
     description: "Update one manager project artifact status or metadata.",
   },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/protocol",
+    description: "Read protocol files and protocol state for one manager project.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/protocol/scan",
+    description: "Rescan protocol files for one manager project.",
+  },
+  {
+    method: "PATCH",
+    path: "/api/manager/projects/:id/protocol",
+    description: "Update protocol version, active rules, or latest change metadata.",
+  },
   { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
   {
     method: "PATCH",
@@ -3922,6 +4036,139 @@ async function scanManagerProjectArtifacts(
   }
 
   return await input.artifactStore.upsertMany(input.project.id, [...artifacts.values()]);
+}
+
+interface ManagerProjectProtocolStateInput {
+  project: ManagerProject;
+  protocolStore: ManagerProtocolStore;
+  includeExcerpt?: boolean;
+  limit?: number;
+}
+
+async function buildManagerProjectProtocolState(
+  input: ManagerProjectProtocolStateInput,
+): Promise<ManagerProtocolState> {
+  const metadata = await input.protocolStore.get(input.project.id);
+  const scannedAt = new Date().toISOString();
+  const includeExcerpt = input.includeExcerpt ?? true;
+  const limit = Math.max(
+    MANAGER_PROTOCOL_CORE_FILES.length,
+    Math.min(input.limit ?? MANAGER_PROTOCOL_CORE_FILES.length, 50),
+  );
+  const coreFiles = MANAGER_PROTOCOL_CORE_FILES.slice(0, limit);
+  const warnings: string[] = [];
+  const cwd = resolve(input.project.cwd);
+
+  try {
+    const cwdStat = await stat(cwd);
+    if (!cwdStat.isDirectory()) {
+      throw new Error(`project cwd is not a directory: ${input.project.cwd}`);
+    }
+  } catch (error) {
+    const message = `project cwd cannot be scanned: ${errorMessage(error)}`;
+    warnings.push(message);
+    return {
+      projectId: input.project.id,
+      version: metadata?.version ?? "unversioned",
+      activeRules: metadata?.activeRules ?? [],
+      files: coreFiles.map(({ file, role }) => ({
+        path: file,
+        role,
+        status: "error",
+        error: message,
+      })),
+      ...(metadata?.latestChange ? { latestChange: metadata.latestChange } : {}),
+      scannedAt,
+      warnings,
+    };
+  }
+
+  const files = await Promise.all(
+    coreFiles.map(({ file, role }) => scanManagerProtocolFile(cwd, file, role, includeExcerpt)),
+  );
+  const presentCount = files.filter((file) => file.status === "present").length;
+  if (presentCount === 0) {
+    warnings.push("No core protocol files were found in the project root.");
+  } else if (!metadata?.latestChange) {
+    warnings.push("Protocol files exist, but the latest protocol change is not recorded.");
+  } else if (!metadata.latestChange.decisionId) {
+    warnings.push("Latest protocol change is not linked to a project decision.");
+  }
+  if ((metadata?.activeRules.length ?? 0) === 0) {
+    warnings.push("No active protocol rules are pinned yet.");
+  }
+
+  return {
+    projectId: input.project.id,
+    version: metadata?.version ?? "unversioned",
+    activeRules: metadata?.activeRules ?? [],
+    files,
+    ...(metadata?.latestChange ? { latestChange: metadata.latestChange } : {}),
+    scannedAt,
+    warnings,
+  };
+}
+
+async function scanManagerProtocolFile(
+  cwd: string,
+  file: string,
+  role: ManagerProtocolFileRole,
+  includeExcerpt: boolean,
+): Promise<ManagerProtocolFile> {
+  const absolutePath = resolve(cwd, file);
+  const relativePath = relative(cwd, absolutePath) || file;
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return {
+      path: file,
+      role,
+      status: "error",
+      error: "protocol file resolved outside the project cwd",
+    };
+  }
+  try {
+    const fileStat = await stat(absolutePath);
+    if (!fileStat.isFile()) {
+      return {
+        path: relativePath,
+        role,
+        status: "error",
+        error: "protocol path is not a file",
+      };
+    }
+    if (fileStat.size > MANAGER_PROTOCOL_MAX_FILE_BYTES) {
+      return {
+        path: relativePath,
+        role,
+        status: "too_large",
+        sizeBytes: fileStat.size,
+        modifiedAt: fileStat.mtime.toISOString(),
+      };
+    }
+    const output: ManagerProtocolFile = {
+      path: relativePath,
+      role,
+      status: "present",
+      sizeBytes: fileStat.size,
+      modifiedAt: fileStat.mtime.toISOString(),
+    };
+    if (includeExcerpt) {
+      output.excerpt = (await readFile(absolutePath, "utf8")).slice(
+        0,
+        MANAGER_PROTOCOL_EXCERPT_CHARS,
+      );
+    }
+    return output;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { path: relativePath, role, status: "missing" };
+    }
+    return {
+      path: relativePath,
+      role,
+      status: "error",
+      error: errorMessage(error),
+    };
+  }
 }
 
 function pickManagerProjectActiveRound(
@@ -5702,11 +5949,16 @@ async function enrichManagerAssistantContext(
     context.projectStatus = project.status;
     context.projectCwd = project.cwd;
     if (project.goal.trim()) context.projectGoal = project.goal;
-    const [rounds, decisions, blockers, artifacts] = await Promise.all([
+    const [rounds, decisions, blockers, artifacts, protocol] = await Promise.all([
       stores.orchestrationStore.listRounds(),
       stores.decisionStore.list(project.id),
       stores.blockerStore.list(project.id),
       stores.artifactStore.list(project.id),
+      buildManagerProjectProtocolState({
+        project,
+        protocolStore: stores.protocolStore,
+        includeExcerpt: false,
+      }),
     ]);
     const activeRound =
       (project.activeRoundId
@@ -5731,6 +5983,9 @@ async function enrichManagerAssistantContext(
       .slice(0, 8)
       .map(formatManagerArtifactContextLine);
     if (activeArtifactLines.length) context.projectArtifacts = activeArtifactLines;
+    const protocolLines = formatManagerProtocolContextLines(protocol);
+    if (protocolLines.length) context.projectProtocol = protocolLines;
+    warnings.push(...protocol.warnings.slice(0, 2));
   } catch (error) {
     warnings.push(`project context enrichment failed: ${errorMessage(error)}`);
   }
@@ -5755,6 +6010,27 @@ function formatManagerArtifactContextLine(artifact: ManagerArtifact): string {
   return `${artifact.path} (${artifact.kind}, ${artifact.status}, owner=${artifact.owner})${
     note ? ` - ${note}` : ""
   }`;
+}
+
+function formatManagerProtocolContextLines(protocol: ManagerProtocolState): string[] {
+  const presentFiles = protocol.files
+    .filter((file) => file.status === "present")
+    .map((file) => file.path);
+  const lines = [
+    `version=${protocol.version}; files=${presentFiles.length ? presentFiles.join(", ") : "none"}`,
+  ];
+  if (protocol.activeRules.length) {
+    lines.push(...protocol.activeRules.slice(0, 4).map((rule) => `rule: ${rule}`));
+  }
+  if (protocol.latestChange) {
+    const change = protocol.latestChange;
+    lines.push(
+      `latest change: ${change.summary}${
+        change.decisionId ? ` (decision ${change.decisionId})` : ""
+      }${change.roundId ? ` (round ${change.roundId})` : ""}`,
+    );
+  }
+  return lines;
 }
 
 function compactManagerContextText(value: string, maxLength: number): string {
@@ -8905,10 +9181,12 @@ function normalizeAssistantContext(input: unknown): ManagerAssistantChatContext 
   const projectDecisions = normalizeAssistantContextStringList(input.projectDecisions);
   const projectBlockers = normalizeAssistantContextStringList(input.projectBlockers);
   const projectArtifacts = normalizeAssistantContextStringList(input.projectArtifacts);
+  const projectProtocol = normalizeAssistantContextStringList(input.projectProtocol);
   const projectWarnings = normalizeAssistantContextStringList(input.projectWarnings);
   if (projectDecisions.length) context.projectDecisions = projectDecisions;
   if (projectBlockers.length) context.projectBlockers = projectBlockers;
   if (projectArtifacts.length) context.projectArtifacts = projectArtifacts;
+  if (projectProtocol.length) context.projectProtocol = projectProtocol;
   if (projectWarnings.length) context.projectWarnings = projectWarnings;
   return Object.keys(context).length ? context : undefined;
 }
@@ -8937,6 +9215,7 @@ function formatManagerAssistantBrowserContext(
   appendManagerAssistantContextList(lines, "active project decisions", context.projectDecisions);
   appendManagerAssistantContextList(lines, "open project blockers", context.projectBlockers);
   appendManagerAssistantContextList(lines, "active project artifacts", context.projectArtifacts);
+  appendManagerAssistantContextList(lines, "project protocol state", context.projectProtocol);
   appendManagerAssistantContextList(lines, "project context warnings", context.projectWarnings);
   return lines.join("\n");
 }
@@ -9436,6 +9715,93 @@ function parseManagerArtifactUpdateRequest(
   else if (typeof input.note === "string") value.note = input.note.trim().slice(0, 4_000);
   if (Object.keys(value).length === 0) {
     return { ok: false, error: "artifact update must include at least one field" };
+  }
+  return { ok: true, value };
+}
+
+function parseManagerProtocolScanRequest(
+  input: unknown,
+): { ok: true; value: ManagerProtocolScanRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "protocol scan body must be an object" };
+  const value: ManagerProtocolScanRequest = {};
+  if (input.includeExcerpt !== undefined) {
+    if (typeof input.includeExcerpt !== "boolean") {
+      return { ok: false, error: "protocol scan includeExcerpt must be a boolean" };
+    }
+    value.includeExcerpt = input.includeExcerpt;
+  }
+  if (input.limit !== undefined) {
+    const limit = Number(input.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      return { ok: false, error: "protocol scan limit must be an integer from 1 to 50" };
+    }
+    value.limit = limit;
+  }
+  return { ok: true, value };
+}
+
+function parseManagerProtocolUpdateRequest(
+  input: unknown,
+): { ok: true; value: ManagerProtocolUpdateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "protocol body must be an object" };
+  const value: ManagerProtocolUpdateRequest = {};
+  if (input.version !== undefined) {
+    if (typeof input.version !== "string") {
+      return { ok: false, error: "protocol version must be a string" };
+    }
+    if (input.version.trim().length > 120) {
+      return { ok: false, error: "protocol version is too long" };
+    }
+    value.version = input.version.trim();
+  }
+  if (input.activeRules !== undefined) {
+    if (!Array.isArray(input.activeRules)) {
+      return { ok: false, error: "protocol activeRules must be an array" };
+    }
+    const rules: string[] = [];
+    for (const rule of input.activeRules) {
+      if (typeof rule !== "string") {
+        return { ok: false, error: "protocol activeRules entries must be strings" };
+      }
+      const normalized = rule.trim().replace(/\s+/g, " ");
+      if (!normalized) continue;
+      if (normalized.length > 500) {
+        return { ok: false, error: "protocol active rule is too long" };
+      }
+      rules.push(normalized);
+      if (rules.length > 20) {
+        return { ok: false, error: "protocol activeRules accepts at most 20 entries" };
+      }
+    }
+    value.activeRules = rules;
+  }
+  if (input.latestChange !== undefined) {
+    if (input.latestChange === null) {
+      value.latestChange = null;
+    } else {
+      if (!isRecord(input.latestChange)) {
+        return { ok: false, error: "protocol latestChange must be an object or null" };
+      }
+      const summary =
+        typeof input.latestChange.summary === "string" ? input.latestChange.summary.trim() : "";
+      if (!summary) return { ok: false, error: "protocol latestChange summary is required" };
+      if (summary.length > 1_000) {
+        return { ok: false, error: "protocol latestChange summary is too long" };
+      }
+      value.latestChange = {
+        summary,
+        ...(typeof input.latestChange.decisionId === "string" &&
+        input.latestChange.decisionId.trim()
+          ? { decisionId: input.latestChange.decisionId.trim().slice(0, 200) }
+          : {}),
+        ...(typeof input.latestChange.roundId === "string" && input.latestChange.roundId.trim()
+          ? { roundId: input.latestChange.roundId.trim().slice(0, 200) }
+          : {}),
+      };
+    }
+  }
+  if (Object.keys(value).length === 0) {
+    return { ok: false, error: "protocol update must include at least one field" };
   }
   return { ok: true, value };
 }

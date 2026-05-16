@@ -12,6 +12,8 @@ import type {
   ManagerProject,
   ManagerProjectCreateRequest,
   ManagerProjectOverviewResponse,
+  ManagerProtocolResponse,
+  ManagerProtocolUpdateRequest,
   ManagerRound,
   ManagerRoundHealthGateResponse,
   ManagerSessionHygieneReport,
@@ -67,6 +69,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [decisionActionBusy, setDecisionActionBusy] = createSignal(false);
   const [blockerActionBusy, setBlockerActionBusy] = createSignal(false);
   const [artifactActionBusy, setArtifactActionBusy] = createSignal(false);
+  const [protocolActionBusy, setProtocolActionBusy] = createSignal(false);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
@@ -238,6 +241,22 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     },
   );
 
+  const [projectProtocol] = createResource(
+    () => {
+      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const seq = refreshSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerProtocolResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectProtocol(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+
   const managerAssistantContext = createMemo<ManagerAssistantChatContext | null>(() => {
     const context: ManagerAssistantChatContext = { ...(props.context ?? {}) };
     const project = selectedProject();
@@ -253,6 +272,23 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       context.activeRoundId = round.id;
       context.activeRoundTitle = round.title;
       context.activeRoundStatus = round.status;
+    }
+    const protocol = projectProtocol()?.protocol;
+    if (protocol) {
+      const presentFiles = protocol.files
+        .filter((file) => file.status === "present")
+        .map((file) => file.path);
+      context.projectProtocol = [
+        `version=${protocol.version}; files=${presentFiles.length ? presentFiles.join(", ") : "none"}`,
+        ...protocol.activeRules.slice(0, 4).map((rule) => `rule: ${rule}`),
+        ...(protocol.latestChange ? [`latest change: ${protocol.latestChange.summary}`] : []),
+      ];
+      if (protocol.warnings.length) {
+        context.projectWarnings = [
+          ...(context.projectWarnings ?? []),
+          ...protocol.warnings.slice(0, 2),
+        ];
+      }
     }
     return Object.keys(context).length ? context : null;
   });
@@ -566,6 +602,30 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function scanProjectProtocol() {
+    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    if (!projectId || protocolActionBusy()) return;
+    setProtocolActionBusy(true);
+    try {
+      await api.scanManagerProjectProtocol(projectId);
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setProtocolActionBusy(false);
+    }
+  }
+
+  async function updateProjectProtocol(input: ManagerProtocolUpdateRequest) {
+    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    if (!projectId || protocolActionBusy()) return;
+    setProtocolActionBusy(true);
+    try {
+      await api.updateManagerProjectProtocol(projectId, input);
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setProtocolActionBusy(false);
+    }
+  }
+
   async function repairRegistration() {
     if (managerActionBusy()) return;
     setManagerActionBusy(true);
@@ -652,6 +712,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           artifacts={projectArtifacts()?.artifacts ?? []}
           inactiveArtifacts={projectArtifacts()?.inactive ?? []}
           artifactBusy={artifactActionBusy()}
+          protocol={projectProtocol()?.protocol ?? null}
+          protocolBusy={protocolActionBusy() || projectProtocol.loading}
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
@@ -688,6 +750,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onResolveBlocker={(blockerId, input) => void resolveProjectBlocker(blockerId, input)}
           onScanArtifacts={() => void scanProjectArtifacts()}
           onUpdateArtifact={(artifactId, input) => void updateProjectArtifact(artifactId, input)}
+          onScanProtocol={() => void scanProjectProtocol()}
+          onUpdateProtocol={(input) => void updateProjectProtocol(input)}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">

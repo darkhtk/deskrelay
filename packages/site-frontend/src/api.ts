@@ -42,6 +42,9 @@ import type {
   ManagerProjectOverviewResponse,
   ManagerProjectResponse,
   ManagerProjectUpdateRequest,
+  ManagerProtocolResponse,
+  ManagerProtocolScanRequest,
+  ManagerProtocolUpdateRequest,
   ManagerRegistrationDiagnosis,
   ManagerRegistrationFailureAnalysis,
   ManagerRestartResult,
@@ -451,6 +454,9 @@ export type {
   ManagerProjectListResponse,
   ManagerProjectResponse,
   ManagerProjectUpdateRequest,
+  ManagerProtocolResponse,
+  ManagerProtocolScanRequest,
+  ManagerProtocolUpdateRequest,
   ManagerAssistantStatusReport,
   ManagerAssistantStatusReportInput,
   ManagerAssistantStatusReportResponse,
@@ -768,6 +774,23 @@ export const api = {
     request<ManagerArtifactResponse>(
       "PATCH",
       `/api/manager/projects/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifactId)}`,
+      input,
+    ),
+  managerProjectProtocol: (id: string) =>
+    request<ManagerProtocolResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/protocol`,
+    ),
+  scanManagerProjectProtocol: (id: string, input: ManagerProtocolScanRequest = {}) =>
+    request<ManagerProtocolResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/protocol/scan`,
+      input,
+    ),
+  updateManagerProjectProtocol: (id: string, input: ManagerProtocolUpdateRequest) =>
+    request<ManagerProtocolResponse>(
+      "PATCH",
+      `/api/manager/projects/${encodeURIComponent(id)}/protocol`,
       input,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),

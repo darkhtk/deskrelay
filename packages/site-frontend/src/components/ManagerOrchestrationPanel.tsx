@@ -11,6 +11,8 @@ import type {
   ManagerProject,
   ManagerProjectCreateRequest,
   ManagerProjectOverviewResponse,
+  ManagerProtocolState,
+  ManagerProtocolUpdateRequest,
   ManagerRound,
   ManagerRoundHealthGate,
   ManagerRoundReportResponse,
@@ -56,6 +58,8 @@ interface ManagerOrchestrationPanelProps {
   artifacts?: ManagerArtifact[] | undefined;
   inactiveArtifacts?: ManagerArtifact[] | undefined;
   artifactBusy?: boolean | undefined;
+  protocol?: ManagerProtocolState | null | undefined;
+  protocolBusy?: boolean | undefined;
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
@@ -99,6 +103,8 @@ interface ManagerOrchestrationPanelProps {
   onUpdateArtifact?:
     | ((artifactId: string, input: ManagerArtifactUpdateRequest) => void)
     | undefined;
+  onScanProtocol?: (() => void) | undefined;
+  onUpdateProtocol?: ((input: ManagerProtocolUpdateRequest) => void) | undefined;
 }
 
 interface TimelineEntry {
@@ -127,6 +133,7 @@ type OrchestrationInfoTab =
   | "graph"
   | "runs"
   | "artifacts"
+  | "protocol"
   | "timeline"
   | "hygiene";
 
@@ -139,6 +146,7 @@ const ORCHESTRATION_INFO_TABS: Array<{ id: OrchestrationInfoTab; label: string }
   { id: "graph", label: "Graph" },
   { id: "runs", label: "Runs" },
   { id: "artifacts", label: "Artifacts" },
+  { id: "protocol", label: "Protocol" },
   { id: "timeline", label: "Timeline" },
   { id: "hygiene", label: "Hygiene" },
 ];
@@ -471,6 +479,19 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   stored={Boolean(props.artifacts && props.artifacts.length > 0)}
                   onScan={props.onScanArtifacts}
                   onUpdate={props.onUpdateArtifact}
+                />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "protocol"}>
+              <OrchestrationSection title="Protocol" class="manager-section-protocol">
+                <ProtocolView
+                  protocol={props.protocol ?? null}
+                  busy={props.protocolBusy}
+                  activeRoundId={activeRound()?.id}
+                  decisions={props.decisions ?? []}
+                  onScan={props.onScanProtocol}
+                  onUpdate={props.onUpdateProtocol}
                 />
               </OrchestrationSection>
             </Show>
@@ -1829,6 +1850,174 @@ const ArtifactsView: Component<{
     </Show>
   </div>
 );
+
+const ProtocolView: Component<{
+  protocol: ManagerProtocolState | null;
+  busy?: boolean | undefined;
+  activeRoundId?: string | undefined;
+  decisions: ManagerDecision[];
+  onScan?: (() => void) | undefined;
+  onUpdate?: ((input: ManagerProtocolUpdateRequest) => void) | undefined;
+}> = (props) => {
+  const [version, setVersion] = createSignal("unversioned");
+  const [activeRules, setActiveRules] = createSignal("");
+  const [changeSummary, setChangeSummary] = createSignal("");
+  const [changeDecisionId, setChangeDecisionId] = createSignal("");
+  const [changeRoundId, setChangeRoundId] = createSignal("");
+  createEffect(() => {
+    const protocol = props.protocol;
+    setVersion(protocol?.version ?? "unversioned");
+    setActiveRules((protocol?.activeRules ?? []).join("\n"));
+    setChangeSummary(protocol?.latestChange?.summary ?? "");
+    setChangeDecisionId(protocol?.latestChange?.decisionId ?? "");
+    setChangeRoundId(protocol?.latestChange?.roundId ?? props.activeRoundId ?? "");
+  });
+  const presentCount = createMemo(
+    () => props.protocol?.files.filter((file) => file.status === "present").length ?? 0,
+  );
+  const save = () => {
+    if (!props.onUpdate) return;
+    const rules = activeRules()
+      .split(/\r?\n/)
+      .map((rule) => rule.trim())
+      .filter(Boolean);
+    const summary = changeSummary().trim();
+    props.onUpdate({
+      version: version().trim(),
+      activeRules: rules,
+      ...(summary
+        ? {
+            latestChange: {
+              summary,
+              ...(changeDecisionId().trim() ? { decisionId: changeDecisionId().trim() } : {}),
+              ...(changeRoundId().trim() ? { roundId: changeRoundId().trim() } : {}),
+            },
+          }
+        : {}),
+    });
+  };
+  return (
+    <div class="manager-protocol-view">
+      <div class="manager-artifact-toolbar">
+        <p>
+          {props.protocol
+            ? `${presentCount()}/${props.protocol.files.length} core files present · ${props.protocol.version}`
+            : "No protocol scan has loaded yet."}
+        </p>
+        <button type="button" disabled={props.busy} onClick={() => props.onScan?.()}>
+          {props.busy ? "Scanning..." : "Scan protocol"}
+        </button>
+      </div>
+      <Show when={(props.protocol?.warnings.length ?? 0) > 0}>
+        <ul class="manager-protocol-warnings">
+          <For each={props.protocol?.warnings ?? []}>{(warning) => <li>{warning}</li>}</For>
+        </ul>
+      </Show>
+      <div class="manager-protocol-editor">
+        <label>
+          <span>Version</span>
+          <input
+            type="text"
+            value={version()}
+            disabled={props.busy}
+            onInput={(event) => setVersion(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          <span>Active rules</span>
+          <textarea
+            value={activeRules()}
+            disabled={props.busy}
+            rows={4}
+            onInput={(event) => setActiveRules(event.currentTarget.value)}
+            placeholder="One pinned rule per line"
+          />
+        </label>
+        <label>
+          <span>Latest change</span>
+          <input
+            type="text"
+            value={changeSummary()}
+            disabled={props.busy}
+            onInput={(event) => setChangeSummary(event.currentTarget.value)}
+            placeholder="What changed and why"
+          />
+        </label>
+        <div class="manager-protocol-change-row">
+          <label>
+            <span>Decision</span>
+            <select
+              value={changeDecisionId()}
+              disabled={props.busy}
+              onChange={(event) => setChangeDecisionId(event.currentTarget.value)}
+            >
+              <option value="">No linked decision</option>
+              <For each={props.decisions.filter((decision) => decision.status === "active")}>
+                {(decision) => <option value={decision.id}>{decision.title}</option>}
+              </For>
+            </select>
+          </label>
+          <label>
+            <span>Round</span>
+            <input
+              type="text"
+              value={changeRoundId()}
+              disabled={props.busy}
+              onInput={(event) => setChangeRoundId(event.currentTarget.value)}
+              placeholder="round id"
+            />
+          </label>
+        </div>
+        <div class="manager-protocol-actions">
+          <button type="button" disabled={props.busy || !props.onUpdate} onClick={save}>
+            Save protocol state
+          </button>
+          <button
+            type="button"
+            disabled={props.busy || !props.onUpdate}
+            onClick={() => props.onUpdate?.({ latestChange: null })}
+          >
+            Clear change
+          </button>
+        </div>
+      </div>
+      <div class="manager-artifact-row manager-artifact-row-head">
+        <span>File</span>
+        <span>Role</span>
+        <span>Status</span>
+        <span>Updated</span>
+        <span>Evidence</span>
+        <span>Note</span>
+      </div>
+      <For each={props.protocol?.files ?? []}>
+        {(file) => (
+          <div class="manager-artifact-row">
+            <span class="manager-artifact-path" title={file.path}>
+              {file.path}
+            </span>
+            <span>{file.role}</span>
+            <span>{statusLabel(file.status)}</span>
+            <time>{file.modifiedAt ? formatTime(file.modifiedAt) : "-"}</time>
+            <span>
+              <Show when={file.excerpt}>
+                {(excerpt) => (
+                  <details class="manager-protocol-excerpt">
+                    <summary>excerpt</summary>
+                    <pre>{excerpt()}</pre>
+                  </details>
+                )}
+              </Show>
+            </span>
+            <span>{file.error ?? (file.sizeBytes ? `${file.sizeBytes} bytes` : "")}</span>
+          </div>
+        )}
+      </For>
+      <Show when={!props.protocol}>
+        <p class="manager-orchestration-empty">Select a project to scan protocol files.</p>
+      </Show>
+    </div>
+  );
+};
 
 const HygieneView: Component<{
   report?: ManagerSessionHygieneReport | null | undefined;
