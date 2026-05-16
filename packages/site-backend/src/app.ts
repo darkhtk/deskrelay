@@ -9102,12 +9102,8 @@ async function buildDeviceNetworkStatus(
       },
     };
   }
-  return {
-    ...result.value,
-    targetId: device.id,
-    targetLabel: device.label,
-    registeredUrl: device.daemonUrl,
-    probes: [
+  const probes = normalizeDeviceNetworkProbes(
+    [
       ...result.value.probes,
       {
         id: "server-to-device.network-status",
@@ -9118,7 +9114,64 @@ async function buildDeviceNetworkStatus(
         latencyMs: Date.now() - started,
       },
     ],
+    daemonNetworkKind(device.daemonUrl),
+  );
+  return {
+    ...result.value,
+    targetId: device.id,
+    targetLabel: device.label,
+    registeredUrl: device.daemonUrl,
+    probes,
+    summary: normalizeDeviceNetworkSummary(result.value.summary, probes),
   };
+}
+
+function normalizeDeviceNetworkProbes(
+  probes: ManagerNetworkStatus["probes"],
+  registeredKind: ReturnType<typeof daemonNetworkKind>,
+): ManagerNetworkStatus["probes"] {
+  if (registeredKind !== "local") return probes;
+  return probes.map((probe) => {
+    if (probe.classification !== "local-bind-with-remote-address") return probe;
+    return {
+      ...probe,
+      ok: true,
+      state: "skipped",
+      classification: "local-bind",
+      hint: "Local server connectors can remain bound to localhost.",
+    };
+  });
+}
+
+function normalizeDeviceNetworkSummary(
+  summary: ManagerNetworkStatus["summary"],
+  probes: ManagerNetworkStatus["probes"],
+): ManagerNetworkStatus["summary"] {
+  const severity = worstNetworkProbeSeverity(probes);
+  if (severity === "ok") return { severity: "ok", message: "Connector route verified." };
+  if (summary.severity === severity) return summary;
+  const probe = probes.find((candidate) => networkProbeSeverity(candidate) === severity);
+  return {
+    severity,
+    message: probe?.hint || probe?.error || probe?.label || summary.message,
+  };
+}
+
+function worstNetworkProbeSeverity(
+  probes: ManagerNetworkStatus["probes"],
+): ManagerNetworkStatus["summary"]["severity"] {
+  if (probes.some((probe) => networkProbeSeverity(probe) === "error")) return "error";
+  if (probes.some((probe) => networkProbeSeverity(probe) === "warn")) return "warn";
+  if (probes.some((probe) => networkProbeSeverity(probe) === "unknown")) return "unknown";
+  return "ok";
+}
+
+function networkProbeSeverity(probe: ManagerNetworkStatus["probes"][number]) {
+  if (probe.state === "error") return "error";
+  if (probe.state === "warn") return "warn";
+  if (probe.state === "unknown") return probe.ok ? "unknown" : "error";
+  if (probe.ok || probe.state === "ok" || probe.state === "skipped") return "ok";
+  return "error";
 }
 
 async function buildDeviceInstallStatus(

@@ -1,5 +1,5 @@
 import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
-import type { DiagnosticStep } from "@deskrelay/shared";
+import type { DiagnosticStep, ManagerNetworkProbe, ManagerNetworkStatus } from "@deskrelay/shared";
 import {
   type DeskRelayBuildInfo,
   type Device,
@@ -46,6 +46,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   const [updatedAt, setUpdatedAt] = createSignal<Date | null>(null);
   const [diagnosticsError, setDiagnosticsError] = createSignal<Error | null>(null);
   const [doctorError, setDoctorError] = createSignal<Error | null>(null);
+  const [networkError, setNetworkError] = createSignal<Error | null>(null);
   const [health, { refetch: refetchHealth }] = createResource(
     () => props.devicesRevision ?? 0,
     () => api.health().catch(() => null),
@@ -119,6 +120,20 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       }
     },
   );
+  const [networkStatus, { refetch: refetchNetworkStatus }] = createResource(
+    selectedDeviceDiagnosticSource,
+    async (source) => {
+      if (!source) return null;
+      try {
+        const snapshot = await api.deviceNetworkStatus(source.id);
+        setNetworkError(null);
+        return snapshot;
+      } catch (err) {
+        setNetworkError(err as Error);
+        return null;
+      }
+    },
+  );
 
   function refresh(): void {
     void refetchHealth();
@@ -127,6 +142,7 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
     void refetchDevices();
     if (selectedDevice()) void refetchDiagnostics();
     if (selectedDevice()) void refetchDoctor();
+    if (selectedDevice()) void refetchNetworkStatus();
   }
 
   function openDevices(): void {
@@ -158,6 +174,13 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
   const serverTone = (): Tone => {
     if (health.loading) return "pending";
     return health()?.ok ? "ok" : "bad";
+  };
+
+  const networkTone = (): Tone => {
+    if (networkStatus.loading) return "pending";
+    if (networkError()) return "bad";
+    const severity = networkStatus()?.summary?.severity;
+    return severity ? diagnosticTone(severity) : "pending";
   };
 
   const daemonStatusDetail = (): string => {
@@ -199,6 +222,11 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         tone: daemonTone(),
         label: "Connector",
         detail: daemonStatusDetail(),
+      },
+      {
+        tone: networkTone(),
+        label: "Network",
+        detail: networkStatusDetail(networkStatus(), networkStatus.loading, networkError()),
       },
       {
         tone: deviceConnectionTone(),
@@ -318,6 +346,34 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       detail: check.detail ? `${check.summary} · ${check.detail}` : check.summary,
     }));
   };
+  const networkRows = (): StatusRow[] => {
+    if (networkStatus.loading) {
+      return [{ tone: "pending", label: "Network", detail: "Checking connector route..." }];
+    }
+    if (networkError()) {
+      return [
+        {
+          tone: "bad",
+          label: "Network",
+          detail: networkError()?.message ?? "Network status request failed.",
+          action: t("conn-diag.action.refresh"),
+          onAction: refresh,
+        },
+      ];
+    }
+    return (networkStatus()?.probes ?? []).filter(isUserVisibleNetworkProbe).map((probe) => {
+      const action = actionForNetworkProbe(probe);
+      return {
+        tone: networkProbeTone(probe),
+        label: networkProbeLabel(probe),
+        detail: networkProbeDetail(probe),
+        action: action?.label,
+        onAction:
+          action?.kind === "devices" ? openDevices : action?.kind === "refresh" ? refresh : undefined,
+      };
+    });
+  };
+
   const visibleInstallReports = (): InstallReportRecord[] =>
     (installReports() ?? []).filter((report) => report.steps.some(isUserVisibleDiagnosticStep));
   const installReportRows = (report: InstallReportRecord): StatusRow[] =>
@@ -383,10 +439,10 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
       </div>
 
       <Show
-        when={rows().length > 0}
+        when={rows().length + networkRows().length > 0}
         fallback={<p class="settings-card-help">표시할 조치 항목이 없습니다.</p>}
       >
-        <StatusTable rows={rows()} label={t("conn-diag.summary")} />
+        <StatusTable rows={[...rows(), ...networkRows()]} label={t("conn-diag.summary")} />
       </Show>
 
       <Show when={doctorRows().length > 0}>
@@ -583,8 +639,104 @@ function updateStatusText(status: SelfServerUpdateStatus | null | undefined): st
   return "서버 업데이트 상태 확인 필요";
 }
 
+function networkStatusDetail(
+  snapshot: ManagerNetworkStatus | null | undefined,
+  loading: boolean,
+  error: Error | null,
+): string {
+  if (loading) return "checking connector route";
+  if (error) return error.message;
+  if (!snapshot) return "network status unavailable";
+  if (snapshot.summary.severity === "ok") return "connector route verified";
+  return snapshot.summary.message;
+}
+
 function shortCommit(commit: string): string {
   return commit.slice(0, 7);
+}
+
+function isUserVisibleNetworkProbe(probe: ManagerNetworkProbe): boolean {
+  const state = probe.state ?? (probe.ok ? "ok" : "error");
+  if (state === "ok" || state === "skipped") return false;
+  if (
+    probe.classification === "no-tailscale-address" ||
+    probe.classification === "non-windows" ||
+    probe.classification === "local-bind"
+  ) {
+    return false;
+  }
+  return Boolean(probe.hint || probe.error || probe.classification || !probe.ok);
+}
+
+function networkProbeTone(probe: ManagerNetworkProbe): Tone {
+  const state = probe.state ?? (probe.ok ? "ok" : "error");
+  if (state === "ok" || state === "skipped") return "ok";
+  if (state === "warn") return "warning";
+  if (state === "unknown") return probe.ok ? "pending" : "bad";
+  return "bad";
+}
+
+function networkProbeLabel(probe: ManagerNetworkProbe): string {
+  if (probe.id === "device.network-status" || probe.id === "server-to-device.network-status") {
+    return "Server to connector";
+  }
+  if (probe.id === "daemon.listen-bind") return "Connector bind";
+  if (probe.id === "daemon.tailscale") return "Tailscale";
+  if (probe.id === "daemon.windows-firewall") return "Windows Firewall";
+  return probe.label;
+}
+
+function networkProbeDetail(probe: ManagerNetworkProbe): string {
+  const summary = networkProbeSummary(probe);
+  const action = probe.hint && probe.hint !== summary ? probe.hint : "";
+  const fallback = !action && probe.error && probe.error !== summary ? probe.error : "";
+  return [summary, action, fallback].filter(Boolean).join(" · ");
+}
+
+function networkProbeSummary(probe: ManagerNetworkProbe): string {
+  switch (probe.classification) {
+    case "token-rejected":
+      return "Saved connector token is invalid.";
+    case "local-only-url":
+      return "Registered connector URL is local-only.";
+    case "daemon-not-listening":
+      return "Connector port is not responding.";
+    case "tailscale-route-or-firewall":
+      return "Tailscale route or connector PC firewall is blocking access.";
+    case "lan-route-or-firewall":
+      return "LAN/VPN route or connector PC firewall is blocking access.";
+    case "public-route-or-firewall":
+      return "Public connector route is unsafe or blocked.";
+    case "route-or-firewall":
+      return "Connector route or firewall needs attention.";
+    case "local-bind-with-remote-address":
+      return "Connector is listening only on this PC.";
+    case "rule-missing":
+      return "Windows Firewall allow rule is missing.";
+    case "rule-check-failed":
+      return "Windows Firewall state could not be checked.";
+    case "no-listener":
+    case "not-reported":
+      return "Connector listener was not reported.";
+    case "http-error":
+      return "Connector returned an unexpected HTTP response.";
+    default:
+      return probe.hint || probe.error || probe.label;
+  }
+}
+
+function actionForNetworkProbe(
+  probe: ManagerNetworkProbe,
+): { kind: "devices" | "refresh"; label: string } | undefined {
+  if (
+    probe.classification === "token-rejected" ||
+    probe.classification === "local-only-url" ||
+    probe.classification === "local-bind-with-remote-address"
+  ) {
+    return { kind: "devices", label: t("connection.action.devices") };
+  }
+  if (probe.retrySafe) return { kind: "refresh", label: t("conn-diag.action.refresh") };
+  return undefined;
 }
 
 function isUserVisibleStatusRow(row: StatusRow): boolean {

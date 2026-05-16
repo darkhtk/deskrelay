@@ -1158,6 +1158,49 @@ describe("manager logs and process APIs", () => {
     expect(securityBody.networkBoundary?.kind).toBe("tailscale");
     expect(securityBody.tokenBoundary?.browserReceivesDaemonToken).toBe(false);
   });
+
+  test("device network status does not flag localhost bind for a local server connector", async () => {
+    const device = setup.registry.register({
+      daemonUrl: "http://127.0.0.1:18191",
+      authToken: "daemon-token",
+      label: "server connector",
+    });
+    setup.setMockResponse(() =>
+      Response.json({
+        scope: "device",
+        generatedAt: "2026-05-11T00:00:00.000Z",
+        listening: { host: "127.0.0.1", port: 18191, kind: "local" },
+        tailscale: { detected: true, addresses: ["100.64.0.50"], interfaceNames: ["Tailscale"] },
+        addresses: [],
+        probes: [
+          {
+            id: "daemon.listen-bind",
+            label: "Connector bind address",
+            url: "http://127.0.0.1:18191/status",
+            ok: false,
+            state: "warn",
+            classification: "local-bind-with-remote-address",
+            hint: "Connector is local-only even though this PC has LAN/Tailscale addresses.",
+          },
+        ],
+        summary: { severity: "warn", message: "Connector is local-only." },
+      }),
+    );
+
+    const network = await setup.app.fetch(
+      authedRequest("GET", `/api/devices/${device.id}/network/status`),
+    );
+    expect(network.status).toBe(200);
+    const body = (await network.json()) as {
+      summary?: { severity?: string };
+      probes?: Array<{ id?: string; state?: string; classification?: string; ok?: boolean }>;
+    };
+    const bindProbe = body.probes?.find((probe) => probe.id === "daemon.listen-bind");
+    expect(body.summary?.severity).toBe("ok");
+    expect(bindProbe?.ok).toBe(true);
+    expect(bindProbe?.state).toBe("skipped");
+    expect(bindProbe?.classification).toBe("local-bind");
+  });
 });
 
 describe("manager task API", () => {
