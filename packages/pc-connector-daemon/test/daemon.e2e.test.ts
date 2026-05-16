@@ -180,7 +180,7 @@ describe("Daemon HTTP API — basics", () => {
     expect(d.probes?.some((probe) => probe.ok === true)).toBe(true);
     expect(d.probes?.some((probe) => probe.id === "daemon.local-http")).toBe(true);
     expect(d.probes?.some((probe) => probe.id === "daemon.listen-bind")).toBe(true);
-    expect(d.probes?.some((probe) => probe.id === "daemon.tailscale-cli")).toBe(true);
+    expect(d.probes?.some((probe) => probe.id === "daemon.tailscale")).toBe(true);
     expect(d.probes?.some((probe) => probe.id === "daemon.windows-firewall")).toBe(true);
   });
 

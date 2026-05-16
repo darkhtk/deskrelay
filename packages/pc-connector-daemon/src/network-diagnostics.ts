@@ -32,7 +32,7 @@ export function buildConnectorNetworkDiagnostics(
   const runner = input.runner ?? defaultRunner;
   const probes = [
     listenBindProbe(input.listening, input.addresses),
-    tailscaleCliProbe(input.addresses, runner),
+    tailscaleAddressProbe(input.addresses),
     windowsFirewallProbe(input.platform, input.listening, runner),
   ];
   const warnings = probes
@@ -88,15 +88,12 @@ function listenBindProbe(
   };
 }
 
-function tailscaleCliProbe(
-  addresses: ManagerNetworkAddress[],
-  runner: NetworkDiagnosticRunner,
-): ManagerNetworkProbe {
+function tailscaleAddressProbe(addresses: ManagerNetworkAddress[]): ManagerNetworkProbe {
   const tailscaleAddresses = addresses.filter((address) => address.kind === "tailscale");
   if (tailscaleAddresses.length === 0) {
     return {
-      id: "daemon.tailscale-cli",
-      label: "Tailscale CLI",
+      id: "daemon.tailscale",
+      label: "Tailscale address",
       url: "tailscale://ip",
       ok: true,
       state: "skipped",
@@ -104,43 +101,15 @@ function tailscaleCliProbe(
       hint: "No Tailscale address was detected on this PC.",
     };
   }
-  try {
-    const output = runner("tailscale", ["ip", "-4"], { timeoutMs: COMMAND_TIMEOUT_MS }).trim();
-    if (output) {
-      return {
-        id: "daemon.tailscale-cli",
-        label: "Tailscale CLI",
-        url: "tailscale://ip",
-        ok: true,
-        state: "ok",
-        classification: "tailscale-ip-reported",
-        status: 0,
-      };
-    }
-    return {
-      id: "daemon.tailscale-cli",
-      label: "Tailscale CLI",
-      url: "tailscale://ip",
-      ok: false,
-      state: "warn",
-      classification: "tailscale-empty-ip",
-      error: "tailscale ip -4 returned no address.",
-      hint: "Check that Tailscale is logged in and connected on this PC.",
-      retrySafe: true,
-    };
-  } catch (error) {
-    return {
-      id: "daemon.tailscale-cli",
-      label: "Tailscale CLI",
-      url: "tailscale://ip",
-      ok: false,
-      state: "warn",
-      classification: "tailscale-command-failed",
-      error: errorMessage(error),
-      hint: "Install Tailscale or log in to the same tailnet as the server PC.",
-      retrySafe: true,
-    };
-  }
+  return {
+    id: "daemon.tailscale",
+    label: "Tailscale address",
+    url: tailscaleAddresses[0]?.url ?? "tailscale://ip",
+    ok: true,
+    state: "ok",
+    classification: "tailscale-address-detected",
+    status: 200,
+  };
 }
 
 function windowsFirewallProbe(

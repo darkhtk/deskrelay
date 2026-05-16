@@ -38,22 +38,24 @@ describe("connector network diagnostics", () => {
     );
   });
 
-  test("reports Tailscale CLI failures as retry-safe warnings", () => {
+  test("trusts detected Tailscale interface addresses without shelling out", () => {
+    let calls = 0;
     const result = buildConnectorNetworkDiagnostics({
       platform: "linux",
       listening: { host: "0.0.0.0", port: 18091, kind: "unknown" },
       addresses: [tailscaleAddress],
       runner: () => {
-        throw new Error("tailscale not found");
+        calls += 1;
+        throw new Error("runner should not be called for Tailscale detection");
       },
     });
-    expect(result.severity).toBe("warn");
+    expect(calls).toBe(0);
+    expect(result.severity).toBe("ok");
     expect(result.probes).toContainEqual(
       expect.objectContaining({
-        id: "daemon.tailscale-cli",
-        state: "warn",
-        classification: "tailscale-command-failed",
-        retrySafe: true,
+        id: "daemon.tailscale",
+        state: "ok",
+        classification: "tailscale-address-detected",
       }),
     );
   });
