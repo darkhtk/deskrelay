@@ -35,6 +35,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
+import { t } from "../i18n.ts";
 import type { ManagerEventConnectionState } from "../manager-events.ts";
 
 type Tone = "neutral" | "running" | "done" | "blocked";
@@ -144,18 +145,18 @@ type OrchestrationInfoTab =
   | "timeline"
   | "hygiene";
 
-const ORCHESTRATION_INFO_TABS: Array<{ id: OrchestrationInfoTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "agents", label: "Agents" },
-  { id: "state", label: "State" },
-  { id: "decisions", label: "Decisions" },
-  { id: "blockers", label: "Blockers" },
-  { id: "graph", label: "Graph" },
-  { id: "runs", label: "Runs" },
-  { id: "artifacts", label: "Artifacts" },
-  { id: "protocol", label: "Protocol" },
-  { id: "timeline", label: "Timeline" },
-  { id: "hygiene", label: "Hygiene" },
+const ORCHESTRATION_INFO_TABS: OrchestrationInfoTab[] = [
+  "overview",
+  "agents",
+  "state",
+  "decisions",
+  "blockers",
+  "graph",
+  "runs",
+  "artifacts",
+  "protocol",
+  "timeline",
+  "hygiene",
 ];
 
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
@@ -241,7 +242,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
         "manager-orchestration-panel-expanded": isExpanded(),
         "manager-orchestration-panel-standalone": Boolean(props.standalone),
       }}
-      aria-label="orchestration progress"
+      aria-label={t("manager.orchestration.aria.panel")}
       style={{ "--manager-orchestration-panel-height": `${panelHeight()}px` } as JSX.CSSProperties}
     >
       <header class="manager-orchestration-panel-head">
@@ -256,7 +257,9 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           <span
             class={`manager-status-dot manager-status-dot-${currentStateTone(currentState()?.tone) ?? statusTone(activeRound()?.status)}`}
           />
-          <strong>{currentState()?.title ?? activeRound()?.title ?? "Agent orchestration"}</strong>
+          <strong>
+            {currentState()?.title ?? activeRound()?.title ?? t("manager.orchestration.title")}
+          </strong>
           <Show when={currentState()} fallback={<RoundStatusPill round={activeRound()} />}>
             {(current) => <span class="manager-status-pill">{current().status}</span>}
           </Show>
@@ -266,7 +269,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             when={props.state}
             fallback={
               <span>
-                {totals().completed}/{totals().total} agents done
+                {t("manager.orchestration.metric.agents-done", {
+                  completed: totals().completed,
+                  total: totals().total,
+                })}
               </span>
             }
           >
@@ -274,10 +280,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           </Show>
           <Show when={freshnessLabel()}>{(label) => <span>{label()}</span>}</Show>
           <Show when={eventConnectionLabel()}>{(label) => <span>{label()}</span>}</Show>
-          <span>running {totals().running}</span>
-          <span>blocked {totals().blocked}</span>
+          <span>{t("manager.orchestration.metric.running", { count: totals().running })}</span>
+          <span>{t("manager.orchestration.metric.blocked", { count: totals().blocked })}</span>
           <span>
-            runs {runTotals().active}/{runTotals().total}
+            {t("manager.orchestration.metric.runs", {
+              active: runTotals().active,
+              total: runTotals().total,
+            })}
           </span>
         </div>
         <Show when={activeIssueCount() > 0 && Boolean(props.onAcknowledgeFailures)}>
@@ -286,9 +295,11 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             class="manager-orchestration-ack"
             disabled={props.acknowledgeBusy}
             onClick={() => props.onAcknowledgeFailures?.()}
-            title="Keep the history but clear acknowledged failures from current state"
+            title={t("manager.orchestration.recovery.acknowledge-title")}
           >
-            {props.acknowledgeBusy ? "Acknowledging" : "Acknowledge"}
+            {props.acknowledgeBusy
+              ? t("manager.orchestration.action.acknowledging")
+              : t("manager.orchestration.action.acknowledge")}
           </button>
         </Show>
         <Show when={!props.standalone}>
@@ -298,7 +309,9 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             aria-expanded={isExpanded()}
             onClick={() => setExpanded((current) => !current)}
           >
-            {isExpanded() ? "Hide" : "Details"}
+            {isExpanded()
+              ? t("manager.orchestration.action.hide")
+              : t("manager.orchestration.action.details")}
           </button>
         </Show>
       </header>
@@ -321,7 +334,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
           <nav
             class="manager-orchestration-tabs"
             role="tablist"
-            aria-label="Orchestration information"
+            aria-label={t("manager.orchestration.aria.information")}
           >
             <For each={ORCHESTRATION_INFO_TABS}>
               {(tab) => (
@@ -329,11 +342,11 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   type="button"
                   role="tab"
                   class="manager-orchestration-tab"
-                  classList={{ "is-active": activeTab() === tab.id }}
-                  aria-selected={activeTab() === tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  classList={{ "is-active": activeTab() === tab }}
+                  aria-selected={activeTab() === tab}
+                  onClick={() => setActiveTab(tab)}
                 >
-                  {tab.label}
+                  {t(`manager.orchestration.tab.${tab}`)}
                 </button>
               )}
             </For>
@@ -347,7 +360,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             role="tabpanel"
           >
             <Show when={activeTab() === "overview"}>
-              <OrchestrationSection title="Command Center" class="manager-section-overview">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.command-center")}
+                class="manager-section-overview"
+              >
                 <OverviewView
                   round={activeRound()}
                   overview={props.projectOverview ?? null}
@@ -357,7 +373,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   hiddenAgentCount={hiddenAgentCount()}
                 />
               </OrchestrationSection>
-              <OrchestrationSection title="Current state" class="manager-section-current">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.current-state")}
+                class="manager-section-current"
+              >
                 <CurrentStateView
                   state={props.state}
                   busy={props.actionBusy || props.acknowledgeBusy}
@@ -370,7 +389,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   onRunUpdateAll={props.onRunUpdateAll}
                 />
               </OrchestrationSection>
-              <OrchestrationSection title="Blockers / Health" class="manager-section-health">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.health")}
+                class="manager-section-health"
+              >
                 <RoundHealthGateView
                   health={props.health}
                   busy={props.actionBusy || props.acknowledgeBusy}
@@ -383,7 +405,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "agents"}>
-              <OrchestrationSection title="Agent Theater" class="manager-section-agents">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.theater")}
+                class="manager-section-agents"
+              >
                 <AgentsView
                   agents={agents()}
                   busy={props.actionBusy || props.observeBusy}
@@ -393,7 +418,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "state"}>
-              <OrchestrationSection title="Current state" class="manager-section-current">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.current-state")}
+                class="manager-section-current"
+              >
                 <CurrentStateView
                   state={props.state}
                   busy={props.actionBusy || props.acknowledgeBusy}
@@ -406,7 +434,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   onRunUpdateAll={props.onRunUpdateAll}
                 />
               </OrchestrationSection>
-              <OrchestrationSection title="Blockers / Health" class="manager-section-health">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.health")}
+                class="manager-section-health"
+              >
                 <RoundHealthGateView
                   health={props.health}
                   busy={props.actionBusy || props.acknowledgeBusy}
@@ -419,7 +450,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "decisions"}>
-              <OrchestrationSection title="Decisions" class="manager-section-decisions">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.decisions")}
+                class="manager-section-decisions"
+              >
                 <DecisionsView
                   project={props.selectedProject ?? null}
                   decisions={props.decisions ?? []}
@@ -433,7 +467,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "blockers"}>
-              <OrchestrationSection title="Blockers" class="manager-section-blockers">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.blockers")}
+                class="manager-section-blockers"
+              >
                 <BlockersView
                   project={props.selectedProject ?? null}
                   blockers={props.blockers ?? []}
@@ -447,7 +484,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "graph"}>
-              <OrchestrationSection title="Worker Graph" class="manager-section-flow">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.graph")}
+                class="manager-section-flow"
+              >
                 <MermaidFlowView
                   round={activeRound()}
                   agents={agents()}
@@ -461,14 +501,17 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               <Show when={props.observedTask}>
                 {(observation) => (
                   <OrchestrationSection
-                    title="Task observation"
+                    title={t("manager.orchestration.section.task-observation")}
                     class="manager-section-observation"
                   >
                     <TaskObservationView observation={observation()} busy={props.observeBusy} />
                   </OrchestrationSection>
                 )}
               </Show>
-              <OrchestrationSection title="Worker runs" class="manager-section-worker-runs">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.runs")}
+                class="manager-section-worker-runs"
+              >
                 <WorkerRunsView
                   runs={props.workerRuns ?? []}
                   busy={props.observeBusy || props.actionBusy}
@@ -478,7 +521,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "artifacts"}>
-              <OrchestrationSection title="Artifacts" class="manager-section-artifacts">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.artifacts")}
+                class="manager-section-artifacts"
+              >
                 <ArtifactsView
                   artifacts={artifacts()}
                   inactiveArtifacts={inactiveArtifacts()}
@@ -491,7 +537,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "protocol"}>
-              <OrchestrationSection title="Protocol" class="manager-section-protocol">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.protocol")}
+                class="manager-section-protocol"
+              >
                 <ProtocolView
                   protocol={props.protocol ?? null}
                   busy={props.protocolBusy}
@@ -504,13 +553,19 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "timeline"}>
-              <OrchestrationSection title="Timeline" class="manager-section-timeline">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.timeline")}
+                class="manager-section-timeline"
+              >
                 <TimelineView entries={timeline()} />
               </OrchestrationSection>
             </Show>
 
             <Show when={activeTab() === "hygiene"}>
-              <OrchestrationSection title="Hygiene" class="manager-section-hygiene">
+              <OrchestrationSection
+                title={t("manager.orchestration.section.hygiene")}
+                class="manager-section-hygiene"
+              >
                 <HygieneView
                   report={props.hygiene}
                   projectReport={props.projectHygiene}
@@ -729,29 +784,34 @@ const OverviewView: Component<{
     const projectBlocker = activeBlocker();
     if (projectBlocker) {
       if (projectBlocker.requiredAction === "user")
-        return `User action needed: ${projectBlocker.title}`;
+        return t("manager.orchestration.next-action.user", { title: projectBlocker.title });
       if (projectBlocker.requiredAction === "worker")
-        return `Assign worker recovery: ${projectBlocker.title}`;
+        return t("manager.orchestration.next-action.assign-worker", {
+          title: projectBlocker.title,
+        });
       if (projectBlocker.requiredAction === "manager")
-        return `Manager should resolve: ${projectBlocker.title}`;
-      return `Track blocker: ${projectBlocker.title}`;
+        return t("manager.orchestration.next-action.manager", { title: projectBlocker.title });
+      return t("manager.orchestration.next-action.track", { title: projectBlocker.title });
     }
     const blocked = blocker();
     if (blocked) {
       return blocked.taskId
-        ? `Inspect ${blocked.role} and decide whether to retry task ${shortId(blocked.taskId)}.`
-        : `Inspect ${blocked.role} and ask the manager for a recovery instruction.`;
+        ? t("manager.orchestration.next-action.inspect-task", {
+            role: blocked.role,
+            taskId: shortId(blocked.taskId),
+          })
+        : t("manager.orchestration.next-action.inspect-role", { role: blocked.role });
     }
     if (totals().running > 0) {
-      return "Watch for fresh worker signals and artifact updates before closing the round.";
+      return t("manager.orchestration.next-action.watch");
     }
     if (props.tasks.some((task) => ["blocked", "failed"].includes(task.state))) {
-      return "Review failed task evidence before starting another round.";
+      return t("manager.orchestration.next-action.review-failed");
     }
     if (props.tasks.length > 0 || totals().completed > 0) {
-      return "Review artifacts and ask the manager to summarize the round result.";
+      return t("manager.orchestration.next-action.review-artifacts");
     }
-    return "Dispatch agents or ask the manager to plan the next round.";
+    return t("manager.orchestration.next-action.dispatch");
   });
   return (
     <div class="manager-command-board">
@@ -762,40 +822,54 @@ const OverviewView: Component<{
           />
           <span>
             {props.overview?.currentSignal.title ??
-              (props.round ? statusLabel(props.round.status) : "no round")}
+              (props.round
+                ? statusLabel(props.round.status)
+                : t("manager.orchestration.overview.no-round"))}
           </span>
           <Show when={lastUpdatedAt()}>
-            {(updatedAt) => <time>last update {formatTime(updatedAt())}</time>}
+            {(updatedAt) => (
+              <time>
+                {t("manager.orchestration.overview.last-update", {
+                  time: formatTime(updatedAt()),
+                })}
+              </time>
+            )}
           </Show>
         </div>
-        <h3>{props.overview?.activeRound?.title ?? props.round?.title ?? "Agent orchestration"}</h3>
+        <h3>
+          {props.overview?.activeRound?.title ??
+            props.round?.title ??
+            t("manager.orchestration.title")}
+        </h3>
         <p>
           {props.overview?.currentSignal.detail ||
             props.round?.objective ||
-            "No round objective is available yet."}
+            t("manager.orchestration.overview.no-round-objective")}
         </p>
       </div>
-      <div class="manager-command-metrics" aria-label="orchestration metrics">
+      <div class="manager-command-metrics" aria-label={t("manager.orchestration.aria.metrics")}>
         <div class="manager-command-metric">
-          <span>Agents</span>
+          <span>{t("manager.orchestration.field.agents")}</span>
           <strong>{counts()?.agents ?? totals().total}</strong>
         </div>
         <div class="manager-command-metric">
-          <span>Done</span>
+          <span>{t("manager.orchestration.field.done")}</span>
           <strong>{counts()?.completedAgents ?? totals().completed}</strong>
         </div>
         <div class="manager-command-metric">
-          <span>Blocked</span>
+          <span>{t("manager.orchestration.field.blocked")}</span>
           <strong>{props.blockers.length || counts()?.blockedAgents || totals().blocked}</strong>
         </div>
         <div class="manager-command-metric">
-          <span>Artifacts</span>
+          <span>{t("manager.orchestration.field.artifacts")}</span>
           <strong>{counts()?.artifacts ?? artifacts().length}</strong>
         </div>
       </div>
       <div class="manager-command-decision">
         <div>
-          <span class="manager-overview-label">Current signal</span>
+          <span class="manager-overview-label">
+            {t("manager.orchestration.overview.current-signal")}
+          </span>
           <p>
             {props.overview?.currentSignal.detail ||
               (activeBlocker()
@@ -806,10 +880,14 @@ const OverviewView: Component<{
                     }`
                   : [
                       props.tasks.length > 0
-                        ? `${props.tasks.length} task records collected.`
-                        : "No active blocker detected.",
+                        ? t("manager.orchestration.overview.task-records", {
+                            count: props.tasks.length,
+                          })
+                        : t("manager.orchestration.overview.no-blocker"),
                       props.hiddenAgentCount > 0
-                        ? `${props.hiddenAgentCount} quiet agents hidden.`
+                        ? t("manager.orchestration.overview.quiet-agents", {
+                            count: props.hiddenAgentCount,
+                          })
                         : "",
                     ]
                       .filter(Boolean)
@@ -817,7 +895,9 @@ const OverviewView: Component<{
           </p>
         </div>
         <div>
-          <span class="manager-overview-label">Next action</span>
+          <span class="manager-overview-label">
+            {t("manager.orchestration.overview.next-action")}
+          </span>
           <p>{nextAction()}</p>
         </div>
       </div>
@@ -856,7 +936,11 @@ const CurrentStateView: Component<{
     <div class="manager-current-state">
       <Show
         when={current()}
-        fallback={<p class="manager-orchestration-empty">No manager state is loaded yet.</p>}
+        fallback={
+          <p class="manager-orchestration-empty">
+            {t("manager.orchestration.empty.manager-state")}
+          </p>
+        }
       >
         {(item) => (
           <>
@@ -869,17 +953,17 @@ const CurrentStateView: Component<{
             </div>
             <dl class="manager-current-state-grid">
               <div>
-                <dt>Kind</dt>
+                <dt>{t("manager.orchestration.field.kind")}</dt>
                 <dd>{item().kind}</dd>
               </div>
               <div>
-                <dt>Source</dt>
+                <dt>{t("manager.orchestration.field.source")}</dt>
                 <dd>{item().source}</dd>
               </div>
               <Show when={item().updatedAt}>
                 {(updatedAt) => (
                   <div>
-                    <dt>Updated</dt>
+                    <dt>{t("manager.orchestration.field.updated")}</dt>
                     <dd>{formatTime(updatedAt())}</dd>
                   </div>
                 )}
@@ -887,8 +971,8 @@ const CurrentStateView: Component<{
               <Show when={props.state?.freshness}>
                 {(freshness) => (
                   <div>
-                    <dt>Signal</dt>
-                    <dd>{freshness().stale ? "stale" : formatFreshness(props.state)}</dd>
+                    <dt>{t("manager.orchestration.field.signal")}</dt>
+                    <dd>{freshness().stale ? statusLabel("stale") : formatFreshness(props.state)}</dd>
                   </div>
                 )}
               </Show>
@@ -897,14 +981,26 @@ const CurrentStateView: Component<{
               {(detail) => <p class="manager-current-state-detail">{detail()}</p>}
             </Show>
             <div class="manager-current-state-ids">
-              <Show when={item().roundId}>{(id) => <span>round {shortId(id())}</span>}</Show>
-              <Show when={item().agentId}>{(id) => <span>agent {shortId(id())}</span>}</Show>
-              <Show when={item().taskId}>{(id) => <span>task {shortId(id())}</span>}</Show>
+              <Show when={item().roundId}>
+                {(id) => (
+                  <span>{t("manager.orchestration.word.round", { id: shortId(id()) })}</span>
+                )}
+              </Show>
+              <Show when={item().agentId}>
+                {(id) => (
+                  <span>{t("manager.orchestration.word.agent")} {shortId(id())}</span>
+                )}
+              </Show>
+              <Show when={item().taskId}>
+                {(id) => (
+                  <span>{t("manager.orchestration.word.task", { id: shortId(id()) })}</span>
+                )}
+              </Show>
             </div>
             <div class="manager-current-state-actions">
               <Show when={item().actions.includes("refresh") && props.onRefresh}>
                 <button type="button" disabled={props.busy} onClick={() => props.onRefresh?.()}>
-                  Refresh
+                  {t("manager.orchestration.action.refresh")}
                 </button>
               </Show>
               <Show
@@ -918,7 +1014,7 @@ const CurrentStateView: Component<{
                     if (id) props.onRetryTask?.(id);
                   }}
                 >
-                  Retry
+                  {t("manager.orchestration.action.retry")}
                 </button>
               </Show>
               <Show when={Boolean(taskId() && props.onInspectTask)}>
@@ -930,7 +1026,7 @@ const CurrentStateView: Component<{
                     if (id) props.onInspectTask?.(id);
                   }}
                 >
-                  Inspect
+                  {t("manager.orchestration.action.inspect")}
                 </button>
               </Show>
               <Show
@@ -944,12 +1040,12 @@ const CurrentStateView: Component<{
                     if (id) props.onCancelTask?.(id);
                   }}
                 >
-                  Cancel
+                  {t("manager.orchestration.action.cancel")}
                 </button>
               </Show>
               <Show when={item().actions.includes("acknowledge") && props.onAcknowledge}>
                 <button type="button" disabled={props.busy} onClick={() => props.onAcknowledge?.()}>
-                  Acknowledge
+                  {t("manager.orchestration.action.acknowledge")}
                 </button>
               </Show>
               <For each={recoveryActions()}>
@@ -1007,13 +1103,11 @@ const RoundHealthGateView: Component<{
 }> = (props) => {
   const issues = createMemo(() => props.health?.issues ?? []);
   return (
-    <div class="manager-round-health" aria-label="round health gate">
+    <div class="manager-round-health" aria-label={t("manager.orchestration.section.health")}>
       <Show
         when={props.health}
         fallback={
-          <p class="manager-orchestration-empty">
-            No round health gate yet. Select or dispatch a round to verify worker evidence.
-          </p>
+          <p class="manager-orchestration-empty">{t("manager.orchestration.empty.health")}</p>
         }
       >
         {(health) => (
@@ -1022,30 +1116,39 @@ const RoundHealthGateView: Component<{
               <span
                 class={`manager-status-dot manager-status-dot-${roundHealthTone(health().status)}`}
               />
-              <strong>{health().status}</strong>
+              <strong>{statusLabel(health().status)}</strong>
               <span>{health().summary}</span>
             </div>
             <dl class="manager-round-health-grid">
               <div>
-                <dt>Expected</dt>
+                <dt>{t("manager.orchestration.field.expected")}</dt>
                 <dd>
-                  {health().expectedAgents} agents · {health().expectedTasks} tasks
+                  {t("manager.orchestration.health.expected", {
+                    agents: health().expectedAgents,
+                    tasks: health().expectedTasks,
+                  })}
                 </dd>
               </div>
               <div>
-                <dt>Runs</dt>
+                <dt>{t("manager.orchestration.field.runs")}</dt>
                 <dd>
-                  {health().completedRuns}/{health().actualRuns} complete
+                  {t("manager.orchestration.health.runs", {
+                    completed: health().completedRuns,
+                    actual: health().actualRuns,
+                  })}
                 </dd>
               </div>
               <div>
-                <dt>Active</dt>
+                <dt>{t("manager.orchestration.field.active")}</dt>
                 <dd>
-                  {health().runningRuns} running · {health().blockedRuns} blocked
+                  {t("manager.orchestration.health.active", {
+                    running: health().runningRuns,
+                    blocked: health().blockedRuns,
+                  })}
                 </dd>
               </div>
               <div>
-                <dt>Missing</dt>
+                <dt>{t("manager.orchestration.field.missing")}</dt>
                 <dd>{health().missingRuns}</dd>
               </div>
             </dl>
@@ -1079,7 +1182,6 @@ const RoundHealthGateView: Component<{
     </div>
   );
 };
-
 const HealthIssueAction: Component<{
   issue: ManagerRoundHealthGate["issues"][number];
   roundId: string;
@@ -1128,32 +1230,39 @@ const TaskObservationView: Component<{
   const steps = createMemo(() => props.observation.log.steps.slice(-6));
   const resultPreview = createMemo(() => taskResultPreview(props.observation.log.result));
   return (
-    <div class="manager-task-observation" aria-label="manager task observation">
+    <div
+      class="manager-task-observation"
+      aria-label={t("manager.orchestration.aria.task-observation")}
+    >
       <div class="manager-task-observation-head">
         <span
           class={`manager-status-dot manager-status-dot-${statusTone(props.observation.task.state)}`}
         />
         <strong>{props.observation.summary}</strong>
-        <span>{props.observation.terminal ? "terminal" : "active"}</span>
+        <span>
+          {props.observation.terminal
+            ? t("manager.orchestration.task.terminal")
+            : t("manager.orchestration.task.active")}
+        </span>
         <Show when={props.busy}>
-          <span>loading</span>
+          <span>{t("manager.orchestration.task.loading")}</span>
         </Show>
       </div>
       <dl class="manager-task-observation-grid">
         <div>
-          <dt>Task</dt>
+          <dt>{t("manager.orchestration.field.task")}</dt>
           <dd>{shortId(props.observation.task.id)}</dd>
         </div>
         <div>
-          <dt>Kind</dt>
+          <dt>{t("manager.orchestration.field.kind")}</dt>
           <dd>{props.observation.task.kind}</dd>
         </div>
         <div>
-          <dt>State</dt>
-          <dd>{props.observation.task.state}</dd>
+          <dt>{t("manager.orchestration.field.state")}</dt>
+          <dd>{statusLabel(props.observation.task.state)}</dd>
         </div>
         <div>
-          <dt>Next</dt>
+          <dt>{t("manager.orchestration.field.next")}</dt>
           <dd>{props.observation.nextRead}</dd>
         </div>
       </dl>
@@ -1175,7 +1284,10 @@ const TaskObservationView: Component<{
       </Show>
       <Show when={resultPreview()}>
         {(preview) => (
-          <pre aria-label="task result preview" class="manager-task-observation-result">
+          <pre
+            aria-label={t("manager.orchestration.task.result-preview")}
+            class="manager-task-observation-result"
+          >
             {preview()}
           </pre>
         )}
@@ -1186,19 +1298,18 @@ const TaskObservationView: Component<{
     </div>
   );
 };
-
 const WorkerRunsView: Component<{
   runs: ManagerWorkerRun[];
   busy?: boolean | undefined;
   onInspectTask?: ((taskId: string) => void) | undefined;
 }> = (props) => (
-  <div class="manager-worker-runs" aria-label="worker run ledger">
+  <div class="manager-worker-runs" aria-label={t("manager.orchestration.aria.worker-runs")}>
     <div class="manager-worker-run-row manager-worker-run-row-head">
-      <span>Worker</span>
-      <span>Status</span>
-      <span>Session</span>
-      <span>Result</span>
-      <span>Signal</span>
+      <span>{t("manager.orchestration.field.worker")}</span>
+      <span>{t("manager.orchestration.field.status")}</span>
+      <span>{t("manager.orchestration.field.session")}</span>
+      <span>{t("manager.orchestration.field.result")}</span>
+      <span>{t("manager.orchestration.field.signal")}</span>
     </div>
     <For each={props.runs.slice(0, 12)}>
       {(run) => (
@@ -1211,7 +1322,12 @@ const WorkerRunsView: Component<{
           }}
         >
           <span class="manager-worker-run-main">
-            <strong>{run.agentRole ?? run.agentLabel ?? run.profile ?? "worker"}</strong>
+            <strong>
+              {run.agentRole ??
+                run.agentLabel ??
+                run.profile ??
+                t("manager.orchestration.word.worker")}
+            </strong>
             <small title={run.cwd ?? ""}>
               {clip(run.cwd ?? run.profile ?? run.taskId ?? "", 42)}
             </small>
@@ -1223,7 +1339,7 @@ const WorkerRunsView: Component<{
             {run.sessionId
               ? shortId(run.sessionId)
               : run.taskId
-                ? `task ${shortId(run.taskId)}`
+                ? t("manager.orchestration.word.task", { id: shortId(run.taskId) })
                 : "-"}
           </span>
           <span title={workerRunResultTitle(run)}>{workerRunResultLabel(run)}</span>
@@ -1240,7 +1356,7 @@ const WorkerRunsView: Component<{
                   if (run.taskId) props.onInspectTask?.(run.taskId);
                 }}
               >
-                Inspect
+                {t("manager.orchestration.action.inspect")}
               </button>
             </Show>
           </span>
@@ -1248,31 +1364,34 @@ const WorkerRunsView: Component<{
       )}
     </For>
     <Show when={props.runs.length > 12}>
-      <p class="manager-orchestration-empty">{props.runs.length - 12} older worker runs hidden.</p>
+      <p class="manager-orchestration-empty">
+        {t("manager.orchestration.worker.older-hidden", { count: props.runs.length - 12 })}
+      </p>
     </Show>
     <Show when={props.runs.length === 0}>
-      <p class="manager-orchestration-empty">No worker runs recorded for this round yet.</p>
+      <p class="manager-orchestration-empty">
+        {t("manager.orchestration.empty.worker-runs")}
+      </p>
     </Show>
   </div>
 );
-
 const AgentsView: Component<{
   agents: ManagerAgent[];
   busy?: boolean | undefined;
   onInspectTask?: ((taskId: string) => void) | undefined;
 }> = (props) => (
-  <div class="manager-agent-table" aria-label="orchestration agents">
+  <div class="manager-agent-table" aria-label={t("manager.orchestration.tab.agents")}>
     <div class="manager-agent-row manager-agent-row-head">
-      <span>Role</span>
-      <span>Status</span>
-      <span>Current task</span>
-      <span>Last reply</span>
-      <span>Action</span>
+      <span>{t("manager.orchestration.field.role")}</span>
+      <span>{t("manager.orchestration.field.status")}</span>
+      <span>{t("manager.orchestration.field.task")}</span>
+      <span>{t("manager.orchestration.field.signal")}</span>
+      <span>{t("manager.orchestration.field.action")}</span>
     </div>
     <For each={props.agents}>
       {(agent) => (
         <div class={`manager-agent-row manager-agent-row-${statusTone(agent.status)}`}>
-          <span class="manager-agent-role" title={`${agent.label} · ${agent.profile}`}>
+          <span class="manager-agent-role" title={agent.label + " · " + agent.profile}>
             {agent.role}
             <small>{clip(agent.profile, 28)}</small>
           </span>
@@ -1281,7 +1400,7 @@ const AgentsView: Component<{
           </span>
           <span class="manager-agent-task" title={agent.taskId ?? agent.lastInstruction ?? ""}>
             {agent.taskId
-              ? `task ${shortId(agent.taskId)}`
+              ? t("manager.orchestration.word.task", { id: shortId(agent.taskId) })
               : clip(agent.lastInstruction, 68) || "-"}
           </span>
           <span
@@ -1289,7 +1408,10 @@ const AgentsView: Component<{
             title={agent.lastError || agent.lastOutput || agent.lastInstruction || ""}
           >
             {clip(
-              agent.lastError || agent.lastOutput || agent.lastInstruction || "No reply yet",
+              agent.lastError ||
+                agent.lastOutput ||
+                agent.lastInstruction ||
+                t("manager.orchestration.worker.no-reply"),
               92,
             )}
             <time>{formatTime(agent.lastOutputAt ?? agent.updatedAt)}</time>
@@ -1302,7 +1424,7 @@ const AgentsView: Component<{
                   disabled={props.busy || !props.onInspectTask}
                   onClick={() => props.onInspectTask?.(taskId())}
                 >
-                  Inspect
+                  {t("manager.orchestration.action.inspect")}
                 </button>
               )}
             </Show>
@@ -1311,11 +1433,10 @@ const AgentsView: Component<{
       )}
     </For>
     <Show when={props.agents.length === 0}>
-      <p class="manager-orchestration-empty">No agents yet.</p>
+      <p class="manager-orchestration-empty">{t("manager.orchestration.empty.agents")}</p>
     </Show>
   </div>
 );
-
 const DecisionsView: Component<{
   project: ManagerProject | null;
   decisions: ManagerDecision[];

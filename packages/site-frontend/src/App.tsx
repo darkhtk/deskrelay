@@ -58,7 +58,7 @@ import {
   openConversationPdfPrint,
 } from "./conversation-export.ts";
 import { deviceDisplayName } from "./device-display.ts";
-import { t } from "./i18n.ts";
+import { LOCALES, LOCALE_LABELS, locale, setLocale, t } from "./i18n.ts";
 import {
   instructionScopeEmptyDescription,
   instructionScopePlaceholder,
@@ -155,6 +155,7 @@ const HELP_SECTIONS: Array<{
     scopes: ["browser"],
     open: true,
     items: [
+      "언어 설정은 이 브라우저에 저장됩니다. 한국어가 기본이며 영어는 설정 > 일반에서 선택할 수 있습니다.",
       "브라우저 캐시는 지금 페이지를 연 기기의 브라우저 저장소에만 남습니다.",
       "대화 표시 캐시, 로컬 이미지 미리보기 캐시, Session/Week/CTX 조회 캐시만 포함합니다.",
       "Site token, daemon token, Claude 계정 토큰 원문은 캐시 삭제/저장 대상에 포함하지 않습니다.",
@@ -292,9 +293,7 @@ const HELP_SECTIONS: Array<{
 ];
 
 function settingsTabLabel(value: SettingsTab): string {
-  if (value === "assistant") return "관리 Assistant";
-  if (value === "workers") return "작업자";
-  return value === "help" ? "도움말" : t(`app.settings.tab.${value}`);
+  return t(`app.settings.tab.${value}`);
 }
 
 function consumeSiteTokenFromUrl(): string | null {
@@ -877,7 +876,10 @@ const ManagerWorkersSettings: Component = () => {
   };
 
   async function checkWorker(profile: ManagerWorkerProfile) {
-    setWorkerState(profile.id, { phase: "running", message: "상태 확인 중" });
+    setWorkerState(profile.id, {
+      phase: "running",
+      message: t("manager.worker-settings.check.running"),
+    });
     try {
       const result = await api.checkManagerWorker(profile.id);
       setWorkerState(profile.id, {
@@ -888,14 +890,17 @@ const ManagerWorkersSettings: Component = () => {
     } catch (err) {
       setWorkerState(profile.id, {
         phase: "failed",
-        message: `상태 확인 실패: ${(err as Error).message}`,
+        message: t("manager.worker-settings.check.failed", { error: (err as Error).message }),
       });
     }
   }
 
   async function dryRunWorker(profile: ManagerWorkerProfile) {
     setRunning(profile.id);
-    setWorkerState(profile.id, { phase: "running", message: "실행 계획 확인 중" });
+    setWorkerState(profile.id, {
+      phase: "running",
+      message: t("manager.worker-settings.dry-run.running"),
+    });
     try {
       const task = await api.runManagerWorker({
         profile: profile.id,
@@ -908,15 +913,15 @@ const ManagerWorkersSettings: Component = () => {
         phase: task.state === "succeeded" ? "succeeded" : "failed",
         message:
           task.state === "succeeded"
-            ? "실행 계획 확인됨"
+            ? t("manager.worker-settings.dry-run.succeeded")
             : task.error
-              ? `실행 계획 실패: ${task.error}`
-              : `실행 계획 상태: ${task.state}`,
+              ? t("manager.worker-settings.dry-run.failed", { error: task.error })
+              : t("manager.worker-settings.dry-run.state", { state: task.state }),
       });
     } catch (err) {
       setWorkerState(profile.id, {
         phase: "failed",
-        message: `실행 계획 실패: ${(err as Error).message}`,
+        message: t("manager.worker-settings.dry-run.failed", { error: (err as Error).message }),
       });
     } finally {
       setRunning(null);
@@ -926,24 +931,21 @@ const ManagerWorkersSettings: Component = () => {
   return (
     <section class="settings-card settings-worker-section">
       <div class="settings-card-heading">
-        <h3 class="settings-card-title">작업자 CLI</h3>
+        <h3 class="settings-card-title">{t("manager.worker-settings.title")}</h3>
         <SettingsScopeLabel scope="server" />
       </div>
-      <p class="settings-card-help">
-        Manager Assistant가 구현, 점검, 복구 작업을 맡길 수 있는 서버 PC의 로컬 CLI입니다. 실제 실행
-        전에 상태 확인으로 설치 여부와 시작 가능 여부를 확인합니다.
-      </p>
+      <p class="settings-card-help">{t("manager.worker-settings.help")}</p>
 
       <div class="settings-worker-actions">
         <button type="button" class="secondary-button" onClick={() => void refetch()}>
-          새로고침
+          {t("manager.worker-settings.refresh")}
         </button>
       </div>
 
       <div class="settings-worker-list">
         <Show
           when={!workers.loading}
-          fallback={<p class="settings-card-help">작업자 목록 확인 중</p>}
+          fallback={<p class="settings-card-help">{t("manager.worker-settings.loading")}</p>}
         >
           <For each={workers()?.profiles ?? []}>
             {(profile) => {
@@ -980,7 +982,9 @@ const ManagerWorkersSettings: Component = () => {
                       disabled={!profile.available || check()?.phase === "running"}
                       onClick={() => void checkWorker(profile)}
                     >
-                      {check()?.phase === "running" ? "확인 중" : "상태 확인"}
+                      {check()?.phase === "running"
+                        ? t("manager.worker-settings.working")
+                        : t("manager.worker-settings.status-check")}
                     </button>
                     <button
                       type="button"
@@ -988,7 +992,9 @@ const ManagerWorkersSettings: Component = () => {
                       disabled={!profile.available || running() !== null}
                       onClick={() => void dryRunWorker(profile)}
                     >
-                      {running() === profile.id ? "확인 중" : "계획 확인"}
+                      {running() === profile.id
+                        ? t("manager.worker-settings.working")
+                        : t("manager.worker-settings.plan-check")}
                     </button>
                   </div>
                 </div>
@@ -996,14 +1002,13 @@ const ManagerWorkersSettings: Component = () => {
             }}
           </For>
           <Show when={(workers()?.profiles ?? []).length === 0}>
-            <p class="settings-card-help">등록된 작업자 CLI가 없습니다.</p>
+            <p class="settings-card-help">{t("manager.worker-settings.empty")}</p>
           </Show>
         </Show>
       </div>
     </section>
   );
 };
-
 type UpdatePhase =
   | "idle"
   | "queued"
@@ -1874,6 +1879,27 @@ const GeneralSettings: Component<{
           <h3 class="settings-card-title">{t("lang.settings.title")}</h3>
           <SettingsScopeLabel scope="browser" />
         </div>
+        <div class="settings-toggle-row">
+          <div class="settings-toggle-copy">
+            <span class="settings-toggle-title">{t("settings.language.title")}</span>
+            <span class="settings-toggle-help">{t("settings.language.help")}</span>
+          </div>
+          <div class="settings-segmented" aria-label={t("settings.language.title")}>
+            <For each={LOCALES}>
+              {(value) => (
+                <button
+                  type="button"
+                  class={`settings-segment${locale() === value ? " active" : ""}`}
+                  aria-pressed={locale() === value ? "true" : "false"}
+                  onClick={() => setLocale(value)}
+                  title={LOCALE_LABELS[value]}
+                >
+                  {t(`settings.language.${value}`)}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
         <div class="settings-slider-row">
           <div class="settings-toggle-copy">
             <span class="settings-toggle-title">{t("settings.chat-font-size.title")}</span>
@@ -2113,10 +2139,10 @@ function workerCheckMessage(result: ManagerWorkerCheckResult): string {
 }
 
 function workerRiskText(profile: ManagerWorkerProfile): string {
-  if (profile.risk === "system") return "시스템";
-  if (profile.risk === "destructive") return "쓰기/실행";
-  if (profile.risk === "write") return "쓰기";
-  return "읽기";
+  if (profile.risk === "system") return t("manager.worker-settings.risk.system");
+  if (profile.risk === "destructive") return t("manager.worker-settings.risk.destructive");
+  if (profile.risk === "write") return t("manager.worker-settings.risk.write");
+  return t("manager.worker-settings.risk.read");
 }
 
 function connectorUpdatePhase(result: DeviceUpdateResponse): UpdatePhase {
