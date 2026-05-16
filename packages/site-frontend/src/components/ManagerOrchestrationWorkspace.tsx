@@ -1,6 +1,9 @@
 import type {
   ManagerAgent,
   ManagerAssistantChatContext,
+  ManagerDecisionCreateRequest,
+  ManagerDecisionListResponse,
+  ManagerDecisionUpdateRequest,
   ManagerProject,
   ManagerProjectCreateRequest,
   ManagerProjectOverviewResponse,
@@ -56,6 +59,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [selectedProjectId, setSelectedProjectId] = createSignal(readSelectedManagerProjectId());
   const [projectActionBusy, setProjectActionBusy] = createSignal(false);
+  const [decisionActionBusy, setDecisionActionBusy] = createSignal(false);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
@@ -173,6 +177,22 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       if (!input) return null;
       try {
         return await api.managerProjectOverview(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const [projectDecisions] = createResource(
+    () => {
+      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const seq = refreshSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerDecisionListResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectDecisions(input.projectId);
       } catch {
         return null;
       }
@@ -413,6 +433,30 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function createProjectDecision(input: ManagerDecisionCreateRequest) {
+    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    if (!projectId || decisionActionBusy()) return;
+    setDecisionActionBusy(true);
+    try {
+      await api.createManagerProjectDecision(projectId, input);
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setDecisionActionBusy(false);
+    }
+  }
+
+  async function updateProjectDecision(decisionId: string, input: ManagerDecisionUpdateRequest) {
+    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    if (!projectId || decisionActionBusy()) return;
+    setDecisionActionBusy(true);
+    try {
+      await api.updateManagerProjectDecision(projectId, decisionId, input);
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setDecisionActionBusy(false);
+    }
+  }
+
   async function repairRegistration() {
     if (managerActionBusy()) return;
     setManagerActionBusy(true);
@@ -490,6 +534,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           projectOverview={projectOverview()}
           projectLoading={managerProjects.loading}
           projectBusy={projectActionBusy()}
+          decisions={projectDecisions()?.decisions ?? []}
+          archivedDecisions={projectDecisions()?.archived ?? []}
+          decisionBusy={decisionActionBusy()}
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
@@ -520,6 +567,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onSelectProject={(projectId) => selectManagerProject(projectId)}
           onCreateProject={(input) => void createManagerProject(input)}
           onArchiveProject={(projectId) => void archiveManagerProject(projectId)}
+          onCreateDecision={(input) => void createProjectDecision(input)}
+          onUpdateDecision={(decisionId, input) => void updateProjectDecision(decisionId, input)}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">

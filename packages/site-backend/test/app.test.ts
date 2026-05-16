@@ -10,6 +10,7 @@ import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
 } from "../src/device-update-queue-store.ts";
+import { createInMemoryManagerDecisionStore } from "../src/manager-decision-store.ts";
 import { createInMemoryManagerOrchestrationStore } from "../src/manager-orchestration-store.ts";
 import { createInMemoryManagerProjectStore } from "../src/manager-project-store.ts";
 import { createInMemoryManagerTaskStore } from "../src/manager-task-store.ts";
@@ -63,6 +64,7 @@ function makeApp(
     registry,
     token: TOKEN,
     fetchImpl,
+    managerDecisionStore: createInMemoryManagerDecisionStore(),
     managerProjectStore: createInMemoryManagerProjectStore(),
     ...options,
   });
@@ -663,6 +665,26 @@ describe("API route inventory", () => {
         [
           "GET /api/manager/projects/:id/overview",
           authedRequest("GET", "/api/manager/projects/missing/overview"),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/decisions",
+          authedRequest("GET", "/api/manager/projects/missing/decisions"),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/decisions",
+          authedRequest("POST", "/api/manager/projects/missing/decisions", {
+            title: "Use project decisions",
+            detail: "Record why an orchestration path was chosen.",
+          }),
+          [404],
+        ],
+        [
+          "PATCH /api/manager/projects/:id/decisions/:decisionId",
+          authedRequest("PATCH", "/api/manager/projects/missing/decisions/missing", {
+            status: "superseded",
+          }),
           [404],
         ],
         [
@@ -2425,6 +2447,87 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     };
     expect(updatedProject.project?.activeRoundId).toBe(roundBody.round?.id);
     expect(updatedProject.project?.status).toBe("running");
+  });
+
+  test("manager project decisions preserve revisions and exclude archived decisions by default", async () => {
+    const projectCreate = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/projects", {
+        name: "Decision Project",
+        cwd: "C:\\Users\\darkh\\Projects\\decisions",
+        goal: "track orchestration choices",
+      }),
+    );
+    expect(projectCreate.status).toBe(201);
+    const projectBody = (await projectCreate.json()) as { project?: { id?: string } };
+    const projectId = projectBody.project?.id;
+    expect(projectId).toBeTruthy();
+
+    const create = await setup.app.fetch(
+      authedRequest("POST", `/api/manager/projects/${projectId}/decisions`, {
+        title: "Keep verifier separate",
+        detail: "Verification agents should not edit implementation files.",
+        rationale: "This keeps review evidence independent from worker output.",
+        tags: ["protocol", "verification", "protocol"],
+      }),
+    );
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as {
+      decision?: { id?: string; tags?: string[]; status?: string };
+    };
+    expect(created.decision?.status).toBe("active");
+    expect(created.decision?.tags).toEqual(["protocol", "verification"]);
+
+    const patch = await setup.app.fetch(
+      authedRequest(
+        "PATCH",
+        `/api/manager/projects/${projectId}/decisions/${created.decision?.id}`,
+        {
+          status: "superseded",
+          detail: "Verifier agents may write only dedicated report files.",
+        },
+      ),
+    );
+    expect(patch.status).toBe(200);
+    const patched = (await patch.json()) as {
+      decision?: { status?: string; detail?: string; revisions?: unknown[] };
+    };
+    expect(patched.decision?.status).toBe("superseded");
+    expect(patched.decision?.detail).toBe("Verifier agents may write only dedicated report files.");
+    expect(patched.decision?.revisions).toHaveLength(1);
+
+    const list = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/decisions`),
+    );
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as {
+      decisions?: Array<{ id?: string; status?: string }>;
+      archived?: unknown[];
+    };
+    expect(listBody.decisions?.map((decision) => decision.id)).toEqual([created.decision?.id]);
+    expect(listBody.decisions?.[0]?.status).toBe("superseded");
+    expect(listBody.archived).toEqual([]);
+
+    const archive = await setup.app.fetch(
+      authedRequest(
+        "PATCH",
+        `/api/manager/projects/${projectId}/decisions/${created.decision?.id}`,
+        {
+          status: "archived",
+        },
+      ),
+    );
+    expect(archive.status).toBe(200);
+
+    const afterArchive = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/decisions`),
+    );
+    const archivedBody = (await afterArchive.json()) as {
+      decisions?: unknown[];
+      archived?: Array<{ id?: string; revisions?: unknown[] }>;
+    };
+    expect(archivedBody.decisions).toEqual([]);
+    expect(archivedBody.archived?.map((decision) => decision.id)).toEqual([created.decision?.id]);
+    expect(archivedBody.archived?.[0]?.revisions).toHaveLength(2);
   });
 
   test("manager orchestration rounds dispatch multiple role agents", async () => {

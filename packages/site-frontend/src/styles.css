@@ -6464,6 +6464,7 @@ body.manager-orchestration-resizing {
 .manager-agent-table,
 .manager-agent-lanes,
 .manager-worker-runs,
+.manager-decision-list,
 .manager-artifact-list {
   display: grid;
   gap: 1px;
@@ -6578,6 +6579,115 @@ body.manager-orchestration-resizing {
 }
 .manager-worker-run-main small {
   color: var(--text-faint);
+}
+.manager-decision-board {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.manager-decision-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.manager-decision-toolbar p {
+  margin: 0;
+}
+.manager-decision-toolbar button,
+.manager-decision-form button,
+.manager-decision-actions button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 10px;
+}
+.manager-decision-toolbar button:disabled,
+.manager-decision-form button:disabled,
+.manager-decision-actions button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.manager-decision-form {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(160px, 0.7fr) minmax(260px, 1.4fr) minmax(160px, 0.7fr) auto;
+  min-width: 0;
+}
+.manager-decision-form input,
+.manager-decision-form textarea {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  min-width: 0;
+  padding: 8px 10px;
+}
+.manager-decision-form textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+.manager-decision-row {
+  border-left: 2px solid var(--success);
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 10px 0 10px 10px;
+}
+.manager-decision-row-superseded {
+  border-left-color: var(--warning);
+}
+.manager-decision-row-archived {
+  border-left-color: var(--border);
+  opacity: 0.78;
+}
+.manager-decision-row-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.manager-decision-row-main strong {
+  color: var(--text);
+  font-weight: 650;
+}
+.manager-decision-row-main p {
+  color: var(--text-muted);
+  margin: 0;
+  white-space: pre-wrap;
+}
+.manager-decision-meta,
+.manager-decision-tags,
+.manager-decision-actions {
+  align-items: center;
+  color: var(--text-faint);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 8px;
+}
+.manager-decision-tags span {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+.manager-decision-actions {
+  justify-content: flex-end;
+}
+.manager-decision-archive {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  padding-top: 8px;
+}
+.manager-decision-archive summary {
+  cursor: pointer;
+  font-size: 12px;
 }
 .manager-worker-run-signal {
   align-items: center;
@@ -7385,6 +7495,17 @@ body.manager-orchestration-resizing {
   }
   .manager-project-create {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-decision-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .manager-decision-form,
+  .manager-decision-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-decision-actions {
+    justify-content: flex-start;
   }
   .manager-orchestration-tabs {
     gap: 14px;

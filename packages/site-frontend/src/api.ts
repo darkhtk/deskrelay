@@ -16,6 +16,10 @@ import type {
   ManagerAssistantStatusReportResponse,
   ManagerAssistantStreamEvent,
   ManagerCapabilities,
+  ManagerDecisionCreateRequest,
+  ManagerDecisionListResponse,
+  ManagerDecisionResponse,
+  ManagerDecisionUpdateRequest,
   ManagerDeviceActions,
   ManagerEvent,
   ManagerEventListResponse,
@@ -420,6 +424,10 @@ export interface BrowserClientContext {
 export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
 export type {
   ManagerAcknowledgeResponse,
+  ManagerDecisionCreateRequest,
+  ManagerDecisionListResponse,
+  ManagerDecisionResponse,
+  ManagerDecisionUpdateRequest,
   ManagerProject,
   ManagerProjectCreateRequest,
   ManagerProjectListResponse,
@@ -680,6 +688,27 @@ export const api = {
     request<ManagerProjectOverviewResponse>(
       "GET",
       `/api/manager/projects/${encodeURIComponent(id)}/overview`,
+    ),
+  managerProjectDecisions: (id: string) =>
+    request<ManagerDecisionListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/decisions`,
+    ),
+  createManagerProjectDecision: (id: string, input: ManagerDecisionCreateRequest) =>
+    request<ManagerDecisionResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/decisions`,
+      input,
+    ),
+  updateManagerProjectDecision: (
+    id: string,
+    decisionId: string,
+    input: ManagerDecisionUpdateRequest,
+  ) =>
+    request<ManagerDecisionResponse>(
+      "PATCH",
+      `/api/manager/projects/${encodeURIComponent(id)}/decisions/${encodeURIComponent(decisionId)}`,
+      input,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
   managerTaskLogs: (id: string) =>

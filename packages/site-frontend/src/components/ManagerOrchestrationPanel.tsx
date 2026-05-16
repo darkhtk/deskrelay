@@ -1,5 +1,8 @@
 import type {
   ManagerAgent,
+  ManagerDecision,
+  ManagerDecisionCreateRequest,
+  ManagerDecisionUpdateRequest,
   ManagerProject,
   ManagerProjectCreateRequest,
   ManagerProjectOverviewResponse,
@@ -39,6 +42,9 @@ interface ManagerOrchestrationPanelProps {
   projectOverview?: ManagerProjectOverviewResponse | null | undefined;
   projectLoading?: boolean | undefined;
   projectBusy?: boolean | undefined;
+  decisions?: ManagerDecision[] | undefined;
+  archivedDecisions?: ManagerDecision[] | undefined;
+  decisionBusy?: boolean | undefined;
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
@@ -70,6 +76,10 @@ interface ManagerOrchestrationPanelProps {
   onSelectProject?: ((projectId: string | null) => void) | undefined;
   onCreateProject?: ((input: ManagerProjectCreateRequest) => void) | undefined;
   onArchiveProject?: ((projectId: string) => void) | undefined;
+  onCreateDecision?: ((input: ManagerDecisionCreateRequest) => void) | undefined;
+  onUpdateDecision?:
+    | ((decisionId: string, input: ManagerDecisionUpdateRequest) => void)
+    | undefined;
 }
 
 interface TimelineEntry {
@@ -90,6 +100,7 @@ type OrchestrationInfoTab =
   | "overview"
   | "agents"
   | "state"
+  | "decisions"
   | "graph"
   | "runs"
   | "artifacts"
@@ -100,6 +111,7 @@ const ORCHESTRATION_INFO_TABS: Array<{ id: OrchestrationInfoTab; label: string }
   { id: "overview", label: "Overview" },
   { id: "agents", label: "Agents" },
   { id: "state", label: "State" },
+  { id: "decisions", label: "Decisions" },
   { id: "graph", label: "Graph" },
   { id: "runs", label: "Runs" },
   { id: "artifacts", label: "Artifacts" },
@@ -355,6 +367,20 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   onInspectTask={props.onInspectTask}
                   onRepairRound={props.onRepairRound}
                   onRetryTask={props.onRetryTask}
+                />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "decisions"}>
+              <OrchestrationSection title="Decisions" class="manager-section-decisions">
+                <DecisionsView
+                  project={props.selectedProject ?? null}
+                  decisions={props.decisions ?? []}
+                  archivedDecisions={props.archivedDecisions ?? []}
+                  busy={props.decisionBusy}
+                  activeRoundId={activeRound()?.id}
+                  onCreate={props.onCreateDecision}
+                  onUpdate={props.onUpdateDecision}
                 />
               </OrchestrationSection>
             </Show>
@@ -1190,6 +1216,159 @@ const AgentsView: Component<{
   </div>
 );
 
+const DecisionsView: Component<{
+  project: ManagerProject | null;
+  decisions: ManagerDecision[];
+  archivedDecisions: ManagerDecision[];
+  busy?: boolean | undefined;
+  activeRoundId?: string | undefined;
+  onCreate?: ((input: ManagerDecisionCreateRequest) => void) | undefined;
+  onUpdate?: ((decisionId: string, input: ManagerDecisionUpdateRequest) => void) | undefined;
+}> = (props) => {
+  const [creating, setCreating] = createSignal(false);
+  const [title, setTitle] = createSignal("");
+  const [detail, setDetail] = createSignal("");
+  const [tags, setTags] = createSignal("");
+  const canCreate = createMemo(
+    () =>
+      Boolean(props.project && props.onCreate && title().trim() && detail().trim()) && !props.busy,
+  );
+  const submit = () => {
+    if (!canCreate() || !props.onCreate) return;
+    props.onCreate({
+      title: title().trim(),
+      detail: detail().trim(),
+      tags: parseDecisionTags(tags()),
+      createdBy: "browser",
+      ...(props.activeRoundId ? { roundId: props.activeRoundId } : {}),
+    });
+    setCreating(false);
+    setTitle("");
+    setDetail("");
+    setTags("");
+  };
+
+  return (
+    <div class="manager-decision-board">
+      <div class="manager-decision-toolbar">
+        <p class="manager-orchestration-empty">
+          Capture decisions that explain why the manager chose a protocol, role split, or recovery
+          path.
+        </p>
+        <button
+          type="button"
+          disabled={!props.project || props.busy || !props.onCreate}
+          onClick={() => setCreating((value) => !value)}
+        >
+          {creating() ? "Cancel" : "Record decision"}
+        </button>
+      </div>
+
+      <Show when={creating()}>
+        <form
+          class="manager-decision-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <input
+            type="text"
+            value={title()}
+            onInput={(event) => setTitle(event.currentTarget.value)}
+            placeholder="Decision title"
+          />
+          <textarea
+            value={detail()}
+            onInput={(event) => setDetail(event.currentTarget.value)}
+            placeholder="What was decided, and what should future agents remember?"
+            rows={4}
+          />
+          <input
+            type="text"
+            value={tags()}
+            onInput={(event) => setTags(event.currentTarget.value)}
+            placeholder="tags: protocol, verification"
+          />
+          <button type="submit" disabled={!canCreate()}>
+            Save decision
+          </button>
+        </form>
+      </Show>
+
+      <div class="manager-decision-list">
+        <For each={props.decisions}>
+          {(decision) => (
+            <DecisionRow decision={decision} busy={props.busy} onUpdate={props.onUpdate} />
+          )}
+        </For>
+        <Show when={props.decisions.length === 0}>
+          <p class="manager-orchestration-empty">No active project decisions recorded yet.</p>
+        </Show>
+      </div>
+
+      <Show when={props.archivedDecisions.length > 0}>
+        <details class="manager-decision-archive">
+          <summary>Archived decisions ({props.archivedDecisions.length})</summary>
+          <For each={props.archivedDecisions.slice(0, 8)}>
+            {(decision) => (
+              <DecisionRow decision={decision} busy={props.busy} onUpdate={props.onUpdate} />
+            )}
+          </For>
+        </details>
+      </Show>
+    </div>
+  );
+};
+
+const DecisionRow: Component<{
+  decision: ManagerDecision;
+  busy?: boolean | undefined;
+  onUpdate?: ((decisionId: string, input: ManagerDecisionUpdateRequest) => void) | undefined;
+}> = (props) => (
+  <article class={`manager-decision-row manager-decision-row-${props.decision.status}`}>
+    <div class="manager-decision-row-main">
+      <strong>{props.decision.title}</strong>
+      <p>{props.decision.detail}</p>
+      <div class="manager-decision-meta">
+        <span>{props.decision.status}</span>
+        <time>{formatTime(props.decision.updatedAt)}</time>
+        <Show when={props.decision.roundId}>
+          {(roundId) => <span>round {shortId(roundId())}</span>}
+        </Show>
+        <Show when={props.decision.revisions.length > 0}>
+          <span>{props.decision.revisions.length} revisions</span>
+        </Show>
+      </div>
+      <Show when={props.decision.tags.length > 0}>
+        <div class="manager-decision-tags">
+          <For each={props.decision.tags}>{(tag) => <span>{tag}</span>}</For>
+        </div>
+      </Show>
+    </div>
+    <div class="manager-decision-actions">
+      <Show when={props.decision.status === "active"}>
+        <button
+          type="button"
+          disabled={props.busy || !props.onUpdate}
+          onClick={() => props.onUpdate?.(props.decision.id, { status: "superseded" })}
+        >
+          Supersede
+        </button>
+      </Show>
+      <Show when={props.decision.status !== "archived"}>
+        <button
+          type="button"
+          disabled={props.busy || !props.onUpdate}
+          onClick={() => props.onUpdate?.(props.decision.id, { status: "archived" })}
+        >
+          Archive
+        </button>
+      </Show>
+    </div>
+  </article>
+);
+
 const TimelineView: Component<{ entries: TimelineEntry[] }> = (props) => (
   <ol class="manager-timeline">
     <For each={props.entries}>
@@ -1960,6 +2139,19 @@ function formatHygieneCategory(value: string): string {
     default:
       return value;
   }
+}
+
+function parseDecisionTags(value: string): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const chunk of value.split(/[,\s]+/)) {
+    const tag = chunk.trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+    if (tags.length >= 12) break;
+  }
+  return tags;
 }
 
 function formatTime(value: string | undefined): string {

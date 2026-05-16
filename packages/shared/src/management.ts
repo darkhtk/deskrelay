@@ -503,6 +503,76 @@ export interface ManagerProjectResponse {
   project: ManagerProject;
 }
 
+export type ManagerDecisionStatus = "active" | "superseded" | "archived";
+
+export type ManagerDecisionAuthor = "manager" | "browser" | "system";
+
+export interface ManagerDecisionRevision {
+  id: string;
+  title: string;
+  detail: string;
+  rationale?: string | undefined;
+  status: ManagerDecisionStatus;
+  tags: string[];
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+  createdAt: string;
+  createdBy: ManagerDecisionAuthor;
+}
+
+export interface ManagerDecision {
+  id: string;
+  projectId: string;
+  title: string;
+  detail: string;
+  rationale?: string | undefined;
+  status: ManagerDecisionStatus;
+  tags: string[];
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: ManagerDecisionAuthor;
+  revisions: ManagerDecisionRevision[];
+}
+
+export interface ManagerDecisionCreateRequest {
+  title: string;
+  detail: string;
+  rationale?: string;
+  status?: ManagerDecisionStatus;
+  tags?: string[];
+  roundId?: string;
+  agentId?: string;
+  taskId?: string;
+  createdBy?: ManagerDecisionAuthor;
+}
+
+export interface ManagerDecisionUpdateRequest {
+  title?: string;
+  detail?: string;
+  rationale?: string | null;
+  status?: ManagerDecisionStatus;
+  tags?: string[];
+  roundId?: string | null;
+  agentId?: string | null;
+  taskId?: string | null;
+}
+
+export interface ManagerDecisionListResponse {
+  generatedAt: string;
+  projectId: string;
+  decisions: ManagerDecision[];
+  archived: ManagerDecision[];
+}
+
+export interface ManagerDecisionResponse {
+  generatedAt: string;
+  decision: ManagerDecision;
+}
+
 export type ManagerProjectOverviewTone = "idle" | "running" | "success" | "warning" | "error";
 
 export type ManagerProjectNextActionKind =
@@ -1162,6 +1232,7 @@ export interface ManagerSystemSummary {
 
 export interface ManagerEventSnapshot {
   projects?: ManagerProject[];
+  decisions?: ManagerDecision[];
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   tasks: ManagerTask[];
@@ -1173,6 +1244,8 @@ export type ManagerEventInput =
   | { type: "snapshot"; snapshot: ManagerEventSnapshot }
   | { type: "project.created"; project: ManagerProject }
   | { type: "project.updated"; project: ManagerProject }
+  | { type: "decision.created"; decision: ManagerDecision }
+  | { type: "decision.updated"; decision: ManagerDecision }
   | { type: "round.created"; round: ManagerRound }
   | { type: "round.updated"; round: ManagerRound }
   | { type: "agent.created"; agent: ManagerAgent }

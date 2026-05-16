@@ -1,4 +1,9 @@
-import type { ManagerEvent, ManagerEventInput } from "@deskrelay/shared";
+import type {
+  ManagerDecisionUpdateRequest,
+  ManagerEvent,
+  ManagerEventInput,
+} from "@deskrelay/shared";
+import type { ManagerDecisionStore } from "./manager-decision-store.ts";
 import type {
   ManagerAgentPatch,
   ManagerOrchestrationStore,
@@ -151,6 +156,30 @@ export function withManagerProjectEvents(
       const project = await store.archive(id);
       if (project) bus.emit({ type: "project.updated", project });
       return project;
+    },
+  };
+}
+
+export function withManagerDecisionEvents(
+  store: ManagerDecisionStore,
+  bus: ManagerEventBus,
+): ManagerDecisionStore {
+  return {
+    list(projectId) {
+      return store.list(projectId);
+    },
+    get(projectId, id) {
+      return store.get(projectId, id);
+    },
+    async create(projectId, input) {
+      const decision = await store.create(projectId, input);
+      bus.emit({ type: "decision.created", decision });
+      return decision;
+    },
+    async update(projectId: string, id: string, patch: ManagerDecisionUpdateRequest) {
+      const decision = await store.update(projectId, id, patch);
+      if (decision) bus.emit({ type: "decision.updated", decision });
+      return decision;
     },
   };
 }

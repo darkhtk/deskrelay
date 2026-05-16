@@ -33,6 +33,11 @@ import {
   type ManagerAssistantStreamStatus,
   type ManagerAssistantStructuredState,
   type ManagerCapabilities,
+  type ManagerDecisionCreateRequest,
+  type ManagerDecisionListResponse,
+  type ManagerDecisionResponse,
+  type ManagerDecisionStatus,
+  type ManagerDecisionUpdateRequest,
   type ManagerDeviceActions,
   type ManagerEvent,
   type ManagerEventListResponse,
@@ -121,8 +126,13 @@ import {
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
 import {
+  type ManagerDecisionStore,
+  createJsonManagerDecisionStore,
+} from "./manager-decision-store.ts";
+import {
   type ManagerEventBus,
   createManagerEventBus,
+  withManagerDecisionEvents,
   withManagerOrchestrationEvents,
   withManagerProjectEvents,
   withManagerTaskEvents,
@@ -166,6 +176,7 @@ export interface SiteAppOptions {
   managerTaskStore?: ManagerTaskStore;
   managerOrchestrationStore?: ManagerOrchestrationStore;
   managerProjectStore?: ManagerProjectStore;
+  managerDecisionStore?: ManagerDecisionStore;
   managerAssistant?: ManagerAssistantOptions;
   managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
@@ -227,6 +238,7 @@ const DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS = 600_000;
 const MAX_MANAGER_ASSISTANT_TIMEOUT_MS = 1_800_000;
 const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_PROJECTS_DIR = ".deskrelay/manager-projects";
+const MANAGER_DECISIONS_DIR = ".deskrelay/manager-decisions";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
@@ -252,6 +264,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const managerProjectStore = withManagerProjectEvents(
     options.managerProjectStore ??
       createJsonManagerProjectStore(join(managerRepoRoot, MANAGER_PROJECTS_DIR)),
+    managerEventBus,
+  );
+  const managerDecisionStore = withManagerDecisionEvents(
+    options.managerDecisionStore ??
+      createJsonManagerDecisionStore(join(managerRepoRoot, MANAGER_DECISIONS_DIR)),
     managerEventBus,
   );
   const managerOrchestrationStore = withManagerOrchestrationEvents(
@@ -578,6 +595,61 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         now: new Date(),
       }),
     );
+  });
+
+  app.get("/api/manager/projects/:id/decisions", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const result = await managerDecisionStore.list(project.id);
+    const response: ManagerDecisionListResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      ...result,
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/decisions", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerDecisionCreateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const decision = await managerDecisionStore.create(project.id, parsed.value);
+    const response: ManagerDecisionResponse = {
+      generatedAt: new Date().toISOString(),
+      decision,
+    };
+    return c.json(response, 201);
+  });
+
+  app.patch("/api/manager/projects/:id/decisions/:decisionId", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerDecisionUpdateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const decision = await managerDecisionStore.update(
+      project.id,
+      c.req.param("decisionId"),
+      parsed.value,
+    );
+    if (!decision) return c.json({ error: "unknown decision" }, 404);
+    const response: ManagerDecisionResponse = {
+      generatedAt: new Date().toISOString(),
+      decision,
+    };
+    return c.json(response);
   });
 
   app.get("/api/manager/projects/:id", async (c) => {
@@ -2115,6 +2187,21 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "GET",
     path: "/api/manager/projects/:id/overview",
     description: "Read the command-center overview for one manager project.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/decisions",
+    description: "List recorded decisions for one manager project.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/decisions",
+    description: "Record a manager project decision.",
+  },
+  {
+    method: "PATCH",
+    path: "/api/manager/projects/:id/decisions/:decisionId",
+    description: "Update one manager project decision while preserving revisions.",
   },
   { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
   {
@@ -8614,6 +8701,85 @@ function parseManagerProjectUpdateRequest(
   return { ok: true, value };
 }
 
+function parseManagerDecisionCreateRequest(
+  input: unknown,
+): { ok: true; value: ManagerDecisionCreateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "decision body must be an object" };
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const detail = typeof input.detail === "string" ? input.detail.trim() : "";
+  if (!title) return { ok: false, error: "decision title is required" };
+  if (!detail) return { ok: false, error: "decision detail is required" };
+  if (title.length > 240) return { ok: false, error: "decision title is too long" };
+  if (detail.length > 10_000) return { ok: false, error: "decision detail is too long" };
+  const status = parseManagerDecisionStatus(input.status);
+  if (input.status !== undefined && !status) {
+    return { ok: false, error: "decision status is invalid" };
+  }
+  const createdBy =
+    input.createdBy === "manager" || input.createdBy === "browser" || input.createdBy === "system"
+      ? input.createdBy
+      : undefined;
+  return {
+    ok: true,
+    value: {
+      title,
+      detail,
+      tags: parseManagerDecisionTags(input.tags),
+      ...(typeof input.rationale === "string" && input.rationale.trim()
+        ? { rationale: input.rationale.trim().slice(0, 10_000) }
+        : {}),
+      ...(status ? { status } : {}),
+      ...(typeof input.roundId === "string" && input.roundId.trim()
+        ? { roundId: input.roundId.trim() }
+        : {}),
+      ...(typeof input.agentId === "string" && input.agentId.trim()
+        ? { agentId: input.agentId.trim() }
+        : {}),
+      ...(typeof input.taskId === "string" && input.taskId.trim()
+        ? { taskId: input.taskId.trim() }
+        : {}),
+      ...(createdBy ? { createdBy } : {}),
+    },
+  };
+}
+
+function parseManagerDecisionUpdateRequest(
+  input: unknown,
+): { ok: true; value: ManagerDecisionUpdateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "decision body must be an object" };
+  const status = parseManagerDecisionStatus(input.status);
+  if (input.status !== undefined && !status) {
+    return { ok: false, error: "decision status is invalid" };
+  }
+  const value: ManagerDecisionUpdateRequest = {};
+  if (typeof input.title === "string") {
+    const title = input.title.trim();
+    if (!title) return { ok: false, error: "decision title cannot be empty" };
+    if (title.length > 240) return { ok: false, error: "decision title is too long" };
+    value.title = title;
+  }
+  if (typeof input.detail === "string") {
+    const detail = input.detail.trim();
+    if (!detail) return { ok: false, error: "decision detail cannot be empty" };
+    if (detail.length > 10_000) return { ok: false, error: "decision detail is too long" };
+    value.detail = detail;
+  }
+  if (input.rationale === null) value.rationale = null;
+  else if (typeof input.rationale === "string") value.rationale = input.rationale.trim();
+  if (status) value.status = status;
+  if (Array.isArray(input.tags)) value.tags = parseManagerDecisionTags(input.tags);
+  if (input.roundId === null) value.roundId = null;
+  else if (typeof input.roundId === "string") value.roundId = input.roundId.trim();
+  if (input.agentId === null) value.agentId = null;
+  else if (typeof input.agentId === "string") value.agentId = input.agentId.trim();
+  if (input.taskId === null) value.taskId = null;
+  else if (typeof input.taskId === "string") value.taskId = input.taskId.trim();
+  if (Object.keys(value).length === 0) {
+    return { ok: false, error: "decision update must include at least one field" };
+  }
+  return { ok: true, value };
+}
+
 function parseManagerRoundCreateRequest(
   input: unknown,
 ): { ok: true; value: ManagerRoundCreateRequest } | { ok: false; error: string } {
@@ -8714,6 +8880,25 @@ function parseManagerProjectStatus(value: unknown): ManagerProjectStatus | undef
     return value;
   }
   return undefined;
+}
+
+function parseManagerDecisionStatus(value: unknown): ManagerDecisionStatus | undefined {
+  if (value === "active" || value === "superseded" || value === "archived") return value;
+  return undefined;
+}
+
+function parseManagerDecisionTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const item of value) {
+    const tag = typeof item === "string" ? item.trim().slice(0, 48) : "";
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+    if (tags.length >= 12) break;
+  }
+  return tags;
 }
 
 function projectStatusFromRoundStatus(status: ManagerRoundStatus): ManagerProjectStatus {

@@ -68,6 +68,8 @@ export function isManagerOrchestrationEvent(event: ManagerEvent): boolean {
     event.type === "snapshot" ||
     event.type === "project.created" ||
     event.type === "project.updated" ||
+    event.type === "decision.created" ||
+    event.type === "decision.updated" ||
     event.type === "round.created" ||
     event.type === "round.updated" ||
     event.type === "agent.created" ||
