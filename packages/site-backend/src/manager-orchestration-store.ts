@@ -19,6 +19,7 @@ export type ManagerAgentPatch = Partial<
   Pick<
     ManagerAgent,
     | "label"
+    | "projectId"
     | "profile"
     | "status"
     | "cwd"
@@ -40,6 +41,7 @@ export type ManagerRoundPatch = Partial<
   Pick<
     ManagerRound,
     | "title"
+    | "projectId"
     | "objective"
     | "status"
     | "agentIds"
@@ -216,6 +218,7 @@ function createAgentRecord(input: ManagerAgentCreateRequest, now: Date): Manager
   const instruction = input.instruction?.trim();
   return {
     id: `agent_${randomBytes(10).toString("base64url")}`,
+    ...(input.projectId?.trim() ? { projectId: input.projectId.trim() } : {}),
     role,
     label: input.label?.trim() || defaultAgentLabel(role),
     profile: input.profile?.trim() || "claude-code",
@@ -240,6 +243,7 @@ function createRoundRecord(input: ManagerRoundCreateRequest, now: Date): Manager
   const createdAt = now.toISOString();
   return {
     id: `round_${randomBytes(10).toString("base64url")}`,
+    ...(input.projectId?.trim() ? { projectId: input.projectId.trim() } : {}),
     title: input.title?.trim() || "Orchestration round",
     objective: input.objective.trim(),
     status: "planned",
@@ -291,6 +295,7 @@ function normalizeAgent(input: unknown): ManagerAgent | null {
   if (!isAgentStatus(input.status)) return null;
   const createdAt = nonEmptyString(input.createdAt) ?? new Date(0).toISOString();
   const cwd = nonEmptyString(input.cwd);
+  const projectId = nonEmptyString(input.projectId);
   const roundId = nonEmptyString(input.roundId);
   const taskId = nonEmptyString(input.taskId);
   const sessionId = nonEmptyString(input.sessionId);
@@ -304,6 +309,7 @@ function normalizeAgent(input: unknown): ManagerAgent | null {
   const acknowledgedReason = nonEmptyString(input.acknowledgedReason);
   return {
     id: input.id,
+    ...(projectId ? { projectId } : {}),
     role: input.role,
     label: nonEmptyString(input.label) ?? defaultAgentLabel(input.role),
     profile: nonEmptyString(input.profile) ?? "claude-code",
@@ -330,6 +336,7 @@ function normalizeRound(input: unknown): ManagerRound | null {
   if (typeof input.id !== "string" || !input.id.trim()) return null;
   if (!isRoundStatus(input.status)) return null;
   const createdAt = nonEmptyString(input.createdAt) ?? new Date(0).toISOString();
+  const projectId = nonEmptyString(input.projectId);
   const startedAt = nonEmptyString(input.startedAt);
   const completedAt = nonEmptyString(input.completedAt);
   const summary = nonEmptyString(input.summary);
@@ -339,6 +346,7 @@ function normalizeRound(input: unknown): ManagerRound | null {
   const acknowledgedReason = nonEmptyString(input.acknowledgedReason);
   return {
     id: input.id,
+    ...(projectId ? { projectId } : {}),
     title: nonEmptyString(input.title) ?? "Orchestration round",
     objective: nonEmptyString(input.objective) ?? "",
     status: input.status,

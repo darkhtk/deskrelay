@@ -202,6 +202,7 @@ export interface ManagerSecurityBoundary {
 export interface ManagerTaskRequest {
   kind: ManagerTaskKind;
   targetId?: string;
+  projectId?: string;
   dryRun?: boolean;
   requestedBy?: ManagerTaskRequestedBy;
   params?: Record<string, unknown>;
@@ -210,6 +211,7 @@ export interface ManagerTaskRequest {
 export interface ManagerTask {
   id: string;
   kind: ManagerTaskKind;
+  projectId?: string;
   targetId?: string;
   targetLabel?: string;
   params?: Record<string, unknown>;
@@ -248,6 +250,7 @@ export interface ManagerWorkerRun {
   status: ManagerWorkerRunStatus;
   integrity: ManagerWorkerRunIntegrity[];
   dryRun: boolean;
+  projectId?: string;
   requestedBy?: ManagerTaskRequestedBy;
   taskId?: string;
   roundId?: string;
@@ -502,6 +505,7 @@ export interface ManagerProjectResponse {
 
 export interface ManagerAgent {
   id: string;
+  projectId?: string;
   role: ManagerAgentRole;
   label: string;
   profile: string;
@@ -523,6 +527,7 @@ export interface ManagerAgent {
 }
 
 export interface ManagerAgentCreateRequest {
+  projectId?: string;
   role: ManagerAgentRole;
   label?: string;
   profile?: string;
@@ -533,6 +538,7 @@ export interface ManagerAgentCreateRequest {
 
 export interface ManagerAgentMessageRequest {
   prompt: string;
+  projectId?: string;
   profile?: string;
   cwd?: string;
   roundId?: string;
@@ -562,6 +568,7 @@ export interface ManagerRoundAgentAssignment {
 
 export interface ManagerRound {
   id: string;
+  projectId?: string;
   title: string;
   objective: string;
   status: ManagerRoundStatus;
@@ -579,6 +586,7 @@ export interface ManagerRound {
 }
 
 export interface ManagerRoundCreateRequest {
+  projectId?: string;
   title?: string;
   objective: string;
   agents?: Array<Omit<ManagerRoundAgentAssignment, "prompt"> & { prompt?: string }>;

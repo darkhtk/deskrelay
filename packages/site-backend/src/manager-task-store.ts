@@ -17,6 +17,7 @@ export type ManagerTaskCreateInput = Pick<
   ManagerTask,
   "kind" | "dryRun" | "requestedBy" | "steps"
 > & {
+  projectId?: string;
   targetId?: string;
   targetLabel?: string;
   params?: Record<string, unknown>;
@@ -132,6 +133,7 @@ function createTask(input: ManagerTaskCreateInput, now: Date): ManagerTask {
   return {
     id: `task_${randomBytes(12).toString("base64url")}`,
     kind: input.kind,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
     ...(input.targetId ? { targetId: input.targetId } : {}),
     ...(input.targetLabel ? { targetLabel: input.targetLabel } : {}),
     ...(input.params ? { params: input.params } : {}),
@@ -196,6 +198,7 @@ function normalizeStoredTask(input: unknown): ManagerTask | null {
   return {
     id: input.id,
     kind: input.kind,
+    ...(typeof input.projectId === "string" ? { projectId: input.projectId } : {}),
     ...(typeof input.targetId === "string" ? { targetId: input.targetId } : {}),
     ...(typeof input.targetLabel === "string" ? { targetLabel: input.targetLabel } : {}),
     ...(isRecord(input.params) ? { params: input.params } : {}),

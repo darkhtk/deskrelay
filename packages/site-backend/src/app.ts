@@ -488,6 +488,80 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
   });
 
+  app.get("/api/manager/projects/:id/rounds", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const rounds = await managerOrchestrationStore.listRounds();
+    const response: ManagerRoundListResponse = {
+      generatedAt: new Date().toISOString(),
+      rounds: rounds.filter(
+        (round) => round.projectId === project.id || round.id === project.activeRoundId,
+      ),
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/projects/:id/agents", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const rounds = await managerOrchestrationStore.listRounds();
+    const projectRoundIds = new Set(
+      rounds
+        .filter((round) => round.projectId === project.id || round.id === project.activeRoundId)
+        .map((round) => round.id),
+    );
+    const response: ManagerAgentListResponse = {
+      generatedAt: new Date().toISOString(),
+      agents: (await managerOrchestrationStore.listAgents()).filter(
+        (agent) =>
+          agent.projectId === project.id ||
+          Boolean(agent.roundId && projectRoundIds.has(agent.roundId)),
+      ),
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/projects/:id/tasks", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const rounds = await managerOrchestrationStore.listRounds();
+    const projectRoundIds = new Set(
+      rounds
+        .filter((round) => round.projectId === project.id || round.id === project.activeRoundId)
+        .map((round) => round.id),
+    );
+    const projectTaskIds = new Set(
+      rounds.filter((round) => projectRoundIds.has(round.id)).flatMap((round) => round.taskIds),
+    );
+    return c.json({
+      generatedAt: new Date().toISOString(),
+      tasks: (await managerTaskStore.list(clampListLimit(c.req.query("limit"))))
+        .filter(
+          (task) =>
+            task.projectId === project.id ||
+            projectTaskIds.has(task.id) ||
+            (typeof task.params?.roundId === "string" && projectRoundIds.has(task.params.roundId)),
+        )
+        .map(sanitizeManagerTaskForAssistant),
+    });
+  });
+
+  app.get("/api/manager/projects/:id/runs", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    return c.json(
+      await buildManagerWorkerRunLedger({
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        projectId: project.id,
+        limit: clampListLimit(c.req.query("limit")),
+        now: new Date(),
+      }),
+    );
+  });
+
   app.get("/api/manager/projects/:id", async (c) => {
     const project = await managerProjectStore.get(c.req.param("id"));
     if (!project) return c.json({ error: "unknown project" }, 404);
@@ -908,9 +982,16 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const parsed = parseManagerRoundCreateRequest(body);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const round = await managerOrchestrationStore.createRound(parsed.value);
+    if (round.projectId) {
+      await managerProjectStore.update(round.projectId, {
+        activeRoundId: round.id,
+        status: "running",
+      });
+    }
     const agents: ManagerAgent[] = [];
     for (const assignment of parsed.value.agents ?? []) {
       const agent = await managerOrchestrationStore.createAgent({
+        ...(round.projectId ? { projectId: round.projectId } : {}),
         role: assignment.role,
         ...(assignment.label ? { label: assignment.label } : {}),
         ...(assignment.profile ? { profile: assignment.profile } : {}),
@@ -952,6 +1033,14 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       build,
       requestUrl: c.req.url,
     });
+    if (response.round.projectId) {
+      await managerProjectStore.update(response.round.projectId, {
+        activeRoundId: response.round.id,
+        status: projectStatusFromRoundStatus(response.round.status),
+        ...(response.round.summary ? { summary: response.round.summary } : {}),
+        ...(response.round.error ? { error: response.round.error } : { error: null }),
+      });
+    }
     return c.json(response, response.round.status === "blocked" ? 409 : 202);
   });
 
@@ -1984,6 +2073,26 @@ const SITE_ROUTE_CAPABILITIES = [
   { method: "GET", path: "/api/capabilities", description: "List server API capabilities." },
   { method: "GET", path: "/api/manager/projects", description: "List manager projects." },
   { method: "POST", path: "/api/manager/projects", description: "Create a manager project." },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/rounds",
+    description: "List orchestration rounds scoped to one manager project.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/agents",
+    description: "List orchestration agents scoped to one manager project.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/tasks",
+    description: "List manager tasks scoped to one manager project.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/runs",
+    description: "List worker runs scoped to one manager project.",
+  },
   { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
   {
     method: "PATCH",
@@ -2640,6 +2749,7 @@ function isManagerAgentRuntimeActive(status: ManagerAgentStatus): boolean {
 async function createAndRunManagerTask(input: ManagerTaskCreateRunInput): Promise<ManagerTask> {
   const task = await input.store.create({
     kind: input.request.kind,
+    ...(input.request.projectId ? { projectId: input.request.projectId } : {}),
     ...(input.request.targetId ? { targetId: input.request.targetId } : {}),
     ...(input.request.params ? { params: input.request.params } : {}),
     dryRun: input.request.dryRun ?? true,
@@ -2776,8 +2886,12 @@ async function runManagerAgentMessage(
   const prompt = input.message.prompt.trim();
   const profile = input.message.profile?.trim() || input.agent.profile || "claude-code";
   const roundId = input.message.roundId?.trim() || input.agent.roundId;
+  const round = roundId ? await input.store.getRound(roundId) : undefined;
+  const projectId =
+    input.message.projectId?.trim() || input.agent.projectId || round?.projectId || undefined;
   await input.store.updateAgent(input.agent.id, {
     status: "running",
+    ...(projectId ? { projectId } : {}),
     profile,
     ...(input.message.cwd ? { cwd: input.message.cwd } : {}),
     ...(roundId ? { roundId } : {}),
@@ -2790,6 +2904,7 @@ async function runManagerAgentMessage(
   const task = await createAndRunManagerTask({
     request: {
       kind: "run-worker",
+      ...(projectId ? { projectId } : {}),
       dryRun: input.message.dryRun ?? false,
       requestedBy: "manager-assistant",
       params: {
@@ -2802,6 +2917,7 @@ async function runManagerAgentMessage(
         agentId: input.agent.id,
         agentRole: input.agent.role,
         ...(input.agent.sessionId ? { sessionId: input.agent.sessionId } : {}),
+        ...(projectId ? { projectId } : {}),
         ...(roundId ? { roundId } : {}),
       },
     },
@@ -2825,7 +2941,6 @@ async function runManagerAgentMessage(
       ...(task.completedAt ? { lastOutputAt: task.completedAt } : {}),
     })) ?? input.agent;
   if (roundId) {
-    const round = await input.store.getRound(roundId);
     if (round) {
       await input.store.updateRound(round.id, {
         agentIds: uniqueStrings([...round.agentIds, input.agent.id]),
@@ -2911,6 +3026,7 @@ async function dispatchManagerRound(
     const failedTask: ManagerTask = {
       id: `spawn-failed-${agent.id}-${Date.now()}`,
       kind: "run-worker",
+      ...(input.round.projectId ? { projectId: input.round.projectId } : {}),
       targetLabel: assignment.label ?? agent.label ?? "Claude Code worker",
       params: {
         profile: assignment.profile ?? "claude-code",
@@ -2919,6 +3035,7 @@ async function dispatchManagerRound(
         agentId: agent.id,
         agentRole: agent.role,
         roundId: input.round.id,
+        ...(input.round.projectId ? { projectId: input.round.projectId } : {}),
       },
       state: "failed",
       dryRun: input.request.dryRun ?? false,
@@ -2981,11 +3098,18 @@ async function resolveRoundAssignments(input: ManagerRoundDispatchInput): Promis
   for (const assignment of assignments) {
     let agent = assignment.agentId ? await input.store.getAgent(assignment.agentId) : undefined;
     if (agent?.status === "stale") agent = undefined;
+    if (agent?.projectId && input.round.projectId && agent.projectId !== input.round.projectId) {
+      return {
+        ok: false,
+        error: `agent ${agent.id} belongs to a different project`,
+      };
+    }
     if (!agent && !assignment.agentId) {
-      agent = findReusableManagerAgent(existingAgents, assignment);
+      agent = findReusableManagerAgent(existingAgents, assignment, input.round.projectId);
     }
     if (!agent) {
       agent = await input.store.createAgent({
+        ...(input.round.projectId ? { projectId: input.round.projectId } : {}),
         role: assignment.role,
         ...(assignment.label ? { label: assignment.label } : {}),
         ...(assignment.profile ? { profile: assignment.profile } : {}),
@@ -3003,12 +3127,14 @@ async function resolveRoundAssignments(input: ManagerRoundDispatchInput): Promis
 function findReusableManagerAgent(
   agents: ManagerAgent[],
   assignment: ManagerRoundAgentAssignment,
+  projectId?: string,
 ): ManagerAgent | undefined {
   const profile = assignment.profile?.trim() || "claude-code";
   const cwd = assignment.cwd?.trim() || "";
   const label = assignment.label?.trim();
   return agents.find((agent) => {
     if (agent.status === "stale") return false;
+    if ((agent.projectId ?? "") !== (projectId ?? "")) return false;
     if (agent.role !== assignment.role) return false;
     if ((agent.profile || "claude-code") !== profile) return false;
     if ((agent.cwd ?? "") !== cwd) return false;
@@ -3060,6 +3186,7 @@ interface ManagerWorkerRunLedgerInput {
   orchestrationStore: ManagerOrchestrationStore;
   taskStore: ManagerTaskStore;
   roundId?: string;
+  projectId?: string;
   limit: number;
   now: Date;
 }
@@ -3080,6 +3207,11 @@ async function buildManagerWorkerRunLedger(
     if (agent.taskId) agentByTaskId.set(agent.taskId, agent);
   }
   const scopedRound = input.roundId ? roundById.get(input.roundId) : undefined;
+  const projectRoundIds = input.projectId
+    ? new Set(
+        rounds.filter((round) => round.projectId === input.projectId).map((round) => round.id),
+      )
+    : undefined;
   const selected = new Map<string, ManagerWorkerRun>();
 
   for (const task of tasks) {
@@ -3087,6 +3219,15 @@ async function buildManagerWorkerRunLedger(
     const agent = findManagerWorkerAgent(task, agents, agentByTaskId);
     const round = findManagerWorkerRound(task, agent, scopedRound, roundById, rounds);
     if (input.roundId && round?.id !== input.roundId && !scopedRound?.taskIds.includes(task.id)) {
+      continue;
+    }
+    if (
+      input.projectId &&
+      task.projectId !== input.projectId &&
+      agent?.projectId !== input.projectId &&
+      round?.projectId !== input.projectId &&
+      !(round?.id && projectRoundIds?.has(round.id))
+    ) {
       continue;
     }
     const run = managerWorkerRunFromTask(task, agent, round);
@@ -3122,6 +3263,7 @@ async function buildManagerWorkerRunLedger(
     }
   } else {
     for (const agent of agents) {
+      if (input.projectId && agent.projectId !== input.projectId) continue;
       if (!agent.taskId || taskById.has(agent.taskId)) continue;
       const round = agent.roundId ? roundById.get(agent.roundId) : undefined;
       selected.set(
@@ -3618,11 +3760,13 @@ function managerWorkerRunFromTask(
   const command = stringValue(result.command);
   const cwd = stringValue(result.cwd) ?? stringValue(params.cwd);
   const outputPreview = managerWorkerResultText(task);
+  const projectId = task.projectId ?? agent?.projectId ?? round?.projectId;
   const run: ManagerWorkerRun = {
     id: `task:${task.id}`,
     status: task.state,
     integrity,
     dryRun: task.dryRun,
+    ...(projectId ? { projectId } : {}),
     requestedBy: task.requestedBy,
     taskId: task.id,
     ...(round?.id ? { roundId: round.id } : {}),
@@ -3655,12 +3799,14 @@ function managerWorkerRunFromMissingTask(
   now: Date,
 ): ManagerWorkerRun {
   const updatedAt = agent?.updatedAt ?? round?.updatedAt ?? now.toISOString();
+  const projectId = agent?.projectId ?? round?.projectId;
   return {
     id: `missing-task:${taskId}`,
     status: "missing",
     integrity: ["missing-task"],
     dryRun: false,
     taskId,
+    ...(projectId ? { projectId } : {}),
     ...(round?.id ? { roundId: round.id } : {}),
     ...(agent?.id ? { agentId: agent.id } : {}),
     ...(agent?.role ? { agentRole: agent.role } : {}),
@@ -6577,6 +6723,7 @@ function buildRetryManagerTaskRequest(
     ok: true,
     value: {
       kind: task.kind,
+      ...(task.projectId ? { projectId: task.projectId } : {}),
       ...(task.targetId ? { targetId: task.targetId } : {}),
       ...(task.params ? { params: task.params } : {}),
       dryRun: task.dryRun,
@@ -7703,6 +7850,9 @@ function parseManagerTaskRequest(
     ok: true,
     value: {
       kind: input.kind,
+      ...(typeof input.projectId === "string" && input.projectId.trim()
+        ? { projectId: input.projectId.trim() }
+        : {}),
       ...(typeof input.targetId === "string" && input.targetId.trim()
         ? { targetId: input.targetId.trim() }
         : {}),
@@ -7925,6 +8075,7 @@ async function parseManagerWorkerRunRequest(req: { json(): Promise<unknown> }): 
   if (!params.ok) return { ok: false, error: params.error };
   return parseManagerTaskRequest({
     kind: "run-worker",
+    projectId: body.projectId,
     dryRun: body.dryRun,
     requestedBy: body.requestedBy,
     params: params.value,
@@ -7944,6 +8095,9 @@ function parseManagerAgentCreateRequest(
   return {
     ok: true,
     value: {
+      ...(typeof input.projectId === "string" && input.projectId.trim()
+        ? { projectId: input.projectId.trim() }
+        : {}),
       role,
       ...(typeof input.label === "string" && input.label.trim()
         ? { label: input.label.trim() }
@@ -7972,6 +8126,9 @@ function parseManagerAgentMessageRequest(
     ok: true,
     value: {
       prompt,
+      ...(typeof input.projectId === "string" && input.projectId.trim()
+        ? { projectId: input.projectId.trim() }
+        : {}),
       ...(typeof input.profile === "string" && input.profile.trim()
         ? { profile: input.profile.trim() }
         : {}),
@@ -8062,6 +8219,9 @@ function parseManagerRoundCreateRequest(
   return {
     ok: true,
     value: {
+      ...(typeof input.projectId === "string" && input.projectId.trim()
+        ? { projectId: input.projectId.trim() }
+        : {}),
       objective,
       ...(typeof input.title === "string" && input.title.trim()
         ? { title: input.title.trim() }
@@ -8129,6 +8289,13 @@ function parseManagerProjectStatus(value: unknown): ManagerProjectStatus | undef
     return value;
   }
   return undefined;
+}
+
+function projectStatusFromRoundStatus(status: ManagerRoundStatus): ManagerProjectStatus {
+  if (status === "completed") return "reviewing";
+  if (status === "blocked" || status === "failed" || status === "cancelled") return "blocked";
+  if (status === "planned") return "planning";
+  return "running";
 }
 
 function isManagerTaskKind(value: unknown): value is ManagerTaskKind {

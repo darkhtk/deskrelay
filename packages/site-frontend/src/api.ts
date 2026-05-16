@@ -47,6 +47,7 @@ import type {
   ManagerStateViewResponse,
   ManagerSystemSummary,
   ManagerTask,
+  ManagerTaskListResponse,
   ManagerTaskLogResponse,
   ManagerTaskObservationResponse,
   ManagerTaskRequest,
@@ -649,6 +650,30 @@ export const api = {
     request<ManagerProjectResponse>(
       "POST",
       `/api/manager/projects/${encodeURIComponent(id)}/archive`,
+    ),
+  managerProjectRounds: (id: string) =>
+    request<ManagerRoundListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/rounds`,
+    ),
+  managerProjectAgents: (id: string) =>
+    request<ManagerAgentListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/agents`,
+    ),
+  managerProjectTasks: (id: string, limit?: number) =>
+    request<ManagerTaskListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/tasks${
+        typeof limit === "number" ? `?limit=${limit}` : ""
+      }`,
+    ),
+  managerProjectRuns: (id: string, limit?: number) =>
+    request<ManagerWorkerRunLedgerResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/runs${
+        typeof limit === "number" ? `?limit=${limit}` : ""
+      }`,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
   managerTaskLogs: (id: string) =>

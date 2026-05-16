@@ -61,10 +61,15 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   let eventRefreshTimer: number | undefined;
 
   const [orchestration] = createResource(
-    () => refreshSeq(),
-    async (): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
+    () => ({ seq: refreshSeq(), projectId: selectedProjectId() }),
+    async (input): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
       try {
-        const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
+        const [agents, rounds] = input.projectId
+          ? await Promise.all([
+              api.managerProjectAgents(input.projectId),
+              api.managerProjectRounds(input.projectId),
+            ])
+          : await Promise.all([api.managerAgents(), api.managerRounds()]);
         const next = { agents: agents.agents, rounds: rounds.rounds };
         setCachedSnapshot(
           writeManagerOrchestrationCache(next) ?? {
@@ -81,7 +86,12 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
         );
         return next;
       } catch {
-        return null;
+        try {
+          const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
+          return { agents: agents.agents, rounds: rounds.rounds };
+        } catch {
+          return null;
+        }
       }
     },
   );
@@ -148,7 +158,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     const projectRoundId = selectedProject()?.activeRoundId;
     return (
       (projectRoundId ? rounds.find((round) => round.id === projectRoundId) : undefined) ??
-      baseActiveRound()
+      pickActiveRound(rounds)
     );
   });
 
@@ -200,7 +210,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     async (input): Promise<ManagerWorkerRunLedgerResponse | null> => {
       if (!input) return null;
       try {
-        const ledger = await api.managerRoundWorkerRuns(input.id);
+        const ledger = selectedProjectId()
+          ? await api.managerProjectRuns(selectedProjectId() as string)
+          : await api.managerRoundWorkerRuns(input.id);
         setCachedSnapshot(
           writeManagerOrchestrationCache({
             workerRuns: ledger,

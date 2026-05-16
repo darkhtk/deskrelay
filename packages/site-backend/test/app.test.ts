@@ -661,6 +661,26 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/projects/:id/rounds",
+          authedRequest("GET", "/api/manager/projects/missing/rounds"),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/agents",
+          authedRequest("GET", "/api/manager/projects/missing/agents"),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/tasks",
+          authedRequest("GET", "/api/manager/projects/missing/tasks"),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/runs",
+          authedRequest("GET", "/api/manager/projects/missing/runs"),
+          [404],
+        ],
+        [
           "PATCH /api/manager/projects/:id",
           authedRequest("PATCH", "/api/manager/projects/missing", {
             name: "Updated",
@@ -2310,6 +2330,74 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test("manager project scoped routes attach and filter orchestration records", async () => {
+    const projectCreate = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/projects", {
+        name: "Scoped Project",
+        cwd: "C:\\Users\\darkh\\Projects\\scoped",
+        goal: "keep orchestration records grouped",
+      }),
+    );
+    expect(projectCreate.status).toBe(201);
+    const projectBody = (await projectCreate.json()) as { project?: { id?: string } };
+    const projectId = projectBody.project?.id;
+    expect(projectId).toBeTruthy();
+
+    const roundCreate = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/rounds", {
+        projectId,
+        title: "Scoped R1",
+        objective: "Project scoped orchestration.",
+        agents: [{ role: "architect", prompt: "Plan only." }],
+      }),
+    );
+    expect(roundCreate.status).toBe(201);
+    const roundBody = (await roundCreate.json()) as {
+      round?: { id?: string; projectId?: string };
+      agents?: Array<{ id?: string; projectId?: string; roundId?: string }>;
+    };
+    expect(roundBody.round?.projectId).toBe(projectId);
+    expect(roundBody.agents?.[0]?.projectId).toBe(projectId);
+
+    const unscopedRound = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/rounds", {
+        title: "Unscoped",
+        objective: "Legacy unassigned orchestration.",
+      }),
+    );
+    expect(unscopedRound.status).toBe(201);
+
+    const scopedRounds = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/rounds`),
+    );
+    expect(scopedRounds.status).toBe(200);
+    const scopedRoundBody = (await scopedRounds.json()) as {
+      rounds?: Array<{ id?: string; projectId?: string }>;
+    };
+    expect(scopedRoundBody.rounds?.map((round) => round.id)).toEqual([roundBody.round?.id]);
+    expect(scopedRoundBody.rounds?.[0]?.projectId).toBe(projectId);
+
+    const scopedAgents = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/agents`),
+    );
+    expect(scopedAgents.status).toBe(200);
+    const scopedAgentBody = (await scopedAgents.json()) as {
+      agents?: Array<{ id?: string; projectId?: string; roundId?: string }>;
+    };
+    expect(scopedAgentBody.agents?.map((agent) => agent.id)).toEqual([roundBody.agents?.[0]?.id]);
+    expect(scopedAgentBody.agents?.[0]?.projectId).toBe(projectId);
+
+    const project = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}`),
+    );
+    expect(project.status).toBe(200);
+    const updatedProject = (await project.json()) as {
+      project?: { activeRoundId?: string; status?: string };
+    };
+    expect(updatedProject.project?.activeRoundId).toBe(roundBody.round?.id);
+    expect(updatedProject.project?.status).toBe("running");
   });
 
   test("manager orchestration rounds dispatch multiple role agents", async () => {
