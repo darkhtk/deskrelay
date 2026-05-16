@@ -10,6 +10,7 @@ import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
 } from "../src/device-update-queue-store.ts";
+import { createInMemoryManagerBlockerStore } from "../src/manager-blocker-store.ts";
 import { createInMemoryManagerDecisionStore } from "../src/manager-decision-store.ts";
 import { createInMemoryManagerOrchestrationStore } from "../src/manager-orchestration-store.ts";
 import { createInMemoryManagerProjectStore } from "../src/manager-project-store.ts";
@@ -64,6 +65,7 @@ function makeApp(
     registry,
     token: TOKEN,
     fetchImpl,
+    managerBlockerStore: createInMemoryManagerBlockerStore(),
     managerDecisionStore: createInMemoryManagerDecisionStore(),
     managerProjectStore: createInMemoryManagerProjectStore(),
     ...options,
@@ -684,6 +686,27 @@ describe("API route inventory", () => {
           "PATCH /api/manager/projects/:id/decisions/:decisionId",
           authedRequest("PATCH", "/api/manager/projects/missing/decisions/missing", {
             status: "superseded",
+          }),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/blockers",
+          authedRequest("GET", "/api/manager/projects/missing/blockers"),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/blockers",
+          authedRequest("POST", "/api/manager/projects/missing/blockers", {
+            title: "Missing blocker",
+            severity: "warning",
+            requiredAction: "manager",
+          }),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/blockers/:blockerId/resolve",
+          authedRequest("POST", "/api/manager/projects/missing/blockers/missing/resolve", {
+            resolution: "route inventory",
           }),
           [404],
         ],
@@ -2528,6 +2551,94 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(archivedBody.decisions).toEqual([]);
     expect(archivedBody.archived?.map((decision) => decision.id)).toEqual([created.decision?.id]);
     expect(archivedBody.archived?.[0]?.revisions).toHaveLength(2);
+  });
+
+  test("manager project blockers dedupe open causes and resolve cleanly", async () => {
+    const projectCreate = await setup.app.fetch(
+      authedRequest("POST", "/api/manager/projects", {
+        name: "Blocker Project",
+        cwd: "C:\\Users\\darkh\\Projects\\blockers",
+        goal: "track non-happy orchestration blockers",
+      }),
+    );
+    expect(projectCreate.status).toBe(201);
+    const projectBody = (await projectCreate.json()) as { project?: { id?: string } };
+    const projectId = projectBody.project?.id;
+    expect(projectId).toBeTruthy();
+
+    const create = await setup.app.fetch(
+      authedRequest("POST", `/api/manager/projects/${projectId}/blockers`, {
+        title: "Remote connector unreachable",
+        detail: "Server cannot reach the selected device.",
+        severity: "error",
+        requiredAction: "user",
+        owner: "operator",
+        source: "manager",
+        dedupeKey: "device:remote:timeout",
+      }),
+    );
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as {
+      created?: boolean;
+      blocker?: { id?: string; title?: string; status?: string };
+    };
+    expect(created.created).toBe(true);
+    expect(created.blocker?.status).toBe("open");
+
+    const duplicate = await setup.app.fetch(
+      authedRequest("POST", `/api/manager/projects/${projectId}/blockers`, {
+        title: "Transient timeout again",
+        severity: "warning",
+        requiredAction: "manager",
+        dedupeKey: "device:remote:timeout",
+      }),
+    );
+    expect(duplicate.status).toBe(200);
+    const duplicateBody = (await duplicate.json()) as {
+      created?: boolean;
+      blocker?: { id?: string; title?: string };
+    };
+    expect(duplicateBody.created).toBe(false);
+    expect(duplicateBody.blocker?.id).toBe(created.blocker?.id);
+    expect(duplicateBody.blocker?.title).toBe("Remote connector unreachable");
+
+    const list = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/blockers`),
+    );
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as {
+      blockers?: Array<{ id?: string; status?: string }>;
+      resolved?: unknown[];
+    };
+    expect(listBody.blockers?.map((blocker) => blocker.id)).toEqual([created.blocker?.id]);
+    expect(listBody.resolved).toEqual([]);
+
+    const resolve = await setup.app.fetch(
+      authedRequest(
+        "POST",
+        `/api/manager/projects/${projectId}/blockers/${created.blocker?.id}/resolve`,
+        {
+          resolution: "User re-registered the connector.",
+        },
+      ),
+    );
+    expect(resolve.status).toBe(200);
+    const resolved = (await resolve.json()) as {
+      blocker?: { status?: string; resolution?: string };
+    };
+    expect(resolved.blocker?.status).toBe("resolved");
+    expect(resolved.blocker?.resolution).toBe("User re-registered the connector.");
+
+    const afterResolve = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/blockers`),
+    );
+    const afterBody = (await afterResolve.json()) as {
+      blockers?: unknown[];
+      resolved?: Array<{ id?: string; status?: string }>;
+    };
+    expect(afterBody.blockers).toEqual([]);
+    expect(afterBody.resolved?.map((blocker) => blocker.id)).toEqual([created.blocker?.id]);
+    expect(afterBody.resolved?.[0]?.status).toBe("resolved");
   });
 
   test("manager orchestration rounds dispatch multiple role agents", async () => {

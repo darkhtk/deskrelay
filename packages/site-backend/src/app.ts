@@ -32,6 +32,13 @@ import {
   type ManagerAssistantStreamEvent,
   type ManagerAssistantStreamStatus,
   type ManagerAssistantStructuredState,
+  type ManagerBlockerCreateRequest,
+  type ManagerBlockerListResponse,
+  type ManagerBlockerRequiredAction,
+  type ManagerBlockerResolveRequest,
+  type ManagerBlockerResponse,
+  type ManagerBlockerSeverity,
+  type ManagerBlockerSource,
   type ManagerCapabilities,
   type ManagerDecisionCreateRequest,
   type ManagerDecisionListResponse,
@@ -126,12 +133,17 @@ import {
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
 import {
+  type ManagerBlockerStore,
+  createJsonManagerBlockerStore,
+} from "./manager-blocker-store.ts";
+import {
   type ManagerDecisionStore,
   createJsonManagerDecisionStore,
 } from "./manager-decision-store.ts";
 import {
   type ManagerEventBus,
   createManagerEventBus,
+  withManagerBlockerEvents,
   withManagerDecisionEvents,
   withManagerOrchestrationEvents,
   withManagerProjectEvents,
@@ -177,6 +189,7 @@ export interface SiteAppOptions {
   managerOrchestrationStore?: ManagerOrchestrationStore;
   managerProjectStore?: ManagerProjectStore;
   managerDecisionStore?: ManagerDecisionStore;
+  managerBlockerStore?: ManagerBlockerStore;
   managerAssistant?: ManagerAssistantOptions;
   managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
@@ -239,6 +252,7 @@ const MAX_MANAGER_ASSISTANT_TIMEOUT_MS = 1_800_000;
 const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_PROJECTS_DIR = ".deskrelay/manager-projects";
 const MANAGER_DECISIONS_DIR = ".deskrelay/manager-decisions";
+const MANAGER_BLOCKERS_DIR = ".deskrelay/manager-blockers";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
@@ -269,6 +283,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const managerDecisionStore = withManagerDecisionEvents(
     options.managerDecisionStore ??
       createJsonManagerDecisionStore(join(managerRepoRoot, MANAGER_DECISIONS_DIR)),
+    managerEventBus,
+  );
+  const managerBlockerStore = withManagerBlockerEvents(
+    options.managerBlockerStore ??
+      createJsonManagerBlockerStore(join(managerRepoRoot, MANAGER_BLOCKERS_DIR)),
     managerEventBus,
   );
   const managerOrchestrationStore = withManagerOrchestrationEvents(
@@ -648,6 +667,63 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const response: ManagerDecisionResponse = {
       generatedAt: new Date().toISOString(),
       decision,
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/projects/:id/blockers", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const result = await managerBlockerStore.list(project.id);
+    const response: ManagerBlockerListResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      ...result,
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/blockers", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerBlockerCreateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const result = await managerBlockerStore.create(project.id, parsed.value);
+    const response: ManagerBlockerResponse = {
+      generatedAt: new Date().toISOString(),
+      blocker: result.blocker,
+      created: result.created,
+    };
+    return c.json(response, result.created ? 201 : 200);
+  });
+
+  app.post("/api/manager/projects/:id/blockers/:blockerId/resolve", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown = {};
+    try {
+      const text = await c.req.text();
+      body = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerBlockerResolveRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const blocker = await managerBlockerStore.resolve(
+      project.id,
+      c.req.param("blockerId"),
+      parsed.value,
+    );
+    if (!blocker) return c.json({ error: "unknown blocker" }, 404);
+    const response: ManagerBlockerResponse = {
+      generatedAt: new Date().toISOString(),
+      blocker,
     };
     return c.json(response);
   });
@@ -2202,6 +2278,21 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "PATCH",
     path: "/api/manager/projects/:id/decisions/:decisionId",
     description: "Update one manager project decision while preserving revisions.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/blockers",
+    description: "List active and resolved blockers for one manager project.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/blockers",
+    description: "Record a deduplicated manager project blocker.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/blockers/:blockerId/resolve",
+    description: "Resolve or dismiss one manager project blocker.",
   },
   { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
   {
@@ -8780,6 +8871,74 @@ function parseManagerDecisionUpdateRequest(
   return { ok: true, value };
 }
 
+function parseManagerBlockerCreateRequest(
+  input: unknown,
+): { ok: true; value: ManagerBlockerCreateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "blocker body must be an object" };
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  if (!title) return { ok: false, error: "blocker title is required" };
+  if (title.length > 240) return { ok: false, error: "blocker title is too long" };
+  const detail = typeof input.detail === "string" ? input.detail.trim() : "";
+  if (detail.length > 10_000) return { ok: false, error: "blocker detail is too long" };
+  const severity = parseManagerBlockerSeverity(input.severity);
+  if (input.severity !== undefined && !severity) {
+    return { ok: false, error: "blocker severity is invalid" };
+  }
+  const requiredAction = parseManagerBlockerRequiredAction(input.requiredAction);
+  if (input.requiredAction !== undefined && !requiredAction) {
+    return { ok: false, error: "blocker requiredAction is invalid" };
+  }
+  const source = parseManagerBlockerSource(input.source);
+  if (input.source !== undefined && !source) {
+    return { ok: false, error: "blocker source is invalid" };
+  }
+  return {
+    ok: true,
+    value: {
+      title,
+      ...(detail ? { detail } : {}),
+      ...(severity ? { severity } : {}),
+      ...(typeof input.owner === "string" && input.owner.trim()
+        ? { owner: input.owner.trim().slice(0, 96) }
+        : {}),
+      ...(requiredAction ? { requiredAction } : {}),
+      ...(source ? { source } : {}),
+      ...(typeof input.dedupeKey === "string" && input.dedupeKey.trim()
+        ? { dedupeKey: input.dedupeKey.trim().slice(0, 200) }
+        : {}),
+      ...(typeof input.roundId === "string" && input.roundId.trim()
+        ? { roundId: input.roundId.trim() }
+        : {}),
+      ...(typeof input.agentId === "string" && input.agentId.trim()
+        ? { agentId: input.agentId.trim() }
+        : {}),
+      ...(typeof input.taskId === "string" && input.taskId.trim()
+        ? { taskId: input.taskId.trim() }
+        : {}),
+    },
+  };
+}
+
+function parseManagerBlockerResolveRequest(
+  input: unknown,
+): { ok: true; value: ManagerBlockerResolveRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "blocker body must be an object" };
+  if (input.status !== undefined && input.status !== "resolved" && input.status !== "dismissed") {
+    return { ok: false, error: "blocker resolve status is invalid" };
+  }
+  const resolution = typeof input.resolution === "string" ? input.resolution.trim() : "";
+  if (resolution.length > 10_000) {
+    return { ok: false, error: "blocker resolution is too long" };
+  }
+  return {
+    ok: true,
+    value: {
+      ...(resolution ? { resolution } : {}),
+      ...(input.status === "dismissed" ? { status: "dismissed" } : {}),
+    },
+  };
+}
+
 function parseManagerRoundCreateRequest(
   input: unknown,
 ): { ok: true; value: ManagerRoundCreateRequest } | { ok: false; error: string } {
@@ -8884,6 +9043,27 @@ function parseManagerProjectStatus(value: unknown): ManagerProjectStatus | undef
 
 function parseManagerDecisionStatus(value: unknown): ManagerDecisionStatus | undefined {
   if (value === "active" || value === "superseded" || value === "archived") return value;
+  return undefined;
+}
+
+function parseManagerBlockerSeverity(value: unknown): ManagerBlockerSeverity | undefined {
+  if (value === "info" || value === "warning" || value === "error") return value;
+  return undefined;
+}
+
+function parseManagerBlockerRequiredAction(
+  value: unknown,
+): ManagerBlockerRequiredAction | undefined {
+  if (value === "user" || value === "manager" || value === "worker" || value === "none") {
+    return value;
+  }
+  return undefined;
+}
+
+function parseManagerBlockerSource(value: unknown): ManagerBlockerSource | undefined {
+  if (value === "manager" || value === "browser" || value === "worker" || value === "system") {
+    return value;
+  }
   return undefined;
 }
 

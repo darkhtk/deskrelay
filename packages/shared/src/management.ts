@@ -573,6 +573,65 @@ export interface ManagerDecisionResponse {
   decision: ManagerDecision;
 }
 
+export type ManagerBlockerSeverity = "info" | "warning" | "error";
+
+export type ManagerBlockerRequiredAction = "user" | "manager" | "worker" | "none";
+
+export type ManagerBlockerStatus = "open" | "resolved" | "dismissed";
+
+export type ManagerBlockerSource = "manager" | "browser" | "worker" | "system";
+
+export interface ManagerBlocker {
+  id: string;
+  projectId: string;
+  title: string;
+  detail?: string | undefined;
+  severity: ManagerBlockerSeverity;
+  owner: string;
+  requiredAction: ManagerBlockerRequiredAction;
+  status: ManagerBlockerStatus;
+  source: ManagerBlockerSource;
+  dedupeKey?: string | undefined;
+  resolution?: string | undefined;
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string | undefined;
+}
+
+export interface ManagerBlockerCreateRequest {
+  title: string;
+  detail?: string;
+  severity?: ManagerBlockerSeverity;
+  owner?: string;
+  requiredAction?: ManagerBlockerRequiredAction;
+  source?: ManagerBlockerSource;
+  dedupeKey?: string;
+  roundId?: string;
+  agentId?: string;
+  taskId?: string;
+}
+
+export interface ManagerBlockerResolveRequest {
+  resolution?: string;
+  status?: "resolved" | "dismissed";
+}
+
+export interface ManagerBlockerListResponse {
+  generatedAt: string;
+  projectId: string;
+  blockers: ManagerBlocker[];
+  resolved: ManagerBlocker[];
+}
+
+export interface ManagerBlockerResponse {
+  generatedAt: string;
+  blocker: ManagerBlocker;
+  created?: boolean;
+}
+
 export type ManagerProjectOverviewTone = "idle" | "running" | "success" | "warning" | "error";
 
 export type ManagerProjectNextActionKind =
@@ -1233,6 +1292,7 @@ export interface ManagerSystemSummary {
 export interface ManagerEventSnapshot {
   projects?: ManagerProject[];
   decisions?: ManagerDecision[];
+  blockers?: ManagerBlocker[];
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   tasks: ManagerTask[];
@@ -1246,6 +1306,8 @@ export type ManagerEventInput =
   | { type: "project.updated"; project: ManagerProject }
   | { type: "decision.created"; decision: ManagerDecision }
   | { type: "decision.updated"; decision: ManagerDecision }
+  | { type: "blocker.created"; blocker: ManagerBlocker }
+  | { type: "blocker.updated"; blocker: ManagerBlocker }
   | { type: "round.created"; round: ManagerRound }
   | { type: "round.updated"; round: ManagerRound }
   | { type: "agent.created"; agent: ManagerAgent }

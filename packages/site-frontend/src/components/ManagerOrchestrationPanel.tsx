@@ -1,5 +1,8 @@
 import type {
   ManagerAgent,
+  ManagerBlocker,
+  ManagerBlockerCreateRequest,
+  ManagerBlockerResolveRequest,
   ManagerDecision,
   ManagerDecisionCreateRequest,
   ManagerDecisionUpdateRequest,
@@ -45,6 +48,9 @@ interface ManagerOrchestrationPanelProps {
   decisions?: ManagerDecision[] | undefined;
   archivedDecisions?: ManagerDecision[] | undefined;
   decisionBusy?: boolean | undefined;
+  blockers?: ManagerBlocker[] | undefined;
+  resolvedBlockers?: ManagerBlocker[] | undefined;
+  blockerBusy?: boolean | undefined;
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
@@ -80,6 +86,10 @@ interface ManagerOrchestrationPanelProps {
   onUpdateDecision?:
     | ((decisionId: string, input: ManagerDecisionUpdateRequest) => void)
     | undefined;
+  onCreateBlocker?: ((input: ManagerBlockerCreateRequest) => void) | undefined;
+  onResolveBlocker?:
+    | ((blockerId: string, input?: ManagerBlockerResolveRequest) => void)
+    | undefined;
 }
 
 interface TimelineEntry {
@@ -101,6 +111,7 @@ type OrchestrationInfoTab =
   | "agents"
   | "state"
   | "decisions"
+  | "blockers"
   | "graph"
   | "runs"
   | "artifacts"
@@ -112,6 +123,7 @@ const ORCHESTRATION_INFO_TABS: Array<{ id: OrchestrationInfoTab; label: string }
   { id: "agents", label: "Agents" },
   { id: "state", label: "State" },
   { id: "decisions", label: "Decisions" },
+  { id: "blockers", label: "Blockers" },
   { id: "graph", label: "Graph" },
   { id: "runs", label: "Runs" },
   { id: "artifacts", label: "Artifacts" },
@@ -307,6 +319,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   overview={props.projectOverview ?? null}
                   agents={agents()}
                   tasks={tasks()}
+                  blockers={props.blockers ?? []}
                   hiddenAgentCount={hiddenAgentCount()}
                 />
               </OrchestrationSection>
@@ -381,6 +394,20 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   activeRoundId={activeRound()?.id}
                   onCreate={props.onCreateDecision}
                   onUpdate={props.onUpdateDecision}
+                />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "blockers"}>
+              <OrchestrationSection title="Blockers" class="manager-section-blockers">
+                <BlockersView
+                  project={props.selectedProject ?? null}
+                  blockers={props.blockers ?? []}
+                  resolvedBlockers={props.resolvedBlockers ?? []}
+                  busy={props.blockerBusy}
+                  activeRoundId={activeRound()?.id}
+                  onCreate={props.onCreateBlocker}
+                  onResolve={props.onResolveBlocker}
                 />
               </OrchestrationSection>
             </Show>
@@ -618,6 +645,7 @@ const OverviewView: Component<{
   overview: ManagerProjectOverviewResponse | null;
   agents: ManagerAgent[];
   tasks: ManagerTask[];
+  blockers: ManagerBlocker[];
   hiddenAgentCount: number;
 }> = (props) => {
   const totals = createMemo(() => summarizeTotals(props.agents));
@@ -636,8 +664,19 @@ const OverviewView: Component<{
     () =>
       props.agents.find((agent) => agent.status === "blocked" || agent.status === "failed") ?? null,
   );
+  const activeBlocker = createMemo(() => pickPrimaryBlocker(props.blockers));
   const nextAction = createMemo(() => {
     if (props.overview?.nextAction) return props.overview.nextAction.label;
+    const projectBlocker = activeBlocker();
+    if (projectBlocker) {
+      if (projectBlocker.requiredAction === "user")
+        return `User action needed: ${projectBlocker.title}`;
+      if (projectBlocker.requiredAction === "worker")
+        return `Assign worker recovery: ${projectBlocker.title}`;
+      if (projectBlocker.requiredAction === "manager")
+        return `Manager should resolve: ${projectBlocker.title}`;
+      return `Track blocker: ${projectBlocker.title}`;
+    }
     const blocked = blocker();
     if (blocked) {
       return blocked.taskId
@@ -688,7 +727,7 @@ const OverviewView: Component<{
         </div>
         <div class="manager-command-metric">
           <span>Blocked</span>
-          <strong>{counts()?.blockedAgents ?? totals().blocked}</strong>
+          <strong>{props.blockers.length || counts()?.blockedAgents || totals().blocked}</strong>
         </div>
         <div class="manager-command-metric">
           <span>Artifacts</span>
@@ -700,20 +739,22 @@ const OverviewView: Component<{
           <span class="manager-overview-label">Current signal</span>
           <p>
             {props.overview?.currentSignal.detail ||
-              (blocker()
-                ? `${blocker()?.role} agent needs attention: ${
-                    blocker()?.lastError || statusLabel(blocker()?.status)
-                  }`
-                : [
-                    props.tasks.length > 0
-                      ? `${props.tasks.length} task records collected.`
-                      : "No active blocker detected.",
-                    props.hiddenAgentCount > 0
-                      ? `${props.hiddenAgentCount} quiet agents hidden.`
-                      : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" "))}
+              (activeBlocker()
+                ? `${activeBlocker()?.severity}: ${activeBlocker()?.title}`
+                : blocker()
+                  ? `${blocker()?.role} agent needs attention: ${
+                      blocker()?.lastError || statusLabel(blocker()?.status)
+                    }`
+                  : [
+                      props.tasks.length > 0
+                        ? `${props.tasks.length} task records collected.`
+                        : "No active blocker detected.",
+                      props.hiddenAgentCount > 0
+                        ? `${props.hiddenAgentCount} quiet agents hidden.`
+                        : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" "))}
           </p>
         </div>
         <div>
@@ -1369,6 +1410,204 @@ const DecisionRow: Component<{
   </article>
 );
 
+const BlockersView: Component<{
+  project: ManagerProject | null;
+  blockers: ManagerBlocker[];
+  resolvedBlockers: ManagerBlocker[];
+  busy?: boolean | undefined;
+  activeRoundId?: string | undefined;
+  onCreate?: ((input: ManagerBlockerCreateRequest) => void) | undefined;
+  onResolve?: ((blockerId: string, input?: ManagerBlockerResolveRequest) => void) | undefined;
+}> = (props) => {
+  const [creating, setCreating] = createSignal(false);
+  const [title, setTitle] = createSignal("");
+  const [detail, setDetail] = createSignal("");
+  const [severity, setSeverity] = createSignal<ManagerBlocker["severity"]>("warning");
+  const [requiredAction, setRequiredAction] =
+    createSignal<ManagerBlocker["requiredAction"]>("manager");
+  const [owner, setOwner] = createSignal("manager");
+  const [dedupeKey, setDedupeKey] = createSignal("");
+  const canCreate = createMemo(
+    () => Boolean(props.project && props.onCreate && title().trim()) && !props.busy,
+  );
+  const submit = () => {
+    if (!canCreate() || !props.onCreate) return;
+    props.onCreate({
+      title: title().trim(),
+      severity: severity(),
+      requiredAction: requiredAction(),
+      source: "browser",
+      owner: owner().trim() || "manager",
+      ...(detail().trim() ? { detail: detail().trim() } : {}),
+      ...(dedupeKey().trim() ? { dedupeKey: dedupeKey().trim() } : {}),
+      ...(props.activeRoundId ? { roundId: props.activeRoundId } : {}),
+    });
+    setCreating(false);
+    setTitle("");
+    setDetail("");
+    setSeverity("warning");
+    setRequiredAction("manager");
+    setOwner("manager");
+    setDedupeKey("");
+  };
+
+  return (
+    <div class="manager-blocker-board">
+      <div class="manager-blocker-toolbar">
+        <p class="manager-orchestration-empty">
+          Record only actionable blockers. Transient daemon/network noise should stay diagnostic
+          until it needs a clear owner.
+        </p>
+        <button
+          type="button"
+          disabled={!props.project || props.busy || !props.onCreate}
+          onClick={() => setCreating((value) => !value)}
+        >
+          {creating() ? "Cancel" : "Record blocker"}
+        </button>
+      </div>
+
+      <Show when={creating()}>
+        <form
+          class="manager-blocker-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <input
+            type="text"
+            value={title()}
+            onInput={(event) => setTitle(event.currentTarget.value)}
+            placeholder="Blocker title"
+          />
+          <textarea
+            value={detail()}
+            onInput={(event) => setDetail(event.currentTarget.value)}
+            placeholder="What is blocked, what evidence exists, and what action is required?"
+            rows={4}
+          />
+          <select
+            value={severity()}
+            onChange={(event) =>
+              setSeverity(event.currentTarget.value as ManagerBlocker["severity"])
+            }
+          >
+            <option value="info">info</option>
+            <option value="warning">warning</option>
+            <option value="error">error</option>
+          </select>
+          <select
+            value={requiredAction()}
+            onChange={(event) =>
+              setRequiredAction(event.currentTarget.value as ManagerBlocker["requiredAction"])
+            }
+          >
+            <option value="manager">manager action</option>
+            <option value="worker">worker action</option>
+            <option value="user">user action</option>
+            <option value="none">track only</option>
+          </select>
+          <input
+            type="text"
+            value={owner()}
+            onInput={(event) => setOwner(event.currentTarget.value)}
+            placeholder="owner"
+          />
+          <input
+            type="text"
+            value={dedupeKey()}
+            onInput={(event) => setDedupeKey(event.currentTarget.value)}
+            placeholder="dedupe key"
+          />
+          <button type="submit" disabled={!canCreate()}>
+            Save blocker
+          </button>
+        </form>
+      </Show>
+
+      <div class="manager-blocker-list">
+        <For each={props.blockers}>
+          {(blocker) => (
+            <BlockerRow blocker={blocker} busy={props.busy} onResolve={props.onResolve} />
+          )}
+        </For>
+        <Show when={props.blockers.length === 0}>
+          <p class="manager-orchestration-empty">No active project blockers.</p>
+        </Show>
+      </div>
+
+      <Show when={props.resolvedBlockers.length > 0}>
+        <details class="manager-blocker-resolved">
+          <summary>Resolved blockers ({props.resolvedBlockers.length})</summary>
+          <For each={props.resolvedBlockers.slice(0, 8)}>
+            {(blocker) => (
+              <BlockerRow blocker={blocker} busy={props.busy} onResolve={props.onResolve} />
+            )}
+          </For>
+        </details>
+      </Show>
+    </div>
+  );
+};
+
+const BlockerRow: Component<{
+  blocker: ManagerBlocker;
+  busy?: boolean | undefined;
+  onResolve?: ((blockerId: string, input?: ManagerBlockerResolveRequest) => void) | undefined;
+}> = (props) => (
+  <article
+    class={`manager-blocker-row manager-blocker-row-${props.blocker.severity} manager-blocker-row-${props.blocker.status}`}
+  >
+    <div class="manager-blocker-row-main">
+      <strong>{props.blocker.title}</strong>
+      <Show when={props.blocker.detail}>{(detail) => <p>{detail()}</p>}</Show>
+      <div class="manager-blocker-meta">
+        <span>{props.blocker.severity}</span>
+        <span>{props.blocker.requiredAction}</span>
+        <span>owner {props.blocker.owner}</span>
+        <time>{formatTime(props.blocker.updatedAt)}</time>
+        <Show when={props.blocker.roundId}>
+          {(roundId) => <span>round {shortId(roundId())}</span>}
+        </Show>
+        <Show when={props.blocker.dedupeKey}>
+          {(key) => <span title={key()}>key {clip(key(), 32)}</span>}
+        </Show>
+      </div>
+      <Show when={props.blocker.resolution}>
+        {(resolution) => <small class="manager-blocker-resolution">{resolution()}</small>}
+      </Show>
+    </div>
+    <div class="manager-blocker-actions">
+      <Show when={props.blocker.status === "open"}>
+        <button
+          type="button"
+          disabled={props.busy || !props.onResolve}
+          onClick={() =>
+            props.onResolve?.(props.blocker.id, {
+              resolution: "Resolved from workbench.",
+            })
+          }
+        >
+          Resolve
+        </button>
+        <button
+          type="button"
+          disabled={props.busy || !props.onResolve}
+          onClick={() =>
+            props.onResolve?.(props.blocker.id, {
+              status: "dismissed",
+              resolution: "Dismissed from workbench.",
+            })
+          }
+        >
+          Dismiss
+        </button>
+      </Show>
+    </div>
+  </article>
+);
+
 const TimelineView: Component<{ entries: TimelineEntry[] }> = (props) => (
   <ol class="manager-timeline">
     <For each={props.entries}>
@@ -1631,6 +1870,31 @@ function summarizeTotals(agents: ManagerAgent[]) {
       .length,
     blocked: agents.filter((agent) => ["blocked", "failed", "stale"].includes(agent.status)).length,
   };
+}
+
+function pickPrimaryBlocker(blockers: ManagerBlocker[]): ManagerBlocker | null {
+  if (blockers.length === 0) return null;
+  return (
+    [...blockers].sort(
+      (left, right) =>
+        blockerSeverityWeight(right.severity) - blockerSeverityWeight(left.severity) ||
+        blockerActionWeight(right.requiredAction) - blockerActionWeight(left.requiredAction) ||
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+    )[0] ?? null
+  );
+}
+
+function blockerSeverityWeight(value: ManagerBlocker["severity"]): number {
+  if (value === "error") return 3;
+  if (value === "warning") return 2;
+  return 1;
+}
+
+function blockerActionWeight(value: ManagerBlocker["requiredAction"]): number {
+  if (value === "user") return 4;
+  if (value === "manager") return 3;
+  if (value === "worker") return 2;
+  return 1;
 }
 
 function summarizeWorkerRunTotals(runs: ManagerWorkerRun[]) {

@@ -1,8 +1,10 @@
 import type {
+  ManagerBlockerResolveRequest,
   ManagerDecisionUpdateRequest,
   ManagerEvent,
   ManagerEventInput,
 } from "@deskrelay/shared";
+import type { ManagerBlockerStore } from "./manager-blocker-store.ts";
 import type { ManagerDecisionStore } from "./manager-decision-store.ts";
 import type {
   ManagerAgentPatch,
@@ -180,6 +182,33 @@ export function withManagerDecisionEvents(
       const decision = await store.update(projectId, id, patch);
       if (decision) bus.emit({ type: "decision.updated", decision });
       return decision;
+    },
+  };
+}
+
+export function withManagerBlockerEvents(
+  store: ManagerBlockerStore,
+  bus: ManagerEventBus,
+): ManagerBlockerStore {
+  return {
+    list(projectId) {
+      return store.list(projectId);
+    },
+    get(projectId, id) {
+      return store.get(projectId, id);
+    },
+    async create(projectId, input) {
+      const result = await store.create(projectId, input);
+      bus.emit({
+        type: result.created ? "blocker.created" : "blocker.updated",
+        blocker: result.blocker,
+      });
+      return result;
+    },
+    async resolve(projectId: string, id: string, input?: ManagerBlockerResolveRequest) {
+      const blocker = await store.resolve(projectId, id, input);
+      if (blocker) bus.emit({ type: "blocker.updated", blocker });
+      return blocker;
     },
   };
 }

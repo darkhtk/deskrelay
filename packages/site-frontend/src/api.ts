@@ -15,6 +15,10 @@ import type {
   ManagerAssistantStatusReportInput,
   ManagerAssistantStatusReportResponse,
   ManagerAssistantStreamEvent,
+  ManagerBlockerCreateRequest,
+  ManagerBlockerListResponse,
+  ManagerBlockerResolveRequest,
+  ManagerBlockerResponse,
   ManagerCapabilities,
   ManagerDecisionCreateRequest,
   ManagerDecisionListResponse,
@@ -424,6 +428,10 @@ export interface BrowserClientContext {
 export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
 export type {
   ManagerAcknowledgeResponse,
+  ManagerBlockerCreateRequest,
+  ManagerBlockerListResponse,
+  ManagerBlockerResolveRequest,
+  ManagerBlockerResponse,
   ManagerDecisionCreateRequest,
   ManagerDecisionListResponse,
   ManagerDecisionResponse,
@@ -708,6 +716,27 @@ export const api = {
     request<ManagerDecisionResponse>(
       "PATCH",
       `/api/manager/projects/${encodeURIComponent(id)}/decisions/${encodeURIComponent(decisionId)}`,
+      input,
+    ),
+  managerProjectBlockers: (id: string) =>
+    request<ManagerBlockerListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/blockers`,
+    ),
+  createManagerProjectBlocker: (id: string, input: ManagerBlockerCreateRequest) =>
+    request<ManagerBlockerResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/blockers`,
+      input,
+    ),
+  resolveManagerProjectBlocker: (
+    id: string,
+    blockerId: string,
+    input: ManagerBlockerResolveRequest = {},
+  ) =>
+    request<ManagerBlockerResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/blockers/${encodeURIComponent(blockerId)}/resolve`,
       input,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),

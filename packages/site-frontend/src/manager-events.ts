@@ -70,6 +70,8 @@ export function isManagerOrchestrationEvent(event: ManagerEvent): boolean {
     event.type === "project.updated" ||
     event.type === "decision.created" ||
     event.type === "decision.updated" ||
+    event.type === "blocker.created" ||
+    event.type === "blocker.updated" ||
     event.type === "round.created" ||
     event.type === "round.updated" ||
     event.type === "agent.created" ||
