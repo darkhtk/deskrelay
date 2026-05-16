@@ -197,6 +197,7 @@ Work items:
 - Strengthen the other-PC installer so it handles Git, Bun, Tailscale detection, firewall checks, stale connector cleanup, and browser opening.
 - If the browser already has an active DeskRelay tab, refresh that tab through the server event API instead of opening another tab.
 - Add structured installer reports for every step: detected, fixed, skipped, failed, and next action.
+- Collapse repeated installer failures from the same PC and failing step, and provide report cleanup.
 - Keep server URL, Site token, and registration command in one generated source of truth.
 - Ensure device removal also explains what remains on the target PC and how to uninstall it.
 
@@ -338,10 +339,9 @@ Tests:
 
 1. Finish offline-device update durability: persist desired connector update state and retry when the device becomes reachable.
 2. Add Tailscale and Windows Firewall status as separate backend diagnosis steps, but show only failed or actionable rows in the UI.
-3. Add failure report retention: keep recent N reports, collapse repeated failures from the same PC, and expose a cleanup command.
-4. Add virtual UI regression coverage for browser refresh, orchestration event replay, slash command scrolling, attachments, and cached mobile reload.
-5. Harden stale connector cleanup so the installer can classify "port occupied by old DeskRelay" separately from "port occupied by unknown process".
-6. Keep refining the orchestration workspace toward current-state vertical graphs and stable worker-session evidence.
+3. Add virtual UI regression coverage for browser refresh, orchestration event replay, slash command scrolling, attachments, and cached mobile reload.
+4. Harden stale connector cleanup so the installer can classify "port occupied by old DeskRelay" separately from "port occupied by unknown process".
+5. Keep refining the orchestration workspace toward current-state vertical graphs and stable worker-session evidence.
 
 ## Non-Goals For Now
 

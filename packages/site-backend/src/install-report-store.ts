@@ -11,6 +11,9 @@ import {
 export interface StoredInstallReport {
   id: string;
   receivedAt: string;
+  firstReceivedAt?: string;
+  lastReceivedAt?: string;
+  repeatCount?: number;
   generatedAt?: string;
   status: "succeeded" | "failed" | "unknown";
   server?: string;
@@ -22,6 +25,7 @@ export interface StoredInstallReport {
 export interface InstallReportStore {
   list(limit?: number): Promise<StoredInstallReport[]>;
   add(input: unknown): Promise<StoredInstallReport>;
+  clear?(): Promise<{ deleted: number }>;
 }
 
 export function createJsonInstallReportStore(
@@ -40,14 +44,59 @@ export function createJsonInstallReportStore(
     async add(input) {
       const report = normalizeInstallReport(input, now());
       const existing = await readReports(filePath);
-      const next = [report, ...existing.filter((item) => item.id !== report.id)].slice(
-        0,
-        maxReports,
-      );
+      const collapsed = collapseRepeatedFailure(report, existing);
+      const next = [collapsed.report, ...collapsed.remaining].slice(0, maxReports);
       await writeReports(filePath, next);
-      return report;
+      return collapsed.report;
+    },
+
+    async clear() {
+      const existing = await readReports(filePath);
+      await writeReports(filePath, []);
+      return { deleted: existing.length };
     },
   };
+}
+
+function collapseRepeatedFailure(
+  report: StoredInstallReport,
+  existing: StoredInstallReport[],
+): { report: StoredInstallReport; remaining: StoredInstallReport[] } {
+  const remaining = existing.filter((item) => item.id !== report.id);
+  if (report.status !== "failed") return { report, remaining };
+
+  const fingerprint = installReportFingerprint(report);
+  const match = remaining.find((item) => item.status === "failed" && installReportFingerprint(item) === fingerprint);
+  if (!match) return { report, remaining };
+
+  const firstReceivedAt = match.firstReceivedAt ?? match.receivedAt;
+  const repeatCount = Math.max(1, match.repeatCount ?? 1) + 1;
+  return {
+    report: {
+      ...report,
+      firstReceivedAt,
+      lastReceivedAt: report.receivedAt,
+      repeatCount,
+    },
+    remaining: remaining.filter((item) => item.id !== match.id),
+  };
+}
+
+function installReportFingerprint(report: StoredInstallReport): string {
+  const failureStep =
+    report.steps.find((step) => step.severity === "error") ??
+    report.steps.find((step) => step.status !== "ok");
+  return [
+    normalizeFingerprintPart(report.server),
+    normalizeFingerprintPart(report.label),
+    report.status,
+    normalizeFingerprintPart(failureStep?.id),
+    normalizeFingerprintPart(failureStep?.summary),
+  ].join("|");
+}
+
+function normalizeFingerprintPart(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
 function normalizeInstallReport(input: unknown, receivedAt: Date): StoredInstallReport {
@@ -57,11 +106,11 @@ function normalizeInstallReport(input: unknown, receivedAt: Date): StoredInstall
     raw.status === "succeeded" || raw.status === "failed" ? raw.status : statusFromSteps(steps);
   const generatedAt = typeof raw.generatedAt === "string" ? raw.generatedAt : undefined;
   const idSeed = [
+    randomBytes(8).toString("hex"),
     generatedAt,
     typeof raw.label === "string" ? raw.label : "",
     typeof raw.server === "string" ? raw.server : "",
     receivedAt.toISOString(),
-    randomBytes(4).toString("hex"),
   ]
     .filter(Boolean)
     .join(":");

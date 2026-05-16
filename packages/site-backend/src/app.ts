@@ -1267,6 +1267,13 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     return c.json(await options.installReportStore.add(body), 201);
   });
 
+  app.delete("/api/self/install-reports", async (c) => {
+    if (!options.installReportStore?.clear) {
+      return c.json({ error: "install report cleanup is not configured" }, 501);
+    }
+    return c.json(await options.installReportStore.clear());
+  });
+
   app.post("/api/devices", async (c) => {
     let body: unknown;
     try {
@@ -2206,6 +2213,12 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "POST",
     path: "/api/self/install-reports",
     description: "Record a connector install report.",
+  },
+  {
+    method: "DELETE",
+    path: "/api/self/install-reports",
+    description: "Clear stored connector install reports.",
+    destructive: true,
   },
   { method: "PATCH", path: "/api/devices/:id", description: "Rename one registered device." },
   {

@@ -749,6 +749,11 @@ describe("API route inventory", () => {
           [201],
         ],
         [
+          "DELETE /api/self/install-reports",
+          authedRequest("DELETE", "/api/self/install-reports"),
+          [200, 501],
+        ],
+        [
           "PATCH /api/devices/:id",
           authedRequest("PATCH", `/api/devices/${deviceId}`, { label: "Renamed PC" }),
         ],
