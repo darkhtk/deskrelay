@@ -5910,8 +5910,7 @@ dialog.approval-modal-root,
   flex: 1 1 auto;
   gap: 12px;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 2px 14px 12px;
 }
 .manager-orchestration-panel-standalone .manager-orchestration-body {
@@ -5968,6 +5967,10 @@ dialog.approval-modal-root,
   gap: 14px;
   min-height: 0;
   min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 2px;
 }
 .manager-orchestration-tab-panel-wide {
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
