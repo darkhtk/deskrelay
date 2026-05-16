@@ -100,6 +100,10 @@ import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
 } from "./device-update-queue-store.ts";
+import {
+  buildOfflineDeviceUpdateEntry,
+  buildRunningDeviceUpdateEntry,
+} from "./device-update-workflow.ts";
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
 import {
@@ -9474,16 +9478,13 @@ async function requestDaemonSystemUpdate(
   if (token) headers.authorization = `Bearer ${token}`;
   const now = new Date().toISOString();
   const existing = await queue?.get(device.id);
-  const requestedAt =
-    existing?.state === "pending_until_device_online" ? existing.requestedAt : now;
-  await queue?.upsert({
-    deviceId: device.id,
-    label: device.label,
-    daemonUrl: device.daemonUrl,
-    state: "running",
-    requestedAt,
-    startedAt: now,
+  const runningEntry = buildRunningDeviceUpdateEntry({
+    target: device,
+    existing,
+    branch,
+    now: new Date(now),
   });
+  await queue?.upsert(runningEntry);
   let res: Response;
   try {
     res = await fetchImpl(`${device.daemonUrl}/system/update`, {
@@ -9493,15 +9494,16 @@ async function requestDaemonSystemUpdate(
     });
   } catch (err) {
     const error = `cannot reach daemon: ${(err as Error).message}`;
-    await queue?.upsert({
-      deviceId: device.id,
-      label: device.label,
-      daemonUrl: device.daemonUrl,
-      state: "pending_until_device_online",
-      requestedAt,
-      error,
-      fallbackCommand,
-    });
+    await queue?.upsert(
+      buildOfflineDeviceUpdateEntry({
+        target: device,
+        existing,
+        branch,
+        now: new Date(now),
+        error,
+        fallbackCommand,
+      }),
+    );
     return Response.json(
       {
         ok: true,
@@ -9530,7 +9532,11 @@ async function requestDaemonSystemUpdate(
       label: device.label,
       daemonUrl: device.daemonUrl,
       state: "failed",
-      requestedAt,
+      requestedAt: runningEntry.requestedAt,
+      ...(typeof runningEntry.attemptCount === "number"
+        ? { attemptCount: runningEntry.attemptCount }
+        : {}),
+      ...(runningEntry.lastAttemptAt ? { lastAttemptAt: runningEntry.lastAttemptAt } : {}),
       completedAt: new Date().toISOString(),
       error: finalError,
       ...(unavailable ? { recoveryKind: "registration_required" as const, retryable: false } : {}),
@@ -9581,7 +9587,11 @@ async function requestDaemonSystemUpdate(
     label: device.label,
     daemonUrl: device.daemonUrl,
     state: finalState,
-    requestedAt,
+    requestedAt: runningEntry.requestedAt,
+    ...(typeof runningEntry.attemptCount === "number"
+      ? { attemptCount: runningEntry.attemptCount }
+      : {}),
+    ...(runningEntry.lastAttemptAt ? { lastAttemptAt: runningEntry.lastAttemptAt } : {}),
     completedAt: new Date().toISOString(),
     ...(typeof responsePayload.error === "string" ? { error: responsePayload.error } : {}),
     ...(typeof responsePayload.warning === "string" ? { warning: responsePayload.warning } : {}),

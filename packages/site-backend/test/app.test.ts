@@ -3789,6 +3789,7 @@ describe("device connector update queue", () => {
       token: TOKEN,
       deviceUpdateQueue: queue,
       selfHostUrl: "http://100.64.1.2:18193",
+      updateBranch: "api-ai-assistant",
       fetchImpl: async () => {
         throw new Error("connection refused");
       },
@@ -3821,6 +3822,11 @@ describe("device connector update queue", () => {
     expect(payload.entries).toHaveLength(1);
     expect(payload.entries[0]?.deviceId).toBe(device.id);
     expect(payload.entries[0]?.state).toBe("pending_until_device_online");
+    expect(payload.entries[0]?.attemptCount).toBe(1);
+    expect(payload.entries[0]?.lastAttemptAt).toBeTruthy();
+    expect(payload.entries[0]?.nextRetryAt).toBeTruthy();
+    expect(payload.entries[0]?.retryable).toBe(true);
+    expect(payload.entries[0]?.expectedBranch).toBe("api-ai-assistant");
   });
 
   test("retries a queued connector update when diagnostics can reach the daemon", async () => {
@@ -3860,6 +3866,8 @@ describe("device connector update queue", () => {
       daemonUrl: device.daemonUrl,
       state: "pending_until_device_online",
       requestedAt: "2026-05-11T00:00:00.000Z",
+      attemptCount: 1,
+      lastAttemptAt: "2026-05-11T00:00:00.000Z",
       error: "cannot reach daemon",
     });
 
@@ -3872,7 +3880,11 @@ describe("device connector update queue", () => {
     expect(res.status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(updateCalls).toBe(1);
-    expect((await queue.get(device.id))?.state).toBe("succeeded");
+    const entry = await queue.get(device.id);
+    expect(entry?.state).toBe("succeeded");
+    expect(entry?.requestedAt).toBe("2026-05-11T00:00:00.000Z");
+    expect(entry?.attemptCount).toBe(2);
+    expect(entry?.lastAttemptAt).toBeTruthy();
   });
 
   test("adds a fallback command to legacy branch-mismatch queue entries", async () => {

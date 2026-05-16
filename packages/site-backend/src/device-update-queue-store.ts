@@ -10,6 +10,9 @@ export interface StoredDeviceUpdateEntry {
   state: UpdateState;
   requestedAt: string;
   updatedAt: string;
+  attemptCount?: number;
+  lastAttemptAt?: string;
+  nextRetryAt?: string;
   startedAt?: string;
   completedAt?: string;
   error?: string;
@@ -110,6 +113,11 @@ function normalizeInput(input: DeviceUpdateEntryInput, now: Date): StoredDeviceU
     state: input.state,
     requestedAt: input.requestedAt || now.toISOString(),
     updatedAt: input.updatedAt || now.toISOString(),
+    ...(typeof input.attemptCount === "number" && Number.isFinite(input.attemptCount)
+      ? { attemptCount: Math.max(0, Math.floor(input.attemptCount)) }
+      : {}),
+    ...(input.lastAttemptAt ? { lastAttemptAt: input.lastAttemptAt } : {}),
+    ...(input.nextRetryAt ? { nextRetryAt: input.nextRetryAt } : {}),
     ...(input.label ? { label: input.label } : {}),
     ...(input.daemonUrl ? { daemonUrl: input.daemonUrl } : {}),
     ...(input.startedAt ? { startedAt: input.startedAt } : {}),
@@ -155,6 +163,11 @@ function normalizeStoredEntry(input: unknown): StoredDeviceUpdateEntry | null {
     updatedAt,
     ...(typeof input.label === "string" ? { label: input.label } : {}),
     ...(typeof input.daemonUrl === "string" ? { daemonUrl: input.daemonUrl } : {}),
+    ...(typeof input.attemptCount === "number" && Number.isFinite(input.attemptCount)
+      ? { attemptCount: Math.max(0, Math.floor(input.attemptCount)) }
+      : {}),
+    ...(typeof input.lastAttemptAt === "string" ? { lastAttemptAt: input.lastAttemptAt } : {}),
+    ...(typeof input.nextRetryAt === "string" ? { nextRetryAt: input.nextRetryAt } : {}),
     ...(typeof input.startedAt === "string" ? { startedAt: input.startedAt } : {}),
     ...(typeof input.completedAt === "string" ? { completedAt: input.completedAt } : {}),
     ...(typeof input.error === "string" ? { error: input.error } : {}),
