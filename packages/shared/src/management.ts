@@ -1120,6 +1120,18 @@ export interface ManagerAssistantChatContext {
   sessionId?: string;
   sessionTitle?: string;
   cwd?: string;
+  projectId?: string;
+  projectName?: string;
+  projectStatus?: ManagerProjectStatus;
+  projectCwd?: string;
+  projectGoal?: string;
+  activeRoundId?: string;
+  activeRoundTitle?: string;
+  activeRoundStatus?: ManagerRoundStatus;
+  projectDecisions?: string[];
+  projectBlockers?: string[];
+  projectArtifacts?: string[];
+  projectWarnings?: string[];
 }
 
 export interface ManagerAssistantDecisionOption {

@@ -17,6 +17,7 @@ import {
   type ManagerAgentMessageResponse,
   type ManagerAgentRole,
   type ManagerAgentStatus,
+  type ManagerArtifact,
   type ManagerArtifactKind,
   type ManagerArtifactListResponse,
   type ManagerArtifactResponse,
@@ -40,6 +41,7 @@ import {
   type ManagerAssistantStreamEvent,
   type ManagerAssistantStreamStatus,
   type ManagerAssistantStructuredState,
+  type ManagerBlocker,
   type ManagerBlockerCreateRequest,
   type ManagerBlockerListResponse,
   type ManagerBlockerRequiredAction,
@@ -48,6 +50,7 @@ import {
   type ManagerBlockerSeverity,
   type ManagerBlockerSource,
   type ManagerCapabilities,
+  type ManagerDecision,
   type ManagerDecisionCreateRequest,
   type ManagerDecisionListResponse,
   type ManagerDecisionResponse,
@@ -236,6 +239,14 @@ export interface ManagerAssistantOptions {
   runner?: (input: ManagerAssistantRunInput) => Promise<ManagerAssistantRunResult>;
 }
 
+interface ManagerAssistantContextStores {
+  projectStore: ManagerProjectStore;
+  orchestrationStore: ManagerOrchestrationStore;
+  decisionStore: ManagerDecisionStore;
+  blockerStore: ManagerBlockerStore;
+  artifactStore: ManagerArtifactStore;
+}
+
 export interface ManagerAssistantWorkspaceResponse {
   cwd: string;
   instructionsPath: string;
@@ -318,6 +329,13 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       ),
     managerEventBus,
   );
+  const managerAssistantContextStores: ManagerAssistantContextStores = {
+    projectStore: managerProjectStore,
+    orchestrationStore: managerOrchestrationStore,
+    decisionStore: managerDecisionStore,
+    blockerStore: managerBlockerStore,
+    artifactStore: managerArtifactStore,
+  };
   const managerRuntimeRecovery = recoverStaleManagerRuntimeState(
     managerTaskStore,
     managerOrchestrationStore,
@@ -1067,7 +1085,14 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const request = parseManagerAssistantChatRequest(body);
     if (!request.ok) return c.json({ error: request.error }, 400);
     try {
-      return c.json(await runManagerAssistantChat(request.value, options, c.req.url));
+      return c.json(
+        await runManagerAssistantChat(
+          request.value,
+          options,
+          c.req.url,
+          managerAssistantContextStores,
+        ),
+      );
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
@@ -1082,7 +1107,12 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
     const request = parseManagerAssistantChatRequest(body);
     if (!request.ok) return c.json({ error: request.error }, 400);
-    return streamManagerAssistantChat(request.value, options, c.req.url);
+    return streamManagerAssistantChat(
+      request.value,
+      options,
+      c.req.url,
+      managerAssistantContextStores,
+    );
   });
 
   app.get("/api/manager/workers", (c) => {
@@ -1925,6 +1955,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       device,
       options,
       requestUrl: c.req.url,
+      contextStores: managerAssistantContextStores,
     });
     if (!prepared.ok) return c.json({ error: prepared.error }, prepared.status as never);
     return proxyJson(
@@ -5648,10 +5679,97 @@ function redactManagerSensitiveText(value: string): string {
     );
 }
 
+async function enrichManagerAssistantContext(
+  input: ManagerAssistantChatContext | undefined,
+  stores: ManagerAssistantContextStores | undefined,
+): Promise<ManagerAssistantChatContext | undefined> {
+  const context: ManagerAssistantChatContext = input ? { ...input } : {};
+  const warnings = [...(context.projectWarnings ?? [])];
+  if (!context.projectId || !stores) {
+    return Object.keys(context).length ? context : undefined;
+  }
+  try {
+    const project = await stores.projectStore.get(context.projectId);
+    if (!project) {
+      warnings.push(
+        `selected project ${context.projectId} was not found in the manager project store`,
+      );
+      context.projectWarnings = warnings.slice(0, 5);
+      return context;
+    }
+    context.projectId = project.id;
+    context.projectName = project.name;
+    context.projectStatus = project.status;
+    context.projectCwd = project.cwd;
+    if (project.goal.trim()) context.projectGoal = project.goal;
+    const [rounds, decisions, blockers, artifacts] = await Promise.all([
+      stores.orchestrationStore.listRounds(),
+      stores.decisionStore.list(project.id),
+      stores.blockerStore.list(project.id),
+      stores.artifactStore.list(project.id),
+    ]);
+    const activeRound =
+      (project.activeRoundId
+        ? rounds.find((round) => round.id === project.activeRoundId)
+        : undefined) ??
+      (context.activeRoundId
+        ? rounds.find((round) => round.id === context.activeRoundId)
+        : undefined);
+    if (activeRound) {
+      context.activeRoundId = activeRound.id;
+      context.activeRoundTitle = activeRound.title;
+      context.activeRoundStatus = activeRound.status;
+    }
+    const activeDecisionLines = decisions.decisions
+      .filter((decision) => decision.status === "active")
+      .slice(0, 5)
+      .map(formatManagerDecisionContextLine);
+    if (activeDecisionLines.length) context.projectDecisions = activeDecisionLines;
+    const openBlockerLines = blockers.blockers.slice(0, 5).map(formatManagerBlockerContextLine);
+    if (openBlockerLines.length) context.projectBlockers = openBlockerLines;
+    const activeArtifactLines = artifacts.artifacts
+      .slice(0, 8)
+      .map(formatManagerArtifactContextLine);
+    if (activeArtifactLines.length) context.projectArtifacts = activeArtifactLines;
+  } catch (error) {
+    warnings.push(`project context enrichment failed: ${errorMessage(error)}`);
+  }
+  if (warnings.length) context.projectWarnings = warnings.slice(0, 5);
+  return Object.keys(context).length ? context : undefined;
+}
+
+function formatManagerDecisionContextLine(decision: ManagerDecision): string {
+  const detail = compactManagerContextText(decision.detail, 180);
+  return `${decision.title} (${decision.status})${detail ? ` - ${detail}` : ""}`;
+}
+
+function formatManagerBlockerContextLine(blocker: ManagerBlocker): string {
+  const detail = compactManagerContextText(blocker.detail ?? "", 160);
+  return `${blocker.title} (${blocker.severity}, action=${blocker.requiredAction}, owner=${blocker.owner})${
+    detail ? ` - ${detail}` : ""
+  }`;
+}
+
+function formatManagerArtifactContextLine(artifact: ManagerArtifact): string {
+  const note = compactManagerContextText(artifact.note ?? "", 120);
+  return `${artifact.path} (${artifact.kind}, ${artifact.status}, owner=${artifact.owner})${
+    note ? ` - ${note}` : ""
+  }`;
+}
+
+function compactManagerContextText(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  return compact.length > maxLength
+    ? `${compact.slice(0, Math.max(0, maxLength - 3))}...`
+    : compact;
+}
+
 async function runManagerAssistantChat(
   request: ManagerAssistantChatRequest,
   options: SiteAppOptions,
   requestUrl: string,
+  contextStores?: ManagerAssistantContextStores,
 ): Promise<ManagerAssistantChatResponse> {
   const started = Date.now();
   const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
@@ -5659,13 +5777,14 @@ async function runManagerAssistantChat(
   const workspace = await ensureManagerAssistantWorkspace(repoRoot, apiBaseUrl);
   const cwd = options.managerAssistant?.runner ? repoRoot : workspace.cwd;
   const history = normalizeAssistantHistory(request.history);
+  const context = await enrichManagerAssistantContext(request.context, contextStores);
   const runner =
     options.managerAssistant?.runner ??
     ((input: ManagerAssistantRunInput) => runDefaultManagerAssistantCli(input, options));
   const input: ManagerAssistantRunInput = {
     message: request.message.trim(),
     history,
-    context: request.context,
+    context,
     cwd,
     repoRoot,
     instructionsPath: workspace.instructionsPath,
@@ -5698,6 +5817,7 @@ function streamManagerAssistantChat(
   request: ManagerAssistantChatRequest,
   options: SiteAppOptions,
   requestUrl: string,
+  contextStores?: ManagerAssistantContextStores,
 ): Response {
   const encoder = new TextEncoder();
   let closed = false;
@@ -5728,10 +5848,11 @@ function streamManagerAssistantChat(
           const workspace = await ensureManagerAssistantWorkspace(repoRoot, apiBaseUrl);
           const cwd = options.managerAssistant?.runner ? repoRoot : workspace.cwd;
           const history = normalizeAssistantHistory(request.history);
+          const context = await enrichManagerAssistantContext(request.context, contextStores);
           const input: ManagerAssistantRunInput = {
             message: request.message.trim(),
             history,
-            context: request.context,
+            context,
             cwd,
             repoRoot,
             instructionsPath: workspace.instructionsPath,
@@ -6493,6 +6614,13 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
       "- If the user says continue, proceed, keep going, or loop, run the managed Autonomous Supervision Loop instead of returning only a plan.",
     ].join("\n"),
     [
+      "## Project Context Rule",
+      "- For orchestration or project-management work, the Current Browser Context's current project is the primary operating scope.",
+      "- If a current project id is present, verify it with manager project APIs before destructive or broad mutations.",
+      "- If no current project is present and the request needs project scope, create or select a manager project before launching rounds, workers, decisions, blockers, or artifacts.",
+      "- If browser-selected cwd/session and current project cwd disagree, inspect first and report the mismatch instead of guessing.",
+    ].join("\n"),
+    [
       "## Autonomous Loop Reminder",
       "- A loop is real only if you execute observable steps in this turn or create observable manager tasks.",
       "- For launched tasks, observe with `GET /api/manager/tasks/:id/observe`; if still active, continue with `GET /api/manager/tasks/:id/stream`.",
@@ -7178,6 +7306,13 @@ function buildManagedManagerAssistantInstructions(input: {
     "5. You reported the worker task id(s), observed result, verification evidence, and remaining risk.",
     "",
     "If the work only used your own reasoning, direct file edits, or PowerShell scripts, describe it as supervisor inspection or mechanical verification, not as orchestration success.",
+    "",
+    "## Manager Project Context",
+    "",
+    "- For orchestration and project-management work, the selected manager project is the primary operating scope.",
+    "- Browser context may include the selected project id, cwd, active round, open blockers, active decisions, and active artifacts. Treat it as a navigation hint, then verify with manager project APIs before mutation.",
+    "- If no project is selected but the user's request needs project scope, create or select a manager project before launching rounds, workers, decisions, blockers, or artifacts.",
+    "- If the selected session/cwd and selected project cwd disagree, inspect and report the mismatch instead of guessing.",
     "",
     "## Common Behavior Contract",
     "",
@@ -8743,6 +8878,38 @@ function normalizeAssistantContext(input: unknown): ManagerAssistantChatContext 
   if (typeof input.cwd === "string" && input.cwd.trim()) {
     context.cwd = input.cwd.trim().slice(0, 2_000);
   }
+  if (typeof input.projectId === "string" && input.projectId.trim()) {
+    context.projectId = input.projectId.trim().slice(0, 200);
+  }
+  if (typeof input.projectName === "string" && input.projectName.trim()) {
+    context.projectName = input.projectName.trim().slice(0, 500);
+  }
+  if (isManagerProjectStatusValue(input.projectStatus)) {
+    context.projectStatus = input.projectStatus;
+  }
+  if (typeof input.projectCwd === "string" && input.projectCwd.trim()) {
+    context.projectCwd = input.projectCwd.trim().slice(0, 2_000);
+  }
+  if (typeof input.projectGoal === "string" && input.projectGoal.trim()) {
+    context.projectGoal = input.projectGoal.trim().slice(0, 2_000);
+  }
+  if (typeof input.activeRoundId === "string" && input.activeRoundId.trim()) {
+    context.activeRoundId = input.activeRoundId.trim().slice(0, 200);
+  }
+  if (typeof input.activeRoundTitle === "string" && input.activeRoundTitle.trim()) {
+    context.activeRoundTitle = input.activeRoundTitle.trim().slice(0, 500);
+  }
+  if (isManagerRoundStatusValue(input.activeRoundStatus)) {
+    context.activeRoundStatus = input.activeRoundStatus;
+  }
+  const projectDecisions = normalizeAssistantContextStringList(input.projectDecisions);
+  const projectBlockers = normalizeAssistantContextStringList(input.projectBlockers);
+  const projectArtifacts = normalizeAssistantContextStringList(input.projectArtifacts);
+  const projectWarnings = normalizeAssistantContextStringList(input.projectWarnings);
+  if (projectDecisions.length) context.projectDecisions = projectDecisions;
+  if (projectBlockers.length) context.projectBlockers = projectBlockers;
+  if (projectArtifacts.length) context.projectArtifacts = projectArtifacts;
+  if (projectWarnings.length) context.projectWarnings = projectWarnings;
   return Object.keys(context).length ? context : undefined;
 }
 
@@ -8759,7 +8926,62 @@ function formatManagerAssistantBrowserContext(
   if (context.sessionId) lines.push(`- selected session id: ${context.sessionId}`);
   if (context.sessionTitle) lines.push(`- selected session title: ${context.sessionTitle}`);
   if (context.cwd) lines.push(`- selected/current cwd: ${context.cwd}`);
+  if (context.projectId) lines.push(`- current project id: ${context.projectId}`);
+  if (context.projectName) lines.push(`- current project name: ${context.projectName}`);
+  if (context.projectStatus) lines.push(`- current project status: ${context.projectStatus}`);
+  if (context.projectCwd) lines.push(`- current project cwd: ${context.projectCwd}`);
+  if (context.projectGoal) lines.push(`- current project goal: ${context.projectGoal}`);
+  if (context.activeRoundId) lines.push(`- active round id: ${context.activeRoundId}`);
+  if (context.activeRoundTitle) lines.push(`- active round title: ${context.activeRoundTitle}`);
+  if (context.activeRoundStatus) lines.push(`- active round status: ${context.activeRoundStatus}`);
+  appendManagerAssistantContextList(lines, "active project decisions", context.projectDecisions);
+  appendManagerAssistantContextList(lines, "open project blockers", context.projectBlockers);
+  appendManagerAssistantContextList(lines, "active project artifacts", context.projectArtifacts);
+  appendManagerAssistantContextList(lines, "project context warnings", context.projectWarnings);
   return lines.join("\n");
+}
+
+function appendManagerAssistantContextList(
+  lines: string[],
+  label: string,
+  values: string[] | undefined,
+): void {
+  if (!values?.length) return;
+  lines.push(`- ${label}:`);
+  for (const value of values.slice(0, 8)) lines.push(`  - ${value}`);
+}
+
+function normalizeAssistantContextStringList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim().replace(/\s+/g, " ").slice(0, 500))
+    .slice(0, 8);
+}
+
+function isManagerProjectStatusValue(value: unknown): value is ManagerProjectStatus {
+  return (
+    value === "planning" ||
+    value === "running" ||
+    value === "blocked" ||
+    value === "reviewing" ||
+    value === "completed" ||
+    value === "archived"
+  );
+}
+
+function isManagerRoundStatusValue(value: unknown): value is ManagerRoundStatus {
+  return (
+    value === "planned" ||
+    value === "dispatching" ||
+    value === "running" ||
+    value === "collecting" ||
+    value === "reviewing" ||
+    value === "completed" ||
+    value === "blocked" ||
+    value === "failed" ||
+    value === "cancelled"
+  );
 }
 
 function normalizeAssistantState(input: unknown): ManagerAssistantStructuredState | undefined {
@@ -11220,7 +11442,12 @@ function isServerDevice(device: Device): boolean {
 
 async function prepareBehaviorRequestBodyForProxy(
   body: string,
-  input: { device: Device; options: SiteAppOptions; requestUrl: string },
+  input: {
+    device: Device;
+    options: SiteAppOptions;
+    requestUrl: string;
+    contextStores?: ManagerAssistantContextStores;
+  },
 ): Promise<{ ok: true; body: string } | { ok: false; status: number; error: string }> {
   if (!body.trim()) return { ok: true, body };
   let parsed: unknown;
@@ -11252,6 +11479,10 @@ async function prepareBehaviorRequestBodyForProxy(
     typeof conversation.sessionId === "string" && conversation.sessionId.trim()
       ? conversation.sessionId.trim()
       : undefined;
+  const managerBrowserContext = await enrichManagerAssistantContext(
+    normalizeAssistantContext(parsed.params.managerBrowserContext),
+    input.contextStores,
+  );
   const params = {
     ...parsed.params,
     cwd: workspace.cwd,
@@ -11261,6 +11492,7 @@ async function prepareBehaviorRequestBodyForProxy(
     managerInstructionsPath: workspace.instructionsPath,
     managerSiteToken: input.options.token ?? "",
     managerWorkspaceScope: "unrestricted",
+    ...(managerBrowserContext ? { managerBrowserContext } : {}),
     permissionMode: "bypassPermissions",
     securityProfile: "relaxed",
     ...(requestSessionId

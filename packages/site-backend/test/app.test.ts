@@ -3836,6 +3836,64 @@ process.stdin.on("end", () => {
     expect(prompt).toContain("batch-get");
   });
 
+  test("manager assistant prompt includes current project context", () => {
+    const prompt = buildManagerAssistantPrompt({
+      message: "continue orchestration",
+      history: [],
+      context: {
+        deviceId: "dev_server",
+        deviceLabel: "HOMEDEV (Server)",
+        projectId: "proj_1",
+        projectName: "Orchestration Lab",
+        projectStatus: "running",
+        projectCwd: "C:\\Users\\darkh\\Projects\\orchestration-lab",
+        projectGoal: "Build a reliable orchestration framework",
+        activeRoundId: "round_1",
+        activeRoundTitle: "R1 protocol hardening",
+        activeRoundStatus: "running",
+        projectDecisions: ["Use worker agents for implementation rounds"],
+        projectBlockers: ["Firewall verification blocked (warning, action=manager, owner=manager)"],
+        projectArtifacts: ["PROTOCOL.md (protocol, active, owner=protocol-agent)"],
+      },
+      cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+      repoRoot: "C:\\repo",
+      instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+      apiBaseUrl: "http://127.0.0.1:18193",
+    });
+
+    expect(prompt).toContain("- current project id: proj_1");
+    expect(prompt).toContain("- current project name: Orchestration Lab");
+    expect(prompt).toContain("- active round title: R1 protocol hardening");
+    expect(prompt).toContain("- active project decisions:");
+    expect(prompt).toContain("Use worker agents for implementation rounds");
+    expect(prompt).toContain("- open project blockers:");
+    expect(prompt).toContain("- active project artifacts:");
+  });
+
+  test("manager assistant context warns when the selected project is stale", async () => {
+    let capturedContext: unknown;
+    const serverSetup = makeApp({
+      managerAssistant: {
+        runner: async (input) => {
+          capturedContext = input.context;
+          return { text: "ok", command: "mock-manager" };
+        },
+      },
+    });
+
+    const res = await serverSetup.app.fetch(
+      authedRequest("POST", "/api/manager/assistant/chat", {
+        message: "status",
+        context: { projectId: "missing_project" },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const context = capturedContext as { projectId?: string; projectWarnings?: string[] };
+    expect(context.projectId).toBe("missing_project");
+    expect(context.projectWarnings?.[0]).toContain("not found");
+  });
+
   test("manager assistant prompt preserves pending decisions for short replies", () => {
     const longLastReply = [
       "확인된 사실 보고합니다.",
@@ -5178,7 +5236,43 @@ describe("daemon proxy", () => {
   test("manager-mode behavior requests are forced onto the server connector workspace", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-behavior-"));
     try {
-      const serverSetup = makeApp({ managerAssistant: { cwd } });
+      const managerProjectStore = createInMemoryManagerProjectStore();
+      const managerDecisionStore = createInMemoryManagerDecisionStore();
+      const managerBlockerStore = createInMemoryManagerBlockerStore();
+      const managerArtifactStore = createInMemoryManagerArtifactStore();
+      const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+      const project = await managerProjectStore.create({
+        cwd: "C:\\work\\orchestration-lab",
+        name: "Orchestration Lab",
+        goal: "Build a reliable orchestration framework",
+      });
+      const round = await managerOrchestrationStore.createRound({
+        projectId: project.id,
+        title: "R1 protocol hardening",
+        objective: "Harden orchestration protocol",
+      });
+      await managerProjectStore.update(project.id, { activeRoundId: round.id });
+      await managerDecisionStore.create(project.id, {
+        title: "Use worker agents",
+        detail: "Substantive implementation work must be delegated.",
+      });
+      await managerBlockerStore.create(project.id, {
+        title: "Firewall verification",
+        detail: "Remote connector verification is not complete.",
+        severity: "warning",
+        requiredAction: "manager",
+      });
+      await managerArtifactStore.upsertMany(project.id, [
+        { path: "PROTOCOL.md", kind: "protocol", owner: "protocol-agent" },
+      ]);
+      const serverSetup = makeApp({
+        managerAssistant: { cwd },
+        managerProjectStore,
+        managerDecisionStore,
+        managerBlockerStore,
+        managerArtifactStore,
+        managerOrchestrationStore,
+      });
       const device = serverSetup.registry.register({
         daemonUrl: "http://127.0.0.1:18191",
         authToken: "daemon-token",
@@ -5193,6 +5287,7 @@ describe("daemon proxy", () => {
             cwd: "C:\\wrong",
             message: "관리자 작업",
             managerMode: true,
+            managerBrowserContext: { projectId: project.id, deviceId: "dev_browser" },
             permissionMode: "default",
             conversationId: "browser-value",
           },
@@ -5215,6 +5310,21 @@ describe("daemon proxy", () => {
       expect(forwarded.params?.managerInstructionsPath).toBe(
         join(cwd, ".deskrelay", "manager-assistant", "CLAUDE.md"),
       );
+      const context = forwarded.params?.managerBrowserContext as Record<string, unknown>;
+      expect(context.projectId).toBe(project.id);
+      expect(context.projectName).toBe("Orchestration Lab");
+      expect(context.projectCwd).toBe("C:\\work\\orchestration-lab");
+      expect(context.activeRoundId).toBe(round.id);
+      expect(context.activeRoundTitle).toBe("R1 protocol hardening");
+      expect(context.projectDecisions).toEqual([
+        "Use worker agents (active) - Substantive implementation work must be delegated.",
+      ]);
+      expect(context.projectBlockers).toEqual([
+        "Firewall verification (warning, action=manager, owner=manager) - Remote connector verification is not complete.",
+      ]);
+      expect(context.projectArtifacts).toEqual([
+        "PROTOCOL.md (protocol, active, owner=protocol-agent)",
+      ]);
       expect(forwarded.params?.conversationId).toBe("browser-value");
     } finally {
       rmSync(cwd, { recursive: true, force: true });

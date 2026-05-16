@@ -401,10 +401,34 @@ function managerBrowserContextLines(value: unknown): string[] {
     ["selected cwd", input.cwd],
     ["selected session id", input.sessionId],
     ["selected session title", input.sessionTitle],
+    ["current project id", input.projectId],
+    ["current project name", input.projectName],
+    ["current project status", input.projectStatus],
+    ["current project cwd", input.projectCwd],
+    ["current project goal", input.projectGoal],
+    ["active round id", input.activeRoundId],
+    ["active round title", input.activeRoundTitle],
+    ["active round status", input.activeRoundStatus],
   ];
-  return fields
+  const lines = fields
     .filter(([, field]) => typeof field === "string" && field.trim().length > 0)
     .map(([label, field]) => `- ${label}: ${(field as string).trim().slice(0, 500)}`);
+  appendManagerBrowserContextList(lines, "active project decisions", input.projectDecisions);
+  appendManagerBrowserContextList(lines, "open project blockers", input.projectBlockers);
+  appendManagerBrowserContextList(lines, "active project artifacts", input.projectArtifacts);
+  appendManagerBrowserContextList(lines, "project context warnings", input.projectWarnings);
+  return lines;
+}
+
+function appendManagerBrowserContextList(lines: string[], label: string, value: unknown): void {
+  if (!Array.isArray(value)) return;
+  const items = value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim().replace(/\s+/g, " ").slice(0, 500))
+    .slice(0, 8);
+  if (!items.length) return;
+  lines.push(`- ${label}:`);
+  for (const item of items) lines.push(`  - ${item}`);
 }
 
 async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Promise<void> {

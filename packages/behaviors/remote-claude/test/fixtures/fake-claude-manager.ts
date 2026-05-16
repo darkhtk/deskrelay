@@ -9,6 +9,10 @@ const observed = {
   permissionMode: permissionIndex >= 0 ? argv[permissionIndex + 1] : null,
   hasManagerPrompt:
     typeof promptArg === "string" ? promptArg.includes("DeskRelay manager mode is active") : false,
+  hasProjectContext:
+    typeof promptArg === "string"
+      ? promptArg.includes("current project name: Orchestration Lab")
+      : false,
   apiBase: process.env.DESKRELAY_MANAGER_API_BASE ?? null,
   token: process.env.DESKRELAY_SITE_TOKEN ?? null,
   repoRoot: process.env.DESKRELAY_REPOSITORY_ROOT ?? null,

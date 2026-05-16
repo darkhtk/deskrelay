@@ -238,6 +238,25 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     },
   );
 
+  const managerAssistantContext = createMemo<ManagerAssistantChatContext | null>(() => {
+    const context: ManagerAssistantChatContext = { ...(props.context ?? {}) };
+    const project = selectedProject();
+    if (project) {
+      context.projectId = project.id;
+      context.projectName = project.name;
+      context.projectStatus = project.status;
+      context.projectCwd = project.cwd;
+      if (project.goal.trim()) context.projectGoal = project.goal;
+    }
+    const round = projectOverview()?.activeRound ?? activeRound();
+    if (round) {
+      context.activeRoundId = round.id;
+      context.activeRoundTitle = round.title;
+      context.activeRoundStatus = round.status;
+    }
+    return Object.keys(context).length ? context : null;
+  });
+
   createEffect(() => {
     const project = selectedProject();
     const currentId = selectedProjectId();
@@ -686,7 +705,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onKeyDown={props.onAssistantResizeKeyDown}
         />
         <ManagerAssistant
-          context={props.context ?? null}
+          context={managerAssistantContext()}
           devices={props.devices ?? []}
           showOrchestrationPanel={false}
         />

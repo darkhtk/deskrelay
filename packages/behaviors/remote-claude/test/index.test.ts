@@ -199,7 +199,12 @@ describe("remote-claude behavior chat request", () => {
       managerApiBaseUrl: "http://site.local",
       managerRepoRoot: "C:\\repo",
       managerSiteToken: "site-token",
-      managerBrowserContext: { deviceId: "dev_1", sessionId: "session_1" },
+      managerBrowserContext: {
+        deviceId: "dev_1",
+        sessionId: "session_1",
+        projectName: "Orchestration Lab",
+        projectDecisions: ["Use workers"],
+      },
       permissionMode: "default",
       command: ["bun", fixture],
     });
@@ -217,6 +222,7 @@ describe("remote-claude behavior chat request", () => {
     const observed = JSON.parse(assistant?.message?.content?.[0]?.text ?? "{}") as {
       permissionMode?: string;
       hasManagerPrompt?: boolean;
+      hasProjectContext?: boolean;
       apiBase?: string;
       token?: string;
       repoRoot?: string;
@@ -224,6 +230,7 @@ describe("remote-claude behavior chat request", () => {
     };
     expect(observed.permissionMode).toBe("bypassPermissions");
     expect(observed.hasManagerPrompt).toBe(true);
+    expect(observed.hasProjectContext).toBe(true);
     expect(observed.apiBase).toBe("http://site.local");
     expect(observed.token).toBe("site-token");
     expect(observed.repoRoot).toBe("C:\\repo");
