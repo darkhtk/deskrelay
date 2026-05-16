@@ -446,6 +446,12 @@ GET  /api/manager/projects/:projectId/summary.md
 9. Phase 9: Hygiene / Recovery
 10. Phase 10: Export / Import
 
+## 2026-05-16 Progress Update
+
+- Phase 1 through Phase 8 are implemented on `api-ai-assistant`.
+- Phase 9 first slice is implemented: project-scoped hygiene report plus cleanup that records deduplicated recovery blockers without deleting active task/run state.
+- The next planned implementation phase is Phase 10: project export/import and summary generation.
+
 순서를 이렇게 두는 이유는 프로젝트 모델과 연결 관계가 먼저 안정돼야 이후 지능형 기능이 덜 지저분해지기 때문이다.
 
 ## 우선 구현 범위
@@ -565,4 +571,3 @@ happy path만 보지 않는다.
 3. project API 추가
 4. 작업 탭 Project Header 추가
 5. 프로젝트 없음/선택/새로고침 유지 테스트
-

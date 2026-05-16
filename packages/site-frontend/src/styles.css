@@ -7107,6 +7107,15 @@ body.manager-orchestration-resizing {
   display: grid;
   gap: 10px;
 }
+.manager-hygiene-group {
+  display: grid;
+  gap: 8px;
+}
+.manager-hygiene-group + .manager-hygiene-head,
+.manager-hygiene-group + .manager-hygiene-group {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 10px;
+}
 .manager-hygiene-head,
 .manager-hygiene-actions,
 .manager-hygiene-categories,

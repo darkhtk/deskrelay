@@ -66,6 +66,11 @@ import {
   type ManagerNetworkStatus,
   type ManagerProject,
   type ManagerProjectCreateRequest,
+  type ManagerProjectHygieneCleanupRequest,
+  type ManagerProjectHygieneCleanupResponse,
+  type ManagerProjectHygieneIssue,
+  type ManagerProjectHygieneIssueKind,
+  type ManagerProjectHygieneReport,
   type ManagerProjectListResponse,
   type ManagerProjectOverviewAction,
   type ManagerProjectOverviewResponse,
@@ -311,6 +316,16 @@ const MANAGER_PROTOCOL_CORE_FILES: Array<{
 ];
 const MANAGER_PROTOCOL_MAX_FILE_BYTES = 200_000;
 const MANAGER_PROTOCOL_EXCERPT_CHARS = 1_600;
+const MANAGER_PROJECT_HYGIENE_ISSUE_KINDS: ManagerProjectHygieneIssueKind[] = [
+  "missing-task",
+  "missing-agent",
+  "orphan-task",
+  "stale-agent",
+  "synthetic-failure",
+  "missing-session",
+  "missing-active-round",
+  "archived-active-state",
+];
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
 const MANAGER_ORCHESTRATION_FILE = "orchestration-state.json";
 const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
@@ -689,6 +704,53 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         now: new Date(),
       }),
     );
+  });
+
+  app.get("/api/manager/projects/:id/hygiene", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      return c.json(
+        await buildManagerProjectHygieneReport({
+          project,
+          orchestrationStore: managerOrchestrationStore,
+          taskStore: managerTaskStore,
+          blockerStore: managerBlockerStore,
+          now: new Date(),
+        }),
+      );
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/api/manager/projects/:id/hygiene/cleanup", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown = {};
+    try {
+      const text = await c.req.text();
+      body = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProjectHygieneCleanupRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      const result = await cleanupManagerProjectHygiene({
+        project,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        blockerStore: managerBlockerStore,
+        request: parsed.value,
+        now: new Date(),
+      });
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
   });
 
   app.get("/api/manager/projects/:id/decisions", async (c) => {
@@ -2487,6 +2549,17 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/projects/:id/hygiene",
+    description: "Detect stale, orphaned, and inconsistent orchestration records for one project.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/hygiene/cleanup",
+    description:
+      "Preview or record deduplicated blockers for project hygiene recovery without deleting active work.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/projects/:id/decisions",
     description: "List recorded decisions for one manager project.",
   },
@@ -3916,6 +3989,290 @@ async function buildManagerProjectOverview(
     ...(activeRound ? { activeRound } : {}),
     ...(lastUpdateAt ? { lastUpdateAt } : {}),
   };
+}
+
+interface ManagerProjectHygieneInput {
+  project: ManagerProject;
+  orchestrationStore: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  blockerStore: ManagerBlockerStore;
+  now: Date;
+}
+
+async function buildManagerProjectHygieneReport(
+  input: ManagerProjectHygieneInput,
+): Promise<ManagerProjectHygieneReport> {
+  const [ledger, rounds, blockers] = await Promise.all([
+    buildManagerWorkerRunLedger({
+      orchestrationStore: input.orchestrationStore,
+      taskStore: input.taskStore,
+      projectId: input.project.id,
+      limit: 500,
+      now: input.now,
+    }),
+    input.orchestrationStore.listRounds(),
+    input.blockerStore.list(input.project.id),
+  ]);
+  const openBlockerByDedupeKey = new Map(
+    blockers.blockers
+      .filter((blocker) => blocker.dedupeKey)
+      .map((blocker) => [blocker.dedupeKey as string, blocker]),
+  );
+  const issues: ManagerProjectHygieneIssue[] = [];
+  for (const run of ledger.runs) {
+    for (const issue of run.integrity) {
+      if (issue === "ok") continue;
+      issues.push(
+        managerProjectRunHygieneIssue({
+          project: input.project,
+          run,
+          kind: issue,
+          blocker: openBlockerByDedupeKey.get(
+            managerProjectRunHygieneDedupeKey(input.project.id, run.id, issue),
+          ),
+        }),
+      );
+    }
+  }
+
+  const activeRound = input.project.activeRoundId
+    ? rounds.find((round) => round.id === input.project.activeRoundId)
+    : undefined;
+  if (input.project.activeRoundId && !activeRound) {
+    const dedupeKey = `project-hygiene:${input.project.id}:missing-active-round:${input.project.activeRoundId}`;
+    issues.push(
+      managerProjectStaticHygieneIssue({
+        project: input.project,
+        kind: "missing-active-round",
+        severity: "error",
+        title: "Active round record is missing.",
+        detail: `Project activeRoundId points at ${input.project.activeRoundId}, but no round record exists.`,
+        cleanupEligible: true,
+        protected: false,
+        dedupeKey,
+        blocker: openBlockerByDedupeKey.get(dedupeKey),
+      }),
+    );
+  }
+
+  const activeArchivedRuns = ledger.runs.filter((run) => isManagerWorkerRunActive(run.status));
+  if (
+    input.project.status === "archived" &&
+    (Boolean(input.project.activeRoundId) || activeArchivedRuns.length > 0)
+  ) {
+    const dedupeKey = `project-hygiene:${input.project.id}:archived-active-state`;
+    issues.push(
+      managerProjectStaticHygieneIssue({
+        project: input.project,
+        kind: "archived-active-state",
+        severity: "warning",
+        title: "Archived project still has active orchestration state.",
+        detail: `${activeArchivedRuns.length} active worker run(s), activeRoundId: ${
+          input.project.activeRoundId ?? "none"
+        }.`,
+        cleanupEligible: false,
+        protected: true,
+        dedupeKey,
+        blocker: openBlockerByDedupeKey.get(dedupeKey),
+      }),
+    );
+  }
+
+  const sortedIssues = sortManagerProjectHygieneIssues(issues);
+  return {
+    generatedAt: input.now.toISOString(),
+    projectId: input.project.id,
+    project: input.project,
+    summary: summarizeManagerProjectHygiene(sortedIssues),
+    issues: sortedIssues,
+    workerRuns: ledger.summary,
+  };
+}
+
+interface ManagerProjectHygieneCleanupInput extends ManagerProjectHygieneInput {
+  request: ManagerProjectHygieneCleanupRequest;
+}
+
+async function cleanupManagerProjectHygiene(
+  input: ManagerProjectHygieneCleanupInput,
+): Promise<ManagerProjectHygieneCleanupResponse> {
+  const before = await buildManagerProjectHygieneReport(input);
+  const selectedIds = input.request.issueIds ? new Set(input.request.issueIds) : undefined;
+  const candidates = before.issues.filter(
+    (issue) =>
+      (!selectedIds || selectedIds.has(issue.id)) &&
+      issue.cleanupEligible &&
+      issue.cleanupAction === "create-blocker",
+  );
+  const candidateIds = new Set(candidates.map((issue) => issue.id));
+  const skipped = before.issues.filter(
+    (issue) => (selectedIds ? selectedIds.has(issue.id) : true) && !candidateIds.has(issue.id),
+  );
+  const created: ManagerBlocker[] = [];
+  const existing: ManagerBlocker[] = [];
+  const failures: ManagerProjectHygieneCleanupResponse["failures"] = [];
+  const shouldCreateBlockers = !input.request.dryRun && input.request.createBlockers !== false;
+
+  if (shouldCreateBlockers) {
+    for (const issue of candidates) {
+      if (!issue.dedupeKey) {
+        failures.push({ issueId: issue.id, error: "hygiene issue does not have a dedupe key" });
+        continue;
+      }
+      try {
+        const result = await input.blockerStore.create(input.project.id, {
+          title: issue.title,
+          ...(issue.detail ? { detail: issue.detail } : {}),
+          severity: issue.severity,
+          owner: "manager",
+          requiredAction: "manager",
+          source: "system",
+          dedupeKey: issue.dedupeKey,
+          ...(issue.roundId ? { roundId: issue.roundId } : {}),
+          ...(issue.agentId ? { agentId: issue.agentId } : {}),
+          ...(issue.taskId ? { taskId: issue.taskId } : {}),
+        });
+        if (result.created) created.push(result.blocker);
+        else existing.push(result.blocker);
+      } catch (error) {
+        failures.push({ issueId: issue.id, error: errorMessage(error) });
+      }
+    }
+  }
+
+  return {
+    generatedAt: input.now.toISOString(),
+    projectId: input.project.id,
+    dryRun: input.request.dryRun === true,
+    created,
+    existing,
+    skipped,
+    failures,
+    report: shouldCreateBlockers ? await buildManagerProjectHygieneReport(input) : before,
+  };
+}
+
+function managerProjectRunHygieneIssue(input: {
+  project: ManagerProject;
+  run: ManagerWorkerRun;
+  kind: Exclude<ManagerWorkerRunIntegrity, "ok">;
+  blocker: ManagerBlocker | undefined;
+}): ManagerProjectHygieneIssue {
+  const severity = input.kind === "missing-session" ? "warning" : "error";
+  const protectedRun = isManagerWorkerRunActive(input.run.status);
+  const dedupeKey = managerProjectRunHygieneDedupeKey(input.project.id, input.run.id, input.kind);
+  return {
+    id: managerProjectHygieneIssueId(input.kind, input.run.id),
+    projectId: input.project.id,
+    kind: input.kind,
+    severity,
+    title: `Worker hygiene: ${managerWorkerIntegrityMessage(input.kind)}`,
+    ...(managerProjectRunHygieneDetail(input.run)
+      ? {
+          detail: managerProjectRunHygieneDetail(input.run),
+        }
+      : {}),
+    cleanupAction: protectedRun ? "none" : "create-blocker",
+    cleanupEligible: !protectedRun,
+    protected: protectedRun,
+    dedupeKey,
+    ...(input.blocker ? { blockerId: input.blocker.id } : {}),
+    runId: input.run.id,
+    ...(input.run.roundId ? { roundId: input.run.roundId } : {}),
+    ...(input.run.agentId ? { agentId: input.run.agentId } : {}),
+    ...(input.run.taskId ? { taskId: input.run.taskId } : {}),
+    updatedAt: input.run.updatedAt,
+  };
+}
+
+function managerProjectStaticHygieneIssue(input: {
+  project: ManagerProject;
+  kind: Extract<ManagerProjectHygieneIssueKind, "missing-active-round" | "archived-active-state">;
+  severity: ManagerBlockerSeverity;
+  title: string;
+  detail: string;
+  cleanupEligible: boolean;
+  protected: boolean;
+  dedupeKey: string;
+  blocker: ManagerBlocker | undefined;
+}): ManagerProjectHygieneIssue {
+  return {
+    id: managerProjectHygieneIssueId(input.kind, input.dedupeKey),
+    projectId: input.project.id,
+    kind: input.kind,
+    severity: input.severity,
+    title: input.title,
+    detail: input.detail,
+    cleanupAction: input.cleanupEligible ? "create-blocker" : "none",
+    cleanupEligible: input.cleanupEligible,
+    protected: input.protected,
+    dedupeKey: input.dedupeKey,
+    ...(input.blocker ? { blockerId: input.blocker.id } : {}),
+    updatedAt: input.project.updatedAt,
+  };
+}
+
+function managerProjectRunHygieneDedupeKey(
+  projectId: string,
+  runId: string,
+  kind: Exclude<ManagerWorkerRunIntegrity, "ok">,
+): string {
+  return `project-hygiene:${projectId}:worker:${kind}:${runId}`;
+}
+
+function managerProjectHygieneIssueId(kind: ManagerProjectHygieneIssueKind, scope: string): string {
+  return `${kind}:${scope}`.replace(/[^a-zA-Z0-9_.:-]/g, "_").slice(0, 220);
+}
+
+function managerProjectRunHygieneDetail(run: ManagerWorkerRun): string | undefined {
+  const lines = [
+    `Run ${run.id} is ${run.status}.`,
+    run.agentRole || run.agentLabel
+      ? `Agent: ${[run.agentRole, run.agentLabel].filter(Boolean).join(" / ")}.`
+      : "",
+    run.roundId ? `Round: ${run.roundId}.` : "",
+    run.taskId ? `Task: ${run.taskId}.` : "",
+    run.error ? `Error: ${run.error}` : "",
+    !run.error && run.outputPreview ? `Output: ${run.outputPreview}` : "",
+  ].filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function summarizeManagerProjectHygiene(issues: ManagerProjectHygieneIssue[]) {
+  const categories = Object.fromEntries(
+    MANAGER_PROJECT_HYGIENE_ISSUE_KINDS.map((kind) => [kind, 0]),
+  ) as Record<ManagerProjectHygieneIssueKind, number>;
+  for (const issue of issues) {
+    categories[issue.kind] += 1;
+  }
+  return {
+    total: issues.length,
+    warnings: issues.filter((issue) => issue.severity === "warning").length,
+    errors: issues.filter((issue) => issue.severity === "error").length,
+    cleanupCandidates: issues.filter((issue) => issue.cleanupEligible).length,
+    protected: issues.filter((issue) => issue.protected).length,
+    recordedBlockers: issues.filter((issue) => issue.blockerId).length,
+    categories,
+  };
+}
+
+function sortManagerProjectHygieneIssues(
+  issues: ManagerProjectHygieneIssue[],
+): ManagerProjectHygieneIssue[] {
+  return [...issues].sort(
+    (left, right) =>
+      blockerSeverityRank(right.severity) - blockerSeverityRank(left.severity) ||
+      Number(right.cleanupEligible) - Number(left.cleanupEligible) ||
+      Number(Boolean(right.blockerId)) - Number(Boolean(left.blockerId)) ||
+      Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? "") ||
+      left.id.localeCompare(right.id),
+  );
+}
+
+function blockerSeverityRank(value: ManagerBlockerSeverity): number {
+  if (value === "error") return 3;
+  if (value === "warning") return 2;
+  return 1;
 }
 
 function selectManagerProjectRounds(
@@ -7644,6 +8001,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Do not claim selected context is missing until you checked the browser context and available manager/session APIs.",
     "- Summaries and analysis must be based on retrieved transcript data, not memory guesses.",
     "- For manager session cleanup, first call `GET /api/manager/sessions/hygiene` and treat its `managerCwd` value as a scope hint: it only enumerates the manager-assistant cwd. Hygiene categories never include the current manager conversation. Use `POST /api/manager/sessions/hygiene/cleanup` only for cleanup candidates reported by that API.",
+    "- For project orchestration recovery, first call `GET /api/manager/projects/:id/hygiene`. Use `POST /api/manager/projects/:id/hygiene/cleanup` with `dryRun: true` to preview, then run it only for reported candidates; it records deduplicated blockers and never deletes active tasks or runs.",
     "- After any successful cleanup, refresh and verify the new state BEFORE replying to the user: (a) re-call `GET /api/manager/sessions/hygiene` and confirm `cleanupCandidates: 0` for the categories you targeted, (b) call the device behavior `sessions.list` on the active device to catch sessions in other cwds the hygiene policy does not see (e.g. worker transcripts, orphan project slugs), and (c) report deleted / preserved counts plus any residual non-current sessions. Do not declare the cleanup done until both APIs agree with what you intended to remove.",
     "",
     "### Guide",
@@ -9671,6 +10029,38 @@ function parseManagerBlockerResolveRequest(
     value: {
       ...(resolution ? { resolution } : {}),
       ...(input.status === "dismissed" ? { status: "dismissed" } : {}),
+    },
+  };
+}
+
+function parseManagerProjectHygieneCleanupRequest(
+  input: unknown,
+): { ok: true; value: ManagerProjectHygieneCleanupRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "hygiene cleanup body must be an object" };
+  let issueIds: string[] | undefined;
+  if (input.issueIds !== undefined) {
+    if (!Array.isArray(input.issueIds)) {
+      return { ok: false, error: "issueIds must be an array" };
+    }
+    const seen = new Set<string>();
+    issueIds = [];
+    for (const item of input.issueIds) {
+      if (typeof item !== "string" || !item.trim()) {
+        return { ok: false, error: "issueIds must contain non-empty strings" };
+      }
+      const issueId = item.trim().slice(0, 220);
+      if (seen.has(issueId)) continue;
+      seen.add(issueId);
+      issueIds.push(issueId);
+      if (issueIds.length > 200) return { ok: false, error: "issueIds is too large" };
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      dryRun: input.dryRun === true,
+      createBlockers: input.createBlockers !== false,
+      ...(issueIds ? { issueIds } : {}),
     },
   };
 }

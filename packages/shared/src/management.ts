@@ -829,6 +829,76 @@ export interface ManagerProjectOverviewResponse {
   lastUpdateAt?: string | undefined;
 }
 
+export type ManagerProjectHygieneIssueKind =
+  | "missing-task"
+  | "missing-agent"
+  | "orphan-task"
+  | "stale-agent"
+  | "synthetic-failure"
+  | "missing-session"
+  | "missing-active-round"
+  | "archived-active-state";
+
+export type ManagerProjectHygieneCleanupAction = "none" | "create-blocker";
+
+export interface ManagerProjectHygieneIssue {
+  id: string;
+  projectId: string;
+  kind: ManagerProjectHygieneIssueKind;
+  severity: ManagerBlockerSeverity;
+  title: string;
+  detail?: string | undefined;
+  cleanupAction: ManagerProjectHygieneCleanupAction;
+  cleanupEligible: boolean;
+  protected: boolean;
+  dedupeKey?: string | undefined;
+  blockerId?: string | undefined;
+  runId?: string | undefined;
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+  updatedAt?: string | undefined;
+}
+
+export interface ManagerProjectHygieneSummary {
+  total: number;
+  warnings: number;
+  errors: number;
+  cleanupCandidates: number;
+  protected: number;
+  recordedBlockers: number;
+  categories: Record<ManagerProjectHygieneIssueKind, number>;
+}
+
+export interface ManagerProjectHygieneReport {
+  generatedAt: string;
+  projectId: string;
+  project: ManagerProject;
+  summary: ManagerProjectHygieneSummary;
+  issues: ManagerProjectHygieneIssue[];
+  workerRuns: ManagerWorkerRunLedgerSummary;
+}
+
+export interface ManagerProjectHygieneCleanupRequest {
+  dryRun?: boolean;
+  createBlockers?: boolean;
+  issueIds?: string[];
+}
+
+export interface ManagerProjectHygieneCleanupResponse {
+  generatedAt: string;
+  projectId: string;
+  dryRun: boolean;
+  created: ManagerBlocker[];
+  existing: ManagerBlocker[];
+  skipped: ManagerProjectHygieneIssue[];
+  failures: Array<{
+    issueId: string;
+    error: string;
+  }>;
+  report: ManagerProjectHygieneReport;
+}
+
 export interface ManagerAgent {
   id: string;
   projectId?: string;

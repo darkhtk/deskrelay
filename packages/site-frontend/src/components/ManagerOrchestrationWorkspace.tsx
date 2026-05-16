@@ -11,6 +11,7 @@ import type {
   ManagerDecisionUpdateRequest,
   ManagerProject,
   ManagerProjectCreateRequest,
+  ManagerProjectHygieneReport,
   ManagerProjectOverviewResponse,
   ManagerProtocolResponse,
   ManagerProtocolUpdateRequest,
@@ -60,6 +61,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 ) => {
   const [refreshSeq, setRefreshSeq] = createSignal(0);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
+  const [projectHygieneCleanupBusy, setProjectHygieneCleanupBusy] = createSignal(false);
   const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
   const [managerActionBusy, setManagerActionBusy] = createSignal(false);
   const [observeBusy, setObserveBusy] = createSignal(false);
@@ -187,6 +189,22 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       if (!input) return null;
       try {
         return await api.managerProjectOverview(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const [projectHygiene, { refetch: refetchProjectHygiene }] = createResource(
+    () => {
+      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const seq = refreshSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerProjectHygieneReport | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectHygiene(input.projectId);
       } catch {
         return null;
       }
@@ -441,6 +459,19 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       setRefreshSeq((seq) => seq + 1);
     } finally {
       setHygieneCleanupBusy(false);
+    }
+  }
+
+  async function cleanupProjectHygiene() {
+    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    if (!projectId || projectHygieneCleanupBusy()) return;
+    setProjectHygieneCleanupBusy(true);
+    try {
+      await api.cleanupManagerProjectHygiene(projectId);
+      await refetchProjectHygiene();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setProjectHygieneCleanupBusy(false);
     }
   }
 
@@ -720,6 +751,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           health={visibleRoundHealth()?.gate}
           workerRuns={visibleWorkerRuns()?.runs ?? []}
           hygiene={visibleHygiene()}
+          projectHygiene={projectHygiene()}
           state={managerState()}
           observedTask={observedTask()}
           eventState={eventState()}
@@ -727,10 +759,14 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           observeBusy={observeBusy()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}
+          projectHygieneLoading={projectHygiene.loading}
+          projectHygieneCleanupBusy={projectHygieneCleanupBusy()}
           acknowledgeBusy={acknowledgeBusy()}
           actionBusy={managerActionBusy()}
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
+          onRefreshProjectHygiene={() => void refetchProjectHygiene()}
+          onCleanupProjectHygiene={() => void cleanupProjectHygiene()}
           onAcknowledgeFailures={() => void acknowledgeManagerFailures()}
           onAcknowledgeRound={(roundId) => void acknowledgeManagerRound(roundId)}
           onCancelTask={(taskId) => void cancelManagerTask(taskId)}

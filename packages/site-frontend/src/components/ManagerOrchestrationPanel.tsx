@@ -10,6 +10,8 @@ import type {
   ManagerDecisionUpdateRequest,
   ManagerProject,
   ManagerProjectCreateRequest,
+  ManagerProjectHygieneIssue,
+  ManagerProjectHygieneReport,
   ManagerProjectOverviewResponse,
   ManagerProtocolState,
   ManagerProtocolUpdateRequest,
@@ -66,8 +68,11 @@ interface ManagerOrchestrationPanelProps {
   health?: ManagerRoundHealthGate | null | undefined;
   workerRuns?: ManagerWorkerRun[] | undefined;
   hygiene?: ManagerSessionHygieneReport | null | undefined;
+  projectHygiene?: ManagerProjectHygieneReport | null | undefined;
   hygieneLoading?: boolean | undefined;
   hygieneCleanupBusy?: boolean | undefined;
+  projectHygieneLoading?: boolean | undefined;
+  projectHygieneCleanupBusy?: boolean | undefined;
   state?: ManagerStateViewResponse | null | undefined;
   observedTask?: ManagerTaskObservationResponse | null | undefined;
   eventState?: ManagerEventConnectionState | undefined;
@@ -87,6 +92,8 @@ interface ManagerOrchestrationPanelProps {
   onRunUpdateAll?: (() => void) | undefined;
   onRefreshHygiene?: (() => void) | undefined;
   onCleanupHygiene?: (() => void) | undefined;
+  onRefreshProjectHygiene?: (() => void) | undefined;
+  onCleanupProjectHygiene?: (() => void) | undefined;
   onRefreshProjects?: (() => void) | undefined;
   onSelectProject?: ((projectId: string | null) => void) | undefined;
   onCreateProject?: ((input: ManagerProjectCreateRequest) => void) | undefined;
@@ -503,13 +510,18 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
 
             <Show when={activeTab() === "hygiene"}>
-              <OrchestrationSection title="Session Hygiene" class="manager-section-hygiene">
+              <OrchestrationSection title="Hygiene" class="manager-section-hygiene">
                 <HygieneView
                   report={props.hygiene}
+                  projectReport={props.projectHygiene}
                   loading={props.hygieneLoading}
+                  projectLoading={props.projectHygieneLoading}
                   cleanupBusy={props.hygieneCleanupBusy}
+                  projectCleanupBusy={props.projectHygieneCleanupBusy}
                   onRefresh={props.onRefreshHygiene}
                   onCleanup={props.onCleanupHygiene}
+                  onRefreshProject={props.onRefreshProjectHygiene}
+                  onCleanupProject={props.onCleanupProjectHygiene}
                 />
               </OrchestrationSection>
             </Show>
@@ -2021,10 +2033,15 @@ const ProtocolView: Component<{
 
 const HygieneView: Component<{
   report?: ManagerSessionHygieneReport | null | undefined;
+  projectReport?: ManagerProjectHygieneReport | null | undefined;
   loading?: boolean | undefined;
+  projectLoading?: boolean | undefined;
   cleanupBusy?: boolean | undefined;
+  projectCleanupBusy?: boolean | undefined;
   onRefresh?: (() => void) | undefined;
   onCleanup?: (() => void) | undefined;
+  onRefreshProject?: (() => void) | undefined;
+  onCleanupProject?: (() => void) | undefined;
 }> = (props) => {
   const cleanupItems = createMemo(() =>
     (props.report?.items ?? []).filter((item) => item.action === "cleanup"),
@@ -2033,8 +2050,71 @@ const HygieneView: Component<{
     ...cleanupItems(),
     ...(props.report?.items ?? []).filter((item) => item.action !== "cleanup"),
   ]);
+  const projectCleanupIssues = createMemo(() =>
+    (props.projectReport?.issues ?? []).filter((issue) => issue.cleanupEligible),
+  );
+  const visibleProjectIssues = createMemo(() => [
+    ...projectCleanupIssues(),
+    ...(props.projectReport?.issues ?? []).filter((issue) => !issue.cleanupEligible),
+  ]);
   return (
     <div class="manager-hygiene">
+      <div class="manager-hygiene-group">
+        <div class="manager-hygiene-head">
+          <div>
+            <span class="manager-overview-label">Project hygiene</span>
+            <p>
+              <Show
+                when={props.projectReport}
+                fallback={
+                  props.projectLoading ? "Scanning project records..." : "Select a project to scan."
+                }
+              >
+                {(report) =>
+                  `${report().summary.cleanupCandidates} recovery candidates - ${report().summary.protected} protected - ${report().summary.recordedBlockers} recorded`
+                }
+              </Show>
+            </p>
+          </div>
+          <div class="manager-hygiene-actions">
+            <button
+              type="button"
+              onClick={() => props.onRefreshProject?.()}
+              disabled={props.projectLoading}
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => props.onCleanupProject?.()}
+              disabled={props.projectCleanupBusy || projectCleanupIssues().length === 0}
+            >
+              {props.projectCleanupBusy ? "Recording..." : "Record blockers"}
+            </button>
+          </div>
+        </div>
+        <Show when={props.projectReport}>
+          {(report) => (
+            <div class="manager-hygiene-categories">
+              <For each={Object.entries(report().summary.categories)}>
+                {([category, count]) => (
+                  <span classList={{ "manager-hygiene-category-empty": count === 0 }}>
+                    {formatProjectHygieneKind(category)} {count}
+                  </span>
+                )}
+              </For>
+            </div>
+          )}
+        </Show>
+        <div class="manager-hygiene-list">
+          <For each={visibleProjectIssues().slice(0, 12)}>
+            {(issue) => <ProjectHygieneIssueRow issue={issue} />}
+          </For>
+          <Show when={visibleProjectIssues().length === 0}>
+            <p class="manager-orchestration-empty">No project hygiene issues were found.</p>
+          </Show>
+        </div>
+      </div>
       <div class="manager-hygiene-head">
         <div>
           <span class="manager-overview-label">Session hygiene</span>
@@ -2044,7 +2124,7 @@ const HygieneView: Component<{
               fallback={props.loading ? "Scanning manager sessions..." : "No hygiene report yet."}
             >
               {(report) =>
-                `${report().summary.cleanupCandidates} cleanup candidates · ${report().summary.preserved} preserved`
+                `${report().summary.cleanupCandidates} cleanup candidates - ${report().summary.preserved} preserved`
               }
             </Show>
           </p>
@@ -2095,6 +2175,28 @@ const HygieneView: Component<{
     </div>
   );
 };
+
+const ProjectHygieneIssueRow: Component<{ issue: ManagerProjectHygieneIssue }> = (props) => (
+  <div class="manager-hygiene-row">
+    <span class={`manager-agent-status manager-agent-status-${projectHygieneTone(props.issue)}`}>
+      {props.issue.blockerId
+        ? "recorded"
+        : props.issue.protected
+          ? "protected"
+          : props.issue.cleanupEligible
+            ? "record"
+            : "check"}
+    </span>
+    <span class="manager-hygiene-title" title={props.issue.title}>
+      {props.issue.title}
+    </span>
+    <span>{formatProjectHygieneKind(props.issue.kind)}</span>
+    <span title={props.issue.detail ?? props.issue.dedupeKey ?? ""}>
+      {clip(props.issue.detail ?? props.issue.dedupeKey, 72)}
+    </span>
+    <time>{formatTime(props.issue.updatedAt)}</time>
+  </div>
+);
 
 const HygieneItemRow: Component<{ item: ManagerSessionHygieneItem }> = (props) => (
   <div class="manager-hygiene-row">
@@ -2578,6 +2680,13 @@ function hygieneTone(item: ManagerSessionHygieneItem): Tone {
   return "neutral";
 }
 
+function projectHygieneTone(issue: ManagerProjectHygieneIssue): Tone {
+  if (issue.blockerId) return "done";
+  if (issue.severity === "error") return "blocked";
+  if (issue.protected || issue.severity === "warning") return "running";
+  return "neutral";
+}
+
 function statusLabel(status: string | undefined): string {
   switch (status) {
     case "planned":
@@ -2693,6 +2802,29 @@ function formatHygieneCategory(value: string): string {
       return "Orphan";
     case "unreadable":
       return "Unreadable";
+    default:
+      return value;
+  }
+}
+
+function formatProjectHygieneKind(value: string): string {
+  switch (value) {
+    case "missing-task":
+      return "Missing task";
+    case "missing-agent":
+      return "Missing agent";
+    case "orphan-task":
+      return "Orphan task";
+    case "stale-agent":
+      return "Stale agent";
+    case "synthetic-failure":
+      return "Synthetic failure";
+    case "missing-session":
+      return "Missing session";
+    case "missing-active-round":
+      return "Missing active round";
+    case "archived-active-state":
+      return "Archived active";
     default:
       return value;
   }

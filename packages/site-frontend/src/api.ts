@@ -38,6 +38,9 @@ import type {
   ManagerProcessStatus,
   ManagerProject,
   ManagerProjectCreateRequest,
+  ManagerProjectHygieneCleanupRequest,
+  ManagerProjectHygieneCleanupResponse,
+  ManagerProjectHygieneReport,
   ManagerProjectListResponse,
   ManagerProjectOverviewResponse,
   ManagerProjectResponse,
@@ -451,6 +454,9 @@ export type {
   ManagerDecisionUpdateRequest,
   ManagerProject,
   ManagerProjectCreateRequest,
+  ManagerProjectHygieneCleanupRequest,
+  ManagerProjectHygieneCleanupResponse,
+  ManagerProjectHygieneReport,
   ManagerProjectListResponse,
   ManagerProjectResponse,
   ManagerProjectUpdateRequest,
@@ -712,6 +718,17 @@ export const api = {
     request<ManagerProjectOverviewResponse>(
       "GET",
       `/api/manager/projects/${encodeURIComponent(id)}/overview`,
+    ),
+  managerProjectHygiene: (id: string) =>
+    request<ManagerProjectHygieneReport>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/hygiene`,
+    ),
+  cleanupManagerProjectHygiene: (id: string, input: ManagerProjectHygieneCleanupRequest = {}) =>
+    request<ManagerProjectHygieneCleanupResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/hygiene/cleanup`,
+      input,
     ),
   managerProjectDecisions: (id: string) =>
     request<ManagerDecisionListResponse>(

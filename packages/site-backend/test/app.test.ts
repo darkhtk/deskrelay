@@ -675,6 +675,18 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/projects/:id/hygiene",
+          authedRequest("GET", "/api/manager/projects/missing/hygiene"),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/hygiene/cleanup",
+          authedRequest("POST", "/api/manager/projects/missing/hygiene/cleanup", {
+            dryRun: true,
+          }),
+          [404],
+        ],
+        [
           "GET /api/manager/projects/:id/decisions",
           authedRequest("GET", "/api/manager/projects/missing/decisions"),
           [404],
@@ -2678,6 +2690,134 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(afterBody.blockers).toEqual([]);
     expect(afterBody.resolved?.map((blocker) => blocker.id)).toEqual([created.blocker?.id]);
     expect(afterBody.resolved?.[0]?.status).toBe("resolved");
+  });
+
+  test("manager project hygiene reports worker drift and records recovery blockers", async () => {
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerBlockerStore = createInMemoryManagerBlockerStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerProjectStore,
+      managerOrchestrationStore,
+      managerTaskStore,
+      managerBlockerStore,
+    });
+
+    const project = await managerProjectStore.create({
+      name: "Hygiene Project",
+      cwd: "C:\\Users\\darkh\\Projects\\hygiene",
+      goal: "recover stale orchestration records",
+    });
+    const round = await managerOrchestrationStore.createRound({
+      projectId: project.id,
+      title: "Hygiene R1",
+      objective: "Surface stale worker state.",
+    });
+    const staleAgent = await managerOrchestrationStore.createAgent({
+      projectId: project.id,
+      roundId: round.id,
+      role: "implementer",
+      profile: "claude-code",
+      instruction: "finish implementation",
+    });
+    const missingTaskAgent = await managerOrchestrationStore.createAgent({
+      projectId: project.id,
+      roundId: round.id,
+      role: "verifier",
+      profile: "claude-code",
+      instruction: "verify implementation",
+    });
+    const task = await managerTaskStore.create({
+      projectId: project.id,
+      kind: "run-worker",
+      dryRun: false,
+      requestedBy: "manager-assistant",
+      params: {
+        agentId: staleAgent.id,
+        roundId: round.id,
+        profile: "claude-code",
+      },
+      steps: [],
+    });
+    await managerTaskStore.update(task.id, {
+      state: "succeeded",
+      result: { profile: "claude-code", stdout: "done without session id" },
+    });
+    await managerOrchestrationStore.updateAgent(staleAgent.id, {
+      status: "stale",
+      taskId: task.id,
+      lastError: "worker heartbeat expired",
+    });
+    await managerOrchestrationStore.updateAgent(missingTaskAgent.id, {
+      status: "running",
+      taskId: "missing-worker-task",
+      lastError: "task record disappeared",
+    });
+    await managerOrchestrationStore.updateRound(round.id, {
+      status: "running",
+      agentIds: [staleAgent.id, missingTaskAgent.id],
+      taskIds: [task.id, "missing-worker-task"],
+    });
+    await managerProjectStore.update(project.id, {
+      status: "running",
+      activeRoundId: round.id,
+    });
+
+    const reportRes = await app.fetch(
+      authedRequest("GET", `/api/manager/projects/${project.id}/hygiene`),
+    );
+    expect(reportRes.status).toBe(200);
+    const report = (await reportRes.json()) as {
+      summary?: { total?: number; cleanupCandidates?: number; recordedBlockers?: number };
+      issues?: Array<{ kind?: string; cleanupEligible?: boolean; blockerId?: string }>;
+    };
+    expect(report.summary?.total).toBe(3);
+    expect(report.summary?.cleanupCandidates).toBe(3);
+    expect(report.summary?.recordedBlockers).toBe(0);
+    expect(report.issues?.map((issue) => issue.kind).sort()).toEqual([
+      "missing-session",
+      "missing-task",
+      "stale-agent",
+    ]);
+    expect(report.issues?.every((issue) => issue.cleanupEligible)).toBe(true);
+
+    const dryRun = await app.fetch(
+      authedRequest("POST", `/api/manager/projects/${project.id}/hygiene/cleanup`, {
+        dryRun: true,
+      }),
+    );
+    expect(dryRun.status).toBe(200);
+    const dryRunBody = (await dryRun.json()) as { created?: unknown[]; existing?: unknown[] };
+    expect(dryRunBody.created).toEqual([]);
+    expect(dryRunBody.existing).toEqual([]);
+    expect((await managerBlockerStore.list(project.id)).blockers).toEqual([]);
+
+    const cleanup = await app.fetch(
+      authedRequest("POST", `/api/manager/projects/${project.id}/hygiene/cleanup`, {}),
+    );
+    expect(cleanup.status).toBe(200);
+    const cleanupBody = (await cleanup.json()) as {
+      created?: unknown[];
+      existing?: unknown[];
+      report?: { summary?: { recordedBlockers?: number } };
+    };
+    expect(cleanupBody.created).toHaveLength(3);
+    expect(cleanupBody.existing).toEqual([]);
+    expect(cleanupBody.report?.summary?.recordedBlockers).toBe(3);
+
+    const duplicate = await app.fetch(
+      authedRequest("POST", `/api/manager/projects/${project.id}/hygiene/cleanup`, {}),
+    );
+    const duplicateBody = (await duplicate.json()) as {
+      created?: unknown[];
+      existing?: unknown[];
+    };
+    expect(duplicateBody.created).toEqual([]);
+    expect(duplicateBody.existing).toHaveLength(3);
+    expect((await managerBlockerStore.list(project.id)).blockers).toHaveLength(3);
   });
 
   test("manager project artifacts scan worker evidence and preserve inactive records", async () => {
