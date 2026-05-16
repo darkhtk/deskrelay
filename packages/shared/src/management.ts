@@ -105,10 +105,12 @@ export interface ManagerNetworkProbe {
   label: string;
   url: string;
   ok: boolean;
+  classification?: string;
   status?: number;
   latencyMs?: number;
   error?: string;
   hint?: string;
+  retrySafe?: boolean;
 }
 
 export interface ManagerNetworkStatus {

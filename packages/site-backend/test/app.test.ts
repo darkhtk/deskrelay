@@ -4031,6 +4031,31 @@ describe("doctor endpoints", () => {
     expect(setup.calls.at(-1)?.headers.authorization).toBe("Bearer saved-token");
   });
 
+  test("GET /api/devices/:id/doctor separates Tailscale timeout and firewall checks", async () => {
+    const regRes = await setup.app.fetch(
+      authedRequest("POST", "/api/devices", {
+        daemonUrl: "http://100.64.0.8:18091",
+        label: "Tailnet PC",
+        authToken: "saved-token",
+      }),
+    );
+    const device = (await regRes.json()) as { id: string };
+    setup.setMockResponse(() => {
+      throw new Error("The operation timed out.");
+    });
+
+    const res = await setup.app.fetch(authedRequest("GET", `/api/devices/${device.id}/doctor`));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      checks: Array<{ id: string; severity: string; summary: string; fixCommand?: string }>;
+    };
+    expect(findCheck(body.checks, "device.daemon")?.summary).toContain("Tailscale");
+    expect(findCheck(body.checks, "device.network-route")?.summary).toContain("Tailscale");
+    expect(findCheck(body.checks, "device.tailscale")?.severity).toBe("error");
+    expect(findCheck(body.checks, "device.firewall")?.summary).toContain("connector port");
+    expect(findCheck(body.checks, "device.firewall")?.fixCommand).toContain("Allow inbound TCP");
+  });
+
   test("GET /api/devices/:id/doctor surfaces an unloaded Claude behavior", async () => {
     const regRes = await setup.app.fetch(
       authedRequest("POST", "/api/devices", {

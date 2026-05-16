@@ -96,6 +96,11 @@ import {
   DeviceRegistryError,
   normalizeDaemonUrl,
 } from "./device-registry.ts";
+import {
+  connectorNetworkKind,
+  diagnoseConnectorReachability,
+  networkKindForHost,
+} from "./connector-diagnosis.ts";
 import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
@@ -8882,6 +8887,9 @@ function classifyRegistrationFailure(step: ManagerTask["steps"][number] | undefi
     return "firewall-or-route-timeout";
   }
   if (text.includes("tailscale")) return "tailscale-unavailable";
+  if (text.includes("port-owned-by-other-process") || text.includes("non-deskrelay process")) {
+    return "port-owned-by-other-process";
+  }
   if (text.includes("stale") || text.includes("different daemon token")) {
     return "stale-connector-token";
   }
@@ -8905,6 +8913,9 @@ function actionFromRegistrationFailure(
   if (classification === "stale-connector-token") {
     return "Stop the stale connector process or rerun PowerShell as Administrator, then rerun registration.";
   }
+  if (classification === "port-owned-by-other-process") {
+    return "Close the non-DeskRelay process using the connector port or choose another connector port, then rerun registration.";
+  }
   return undefined;
 }
 
@@ -8914,6 +8925,7 @@ function isRetrySafeRegistrationClassification(classification: string): boolean 
     classification === "firewall-or-route-timeout" ||
     classification === "tailscale-unavailable" ||
     classification === "stale-connector-token" ||
+    classification === "port-owned-by-other-process" ||
     classification === "localhost-registration"
   );
 }
@@ -9059,6 +9071,11 @@ async function buildDeviceNetworkStatus(
     authToken,
   );
   if (!result.ok) {
+    const reachability = diagnoseConnectorReachability({
+      daemonUrl: device.daemonUrl,
+      status: result.status,
+      error: result.error,
+    });
     return {
       scope: "device",
       targetId: device.id,
@@ -9073,13 +9090,15 @@ async function buildDeviceNetworkStatus(
           label: "Device network status",
           url: `${device.daemonUrl}/network/status`,
           ok: false,
+          classification: reachability.kind,
           error: result.error,
-          hint: classifyReachabilityHint(device.daemonUrl),
+          hint: reachability.hint,
+          retrySafe: reachability.retrySafe,
         },
       ],
       summary: {
-        severity: "error",
-        message: `Cannot read network status from ${device.label}.`,
+        severity: reachability.severity,
+        message: reachability.summary,
       },
     };
   }
@@ -9148,6 +9167,11 @@ async function buildDeviceInstallStatus(
         },
       };
     }
+    const reachability = diagnoseConnectorReachability({
+      daemonUrl: device.daemonUrl,
+      status: result.status,
+      error: result.error,
+    });
     return {
       scope: "device",
       targetId: device.id,
@@ -9166,8 +9190,8 @@ async function buildDeviceInstallStatus(
           }
         : {}),
       summary: {
-        severity: "error",
-        message: `Cannot read install status from ${device.label}: ${result.error}`,
+        severity: reachability.severity,
+        message: `${reachability.summary}: ${result.error}`,
       },
     };
   }
@@ -9831,16 +9855,7 @@ function classifyRemoteHost(host: string): AccessUrl["kind"] {
 }
 
 function daemonNetworkKind(rawUrl: string): "local" | "tailscale" | "lan" | "public" | "unknown" {
-  try {
-    const host = new URL(rawUrl).hostname.replace(/^\[|\]$/g, "");
-    if (isLocalHost(host)) return "local";
-    const kind = classifyRemoteHost(host);
-    if (kind === "Tailscale") return "tailscale";
-    if (kind === "LAN") return "lan";
-    return "public";
-  } catch {
-    return "unknown";
-  }
+  return connectorNetworkKind(rawUrl);
 }
 
 function collectServerNetworkAddresses(port: number): ManagerNetworkAddress[] {
@@ -9864,16 +9879,7 @@ function collectServerNetworkAddresses(port: number): ManagerNetworkAddress[] {
 }
 
 function classifyNetworkAddress(address: string): ManagerNetworkKind {
-  if (address === "localhost" || address === "127.0.0.1" || address === "::1") return "local";
-  if (address.startsWith("100.")) return "tailscale";
-  if (
-    address.startsWith("10.") ||
-    address.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
-  ) {
-    return "lan";
-  }
-  return "public";
+  return networkKindForHost(address);
 }
 
 function networkKindRank(kind: ManagerNetworkKind): number {
@@ -9929,23 +9935,6 @@ async function fetchManagerJson<T>(
   } catch (err) {
     return { ok: false, status: 502, error: `non-JSON response: ${(err as Error).message}` };
   }
-}
-
-function classifyReachabilityHint(daemonUrl: string): string {
-  const kind = daemonNetworkKind(daemonUrl);
-  if (kind === "tailscale") {
-    return "Check that Tailscale is running on both PCs and Windows Firewall allows the connector port.";
-  }
-  if (kind === "lan") {
-    return "Check that both PCs are on the same LAN/VPN and Windows Firewall allows the connector port.";
-  }
-  if (kind === "local") {
-    return "Localhost connector URLs only work from the same PC as the server.";
-  }
-  if (kind === "public") {
-    return "Avoid public connector exposure; prefer Tailscale or LAN and check inbound firewall policy.";
-  }
-  return "Check the connector URL, network route, and inbound firewall policy.";
 }
 
 function dedupeUrls(rows: AccessUrl[]): AccessUrl[] {
@@ -10172,7 +10161,9 @@ async function buildServerDiagnosticReport(
     );
   } else {
     const localUrl = localServerDaemonUrl();
-    const status = await fetchDaemonStatus(input.fetchImpl, localUrl, input.localToken);
+    const status = await fetchDaemonStatus(input.fetchImpl, localUrl, input.localToken, {
+      allowLocalUrl: true,
+    });
     checks.push(
       diagnosticCheck({
         id: "server.local-connector",
@@ -10275,6 +10266,60 @@ async function buildDeviceDiagnosticReport(
   );
 
   if (!status.ok) {
+    const reachability = status.diagnosis;
+    checks.push(
+      diagnosticCheck({
+        id: "device.network-route",
+        label: "Network route",
+        severity: reachability.severity,
+        summary: reachability.summary,
+        detail: reachability.detail,
+        fixCommand: reachability.hint,
+        generatedAt,
+        userVisible: reachability.userVisible,
+      }),
+    );
+    if (reachability.networkKind === "tailscale") {
+      checks.push(
+        diagnosticCheck({
+          id: "device.tailscale",
+          label: "Tailscale route",
+          severity:
+            reachability.kind === "tailscale-route-or-firewall" ? "error" : "unknown",
+          summary:
+            reachability.kind === "tailscale-route-or-firewall"
+              ? "Tailscale route or incoming policy needs attention"
+              : "Tailscale route was not verified",
+          detail:
+            "This device is registered with a Tailscale address. Both PCs must be in the same tailnet and the connector PC must allow incoming connections.",
+          fixCommand:
+            "Check Tailscale login on both PCs and run 'tailscale set --shields-up=false' on the connector PC if needed.",
+          generatedAt,
+          userVisible: reachability.kind === "tailscale-route-or-firewall",
+        }),
+      );
+    }
+    if (
+      reachability.kind === "tailscale-route-or-firewall" ||
+      reachability.kind === "lan-route-or-firewall" ||
+      reachability.kind === "public-route-or-firewall" ||
+      reachability.kind === "route-or-firewall"
+    ) {
+      checks.push(
+        diagnosticCheck({
+          id: "device.firewall",
+          label: "Inbound firewall",
+          severity: "warn",
+          summary: "connector port may be blocked",
+          detail:
+            "The server could not prove whether the packet reached the PC. The next actionable check is the connector PC firewall for the registered port.",
+          fixCommand:
+            "Allow inbound TCP for the connector port or rerun the registration command as Administrator.",
+          generatedAt,
+          userVisible: true,
+        }),
+      );
+    }
     checks.push(
       diagnosticCheck({
         id: "device.claude",
@@ -10478,9 +10523,16 @@ async function fetchDaemonStatus(
   fetchImpl: NonNullable<SiteAppOptions["fetchImpl"]>,
   daemonUrl: string,
   authToken?: string,
+  options: { allowLocalUrl?: boolean | undefined } = {},
 ): Promise<
   | { ok: true; payload: DaemonStatusPayload }
-  | { ok: false; severity: DiagnosticSeverity; summary: string; detail?: string }
+  | {
+      ok: false;
+      severity: DiagnosticSeverity;
+      summary: string;
+      detail?: string;
+      diagnosis: ReturnType<typeof diagnoseConnectorReachability>;
+    }
 > {
   const headers: Record<string, string> = {};
   if (authToken) headers.authorization = `Bearer ${authToken}`;
@@ -10492,38 +10544,64 @@ async function fetchDaemonStatus(
       signal: AbortSignal.timeout(5_000),
     });
   } catch (err) {
+    const diagnosis = diagnoseConnectorReachability({
+      daemonUrl,
+      error: (err as Error).message,
+      allowLocalUrl: options.allowLocalUrl,
+    });
     return {
       ok: false,
-      severity: "error",
-      summary: `cannot reach daemon at ${daemonUrl}`,
-      detail: (err as Error).message,
+      severity: diagnosis.severity,
+      summary: diagnosis.summary,
+      detail: diagnosis.detail,
+      diagnosis,
     };
   }
   if (res.status === 401) {
+    const diagnosis = diagnoseConnectorReachability({
+      daemonUrl,
+      status: res.status,
+      allowLocalUrl: options.allowLocalUrl,
+    });
     return {
       ok: false,
-      severity: "error",
-      summary: "daemon rejected the saved token",
-      detail: "Re-register this PC so the server stores the current connector token.",
+      severity: diagnosis.severity,
+      summary: diagnosis.summary,
+      detail: diagnosis.detail,
+      diagnosis,
     };
   }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    const diagnosis = diagnoseConnectorReachability({
+      daemonUrl,
+      status: res.status,
+      error: text,
+      allowLocalUrl: options.allowLocalUrl,
+    });
     return {
       ok: false,
-      severity: "error",
-      summary: `daemon status returned HTTP ${res.status}`,
-      ...(text ? { detail: text.slice(0, 500) } : {}),
+      severity: diagnosis.severity,
+      summary: diagnosis.summary,
+      detail: text ? text.slice(0, 500) : diagnosis.detail,
+      diagnosis,
     };
   }
   try {
     return { ok: true, payload: (await res.json()) as DaemonStatusPayload };
   } catch (err) {
+    const diagnosis = diagnoseConnectorReachability({
+      daemonUrl,
+      status: 502,
+      error: (err as Error).message,
+      allowLocalUrl: options.allowLocalUrl,
+    });
     return {
       ok: false,
-      severity: "error",
+      severity: diagnosis.severity,
       summary: "daemon status returned non-JSON",
       detail: (err as Error).message,
+      diagnosis,
     };
   }
 }

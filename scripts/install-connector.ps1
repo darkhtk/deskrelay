@@ -472,6 +472,42 @@ function Get-PortOwnerPids {
     Where-Object { $_ -and [int]$_ -ne $PID })
 }
 
+function Get-ProcessCommandLine {
+  param([int]$ProcessId)
+  try {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction Stop
+    return [string]$proc.CommandLine
+  } catch {
+    return ""
+  }
+}
+
+function Test-IsDeskRelayProcess {
+  param([int]$ProcessId)
+  $cmd = (Get-ProcessCommandLine -ProcessId $ProcessId).ToLowerInvariant()
+  return (
+    $cmd -like "*deskrelay*" -or
+    $cmd -like "*claude-remote*" -or
+    $cmd -like "*cr-connector*" -or
+    $cmd -like "*pc-connector-daemon*" -or
+    $cmd -like "*cr-connector-login-task.ps1*"
+  )
+}
+
+function Format-PortOwnerEvidence {
+  param([int[]]$Pids)
+  $rows = @()
+  foreach ($processId in @($Pids | Sort-Object -Unique)) {
+    $cmd = Get-ProcessCommandLine -ProcessId ([int]$processId)
+    if ([string]::IsNullOrWhiteSpace($cmd)) {
+      $rows += "pid=$processId commandLine=unavailable"
+    } else {
+      $rows += "pid=$processId commandLine=$cmd"
+    }
+  }
+  return $rows
+}
+
 function Test-PortFree {
   param([int]$Port)
   return @(Get-PortOwnerPids -Port $Port).Count -eq 0
@@ -481,9 +517,23 @@ function Stop-StaleConnector {
   param([int]$Port)
   Stop-WindowsLoginTask
 
+  $supervisorPids = @(Get-DeskRelaySupervisorPids)
+  $portOwnerPids = @(Get-PortOwnerPids -Port $Port)
+  $deskRelayPortOwners = @($portOwnerPids | Where-Object { Test-IsDeskRelayProcess -ProcessId ([int]$_) })
+  $foreignPortOwners = @($portOwnerPids | Where-Object { -not (Test-IsDeskRelayProcess -ProcessId ([int]$_)) })
+
+  if ($foreignPortOwners.Count -gt 0) {
+    Fail-Install `
+      -Id "port-owned-by-other-process" `
+      -Label "connector port" `
+      -Summary "TCP $Port is already held by a non-DeskRelay process." `
+      -Evidence (Format-PortOwnerEvidence -Pids $foreignPortOwners) `
+      -Action "Close the process using TCP $Port or choose another connector port, then run this registration command again."
+  }
+
   $pids = @()
-  $pids += @(Get-DeskRelaySupervisorPids)
-  $pids += @(Get-PortOwnerPids -Port $Port)
+  $pids += $supervisorPids
+  $pids += $deskRelayPortOwners
   $pids = @($pids | Where-Object { $_ } | Sort-Object -Unique)
   if ($pids.Count -eq 0) {
     Add-InstallStep -Id "stale-process-cleanup" -Label "stale connector cleanup" -Status "ok" -Summary "no stale connector process found on TCP $Port"
@@ -502,12 +552,20 @@ function Stop-StaleConnector {
 
   $remaining = @(Get-PortOwnerPids -Port $Port)
   if ($remaining.Count -gt 0) {
+    $remainingDeskRelay = @($remaining | Where-Object { Test-IsDeskRelayProcess -ProcessId ([int]$_) })
+    $remainingForeign = @($remaining | Where-Object { -not (Test-IsDeskRelayProcess -ProcessId ([int]$_)) })
+    $failureId = if ($remainingForeign.Count -gt 0) { "port-owned-by-other-process" } else { "stale-port" }
+    $summary = if ($remainingForeign.Count -gt 0) {
+      "TCP $Port is held by a non-DeskRelay process."
+    } else {
+      "TCP $Port is still held by stale DeskRelay process id(s): $($remainingDeskRelay -join ', ')."
+    }
     Fail-Install `
-      -Id "stale-port" `
+      -Id $failureId `
       -Label "stale connector cleanup" `
-      -Summary "TCP $Port is still held by process id(s): $($remaining -join ', ')." `
-      -Evidence @("port=$Port", "pids=$($remaining -join ',')") `
-      -Action "Close those processes or rerun PowerShell as Administrator, then run this registration command again."
+      -Summary $summary `
+      -Evidence (Format-PortOwnerEvidence -Pids $remaining) `
+      -Action "Close the process using TCP $Port or rerun PowerShell as Administrator, then run this registration command again."
   }
   if ($pids.Count -gt 0) {
     Add-InstallStep -Id "stale-process-cleanup" -Label "stale connector cleanup" -Status "repaired" -Summary "stopped stale process id(s): $($pids -join ', ')"

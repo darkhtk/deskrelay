@@ -222,6 +222,8 @@ Work items:
 - Keep detailed backend-only causes out of the UI unless the user can act on them.
 - Add device-level update status: unknown, checking, current, update available, updating, restart pending, failed.
 - Persist offline connector update intent with attempt count, last attempt time, next retry hint, and target branch.
+- Classify connector reachability into token, localhost-only, Tailscale route, LAN route, firewall, and non-DeskRelay port-owner cases.
+- Keep stale connector cleanup conservative: stop only known DeskRelay processes and surface foreign port owners as actionable install failures.
 - Make update buttons enabled only when the current state allows them.
 
 Tests:
@@ -338,10 +340,9 @@ Tests:
 
 ## Immediate Next Steps
 
-1. Add Tailscale and Windows Firewall status as separate backend diagnosis steps, but show only failed or actionable rows in the UI.
-2. Add virtual UI regression coverage for browser refresh, orchestration event replay, slash command scrolling, attachments, and cached mobile reload.
-3. Harden stale connector cleanup so the installer can classify "port occupied by old DeskRelay" separately from "port occupied by unknown process".
-4. Keep refining the orchestration workspace toward current-state vertical graphs and stable worker-session evidence.
+1. Add virtual UI regression coverage for browser refresh, orchestration event replay, slash command scrolling, attachments, and cached mobile reload.
+2. Keep refining the orchestration workspace toward current-state vertical graphs and stable worker-session evidence.
+3. Add UI-level rendering checks that only actionable connector diagnosis rows are shown to users.
 
 ## Non-Goals For Now
 
