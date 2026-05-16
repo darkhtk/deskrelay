@@ -442,6 +442,64 @@ export type ManagerRoundStatus =
   | "failed"
   | "cancelled";
 
+export type ManagerProjectStatus =
+  | "planning"
+  | "running"
+  | "blocked"
+  | "reviewing"
+  | "completed"
+  | "archived";
+
+export interface ManagerProject {
+  id: string;
+  name: string;
+  cwd: string;
+  goal: string;
+  status: ManagerProjectStatus;
+  createdAt: string;
+  updatedAt: string;
+  activeRoundId?: string;
+  summary?: string;
+  archivedAt?: string;
+  error?: string;
+}
+
+export interface ManagerProjectCreateRequest {
+  cwd: string;
+  name?: string;
+  goal?: string;
+  status?: ManagerProjectStatus;
+  activeRoundId?: string;
+}
+
+export interface ManagerProjectUpdateRequest {
+  cwd?: string;
+  name?: string;
+  goal?: string;
+  status?: ManagerProjectStatus;
+  activeRoundId?: string | null;
+  summary?: string | null;
+  error?: string | null;
+}
+
+export interface ManagerProjectCorruptRecord {
+  id: string;
+  path: string;
+  error: string;
+}
+
+export interface ManagerProjectListResponse {
+  generatedAt: string;
+  projects: ManagerProject[];
+  archived: ManagerProject[];
+  corrupt: ManagerProjectCorruptRecord[];
+}
+
+export interface ManagerProjectResponse {
+  generatedAt: string;
+  project: ManagerProject;
+}
+
 export interface ManagerAgent {
   id: string;
   role: ManagerAgentRole;
@@ -1041,6 +1099,7 @@ export interface ManagerSystemSummary {
 }
 
 export interface ManagerEventSnapshot {
+  projects?: ManagerProject[];
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   tasks: ManagerTask[];
@@ -1050,6 +1109,8 @@ export interface ManagerEventSnapshot {
 
 export type ManagerEventInput =
   | { type: "snapshot"; snapshot: ManagerEventSnapshot }
+  | { type: "project.created"; project: ManagerProject }
+  | { type: "project.updated"; project: ManagerProject }
   | { type: "round.created"; round: ManagerRound }
   | { type: "round.updated"; round: ManagerRound }
   | { type: "agent.created"; agent: ManagerAgent }

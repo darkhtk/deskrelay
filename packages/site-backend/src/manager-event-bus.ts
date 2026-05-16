@@ -4,6 +4,7 @@ import type {
   ManagerOrchestrationStore,
   ManagerRoundPatch,
 } from "./manager-orchestration-store.ts";
+import type { ManagerProjectStore } from "./manager-project-store.ts";
 import type { ManagerTaskPatch, ManagerTaskStore } from "./manager-task-store.ts";
 
 export type ManagerEventListener = (event: ManagerEvent) => void;
@@ -121,6 +122,35 @@ export function withManagerOrchestrationEvents(
       const round = await store.updateRound(id, patch);
       if (round) bus.emit({ type: "round.updated", round });
       return round;
+    },
+  };
+}
+
+export function withManagerProjectEvents(
+  store: ManagerProjectStore,
+  bus: ManagerEventBus,
+): ManagerProjectStore {
+  return {
+    list() {
+      return store.list();
+    },
+    get(id) {
+      return store.get(id);
+    },
+    async create(input) {
+      const project = await store.create(input);
+      bus.emit({ type: "project.created", project });
+      return project;
+    },
+    async update(id, patch) {
+      const project = await store.update(id, patch);
+      if (project) bus.emit({ type: "project.updated", project });
+      return project;
+    },
+    async archive(id) {
+      const project = await store.archive(id);
+      if (project) bus.emit({ type: "project.updated", project });
+      return project;
     },
   };
 }

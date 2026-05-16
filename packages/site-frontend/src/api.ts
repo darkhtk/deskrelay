@@ -23,6 +23,11 @@ import type {
   ManagerLogResponse,
   ManagerNetworkStatus,
   ManagerProcessStatus,
+  ManagerProject,
+  ManagerProjectCreateRequest,
+  ManagerProjectListResponse,
+  ManagerProjectResponse,
+  ManagerProjectUpdateRequest,
   ManagerRegistrationDiagnosis,
   ManagerRegistrationFailureAnalysis,
   ManagerRestartResult,
@@ -413,6 +418,11 @@ export interface BrowserClientContext {
 export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
 export type {
   ManagerAcknowledgeResponse,
+  ManagerProject,
+  ManagerProjectCreateRequest,
+  ManagerProjectListResponse,
+  ManagerProjectResponse,
+  ManagerProjectUpdateRequest,
   ManagerAssistantStatusReport,
   ManagerAssistantStatusReportInput,
   ManagerAssistantStatusReportResponse,
@@ -623,6 +633,22 @@ export const api = {
     request<{ tasks: ManagerTask[] }>(
       "GET",
       `/api/manager/tasks${typeof limit === "number" ? `?limit=${limit}` : ""}`,
+    ),
+  managerProjects: () => request<ManagerProjectListResponse>("GET", "/api/manager/projects"),
+  managerProject: (id: string) =>
+    request<ManagerProjectResponse>("GET", `/api/manager/projects/${encodeURIComponent(id)}`),
+  createManagerProject: (input: ManagerProjectCreateRequest) =>
+    request<ManagerProjectResponse>("POST", "/api/manager/projects", input),
+  updateManagerProject: (id: string, input: ManagerProjectUpdateRequest) =>
+    request<ManagerProjectResponse>(
+      "PATCH",
+      `/api/manager/projects/${encodeURIComponent(id)}`,
+      input,
+    ),
+  archiveManagerProject: (id: string) =>
+    request<ManagerProjectResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/archive`,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
   managerTaskLogs: (id: string) =>

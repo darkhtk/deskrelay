@@ -1,6 +1,8 @@
 import type {
   ManagerAgent,
   ManagerAssistantChatContext,
+  ManagerProject,
+  ManagerProjectCreateRequest,
   ManagerRound,
   ManagerRoundHealthGateResponse,
   ManagerSessionHygieneReport,
@@ -19,8 +21,8 @@ import {
 } from "solid-js";
 import { type Device, api } from "../api.ts";
 import {
-  createManagerEventSubscription,
   type ManagerEventConnectionState,
+  createManagerEventSubscription,
   isManagerOrchestrationEvent,
 } from "../manager-events.ts";
 import {
@@ -29,6 +31,8 @@ import {
 } from "../manager-orchestration-cache.ts";
 import { ManagerAssistant } from "./ManagerAssistant.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
+
+const SELECTED_MANAGER_PROJECT_KEY = "cr.manager.selectedProjectId";
 
 interface ManagerOrchestrationWorkspaceProps {
   context?: ManagerAssistantChatContext | null;
@@ -49,6 +53,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [managerActionBusy, setManagerActionBusy] = createSignal(false);
   const [observeBusy, setObserveBusy] = createSignal(false);
   const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = createSignal(readSelectedManagerProjectId());
+  const [projectActionBusy, setProjectActionBusy] = createSignal(false);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
@@ -74,6 +80,17 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           },
         );
         return next;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const [managerProjects, { refetch: refetchManagerProjects }] = createResource(
+    () => refreshSeq(),
+    async () => {
+      try {
+        return await api.managerProjects();
       } catch {
         return null;
       }
@@ -112,7 +129,40 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   );
 
   const visibleHygiene = createMemo(() => sessionHygiene() ?? cachedSnapshot()?.hygiene ?? null);
-  const activeRound = createMemo(() => pickActiveRound(visibleOrchestration()?.rounds ?? []));
+  const baseActiveRound = createMemo(() => pickActiveRound(visibleOrchestration()?.rounds ?? []));
+  const selectedProject = createMemo<ManagerProject | null>(() => {
+    const response = managerProjects();
+    const projects = response?.projects ?? [];
+    const archived = response?.archived ?? [];
+    const selected = selectedProjectId();
+    return (
+      projects.find((project) => project.id === selected) ??
+      projects.find((project) => project.activeRoundId === baseActiveRound()?.id) ??
+      projects[0] ??
+      archived.find((project) => project.id === selected) ??
+      null
+    );
+  });
+  const activeRound = createMemo(() => {
+    const rounds = visibleOrchestration()?.rounds ?? [];
+    const projectRoundId = selectedProject()?.activeRoundId;
+    return (
+      (projectRoundId ? rounds.find((round) => round.id === projectRoundId) : undefined) ??
+      baseActiveRound()
+    );
+  });
+
+  createEffect(() => {
+    const project = selectedProject();
+    const currentId = selectedProjectId();
+    if (project && project.id !== currentId) {
+      setSelectedProjectId(project.id);
+      writeSelectedManagerProjectId(project.id);
+    } else if (!project && currentId && managerProjects()) {
+      setSelectedProjectId(null);
+      writeSelectedManagerProjectId(null);
+    }
+  });
   const [activeRoundReport] = createResource(
     () => {
       const round = activeRound();
@@ -299,6 +349,41 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function createManagerProject(input: ManagerProjectCreateRequest) {
+    if (projectActionBusy()) return;
+    setProjectActionBusy(true);
+    try {
+      const response = await api.createManagerProject(input);
+      setSelectedProjectId(response.project.id);
+      writeSelectedManagerProjectId(response.project.id);
+      await refetchManagerProjects();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setProjectActionBusy(false);
+    }
+  }
+
+  function selectManagerProject(projectId: string | null) {
+    setSelectedProjectId(projectId);
+    writeSelectedManagerProjectId(projectId);
+  }
+
+  async function archiveManagerProject(projectId: string) {
+    if (projectActionBusy()) return;
+    setProjectActionBusy(true);
+    try {
+      await api.archiveManagerProject(projectId);
+      if (selectedProjectId() === projectId) {
+        setSelectedProjectId(null);
+        writeSelectedManagerProjectId(null);
+      }
+      await refetchManagerProjects();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setProjectActionBusy(false);
+    }
+  }
+
   async function repairRegistration() {
     if (managerActionBusy()) return;
     setManagerActionBusy(true);
@@ -370,6 +455,11 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       <section class="manager-workspace-board" aria-label="Orchestration workspace">
         <ManagerOrchestrationPanel
           standalone
+          projects={managerProjects()?.projects ?? []}
+          archivedProjects={managerProjects()?.archived ?? []}
+          selectedProject={selectedProject()}
+          projectLoading={managerProjects.loading}
+          projectBusy={projectActionBusy()}
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
@@ -396,6 +486,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onRefreshState={() => void refreshManagerStateNow()}
           onRetryTask={(taskId) => void retryManagerTask(taskId)}
           onRunUpdateAll={() => void runUpdateAll()}
+          onRefreshProjects={() => void refetchManagerProjects()}
+          onSelectProject={(projectId) => selectManagerProject(projectId)}
+          onCreateProject={(input) => void createManagerProject(input)}
+          onArchiveProject={(projectId) => void archiveManagerProject(projectId)}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">
@@ -431,4 +525,22 @@ function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
       ),
     ) ?? unacknowledged[0]
   );
+}
+
+function readSelectedManagerProjectId(): string | null {
+  try {
+    const value = localStorage.getItem(SELECTED_MANAGER_PROJECT_KEY);
+    return value?.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSelectedManagerProjectId(value: string | null): void {
+  try {
+    if (value) localStorage.setItem(SELECTED_MANAGER_PROJECT_KEY, value);
+    else localStorage.removeItem(SELECTED_MANAGER_PROJECT_KEY);
+  } catch {
+    // ignore unavailable browser storage
+  }
 }

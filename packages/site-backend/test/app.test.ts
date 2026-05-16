@@ -11,6 +11,7 @@ import type {
   StoredDeviceUpdateEntry,
 } from "../src/device-update-queue-store.ts";
 import { createInMemoryManagerOrchestrationStore } from "../src/manager-orchestration-store.ts";
+import { createInMemoryManagerProjectStore } from "../src/manager-project-store.ts";
 import { createInMemoryManagerTaskStore } from "../src/manager-task-store.ts";
 
 const TOKEN = "test-token";
@@ -58,7 +59,13 @@ function makeApp(
     return mockResponse(new Request(url, init));
   }) as typeof fetch;
 
-  const app = createSiteApp({ registry, token: TOKEN, fetchImpl, ...options });
+  const app = createSiteApp({
+    registry,
+    token: TOKEN,
+    fetchImpl,
+    managerProjectStore: createInMemoryManagerProjectStore(),
+    ...options,
+  });
   return {
     app,
     registry,
@@ -568,10 +575,7 @@ describe("API route inventory", () => {
           "POST /api/self/browser/presence",
           authedRequest("POST", "/api/self/browser/presence", { clientId: "route-inventory" }),
         ],
-        [
-          "POST /api/self/browser/refresh",
-          authedRequest("POST", "/api/self/browser/refresh"),
-        ],
+        ["POST /api/self/browser/refresh", authedRequest("POST", "/api/self/browser/refresh")],
         [
           "POST /api/manager/sessions/read",
           authedRequest("POST", "/api/manager/sessions/read", {
@@ -639,6 +643,33 @@ describe("API route inventory", () => {
         [
           "POST /api/manager/agents/:id/acknowledge",
           authedRequest("POST", "/api/manager/agents/missing/acknowledge"),
+          [404],
+        ],
+        ["GET /api/manager/projects", authedRequest("GET", "/api/manager/projects")],
+        [
+          "POST /api/manager/projects",
+          authedRequest("POST", "/api/manager/projects", {
+            name: "Smoke Project",
+            cwd: "C:\\Users\\darkh\\Projects\\smoke",
+            goal: "verify route inventory",
+          }),
+          [201],
+        ],
+        [
+          "GET /api/manager/projects/:id",
+          authedRequest("GET", "/api/manager/projects/missing"),
+          [404],
+        ],
+        [
+          "PATCH /api/manager/projects/:id",
+          authedRequest("PATCH", "/api/manager/projects/missing", {
+            name: "Updated",
+          }),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/archive",
+          authedRequest("POST", "/api/manager/projects/missing/archive"),
           [404],
         ],
         ["GET /api/manager/rounds", authedRequest("GET", "/api/manager/rounds")],
@@ -1671,7 +1702,10 @@ describe("manager task API", () => {
 
     const secondRefresh = await app.fetch(authedRequest("POST", "/api/self/browser/refresh"));
     expect(secondRefresh.status).toBe(200);
-    const secondBody = (await secondRefresh.json()) as { activeClients?: number; eventSeq?: number };
+    const secondBody = (await secondRefresh.json()) as {
+      activeClients?: number;
+      eventSeq?: number;
+    };
     expect(secondBody).toMatchObject({ activeClients: 1, eventSeq: 2 });
 
     const recent = await app.fetch(authedRequest("GET", "/api/manager/events/recent"));

@@ -66,6 +66,8 @@ export function createManagerEventSubscription(options: ManagerEventSubscription
 export function isManagerOrchestrationEvent(event: ManagerEvent): boolean {
   return (
     event.type === "snapshot" ||
+    event.type === "project.created" ||
+    event.type === "project.updated" ||
     event.type === "round.created" ||
     event.type === "round.updated" ||
     event.type === "agent.created" ||

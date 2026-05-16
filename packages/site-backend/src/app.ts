@@ -41,6 +41,11 @@ import {
   type ManagerNetworkAddress,
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
+  type ManagerProjectCreateRequest,
+  type ManagerProjectListResponse,
+  type ManagerProjectResponse,
+  type ManagerProjectStatus,
+  type ManagerProjectUpdateRequest,
   type ManagerRegistrationDiagnosis,
   type ManagerRound,
   type ManagerRoundAgentAssignment,
@@ -91,16 +96,16 @@ import { type DeskRelayBuildInfo, getDeskRelayBuildInfo } from "@deskrelay/share
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 import {
+  connectorNetworkKind,
+  diagnoseConnectorReachability,
+  networkKindForHost,
+} from "./connector-diagnosis.ts";
+import {
   type Device,
   type DeviceRegistry,
   DeviceRegistryError,
   normalizeDaemonUrl,
 } from "./device-registry.ts";
-import {
-  connectorNetworkKind,
-  diagnoseConnectorReachability,
-  networkKindForHost,
-} from "./connector-diagnosis.ts";
 import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
@@ -115,12 +120,17 @@ import {
   type ManagerEventBus,
   createManagerEventBus,
   withManagerOrchestrationEvents,
+  withManagerProjectEvents,
   withManagerTaskEvents,
 } from "./manager-event-bus.ts";
 import {
   type ManagerOrchestrationStore,
   createJsonManagerOrchestrationStore,
 } from "./manager-orchestration-store.ts";
+import {
+  type ManagerProjectStore,
+  createJsonManagerProjectStore,
+} from "./manager-project-store.ts";
 import { type ManagerTaskStore, createInMemoryManagerTaskStore } from "./manager-task-store.ts";
 import type {
   SelfServerAutostartController,
@@ -151,6 +161,7 @@ export interface SiteAppOptions {
   managerEventBus?: ManagerEventBus;
   managerTaskStore?: ManagerTaskStore;
   managerOrchestrationStore?: ManagerOrchestrationStore;
+  managerProjectStore?: ManagerProjectStore;
   managerAssistant?: ManagerAssistantOptions;
   managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
@@ -211,6 +222,7 @@ const CONNECTOR_CLEANUP_TIMEOUT_MS = 5_000;
 const DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS = 600_000;
 const MAX_MANAGER_ASSISTANT_TIMEOUT_MS = 1_800_000;
 const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
+const MANAGER_PROJECTS_DIR = ".deskrelay/manager-projects";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
@@ -227,19 +239,21 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const localToken = options.localDaemonToken;
   const announcements = createAnnouncementSource(options, fetchImpl);
   const build = options.build ?? getDeskRelayBuildInfo();
+  const managerRepoRoot = options.managerAssistant?.cwd ?? process.cwd();
   const managerEventBus = options.managerEventBus ?? createManagerEventBus();
   const managerTaskStore = withManagerTaskEvents(
     options.managerTaskStore ?? createInMemoryManagerTaskStore(),
     managerEventBus,
   );
+  const managerProjectStore = withManagerProjectEvents(
+    options.managerProjectStore ??
+      createJsonManagerProjectStore(join(managerRepoRoot, MANAGER_PROJECTS_DIR)),
+    managerEventBus,
+  );
   const managerOrchestrationStore = withManagerOrchestrationEvents(
     options.managerOrchestrationStore ??
       createJsonManagerOrchestrationStore(
-        join(
-          options.managerAssistant?.cwd ?? process.cwd(),
-          MANAGER_ASSISTANT_DIR,
-          MANAGER_ORCHESTRATION_FILE,
-        ),
+        join(managerRepoRoot, MANAGER_ASSISTANT_DIR, MANAGER_ORCHESTRATION_FILE),
       ),
     managerEventBus,
   );
@@ -308,8 +322,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
 
   app.post("/api/self/browser/presence", async (c) => {
     const input = (await c.req.json().catch(() => ({}))) as { clientId?: unknown };
-    const clientId =
-      typeof input.clientId === "string" ? input.clientId.trim().slice(0, 128) : "";
+    const clientId = typeof input.clientId === "string" ? input.clientId.trim().slice(0, 128) : "";
     if (!clientId) return c.json({ error: "clientId is required" }, 400);
     const now = Date.now();
     browserClients.set(clientId, now);
@@ -439,6 +452,82 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
     }
+  });
+
+  app.get("/api/manager/projects", async (c) => {
+    try {
+      const result = await managerProjectStore.list();
+      const response: ManagerProjectListResponse = {
+        generatedAt: new Date().toISOString(),
+        ...result,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/api/manager/projects", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProjectCreateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const project = await managerProjectStore.create(parsed.value);
+      const response: ManagerProjectResponse = {
+        generatedAt: new Date().toISOString(),
+        project,
+      };
+      return c.json(response, 201);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 400);
+    }
+  });
+
+  app.get("/api/manager/projects/:id", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const response: ManagerProjectResponse = {
+      generatedAt: new Date().toISOString(),
+      project,
+    };
+    return c.json(response);
+  });
+
+  app.patch("/api/manager/projects/:id", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProjectUpdateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    try {
+      const project = await managerProjectStore.update(c.req.param("id"), parsed.value);
+      if (!project) return c.json({ error: "unknown project" }, 404);
+      const response: ManagerProjectResponse = {
+        generatedAt: new Date().toISOString(),
+        project,
+      };
+      return c.json(response);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 400);
+    }
+  });
+
+  app.post("/api/manager/projects/:id/archive", async (c) => {
+    const project = await managerProjectStore.archive(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const response: ManagerProjectResponse = {
+      generatedAt: new Date().toISOString(),
+      project,
+    };
+    return c.json(response);
   });
 
   app.get("/api/manager/worker-runs", async (c) => {
@@ -1893,6 +1982,19 @@ const SITE_ROUTE_CAPABILITIES = [
   { method: "GET", path: "/healthz", description: "Read server version and basic health." },
   { method: "GET", path: "/api/announcement", description: "Read the public update notice." },
   { method: "GET", path: "/api/capabilities", description: "List server API capabilities." },
+  { method: "GET", path: "/api/manager/projects", description: "List manager projects." },
+  { method: "POST", path: "/api/manager/projects", description: "Create a manager project." },
+  { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
+  {
+    method: "PATCH",
+    path: "/api/manager/projects/:id",
+    description: "Update one manager project.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/archive",
+    description: "Archive one manager project without deleting its project folder.",
+  },
   { method: "GET", path: "/api/manager/tasks", description: "List manager tasks." },
   { method: "POST", path: "/api/manager/tasks", description: "Create a manager task." },
   { method: "GET", path: "/api/manager/tasks/:id", description: "Read one manager task." },
@@ -7883,6 +7985,53 @@ function parseManagerAgentMessageRequest(
   };
 }
 
+function parseManagerProjectCreateRequest(
+  input: unknown,
+): { ok: true; value: ManagerProjectCreateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "project body must be an object" };
+  const cwd = typeof input.cwd === "string" ? input.cwd.trim() : "";
+  if (!cwd) return { ok: false, error: "project cwd is required" };
+  const status = parseManagerProjectStatus(input.status);
+  if (input.status !== undefined && !status) {
+    return { ok: false, error: "project status is invalid" };
+  }
+  return {
+    ok: true,
+    value: {
+      cwd,
+      ...(typeof input.name === "string" && input.name.trim() ? { name: input.name.trim() } : {}),
+      ...(typeof input.goal === "string" && input.goal.trim() ? { goal: input.goal.trim() } : {}),
+      ...(status ? { status } : {}),
+      ...(typeof input.activeRoundId === "string" && input.activeRoundId.trim()
+        ? { activeRoundId: input.activeRoundId.trim() }
+        : {}),
+    },
+  };
+}
+
+function parseManagerProjectUpdateRequest(
+  input: unknown,
+): { ok: true; value: ManagerProjectUpdateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "project body must be an object" };
+  const status = parseManagerProjectStatus(input.status);
+  if (input.status !== undefined && !status) {
+    return { ok: false, error: "project status is invalid" };
+  }
+  const value: ManagerProjectUpdateRequest = {};
+  if (typeof input.cwd === "string") value.cwd = input.cwd.trim();
+  if (typeof input.name === "string") value.name = input.name.trim();
+  if (typeof input.goal === "string") value.goal = input.goal.trim();
+  if (status) value.status = status;
+  if (input.activeRoundId === null) value.activeRoundId = null;
+  else if (typeof input.activeRoundId === "string")
+    value.activeRoundId = input.activeRoundId.trim();
+  if (input.summary === null) value.summary = null;
+  else if (typeof input.summary === "string") value.summary = input.summary.trim();
+  if (input.error === null) value.error = null;
+  else if (typeof input.error === "string") value.error = input.error.trim();
+  return { ok: true, value };
+}
+
 function parseManagerRoundCreateRequest(
   input: unknown,
 ): { ok: true; value: ManagerRoundCreateRequest } | { ok: false; error: string } {
@@ -7966,6 +8115,20 @@ function parseManagerAgentRole(value: unknown): ManagerAgentRole | undefined {
   const role = value.trim();
   if (!role || role.length > 64) return undefined;
   return role;
+}
+
+function parseManagerProjectStatus(value: unknown): ManagerProjectStatus | undefined {
+  if (
+    value === "planning" ||
+    value === "running" ||
+    value === "blocked" ||
+    value === "reviewing" ||
+    value === "completed" ||
+    value === "archived"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function isManagerTaskKind(value: unknown): value is ManagerTaskKind {
@@ -10337,8 +10500,7 @@ async function buildDeviceDiagnosticReport(
         diagnosticCheck({
           id: "device.tailscale",
           label: "Tailscale route",
-          severity:
-            reachability.kind === "tailscale-route-or-firewall" ? "error" : "unknown",
+          severity: reachability.kind === "tailscale-route-or-firewall" ? "error" : "unknown",
           summary:
             reachability.kind === "tailscale-route-or-firewall"
               ? "Tailscale route or incoming policy needs attention"

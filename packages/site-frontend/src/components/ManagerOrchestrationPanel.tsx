@@ -1,5 +1,7 @@
 import type {
   ManagerAgent,
+  ManagerProject,
+  ManagerProjectCreateRequest,
   ManagerRound,
   ManagerRoundHealthGate,
   ManagerRoundReportResponse,
@@ -30,6 +32,11 @@ const MIN_PANEL_HEIGHT = 160;
 const MAX_PANEL_HEIGHT = 620;
 
 interface ManagerOrchestrationPanelProps {
+  projects?: ManagerProject[] | undefined;
+  archivedProjects?: ManagerProject[] | undefined;
+  selectedProject?: ManagerProject | null | undefined;
+  projectLoading?: boolean | undefined;
+  projectBusy?: boolean | undefined;
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
@@ -57,6 +64,10 @@ interface ManagerOrchestrationPanelProps {
   onRunUpdateAll?: (() => void) | undefined;
   onRefreshHygiene?: (() => void) | undefined;
   onCleanupHygiene?: (() => void) | undefined;
+  onRefreshProjects?: (() => void) | undefined;
+  onSelectProject?: ((projectId: string | null) => void) | undefined;
+  onCreateProject?: ((input: ManagerProjectCreateRequest) => void) | undefined;
+  onArchiveProject?: ((projectId: string) => void) | undefined;
 }
 
 interface TimelineEntry {
@@ -100,7 +111,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const [activeTab, setActiveTab] = createSignal<OrchestrationInfoTab>("overview");
   let stopResize: (() => void) | undefined;
   const isExpanded = () => Boolean(props.standalone) || expanded();
-  const activeRound = createMemo(() => pickActiveRound(props.rounds));
+  const activeRound = createMemo(() => {
+    const projectRoundId = props.selectedProject?.activeRoundId;
+    return (
+      (projectRoundId ? props.rounds.find((round) => round.id === projectRoundId) : undefined) ??
+      pickActiveRound(props.rounds)
+    );
+  });
   const rawAgents = createMemo(() => {
     const round = activeRound();
     if (!round) return props.agents;
@@ -228,6 +245,18 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
 
       <Show when={isExpanded()}>
         <div class="manager-orchestration-body">
+          <ProjectHeader
+            projects={props.projects ?? []}
+            archivedProjects={props.archivedProjects ?? []}
+            selectedProject={props.selectedProject ?? null}
+            activeRound={activeRound()}
+            loading={props.projectLoading}
+            busy={props.projectBusy}
+            onRefresh={props.onRefreshProjects}
+            onSelect={props.onSelectProject}
+            onCreate={props.onCreateProject}
+            onArchive={props.onArchiveProject}
+          />
           <nav
             class="manager-orchestration-tabs"
             role="tablist"
@@ -413,6 +442,142 @@ const OrchestrationSection: Component<{ title: string; class?: string; children:
     {props.children}
   </section>
 );
+
+const ProjectHeader: Component<{
+  projects: ManagerProject[];
+  archivedProjects: ManagerProject[];
+  selectedProject: ManagerProject | null;
+  activeRound: ManagerRound | undefined;
+  loading?: boolean | undefined;
+  busy?: boolean | undefined;
+  onRefresh?: (() => void) | undefined;
+  onSelect?: ((projectId: string | null) => void) | undefined;
+  onCreate?: ((input: ManagerProjectCreateRequest) => void) | undefined;
+  onArchive?: ((projectId: string) => void) | undefined;
+}> = (props) => {
+  const [creating, setCreating] = createSignal(false);
+  const [name, setName] = createSignal("");
+  const [cwd, setCwd] = createSignal("");
+  const [goal, setGoal] = createSignal("");
+  const projectOptions = createMemo(() => [...props.projects, ...props.archivedProjects]);
+  const project = createMemo(() => props.selectedProject);
+  const canCreate = createMemo(() => Boolean(cwd().trim() && props.onCreate && !props.busy));
+  const submit = () => {
+    const value = cwd().trim();
+    if (!value || !props.onCreate) return;
+    props.onCreate({
+      cwd: value,
+      ...(name().trim() ? { name: name().trim() } : {}),
+      ...(goal().trim() ? { goal: goal().trim() } : {}),
+      ...(props.activeRound?.id ? { activeRoundId: props.activeRound.id } : {}),
+    });
+    setCreating(false);
+    setName("");
+    setCwd("");
+    setGoal("");
+  };
+  return (
+    <section class="manager-project-header" aria-label="Manager project">
+      <div class="manager-project-header-main">
+        <div class="manager-project-selector-row">
+          <span class="manager-project-label">Project</span>
+          <select
+            value={project()?.id ?? ""}
+            disabled={props.busy || projectOptions().length === 0}
+            onChange={(event) => props.onSelect?.(event.currentTarget.value || null)}
+          >
+            <option value="">No project selected</option>
+            <For each={props.projects}>
+              {(item) => <option value={item.id}>{item.name}</option>}
+            </For>
+            <For each={props.archivedProjects}>
+              {(item) => <option value={item.id}>{item.name} (archived)</option>}
+            </For>
+          </select>
+          <button
+            type="button"
+            disabled={props.busy}
+            onClick={() => setCreating((value) => !value)}
+          >
+            {creating() ? "Cancel" : "New"}
+          </button>
+          <button
+            type="button"
+            disabled={props.busy || props.loading}
+            onClick={() => props.onRefresh?.()}
+          >
+            {props.loading ? "Loading" : "Refresh"}
+          </button>
+          <Show when={Boolean(project() && project()?.status !== "archived" && props.onArchive)}>
+            <button
+              type="button"
+              disabled={props.busy}
+              onClick={() => {
+                const current = project();
+                if (current) props.onArchive?.(current.id);
+              }}
+            >
+              Archive
+            </button>
+          </Show>
+        </div>
+        <Show
+          when={project()}
+          fallback={
+            <p class="manager-project-summary">
+              No project is pinned yet. Current rounds are still visible, but they are not grouped
+              by project.
+            </p>
+          }
+        >
+          {(current) => (
+            <p class="manager-project-summary">
+              <strong>{current().name}</strong>
+              <span>{current().status}</span>
+              <span>{current().cwd}</span>
+              <Show when={current().goal}>{(text) => <span>{text()}</span>}</Show>
+              <Show when={current().activeRoundId}>
+                {(roundId) => <span>round {shortId(roundId())}</span>}
+              </Show>
+            </p>
+          )}
+        </Show>
+      </div>
+      <Show when={creating()}>
+        <form
+          class="manager-project-create"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <input
+            type="text"
+            value={name()}
+            onInput={(event) => setName(event.currentTarget.value)}
+            placeholder="Project name"
+          />
+          <input
+            type="text"
+            value={cwd()}
+            onInput={(event) => setCwd(event.currentTarget.value)}
+            placeholder="C:\path\to\project"
+            required
+          />
+          <input
+            type="text"
+            value={goal()}
+            onInput={(event) => setGoal(event.currentTarget.value)}
+            placeholder="Goal"
+          />
+          <button type="submit" disabled={!canCreate()}>
+            Create
+          </button>
+        </form>
+      </Show>
+    </section>
+  );
+};
 
 const OverviewView: Component<{
   round: ManagerRound | undefined;
