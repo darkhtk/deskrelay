@@ -105,6 +105,7 @@ export interface ManagerNetworkProbe {
   label: string;
   url: string;
   ok: boolean;
+  state?: "ok" | "warn" | "error" | "skipped" | "unknown";
   classification?: string;
   status?: number;
   latencyMs?: number;

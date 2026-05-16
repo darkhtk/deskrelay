@@ -54,6 +54,7 @@ import {
   writeClaudeInstruction,
 } from "./instructions.ts";
 import { WINDOWS_LOGIN_TASK_LOG_NAME, queryLoginTask } from "./login-task.ts";
+import { buildConnectorNetworkDiagnostics } from "./network-diagnostics.ts";
 import { defaultStateDir } from "./state-file.ts";
 import type { WorkspaceRoots } from "./workspaces.ts";
 
@@ -797,16 +798,21 @@ export class Daemon {
             label: "Local connector HTTP",
             url: `http://127.0.0.1:${this.#listening.port}/status`,
             ok: true,
+            state: "ok" as const,
             status: 200,
           },
         ]
       : [];
+    const diagnostics = buildConnectorNetworkDiagnostics({
+      platform: process.platform,
+      listening,
+      addresses,
+    });
     const summary =
-      listening && listening.kind === "local" && tailscaleAddresses.length > 0
+      diagnostics.severity !== "ok"
         ? {
-            severity: "warn" as const,
-            message:
-              "Connector is running local-only even though a Tailscale address is available.",
+            severity: diagnostics.severity,
+            message: diagnostics.warnings[0] ?? "Connector network needs attention.",
           }
         : {
             severity: "ok" as const,
@@ -830,7 +836,7 @@ export class Daemon {
         ],
       },
       addresses,
-      probes,
+      probes: [...probes, ...diagnostics.probes],
       summary,
     };
   }

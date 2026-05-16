@@ -169,7 +169,7 @@ describe("Daemon HTTP API — basics", () => {
       listening?: { port?: number; kind?: string };
       tailscale?: { detected?: boolean; addresses?: string[] };
       addresses?: unknown[];
-      probes?: Array<{ ok?: boolean }>;
+      probes?: Array<{ id?: string; ok?: boolean; state?: string }>;
     };
     expect(d.scope).toBe("device");
     expect(typeof d.generatedAt).toBe("string");
@@ -178,6 +178,10 @@ describe("Daemon HTTP API — basics", () => {
     expect(Array.isArray(d.tailscale?.addresses)).toBe(true);
     expect(Array.isArray(d.addresses)).toBe(true);
     expect(d.probes?.some((probe) => probe.ok === true)).toBe(true);
+    expect(d.probes?.some((probe) => probe.id === "daemon.local-http")).toBe(true);
+    expect(d.probes?.some((probe) => probe.id === "daemon.listen-bind")).toBe(true);
+    expect(d.probes?.some((probe) => probe.id === "daemon.tailscale-cli")).toBe(true);
+    expect(d.probes?.some((probe) => probe.id === "daemon.windows-firewall")).toBe(true);
   });
 
   test("GET /install/status reports connector install and running state", async () => {
