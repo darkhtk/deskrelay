@@ -73,9 +73,31 @@ interface ArtifactEntry {
   updatedAt: string;
 }
 
+type OrchestrationInfoTab =
+  | "overview"
+  | "agents"
+  | "state"
+  | "graph"
+  | "runs"
+  | "artifacts"
+  | "timeline"
+  | "hygiene";
+
+const ORCHESTRATION_INFO_TABS: Array<{ id: OrchestrationInfoTab; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "agents", label: "Agents" },
+  { id: "state", label: "State" },
+  { id: "graph", label: "Graph" },
+  { id: "runs", label: "Runs" },
+  { id: "artifacts", label: "Artifacts" },
+  { id: "timeline", label: "Timeline" },
+  { id: "hygiene", label: "Hygiene" },
+];
+
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
   const [expanded, setExpanded] = createSignal(false);
   const [panelHeight, setPanelHeight] = createSignal(readPanelHeight());
+  const [activeTab, setActiveTab] = createSignal<OrchestrationInfoTab>("overview");
   let stopResize: (() => void) | undefined;
   const isExpanded = () => Boolean(props.standalone) || expanded();
   const activeRound = createMemo(() => pickActiveRound(props.rounds));
@@ -206,77 +228,152 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
 
       <Show when={isExpanded()}>
         <div class="manager-orchestration-body">
-          <OrchestrationSection title="Command Center" class="manager-section-overview">
-            <OverviewView
-              round={activeRound()}
-              agents={agents()}
-              tasks={tasks()}
-              hiddenAgentCount={hiddenAgentCount()}
-            />
-          </OrchestrationSection>
-          <OrchestrationSection title="Agent Theater" class="manager-section-agents">
-            <AgentsView agents={agents()} />
-          </OrchestrationSection>
-          <OrchestrationSection title="Current state" class="manager-section-current">
-            <CurrentStateView
-              state={props.state}
-              busy={props.actionBusy || props.acknowledgeBusy}
-              onAcknowledge={props.onAcknowledgeFailures}
-              onCancelTask={props.onCancelTask}
-              onInspectTask={props.onInspectTask}
-              onRepairRegistration={props.onRepairRegistration}
-              onRefresh={props.onRefreshState}
-              onRetryTask={props.onRetryTask}
-              onRunUpdateAll={props.onRunUpdateAll}
-            />
-          </OrchestrationSection>
-          <OrchestrationSection title="Blockers / Health" class="manager-section-health">
-            <RoundHealthGateView
-              health={props.health}
-              busy={props.actionBusy || props.acknowledgeBusy}
-              onAcknowledgeRound={props.onAcknowledgeRound}
-              onInspectTask={props.onInspectTask}
-              onRepairRound={props.onRepairRound}
-              onRetryTask={props.onRetryTask}
-            />
-          </OrchestrationSection>
-          <OrchestrationSection title="Worker Graph" class="manager-section-flow">
-            <MermaidFlowView
-              round={activeRound()}
-              agents={agents()}
-              tasks={tasks()}
-              hiddenAgentCount={hiddenAgentCount()}
-            />
-          </OrchestrationSection>
-          <Show when={props.observedTask}>
-            {(observation) => (
-              <OrchestrationSection title="Task observation" class="manager-section-observation">
-                <TaskObservationView observation={observation()} busy={props.observeBusy} />
+          <nav
+            class="manager-orchestration-tabs"
+            role="tablist"
+            aria-label="Orchestration information"
+          >
+            <For each={ORCHESTRATION_INFO_TABS}>
+              {(tab) => (
+                <button
+                  type="button"
+                  role="tab"
+                  class="manager-orchestration-tab"
+                  classList={{ "is-active": activeTab() === tab.id }}
+                  aria-selected={activeTab() === tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              )}
+            </For>
+          </nav>
+          <div
+            class="manager-orchestration-tab-panel"
+            classList={{
+              "manager-orchestration-tab-panel-wide": activeTab() === "overview",
+              "manager-orchestration-tab-panel-single": activeTab() !== "overview",
+            }}
+            role="tabpanel"
+          >
+            <Show when={activeTab() === "overview"}>
+              <OrchestrationSection title="Command Center" class="manager-section-overview">
+                <OverviewView
+                  round={activeRound()}
+                  agents={agents()}
+                  tasks={tasks()}
+                  hiddenAgentCount={hiddenAgentCount()}
+                />
               </OrchestrationSection>
-            )}
-          </Show>
-          <OrchestrationSection title="Worker runs" class="manager-section-worker-runs">
-            <WorkerRunsView
-              runs={props.workerRuns ?? []}
-              busy={props.observeBusy || props.actionBusy}
-              onInspectTask={props.onInspectTask}
-            />
-          </OrchestrationSection>
-          <OrchestrationSection title="Artifacts" class="manager-section-artifacts">
-            <ArtifactsView artifacts={artifacts()} />
-          </OrchestrationSection>
-          <OrchestrationSection title="Timeline" class="manager-section-timeline">
-            <TimelineView entries={timeline()} />
-          </OrchestrationSection>
-          <OrchestrationSection title="Session Hygiene" class="manager-section-hygiene">
-            <HygieneView
-              report={props.hygiene}
-              loading={props.hygieneLoading}
-              cleanupBusy={props.hygieneCleanupBusy}
-              onRefresh={props.onRefreshHygiene}
-              onCleanup={props.onCleanupHygiene}
-            />
-          </OrchestrationSection>
+              <OrchestrationSection title="Current state" class="manager-section-current">
+                <CurrentStateView
+                  state={props.state}
+                  busy={props.actionBusy || props.acknowledgeBusy}
+                  onAcknowledge={props.onAcknowledgeFailures}
+                  onCancelTask={props.onCancelTask}
+                  onInspectTask={props.onInspectTask}
+                  onRepairRegistration={props.onRepairRegistration}
+                  onRefresh={props.onRefreshState}
+                  onRetryTask={props.onRetryTask}
+                  onRunUpdateAll={props.onRunUpdateAll}
+                />
+              </OrchestrationSection>
+              <OrchestrationSection title="Blockers / Health" class="manager-section-health">
+                <RoundHealthGateView
+                  health={props.health}
+                  busy={props.actionBusy || props.acknowledgeBusy}
+                  onAcknowledgeRound={props.onAcknowledgeRound}
+                  onInspectTask={props.onInspectTask}
+                  onRepairRound={props.onRepairRound}
+                  onRetryTask={props.onRetryTask}
+                />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "agents"}>
+              <OrchestrationSection title="Agent Theater" class="manager-section-agents">
+                <AgentsView agents={agents()} />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "state"}>
+              <OrchestrationSection title="Current state" class="manager-section-current">
+                <CurrentStateView
+                  state={props.state}
+                  busy={props.actionBusy || props.acknowledgeBusy}
+                  onAcknowledge={props.onAcknowledgeFailures}
+                  onCancelTask={props.onCancelTask}
+                  onInspectTask={props.onInspectTask}
+                  onRepairRegistration={props.onRepairRegistration}
+                  onRefresh={props.onRefreshState}
+                  onRetryTask={props.onRetryTask}
+                  onRunUpdateAll={props.onRunUpdateAll}
+                />
+              </OrchestrationSection>
+              <OrchestrationSection title="Blockers / Health" class="manager-section-health">
+                <RoundHealthGateView
+                  health={props.health}
+                  busy={props.actionBusy || props.acknowledgeBusy}
+                  onAcknowledgeRound={props.onAcknowledgeRound}
+                  onInspectTask={props.onInspectTask}
+                  onRepairRound={props.onRepairRound}
+                  onRetryTask={props.onRetryTask}
+                />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "graph"}>
+              <OrchestrationSection title="Worker Graph" class="manager-section-flow">
+                <MermaidFlowView
+                  round={activeRound()}
+                  agents={agents()}
+                  tasks={tasks()}
+                  hiddenAgentCount={hiddenAgentCount()}
+                />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "runs"}>
+              <Show when={props.observedTask}>
+                {(observation) => (
+                  <OrchestrationSection title="Task observation" class="manager-section-observation">
+                    <TaskObservationView observation={observation()} busy={props.observeBusy} />
+                  </OrchestrationSection>
+                )}
+              </Show>
+              <OrchestrationSection title="Worker runs" class="manager-section-worker-runs">
+                <WorkerRunsView
+                  runs={props.workerRuns ?? []}
+                  busy={props.observeBusy || props.actionBusy}
+                  onInspectTask={props.onInspectTask}
+                />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "artifacts"}>
+              <OrchestrationSection title="Artifacts" class="manager-section-artifacts">
+                <ArtifactsView artifacts={artifacts()} />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "timeline"}>
+              <OrchestrationSection title="Timeline" class="manager-section-timeline">
+                <TimelineView entries={timeline()} />
+              </OrchestrationSection>
+            </Show>
+
+            <Show when={activeTab() === "hygiene"}>
+              <OrchestrationSection title="Session Hygiene" class="manager-section-hygiene">
+                <HygieneView
+                  report={props.hygiene}
+                  loading={props.hygieneLoading}
+                  cleanupBusy={props.hygieneCleanupBusy}
+                  onRefresh={props.onRefreshHygiene}
+                  onCleanup={props.onCleanupHygiene}
+                />
+              </OrchestrationSection>
+            </Show>
+          </div>
         </div>
         <Show when={!props.standalone}>
           <button
