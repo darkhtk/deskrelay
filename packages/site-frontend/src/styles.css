@@ -232,6 +232,7 @@ body.sidebar-open {
 
 /* ---- Signed-in pane ---- */
 .signed-in {
+  background: var(--bg);
   flex: 1;
   display: grid;
   /* IMPORTANT: minmax(0, 1fr) — without the explicit 0 minimum, a grid
@@ -241,6 +242,7 @@ body.sidebar-open {
      unbreakable string, producing a horizontal pan surface. */
   grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
   min-height: 0;
+  overflow: hidden;
   position: relative;
 }
 
@@ -2189,6 +2191,34 @@ body.sidebar-collapsed .chat {
 }
 
 @media (min-width: 721px) {
+  .signed-in.orchestration-mode {
+    grid-auto-columns: 0;
+    grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .signed-in.orchestration-mode > .sidebar {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .signed-in.orchestration-mode > .chat {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: start;
+    max-width: 100%;
+    width: calc(100vw - var(--sidebar-width, 260px) - 12px);
+  }
+
+  body.sidebar-collapsed .signed-in.orchestration-mode {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.sidebar-collapsed .signed-in.orchestration-mode > .chat {
+    grid-column: 1;
+    width: calc(100vw - 24px);
+  }
+
   .signed-in.assistant-panel-open {
     grid-template-columns:
       var(--sidebar-width, 260px) minmax(0, 1fr)
@@ -2204,6 +2234,14 @@ body.sidebar-collapsed .chat {
   }
 
   body.sidebar-collapsed .signed-in.assistant-panel-open.main-chat-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .signed-in.assistant-panel-open.orchestration-mode {
+    grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
+  }
+
+  body.sidebar-collapsed .signed-in.assistant-panel-open.orchestration-mode {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -5619,9 +5657,11 @@ dialog.approval-modal-root,
   gap: 0;
 }
 .manager-workspace {
+  background: var(--surface);
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr) var(--assistant-width, 380px);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(220px, 0.36fr);
   min-height: 0;
   min-width: 0;
 }
@@ -5631,24 +5671,31 @@ dialog.approval-modal-root,
   min-width: 0;
 }
 .manager-workspace-board {
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 .manager-workspace-assistant {
-  border-left: 1px solid var(--border-subtle);
+  background: var(--surface);
+  border-left: 0;
+  border-top: 1px solid var(--border-subtle);
+  contain: layout paint;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-left: 16px;
+  padding-left: 0;
+  padding-top: 10px;
   position: relative;
 }
 .manager-workspace-assistant .manager-assistant {
+  background: var(--surface);
   flex: 1 1 auto;
   height: 100%;
+  min-width: 0;
 }
 .manager-workspace-assistant .assistant-resize-handle {
-  left: -8px;
+  display: none;
 }
 .manager-orchestration-status {
   align-items: center;
@@ -5798,7 +5845,8 @@ dialog.approval-modal-root,
   flex: 1 1 auto;
   gap: 14px;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 2px 14px 12px;
 }
 .manager-orchestration-panel-standalone .manager-orchestration-body {
@@ -6174,7 +6222,7 @@ body.manager-orchestration-resizing {
 }
 .manager-agent-lanes {
   gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
 }
 .manager-agent-lane {
   border-left: 2px solid var(--border-subtle);
@@ -6334,6 +6382,7 @@ body.manager-orchestration-resizing {
   display: grid;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
 }
 .manager-mermaid-render {
   color: var(--text);
@@ -6631,11 +6680,60 @@ body.manager-orchestration-resizing {
 }
 .manager-assistant-transcript {
   flex: 1 1 auto;
+  max-width: 100%;
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
 }
 .manager-assistant-transcript > .transcript-inner > .transcript {
   padding-left: 0;
   padding-right: 0;
+}
+.manager-workspace-assistant .transcript,
+.manager-workspace-assistant .transcript-inner,
+.manager-workspace-assistant .message,
+.manager-workspace-assistant .block-text,
+.manager-workspace-assistant .tool-result {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+.manager-workspace-assistant pre,
+.manager-workspace-assistant .markdown-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.manager-workspace-assistant .block-image,
+.manager-workspace-assistant .local-image-preview {
+  width: min(100%, 240px);
+  max-width: 100%;
+  overflow: hidden;
+}
+.manager-workspace-assistant .block-image {
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-faint);
+  display: inline-flex;
+  font-size: 12px;
+  min-height: 32px;
+  padding: 6px 10px;
+}
+.manager-workspace-assistant .block-image::before {
+  content: "이미지 첨부";
+}
+.manager-workspace-assistant .message img,
+.manager-workspace-assistant .block-image img,
+.manager-workspace-assistant .message-image,
+.manager-workspace-assistant .tool-result-image {
+  display: none;
+  height: auto;
+  max-height: 160px;
+  max-width: 100%;
+  object-fit: contain;
+}
+.manager-workspace-assistant .block-image-caption {
+  display: none;
 }
 .manager-assistant-chat .composer-shell {
   flex: 0 0 auto;

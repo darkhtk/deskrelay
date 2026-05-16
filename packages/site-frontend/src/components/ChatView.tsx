@@ -3302,6 +3302,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
       class="signed-in"
       classList={{
         "main-chat-collapsed": chatPanelCollapsed(),
+        "orchestration-mode": mainPanelMode() === "orchestration",
       }}
       id="signed-in-pane"
       style={{
