@@ -632,6 +632,80 @@ export interface ManagerBlockerResponse {
   created?: boolean;
 }
 
+export type ManagerArtifactStatus = "active" | "draft" | "obsolete" | "failed" | "missing";
+
+export type ManagerArtifactKind =
+  | "protocol"
+  | "report"
+  | "code"
+  | "config"
+  | "log"
+  | "document"
+  | "unknown";
+
+export type ManagerArtifactSource = "manager" | "browser" | "worker" | "system" | "scan";
+
+export interface ManagerArtifact {
+  id: string;
+  projectId: string;
+  path: string;
+  kind: ManagerArtifactKind;
+  status: ManagerArtifactStatus;
+  owner: string;
+  source: ManagerArtifactSource;
+  note?: string | undefined;
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+  discoveredAt: string;
+  updatedAt: string;
+}
+
+export interface ManagerArtifactUpsertInput {
+  path: string;
+  kind?: ManagerArtifactKind;
+  status?: ManagerArtifactStatus;
+  owner?: string;
+  source?: ManagerArtifactSource;
+  note?: string;
+  roundId?: string;
+  agentId?: string;
+  taskId?: string;
+}
+
+export interface ManagerArtifactScanRequest {
+  limit?: number;
+}
+
+export interface ManagerArtifactUpdateRequest {
+  kind?: ManagerArtifactKind;
+  status?: ManagerArtifactStatus;
+  owner?: string;
+  note?: string | null;
+}
+
+export interface ManagerArtifactListResponse {
+  generatedAt: string;
+  projectId: string;
+  artifacts: ManagerArtifact[];
+  inactive: ManagerArtifact[];
+}
+
+export interface ManagerArtifactScanResponse {
+  generatedAt: string;
+  projectId: string;
+  artifacts: ManagerArtifact[];
+  inactive: ManagerArtifact[];
+  created: number;
+  updated: number;
+  unchanged: number;
+}
+
+export interface ManagerArtifactResponse {
+  generatedAt: string;
+  artifact: ManagerArtifact;
+}
+
 export type ManagerProjectOverviewTone = "idle" | "running" | "success" | "warning" | "error";
 
 export type ManagerProjectNextActionKind =
@@ -1293,6 +1367,7 @@ export interface ManagerEventSnapshot {
   projects?: ManagerProject[];
   decisions?: ManagerDecision[];
   blockers?: ManagerBlocker[];
+  artifacts?: ManagerArtifact[];
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   tasks: ManagerTask[];
@@ -1308,6 +1383,8 @@ export type ManagerEventInput =
   | { type: "decision.updated"; decision: ManagerDecision }
   | { type: "blocker.created"; blocker: ManagerBlocker }
   | { type: "blocker.updated"; blocker: ManagerBlocker }
+  | { type: "artifact.created"; artifact: ManagerArtifact }
+  | { type: "artifact.updated"; artifact: ManagerArtifact }
   | { type: "round.created"; round: ManagerRound }
   | { type: "round.updated"; round: ManagerRound }
   | { type: "agent.created"; agent: ManagerAgent }

@@ -10,6 +10,7 @@ import type {
   DeviceUpdateQueueStore,
   StoredDeviceUpdateEntry,
 } from "../src/device-update-queue-store.ts";
+import { createInMemoryManagerArtifactStore } from "../src/manager-artifact-store.ts";
 import { createInMemoryManagerBlockerStore } from "../src/manager-blocker-store.ts";
 import { createInMemoryManagerDecisionStore } from "../src/manager-decision-store.ts";
 import { createInMemoryManagerOrchestrationStore } from "../src/manager-orchestration-store.ts";
@@ -65,6 +66,7 @@ function makeApp(
     registry,
     token: TOKEN,
     fetchImpl,
+    managerArtifactStore: createInMemoryManagerArtifactStore(),
     managerBlockerStore: createInMemoryManagerBlockerStore(),
     managerDecisionStore: createInMemoryManagerDecisionStore(),
     managerProjectStore: createInMemoryManagerProjectStore(),
@@ -443,6 +445,7 @@ describe("API route inventory", () => {
         source: "package",
       },
       managerAssistant: { cwd: logDir },
+      managerArtifactStore: createInMemoryManagerArtifactStore(),
     });
 
     const coveredRoutes = new Set<string>();
@@ -707,6 +710,23 @@ describe("API route inventory", () => {
           "POST /api/manager/projects/:id/blockers/:blockerId/resolve",
           authedRequest("POST", "/api/manager/projects/missing/blockers/missing/resolve", {
             resolution: "route inventory",
+          }),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/artifacts",
+          authedRequest("GET", "/api/manager/projects/missing/artifacts"),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/artifacts/scan",
+          authedRequest("POST", "/api/manager/projects/missing/artifacts/scan", {}),
+          [404],
+        ],
+        [
+          "PATCH /api/manager/projects/:id/artifacts/:artifactId",
+          authedRequest("PATCH", "/api/manager/projects/missing/artifacts/missing", {
+            status: "obsolete",
           }),
           [404],
         ],
@@ -2639,6 +2659,107 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(afterBody.blockers).toEqual([]);
     expect(afterBody.resolved?.map((blocker) => blocker.id)).toEqual([created.blocker?.id]);
     expect(afterBody.resolved?.[0]?.status).toBe("resolved");
+  });
+
+  test("manager project artifacts scan worker evidence and preserve inactive records", async () => {
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerArtifactStore = createInMemoryManagerArtifactStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerProjectStore,
+      managerOrchestrationStore,
+      managerTaskStore,
+      managerArtifactStore,
+    });
+
+    const projectCreate = await app.fetch(
+      authedRequest("POST", "/api/manager/projects", {
+        name: "Artifact Project",
+        cwd: "C:\\Users\\darkh\\Projects\\artifacts",
+        goal: "track generated files",
+      }),
+    );
+    expect(projectCreate.status).toBe(201);
+    const projectBody = (await projectCreate.json()) as { project?: { id?: string } };
+    const projectId = projectBody.project?.id ?? "";
+    expect(projectId).toBeTruthy();
+
+    const agent = await managerOrchestrationStore.createAgent({
+      projectId,
+      role: "protocol",
+      profile: "test",
+      instruction: "write protocol",
+    });
+    await managerOrchestrationStore.updateAgent(agent.id, {
+      status: "completed",
+      lastOutput: "Updated PROTOCOL.md and src/game.ts. Ignore notes.txt.",
+    });
+
+    const firstScan = await app.fetch(
+      authedRequest("POST", `/api/manager/projects/${projectId}/artifacts/scan`, {}),
+    );
+    expect(firstScan.status).toBe(200);
+    const firstBody = (await firstScan.json()) as {
+      created?: number;
+      unchanged?: number;
+      artifacts?: Array<{ id?: string; path?: string; kind?: string; status?: string }>;
+    };
+    expect(firstBody.created).toBe(2);
+    expect(firstBody.artifacts?.map((artifact) => artifact.path).sort()).toEqual([
+      "PROTOCOL.md",
+      "src/game.ts",
+    ]);
+    expect(firstBody.artifacts?.find((artifact) => artifact.path === "PROTOCOL.md")?.kind).toBe(
+      "protocol",
+    );
+
+    const secondScan = await app.fetch(
+      authedRequest("POST", `/api/manager/projects/${projectId}/artifacts/scan`, {}),
+    );
+    expect(secondScan.status).toBe(200);
+    const secondBody = (await secondScan.json()) as { created?: number; unchanged?: number };
+    expect(secondBody.created).toBe(0);
+    expect(secondBody.unchanged).toBe(2);
+
+    const protocol = firstBody.artifacts?.find((artifact) => artifact.path === "PROTOCOL.md");
+    const update = await app.fetch(
+      authedRequest("PATCH", `/api/manager/projects/${projectId}/artifacts/${protocol?.id}`, {
+        status: "obsolete",
+        note: "superseded by STATE.md",
+      }),
+    );
+    expect(update.status).toBe(200);
+
+    const afterUpdate = await app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/artifacts`),
+    );
+    const afterBody = (await afterUpdate.json()) as {
+      artifacts?: Array<{ path?: string }>;
+      inactive?: Array<{ path?: string; status?: string; note?: string }>;
+    };
+    expect(afterBody.artifacts?.map((artifact) => artifact.path)).toEqual(["src/game.ts"]);
+    expect(afterBody.inactive?.[0]).toEqual(
+      expect.objectContaining({
+        path: "PROTOCOL.md",
+        status: "obsolete",
+        note: "superseded by STATE.md",
+      }),
+    );
+
+    const rescan = await app.fetch(
+      authedRequest("POST", `/api/manager/projects/${projectId}/artifacts/scan`, {}),
+    );
+    const rescanBody = (await rescan.json()) as {
+      artifacts?: Array<{ path?: string }>;
+      inactive?: Array<{ path?: string; status?: string }>;
+    };
+    expect(rescanBody.artifacts?.map((artifact) => artifact.path)).toEqual(["src/game.ts"]);
+    expect(rescanBody.inactive?.[0]).toEqual(
+      expect.objectContaining({ path: "PROTOCOL.md", status: "obsolete" }),
+    );
   });
 
   test("manager orchestration rounds dispatch multiple role agents", async () => {

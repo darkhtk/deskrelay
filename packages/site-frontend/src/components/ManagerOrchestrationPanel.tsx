@@ -1,5 +1,7 @@
 import type {
   ManagerAgent,
+  ManagerArtifact,
+  ManagerArtifactUpdateRequest,
   ManagerBlocker,
   ManagerBlockerCreateRequest,
   ManagerBlockerResolveRequest,
@@ -51,6 +53,9 @@ interface ManagerOrchestrationPanelProps {
   blockers?: ManagerBlocker[] | undefined;
   resolvedBlockers?: ManagerBlocker[] | undefined;
   blockerBusy?: boolean | undefined;
+  artifacts?: ManagerArtifact[] | undefined;
+  inactiveArtifacts?: ManagerArtifact[] | undefined;
+  artifactBusy?: boolean | undefined;
   rounds: ManagerRound[];
   agents: ManagerAgent[];
   report?: ManagerRoundReportResponse | null | undefined;
@@ -90,6 +95,10 @@ interface ManagerOrchestrationPanelProps {
   onResolveBlocker?:
     | ((blockerId: string, input?: ManagerBlockerResolveRequest) => void)
     | undefined;
+  onScanArtifacts?: (() => void) | undefined;
+  onUpdateArtifact?:
+    | ((artifactId: string, input: ManagerArtifactUpdateRequest) => void)
+    | undefined;
 }
 
 interface TimelineEntry {
@@ -100,10 +109,13 @@ interface TimelineEntry {
 }
 
 interface ArtifactEntry {
+  id?: string | undefined;
   path: string;
   owner: string;
   status: string;
   updatedAt: string;
+  kind?: string | undefined;
+  note?: string | undefined;
 }
 
 type OrchestrationInfoTab =
@@ -155,7 +167,14 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const hiddenAgentCount = createMemo(() => Math.max(0, rawAgents().length - agents().length));
   const tasks = createMemo(() => props.report?.tasks ?? []);
   const timeline = createMemo(() => buildTimeline(activeRound(), agents(), tasks()));
-  const artifacts = createMemo(() => buildArtifacts(agents(), tasks()));
+  const artifacts = createMemo(() =>
+    props.artifacts && props.artifacts.length > 0
+      ? props.artifacts.map(artifactEntryFromStored)
+      : buildArtifacts(agents(), tasks()),
+  );
+  const inactiveArtifacts = createMemo(() =>
+    (props.inactiveArtifacts ?? []).map(artifactEntryFromStored),
+  );
   const totals = createMemo(() => summarizeTotals(agents()));
   const runTotals = createMemo(() => summarizeWorkerRunTotals(props.workerRuns ?? []));
   const currentState = createMemo(() => props.state?.current ?? null);
@@ -445,7 +464,14 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
 
             <Show when={activeTab() === "artifacts"}>
               <OrchestrationSection title="Artifacts" class="manager-section-artifacts">
-                <ArtifactsView artifacts={artifacts()} />
+                <ArtifactsView
+                  artifacts={artifacts()}
+                  inactiveArtifacts={inactiveArtifacts()}
+                  busy={props.artifactBusy}
+                  stored={Boolean(props.artifacts && props.artifacts.length > 0)}
+                  onScan={props.onScanArtifacts}
+                  onUpdate={props.onUpdateArtifact}
+                />
               </OrchestrationSection>
             </Show>
 
@@ -1710,13 +1736,32 @@ const MermaidDiagram: Component<{ source: string }> = (props) => {
   );
 };
 
-const ArtifactsView: Component<{ artifacts: ArtifactEntry[] }> = (props) => (
+const ArtifactsView: Component<{
+  artifacts: ArtifactEntry[];
+  inactiveArtifacts?: ArtifactEntry[] | undefined;
+  busy?: boolean | undefined;
+  stored?: boolean | undefined;
+  onScan?: (() => void) | undefined;
+  onUpdate?: ((artifactId: string, input: ManagerArtifactUpdateRequest) => void) | undefined;
+}> = (props) => (
   <div class="manager-artifact-list">
+    <div class="manager-artifact-toolbar">
+      <p>
+        {props.stored
+          ? "Stored project artifacts."
+          : "Derived from recent worker output until the project is scanned."}
+      </p>
+      <button type="button" disabled={props.busy} onClick={() => props.onScan?.()}>
+        {props.busy ? "Scanning..." : "Scan artifacts"}
+      </button>
+    </div>
     <div class="manager-artifact-row manager-artifact-row-head">
       <span>File</span>
       <span>Owner</span>
+      <span>Kind</span>
       <span>Status</span>
       <span>Updated</span>
+      <span>Action</span>
     </div>
     <For each={props.artifacts}>
       {(artifact) => (
@@ -1725,15 +1770,62 @@ const ArtifactsView: Component<{ artifacts: ArtifactEntry[] }> = (props) => (
             {artifact.path}
           </span>
           <span>{artifact.owner}</span>
+          <span>{artifact.kind ?? "unknown"}</span>
           <span>{statusLabel(artifact.status)}</span>
           <time>{formatTime(artifact.updatedAt)}</time>
+          <span>
+            <Show when={artifact.id}>
+              {(id) => (
+                <button
+                  type="button"
+                  class="manager-artifact-action"
+                  disabled={props.busy}
+                  onClick={() => props.onUpdate?.(id(), { status: "obsolete" })}
+                >
+                  Obsolete
+                </button>
+              )}
+            </Show>
+          </span>
         </div>
       )}
     </For>
     <Show when={props.artifacts.length === 0}>
       <p class="manager-orchestration-empty">
-        No artifact paths detected yet. File paths in worker output will appear here.
+        No artifact paths detected yet. Scan after worker output references files.
       </p>
+    </Show>
+    <Show when={(props.inactiveArtifacts?.length ?? 0) > 0}>
+      <details class="manager-artifact-inactive">
+        <summary>Inactive artifacts ({props.inactiveArtifacts?.length ?? 0})</summary>
+        <For each={props.inactiveArtifacts ?? []}>
+          {(artifact) => (
+            <div class="manager-artifact-row">
+              <span class="manager-artifact-path" title={artifact.path}>
+                {artifact.path}
+              </span>
+              <span>{artifact.owner}</span>
+              <span>{artifact.kind ?? "unknown"}</span>
+              <span>{statusLabel(artifact.status)}</span>
+              <time>{formatTime(artifact.updatedAt)}</time>
+              <span>
+                <Show when={artifact.id}>
+                  {(id) => (
+                    <button
+                      type="button"
+                      class="manager-artifact-action"
+                      disabled={props.busy}
+                      onClick={() => props.onUpdate?.(id(), { status: "active" })}
+                    >
+                      Active
+                    </button>
+                  )}
+                </Show>
+              </span>
+            </div>
+          )}
+        </For>
+      </details>
     </Show>
   </div>
 );
@@ -2171,6 +2263,18 @@ function buildArtifacts(agents: ManagerAgent[], tasks: ManagerTask[]): ArtifactE
   return [...seen.values()]
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
     .slice(0, 24);
+}
+
+function artifactEntryFromStored(artifact: ManagerArtifact): ArtifactEntry {
+  return {
+    id: artifact.id,
+    path: artifact.path,
+    owner: artifact.owner,
+    status: artifact.status,
+    updatedAt: artifact.updatedAt,
+    kind: artifact.kind,
+    ...(artifact.note ? { note: artifact.note } : {}),
+  };
 }
 
 function collectArtifactPaths(text: string): string[] {

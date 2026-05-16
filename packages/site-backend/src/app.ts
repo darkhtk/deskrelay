@@ -17,6 +17,14 @@ import {
   type ManagerAgentMessageResponse,
   type ManagerAgentRole,
   type ManagerAgentStatus,
+  type ManagerArtifactKind,
+  type ManagerArtifactListResponse,
+  type ManagerArtifactResponse,
+  type ManagerArtifactScanRequest,
+  type ManagerArtifactScanResponse,
+  type ManagerArtifactStatus,
+  type ManagerArtifactUpdateRequest,
+  type ManagerArtifactUpsertInput,
   type ManagerAssistantChatContext,
   type ManagerAssistantChatMessage,
   type ManagerAssistantChatRequest,
@@ -133,6 +141,11 @@ import {
 import { loc } from "./i18n.ts";
 import type { InstallReportStore } from "./install-report-store.ts";
 import {
+  type ManagerArtifactStore,
+  type ManagerArtifactUpsertResult,
+  createJsonManagerArtifactStore,
+} from "./manager-artifact-store.ts";
+import {
   type ManagerBlockerStore,
   createJsonManagerBlockerStore,
 } from "./manager-blocker-store.ts";
@@ -143,6 +156,7 @@ import {
 import {
   type ManagerEventBus,
   createManagerEventBus,
+  withManagerArtifactEvents,
   withManagerBlockerEvents,
   withManagerDecisionEvents,
   withManagerOrchestrationEvents,
@@ -190,6 +204,7 @@ export interface SiteAppOptions {
   managerProjectStore?: ManagerProjectStore;
   managerDecisionStore?: ManagerDecisionStore;
   managerBlockerStore?: ManagerBlockerStore;
+  managerArtifactStore?: ManagerArtifactStore;
   managerAssistant?: ManagerAssistantOptions;
   managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
@@ -253,6 +268,7 @@ const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_PROJECTS_DIR = ".deskrelay/manager-projects";
 const MANAGER_DECISIONS_DIR = ".deskrelay/manager-decisions";
 const MANAGER_BLOCKERS_DIR = ".deskrelay/manager-blockers";
+const MANAGER_ARTIFACTS_DIR = ".deskrelay/manager-artifacts";
 const MANAGER_ASSISTANT_INSTRUCTIONS_FILE = "CLAUDE.md";
 const MANAGER_ASSISTANT_STATUS_FILE = "status-reports.json";
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
@@ -288,6 +304,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   const managerBlockerStore = withManagerBlockerEvents(
     options.managerBlockerStore ??
       createJsonManagerBlockerStore(join(managerRepoRoot, MANAGER_BLOCKERS_DIR)),
+    managerEventBus,
+  );
+  const managerArtifactStore = withManagerArtifactEvents(
+    options.managerArtifactStore ??
+      createJsonManagerArtifactStore(join(managerRepoRoot, MANAGER_ARTIFACTS_DIR)),
     managerEventBus,
   );
   const managerOrchestrationStore = withManagerOrchestrationEvents(
@@ -611,6 +632,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         project,
         orchestrationStore: managerOrchestrationStore,
         taskStore: managerTaskStore,
+        artifactStore: managerArtifactStore,
         now: new Date(),
       }),
     );
@@ -724,6 +746,75 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const response: ManagerBlockerResponse = {
       generatedAt: new Date().toISOString(),
       blocker,
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/projects/:id/artifacts", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const result = await managerArtifactStore.list(project.id);
+    const response: ManagerArtifactListResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      ...result,
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/artifacts/scan", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown = {};
+    try {
+      const text = await c.req.text();
+      body = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerArtifactScanRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const result = await scanManagerProjectArtifacts({
+      project,
+      orchestrationStore: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      artifactStore: managerArtifactStore,
+      now: new Date(),
+      ...(parsed.value.limit !== undefined ? { limit: parsed.value.limit } : {}),
+    });
+    const response: ManagerArtifactScanResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      artifacts: result.artifacts,
+      inactive: result.inactive,
+      created: result.created.length,
+      updated: result.updated.length,
+      unchanged: result.unchanged.length,
+    };
+    return c.json(response);
+  });
+
+  app.patch("/api/manager/projects/:id/artifacts/:artifactId", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerArtifactUpdateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const artifact = await managerArtifactStore.update(
+      project.id,
+      c.req.param("artifactId"),
+      parsed.value,
+    );
+    if (!artifact) return c.json({ error: "unknown artifact" }, 404);
+    const response: ManagerArtifactResponse = {
+      generatedAt: new Date().toISOString(),
+      artifact,
     };
     return c.json(response);
   });
@@ -2294,6 +2385,21 @@ const SITE_ROUTE_CAPABILITIES = [
     path: "/api/manager/projects/:id/blockers/:blockerId/resolve",
     description: "Resolve or dismiss one manager project blocker.",
   },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/artifacts",
+    description: "List active and inactive artifacts for one manager project.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/artifacts/scan",
+    description: "Scan project worker evidence and record detected artifacts.",
+  },
+  {
+    method: "PATCH",
+    path: "/api/manager/projects/:id/artifacts/:artifactId",
+    description: "Update one manager project artifact status or metadata.",
+  },
   { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
   {
     method: "PATCH",
@@ -3556,6 +3662,7 @@ interface ManagerProjectOverviewInput {
   project: ManagerProject;
   orchestrationStore: ManagerOrchestrationStore;
   taskStore: ManagerTaskStore;
+  artifactStore?: ManagerArtifactStore;
   now: Date;
 }
 
@@ -3599,7 +3706,14 @@ async function buildManagerProjectOverview(
         (task) => activeTaskIds.has(task.id) || taskRoundId(task) === activeRound.id,
       )
     : projectTasks;
-  const artifactCount = countManagerProjectArtifacts(projectAgents, projectTasks);
+  const storedArtifacts = input.artifactStore
+    ? await input.artifactStore.list(input.project.id)
+    : null;
+  const derivedArtifactCount = countManagerProjectArtifacts(projectAgents, projectTasks);
+  const artifactCount =
+    storedArtifacts && storedArtifacts.artifacts.length > 0
+      ? storedArtifacts.artifacts.length
+      : derivedArtifactCount;
   const currentSignal = managerProjectCurrentSignal({
     project: input.project,
     round: activeRound,
@@ -3627,6 +3741,7 @@ async function buildManagerProjectOverview(
     ...projectAgents.map((agent) => agent.updatedAt),
     ...projectTasks.map((task) => task.updatedAt),
     ...projectRuns.runs.map((run) => run.updatedAt),
+    ...(storedArtifacts?.artifacts ?? []).map((artifact) => artifact.updatedAt),
   ]);
 
   return {
@@ -3693,6 +3808,89 @@ function selectManagerProjectTasks(
       Boolean(roundId && roundIds.has(roundId))
     );
   });
+}
+
+interface ManagerProjectArtifactScanInput {
+  project: ManagerProject;
+  orchestrationStore: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  artifactStore: ManagerArtifactStore;
+  limit?: number;
+  now: Date;
+}
+
+async function scanManagerProjectArtifacts(
+  input: ManagerProjectArtifactScanInput,
+): Promise<ManagerArtifactUpsertResult> {
+  const [rounds, agents, tasks] = await Promise.all([
+    input.orchestrationStore.listRounds(),
+    input.orchestrationStore.listAgents(),
+    input.taskStore.list(500),
+  ]);
+  const projectRounds = selectManagerProjectRounds(input.project, rounds);
+  const projectRoundIds = new Set(projectRounds.map((round) => round.id));
+  const projectAgents = selectManagerProjectAgents(input.project, projectRoundIds, agents);
+  const projectTasks = selectManagerProjectTasks(
+    input.project,
+    projectRoundIds,
+    projectAgents,
+    tasks,
+  );
+  const agentByTaskId = new Map<string, ManagerAgent>();
+  for (const agent of projectAgents) {
+    if (agent.taskId) agentByTaskId.set(agent.taskId, agent);
+  }
+  const artifacts = new Map<string, ManagerArtifactUpsertInput>();
+  const maxArtifacts = Math.max(1, Math.min(input.limit ?? 200, 500));
+
+  const addArtifact = (
+    path: string,
+    source: Omit<ManagerArtifactUpsertInput, "path" | "kind" | "status">,
+  ) => {
+    if (artifacts.size >= maxArtifacts) return;
+    const key = path.replace(/\//g, "\\").toLowerCase();
+    artifacts.set(key, {
+      path,
+      kind: inferManagerArtifactKind(path),
+      status: "active",
+      source: "scan",
+      ...source,
+    });
+  };
+
+  for (const agent of projectAgents) {
+    const text = [agent.lastInstruction, agent.lastOutput, agent.lastError].join("\n");
+    for (const path of collectManagerArtifactPaths(text)) {
+      addArtifact(path, {
+        owner: agent.role,
+        source: "worker",
+        ...(agent.roundId ? { roundId: agent.roundId } : {}),
+        agentId: agent.id,
+        ...(agent.taskId ? { taskId: agent.taskId } : {}),
+      });
+    }
+  }
+
+  for (const task of projectTasks) {
+    const agent = agentByTaskId.get(task.id);
+    const text = [
+      task.error,
+      JSON.stringify(task.params ?? {}),
+      JSON.stringify(task.result ?? {}),
+      ...task.steps.map((step) => `${step.label}\n${step.summary}\n${step.detail ?? ""}`),
+    ].join("\n");
+    for (const path of collectManagerArtifactPaths(text)) {
+      addArtifact(path, {
+        owner: agent?.role ?? task.kind,
+        source: agent ? "worker" : "manager",
+        ...(agent?.roundId ? { roundId: agent.roundId } : {}),
+        ...(agent ? { agentId: agent.id } : {}),
+        taskId: task.id,
+      });
+    }
+  }
+
+  return await input.artifactStore.upsertMany(input.project.id, [...artifacts.values()]);
 }
 
 function pickManagerProjectActiveRound(
@@ -3905,6 +4103,43 @@ function statusToneForProject(status: string): ManagerProjectOverviewSignal["ton
   }
   if (["blocked", "failed", "cancelled", "stale", "missing"].includes(status)) return "warning";
   return "idle";
+}
+
+function inferManagerArtifactKind(path: string): ManagerArtifactKind {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  const basename = normalized.split("/").pop() ?? normalized;
+  if (
+    [
+      "orchestration.md",
+      "agents.md",
+      "protocol.md",
+      "locks.md",
+      "tasks.md",
+      "state.md",
+      "failures.md",
+      "project.md",
+    ].includes(basename)
+  ) {
+    return "protocol";
+  }
+  if (basename.endsWith(".log")) return "log";
+  if (basename.endsWith(".json") || basename.endsWith(".yml") || basename.endsWith(".yaml")) {
+    return "config";
+  }
+  if (
+    basename.endsWith(".ts") ||
+    basename.endsWith(".tsx") ||
+    basename.endsWith(".js") ||
+    basename.endsWith(".jsx") ||
+    basename.endsWith(".py") ||
+    basename.endsWith(".ps1")
+  ) {
+    return "code";
+  }
+  if (basename.endsWith(".md")) {
+    return basename.includes("report") || basename.includes("readme") ? "report" : "document";
+  }
+  return "unknown";
 }
 
 function countManagerProjectArtifacts(agents: ManagerAgent[], tasks: ManagerTask[]): number {
@@ -8939,6 +9174,50 @@ function parseManagerBlockerResolveRequest(
   };
 }
 
+function parseManagerArtifactScanRequest(
+  input: unknown,
+): { ok: true; value: ManagerArtifactScanRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "artifact scan body must be an object" };
+  const value: ManagerArtifactScanRequest = {};
+  if (input.limit !== undefined) {
+    const limit = Number(input.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      return { ok: false, error: "artifact scan limit must be an integer from 1 to 500" };
+    }
+    value.limit = limit;
+  }
+  return { ok: true, value };
+}
+
+function parseManagerArtifactUpdateRequest(
+  input: unknown,
+): { ok: true; value: ManagerArtifactUpdateRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "artifact body must be an object" };
+  const kind = parseManagerArtifactKind(input.kind);
+  if (input.kind !== undefined && !kind) {
+    return { ok: false, error: "artifact kind is invalid" };
+  }
+  const status = parseManagerArtifactStatus(input.status);
+  if (input.status !== undefined && !status) {
+    return { ok: false, error: "artifact status is invalid" };
+  }
+  const value: ManagerArtifactUpdateRequest = {};
+  if (kind) value.kind = kind;
+  if (status) value.status = status;
+  if (typeof input.owner === "string") {
+    const owner = input.owner.trim();
+    if (!owner) return { ok: false, error: "artifact owner cannot be empty" };
+    if (owner.length > 96) return { ok: false, error: "artifact owner is too long" };
+    value.owner = owner;
+  }
+  if (input.note === null) value.note = null;
+  else if (typeof input.note === "string") value.note = input.note.trim().slice(0, 4_000);
+  if (Object.keys(value).length === 0) {
+    return { ok: false, error: "artifact update must include at least one field" };
+  }
+  return { ok: true, value };
+}
+
 function parseManagerRoundCreateRequest(
   input: unknown,
 ): { ok: true; value: ManagerRoundCreateRequest } | { ok: false; error: string } {
@@ -9062,6 +9341,34 @@ function parseManagerBlockerRequiredAction(
 
 function parseManagerBlockerSource(value: unknown): ManagerBlockerSource | undefined {
   if (value === "manager" || value === "browser" || value === "worker" || value === "system") {
+    return value;
+  }
+  return undefined;
+}
+
+function parseManagerArtifactStatus(value: unknown): ManagerArtifactStatus | undefined {
+  if (
+    value === "active" ||
+    value === "draft" ||
+    value === "obsolete" ||
+    value === "failed" ||
+    value === "missing"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function parseManagerArtifactKind(value: unknown): ManagerArtifactKind | undefined {
+  if (
+    value === "protocol" ||
+    value === "report" ||
+    value === "code" ||
+    value === "config" ||
+    value === "log" ||
+    value === "document" ||
+    value === "unknown"
+  ) {
     return value;
   }
   return undefined;

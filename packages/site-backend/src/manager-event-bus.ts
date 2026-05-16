@@ -1,9 +1,11 @@
 import type {
+  ManagerArtifactUpdateRequest,
   ManagerBlockerResolveRequest,
   ManagerDecisionUpdateRequest,
   ManagerEvent,
   ManagerEventInput,
 } from "@deskrelay/shared";
+import type { ManagerArtifactStore } from "./manager-artifact-store.ts";
 import type { ManagerBlockerStore } from "./manager-blocker-store.ts";
 import type { ManagerDecisionStore } from "./manager-decision-store.ts";
 import type {
@@ -209,6 +211,35 @@ export function withManagerBlockerEvents(
       const blocker = await store.resolve(projectId, id, input);
       if (blocker) bus.emit({ type: "blocker.updated", blocker });
       return blocker;
+    },
+  };
+}
+
+export function withManagerArtifactEvents(
+  store: ManagerArtifactStore,
+  bus: ManagerEventBus,
+): ManagerArtifactStore {
+  return {
+    list(projectId) {
+      return store.list(projectId);
+    },
+    get(projectId, id) {
+      return store.get(projectId, id);
+    },
+    async upsertMany(projectId, inputs) {
+      const result = await store.upsertMany(projectId, inputs);
+      for (const artifact of result.created) {
+        bus.emit({ type: "artifact.created", artifact });
+      }
+      for (const artifact of result.updated) {
+        bus.emit({ type: "artifact.updated", artifact });
+      }
+      return result;
+    },
+    async update(projectId: string, id: string, patch: ManagerArtifactUpdateRequest) {
+      const artifact = await store.update(projectId, id, patch);
+      if (artifact) bus.emit({ type: "artifact.updated", artifact });
+      return artifact;
     },
   };
 }

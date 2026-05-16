@@ -7,6 +7,11 @@ import type {
   ManagerAgentListResponse,
   ManagerAgentMessageRequest,
   ManagerAgentMessageResponse,
+  ManagerArtifactListResponse,
+  ManagerArtifactResponse,
+  ManagerArtifactScanRequest,
+  ManagerArtifactScanResponse,
+  ManagerArtifactUpdateRequest,
   ManagerAssistantChatRequest,
   ManagerAssistantChatResponse,
   ManagerAssistantConversationState,
@@ -428,6 +433,11 @@ export interface BrowserClientContext {
 export type { DiagnosticCheck, DiagnosticReport, DiagnosticSeverity } from "@deskrelay/shared";
 export type {
   ManagerAcknowledgeResponse,
+  ManagerArtifactListResponse,
+  ManagerArtifactResponse,
+  ManagerArtifactScanRequest,
+  ManagerArtifactScanResponse,
+  ManagerArtifactUpdateRequest,
   ManagerBlockerCreateRequest,
   ManagerBlockerListResponse,
   ManagerBlockerResolveRequest,
@@ -737,6 +747,27 @@ export const api = {
     request<ManagerBlockerResponse>(
       "POST",
       `/api/manager/projects/${encodeURIComponent(id)}/blockers/${encodeURIComponent(blockerId)}/resolve`,
+      input,
+    ),
+  managerProjectArtifacts: (id: string) =>
+    request<ManagerArtifactListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/artifacts`,
+    ),
+  scanManagerProjectArtifacts: (id: string, input: ManagerArtifactScanRequest = {}) =>
+    request<ManagerArtifactScanResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/artifacts/scan`,
+      input,
+    ),
+  updateManagerProjectArtifact: (
+    id: string,
+    artifactId: string,
+    input: ManagerArtifactUpdateRequest,
+  ) =>
+    request<ManagerArtifactResponse>(
+      "PATCH",
+      `/api/manager/projects/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifactId)}`,
       input,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),

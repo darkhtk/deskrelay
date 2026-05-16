@@ -1,5 +1,7 @@
 import type {
   ManagerAgent,
+  ManagerArtifactListResponse,
+  ManagerArtifactUpdateRequest,
   ManagerAssistantChatContext,
   ManagerBlockerCreateRequest,
   ManagerBlockerListResponse,
@@ -64,6 +66,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [projectActionBusy, setProjectActionBusy] = createSignal(false);
   const [decisionActionBusy, setDecisionActionBusy] = createSignal(false);
   const [blockerActionBusy, setBlockerActionBusy] = createSignal(false);
+  const [artifactActionBusy, setArtifactActionBusy] = createSignal(false);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
@@ -213,6 +216,22 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       if (!input) return null;
       try {
         return await api.managerProjectBlockers(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const [projectArtifacts] = createResource(
+    () => {
+      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const seq = refreshSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerArtifactListResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectArtifacts(input.projectId);
       } catch {
         return null;
       }
@@ -504,6 +523,30 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function scanProjectArtifacts() {
+    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    if (!projectId || artifactActionBusy()) return;
+    setArtifactActionBusy(true);
+    try {
+      await api.scanManagerProjectArtifacts(projectId);
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setArtifactActionBusy(false);
+    }
+  }
+
+  async function updateProjectArtifact(artifactId: string, input: ManagerArtifactUpdateRequest) {
+    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    if (!projectId || artifactActionBusy()) return;
+    setArtifactActionBusy(true);
+    try {
+      await api.updateManagerProjectArtifact(projectId, artifactId, input);
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setArtifactActionBusy(false);
+    }
+  }
+
   async function repairRegistration() {
     if (managerActionBusy()) return;
     setManagerActionBusy(true);
@@ -587,6 +630,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           blockers={projectBlockers()?.blockers ?? []}
           resolvedBlockers={projectBlockers()?.resolved ?? []}
           blockerBusy={blockerActionBusy()}
+          artifacts={projectArtifacts()?.artifacts ?? []}
+          inactiveArtifacts={projectArtifacts()?.inactive ?? []}
+          artifactBusy={artifactActionBusy()}
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
@@ -621,6 +667,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onUpdateDecision={(decisionId, input) => void updateProjectDecision(decisionId, input)}
           onCreateBlocker={(input) => void createProjectBlocker(input)}
           onResolveBlocker={(blockerId, input) => void resolveProjectBlocker(blockerId, input)}
+          onScanArtifacts={() => void scanProjectArtifacts()}
+          onUpdateArtifact={(artifactId, input) => void updateProjectArtifact(artifactId, input)}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">
