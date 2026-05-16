@@ -197,13 +197,16 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
 
       <Show when={isExpanded()}>
         <div class="manager-orchestration-body">
-          <OrchestrationSection title="Overview" class="manager-section-overview">
+          <OrchestrationSection title="Command Center" class="manager-section-overview">
             <OverviewView
               round={activeRound()}
               agents={agents()}
               tasks={tasks()}
               hiddenAgentCount={hiddenAgentCount()}
             />
+          </OrchestrationSection>
+          <OrchestrationSection title="Agent Theater" class="manager-section-agents">
+            <AgentsView agents={agents()} />
           </OrchestrationSection>
           <OrchestrationSection title="Current state" class="manager-section-current">
             <CurrentStateView
@@ -218,7 +221,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               onRunUpdateAll={props.onRunUpdateAll}
             />
           </OrchestrationSection>
-          <OrchestrationSection title="Round health" class="manager-section-health">
+          <OrchestrationSection title="Blockers / Health" class="manager-section-health">
             <RoundHealthGateView
               health={props.health}
               busy={props.actionBusy || props.acknowledgeBusy}
@@ -226,6 +229,14 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               onInspectTask={props.onInspectTask}
               onRepairRound={props.onRepairRound}
               onRetryTask={props.onRetryTask}
+            />
+          </OrchestrationSection>
+          <OrchestrationSection title="Worker Graph" class="manager-section-flow">
+            <MermaidFlowView
+              round={activeRound()}
+              agents={agents()}
+              tasks={tasks()}
+              hiddenAgentCount={hiddenAgentCount()}
             />
           </OrchestrationSection>
           <Show when={props.observedTask}>
@@ -242,24 +253,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               onInspectTask={props.onInspectTask}
             />
           </OrchestrationSection>
-          <OrchestrationSection title="Worker flow" class="manager-section-flow">
-            <MermaidFlowView
-              round={activeRound()}
-              agents={agents()}
-              tasks={tasks()}
-              hiddenAgentCount={hiddenAgentCount()}
-            />
-          </OrchestrationSection>
-          <OrchestrationSection title="Agents" class="manager-section-agents">
-            <AgentsView agents={agents()} />
+          <OrchestrationSection title="Artifacts" class="manager-section-artifacts">
+            <ArtifactsView artifacts={artifacts()} />
           </OrchestrationSection>
           <OrchestrationSection title="Timeline" class="manager-section-timeline">
             <TimelineView entries={timeline()} />
           </OrchestrationSection>
-          <OrchestrationSection title="Artifacts" class="manager-section-artifacts">
-            <ArtifactsView artifacts={artifacts()} />
-          </OrchestrationSection>
-          <OrchestrationSection title="Hygiene" class="manager-section-hygiene">
+          <OrchestrationSection title="Session Hygiene" class="manager-section-hygiene">
             <HygieneView
               report={props.hygiene}
               loading={props.hygieneLoading}
@@ -312,6 +312,24 @@ const OverviewView: Component<{
     () =>
       props.agents.find((agent) => agent.status === "blocked" || agent.status === "failed") ?? null,
   );
+  const nextAction = createMemo(() => {
+    const blocked = blocker();
+    if (blocked) {
+      return blocked.taskId
+        ? `Inspect ${blocked.role} and decide whether to retry task ${shortId(blocked.taskId)}.`
+        : `Inspect ${blocked.role} and ask the manager for a recovery instruction.`;
+    }
+    if (totals().running > 0) {
+      return "Watch for fresh worker signals and artifact updates before closing the round.";
+    }
+    if (props.tasks.some((task) => ["blocked", "failed"].includes(task.state))) {
+      return "Review failed task evidence before starting another round.";
+    }
+    if (props.tasks.length > 0 || totals().completed > 0) {
+      return "Review artifacts and ask the manager to summarize the round result.";
+    }
+    return "Dispatch agents or ask the manager to plan the next round.";
+  });
   return (
     <div class="manager-overview-grid">
       <div class="manager-overview-main">
@@ -355,6 +373,10 @@ const OverviewView: Component<{
             }
           </Show>
         </p>
+      </div>
+      <div class="manager-overview-main manager-overview-next">
+        <span class="manager-overview-label">Next action</span>
+        <p>{nextAction()}</p>
       </div>
     </div>
   );
@@ -792,25 +814,28 @@ const WorkerRunsView: Component<{
 );
 
 const AgentsView: Component<{ agents: ManagerAgent[] }> = (props) => (
-  <div class="manager-agent-table" aria-label="orchestration agents">
-    <div class="manager-agent-row manager-agent-row-head">
-      <span>Role</span>
-      <span>Status</span>
-      <span>Current work</span>
-      <span>Task</span>
-    </div>
+  <div class="manager-agent-lanes" aria-label="orchestration agents">
     <For each={props.agents}>
       {(agent) => (
-        <div class="manager-agent-row">
-          <span class="manager-agent-role">{agent.role}</span>
-          <span class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}>
-            {statusLabel(agent.status)}
-          </span>
-          <span class="manager-agent-work" title={agent.lastOutput || agent.lastInstruction || ""}>
-            {clip(agent.lastError || agent.lastOutput || agent.lastInstruction || "Idle", 120)}
-          </span>
-          <span class="manager-agent-task">{agent.taskId ? shortId(agent.taskId) : "-"}</span>
-        </div>
+        <article class={`manager-agent-lane manager-agent-lane-${statusTone(agent.status)}`}>
+          <header class="manager-agent-lane-head">
+            <span class="manager-agent-role">{agent.role}</span>
+            <span class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}>
+              {statusLabel(agent.status)}
+            </span>
+          </header>
+          <p
+            class="manager-agent-work"
+            title={agent.lastError || agent.lastOutput || agent.lastInstruction || ""}
+          >
+            {clip(agent.lastError || agent.lastOutput || agent.lastInstruction || "Idle", 180)}
+          </p>
+          <footer class="manager-agent-lane-foot">
+            <span title={agent.profile}>profile {clip(agent.profile, 28)}</span>
+            <span>task {agent.taskId ? shortId(agent.taskId) : "-"}</span>
+            <time>{formatTime(agent.updatedAt)}</time>
+          </footer>
+        </article>
       )}
     </For>
     <Show when={props.agents.length === 0}>

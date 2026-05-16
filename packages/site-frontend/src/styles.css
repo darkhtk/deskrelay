@@ -5803,14 +5803,14 @@ dialog.approval-modal-root,
 }
 .manager-orchestration-panel-standalone .manager-orchestration-body {
   align-content: start;
-  grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
   padding: 4px 16px 16px;
 }
 .manager-section-overview,
+.manager-section-agents,
 .manager-section-flow {
   grid-column: 1 / -1;
 }
-.manager-section-agents,
 .manager-section-timeline,
 .manager-section-artifacts,
 .manager-section-hygiene {
@@ -5860,11 +5860,17 @@ body.manager-orchestration-resizing {
 .manager-overview-grid {
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(54px, 72px));
+  grid-template-columns: repeat(4, minmax(72px, 1fr));
 }
 .manager-overview-main,
 .manager-overview-stat {
   min-width: 0;
+}
+.manager-overview-main {
+  grid-column: span 2;
+}
+.manager-overview-main:first-child {
+  grid-column: 1 / -1;
 }
 .manager-overview-main p {
   color: var(--text-muted);
@@ -5884,6 +5890,9 @@ body.manager-orchestration-resizing {
 .manager-overview-stat strong {
   color: var(--text);
   font-size: 18px;
+}
+.manager-overview-next p {
+  color: var(--text);
 }
 .manager-current-state {
   color: var(--text-muted);
@@ -6157,10 +6166,50 @@ body.manager-orchestration-resizing {
   white-space: pre-wrap;
 }
 .manager-agent-table,
+.manager-agent-lanes,
 .manager-worker-runs,
 .manager-artifact-list {
   display: grid;
   gap: 1px;
+}
+.manager-agent-lanes {
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+.manager-agent-lane {
+  border-left: 2px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 12px 2px 10px;
+}
+.manager-agent-lane-running {
+  border-left-color: var(--warning);
+}
+.manager-agent-lane-done {
+  border-left-color: var(--success);
+}
+.manager-agent-lane-blocked {
+  border-left-color: var(--danger);
+}
+.manager-agent-lane-head,
+.manager-agent-lane-foot {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.manager-agent-lane-foot {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-agent-lane-foot span,
+.manager-agent-lane-foot time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .manager-agent-row,
 .manager-worker-run-row,
@@ -6904,6 +6953,7 @@ body.manager-orchestration-resizing {
     padding-inline: 10px;
   }
   .manager-section-overview,
+  .manager-section-agents,
   .manager-section-flow {
     grid-column: auto;
   }
@@ -6928,6 +6978,13 @@ body.manager-orchestration-resizing {
   .manager-current-state-grid,
   .manager-round-health-grid,
   .manager-flow {
+    grid-template-columns: 1fr;
+  }
+  .manager-overview-main,
+  .manager-overview-main:first-child {
+    grid-column: auto;
+  }
+  .manager-agent-lanes {
     grid-template-columns: 1fr;
   }
   .manager-flow-branches {
