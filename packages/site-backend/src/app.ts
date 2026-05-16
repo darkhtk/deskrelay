@@ -41,8 +41,12 @@ import {
   type ManagerNetworkAddress,
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
+  type ManagerProject,
   type ManagerProjectCreateRequest,
   type ManagerProjectListResponse,
+  type ManagerProjectOverviewAction,
+  type ManagerProjectOverviewResponse,
+  type ManagerProjectOverviewSignal,
   type ManagerProjectResponse,
   type ManagerProjectStatus,
   type ManagerProjectUpdateRequest,
@@ -557,6 +561,20 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         taskStore: managerTaskStore,
         projectId: project.id,
         limit: clampListLimit(c.req.query("limit")),
+        now: new Date(),
+      }),
+    );
+  });
+
+  app.get("/api/manager/projects/:id/overview", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    return c.json(
+      await buildManagerProjectOverview({
+        project,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
         now: new Date(),
       }),
     );
@@ -2093,6 +2111,11 @@ const SITE_ROUTE_CAPABILITIES = [
     path: "/api/manager/projects/:id/runs",
     description: "List worker runs scoped to one manager project.",
   },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/overview",
+    description: "Read the command-center overview for one manager project.",
+  },
   { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
   {
     method: "PATCH",
@@ -3349,6 +3372,408 @@ async function buildManagerRoundHealthGate(
     issues,
   };
   return { gate };
+}
+
+interface ManagerProjectOverviewInput {
+  project: ManagerProject;
+  orchestrationStore: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  now: Date;
+}
+
+async function buildManagerProjectOverview(
+  input: ManagerProjectOverviewInput,
+): Promise<ManagerProjectOverviewResponse> {
+  const [rounds, agents, tasks] = await Promise.all([
+    input.orchestrationStore.listRounds(),
+    input.orchestrationStore.listAgents(),
+    input.taskStore.list(500),
+  ]);
+  const projectRounds = selectManagerProjectRounds(input.project, rounds);
+  const projectRoundIds = new Set(projectRounds.map((round) => round.id));
+  const projectAgents = selectManagerProjectAgents(input.project, projectRoundIds, agents);
+  const projectTasks = selectManagerProjectTasks(
+    input.project,
+    projectRoundIds,
+    projectAgents,
+    tasks,
+  );
+  const projectRuns = await buildManagerWorkerRunLedger({
+    orchestrationStore: input.orchestrationStore,
+    taskStore: input.taskStore,
+    projectId: input.project.id,
+    limit: 500,
+    now: input.now,
+  });
+  const activeRound = pickManagerProjectActiveRound(input.project, projectRounds);
+  const activeRoundAgentIds = new Set(activeRound?.agentIds ?? []);
+  const activeAgents = activeRound
+    ? projectAgents.filter(
+        (agent) => agent.roundId === activeRound.id || activeRoundAgentIds.has(agent.id),
+      )
+    : projectAgents;
+  const activeTaskIds = new Set(activeRound?.taskIds ?? []);
+  for (const agent of activeAgents) {
+    if (agent.taskId) activeTaskIds.add(agent.taskId);
+  }
+  const activeTasks = activeRound
+    ? projectTasks.filter(
+        (task) => activeTaskIds.has(task.id) || taskRoundId(task) === activeRound.id,
+      )
+    : projectTasks;
+  const artifactCount = countManagerProjectArtifacts(projectAgents, projectTasks);
+  const currentSignal = managerProjectCurrentSignal({
+    project: input.project,
+    round: activeRound,
+    agents: activeAgents,
+    tasks: activeTasks,
+    runs: projectRuns.runs,
+  });
+  const nextAction = managerProjectNextAction({
+    project: input.project,
+    round: activeRound,
+    signal: currentSignal,
+    agents: activeAgents,
+    tasks: activeTasks,
+    runs: projectRuns.runs,
+  });
+  const recentSignals = managerProjectRecentSignals({
+    round: activeRound,
+    agents: activeAgents,
+    tasks: activeTasks,
+    runs: projectRuns.runs,
+  });
+  const lastUpdateAt = latestIsoString([
+    input.project.updatedAt,
+    ...projectRounds.map((round) => round.updatedAt),
+    ...projectAgents.map((agent) => agent.updatedAt),
+    ...projectTasks.map((task) => task.updatedAt),
+    ...projectRuns.runs.map((run) => run.updatedAt),
+  ]);
+
+  return {
+    generatedAt: input.now.toISOString(),
+    project: input.project,
+    counts: {
+      rounds: projectRounds.length,
+      agents: projectAgents.length,
+      runningAgents: projectAgents.filter((agent) =>
+        ["assigned", "running", "waiting"].includes(agent.status),
+      ).length,
+      completedAgents: projectAgents.filter((agent) => agent.status === "completed").length,
+      blockedAgents: projectAgents.filter(
+        (agent) => ["blocked", "failed", "stale"].includes(agent.status) && !agent.acknowledgedAt,
+      ).length,
+      tasks: projectTasks.length,
+      runningTasks: projectTasks.filter((task) => !isManagerTaskTerminalState(task.state)).length,
+      failedTasks: projectTasks.filter(
+        (task) => (task.state === "failed" || task.state === "blocked") && !task.acknowledgedAt,
+      ).length,
+      workerRuns: projectRuns.runs.length,
+      artifacts: artifactCount,
+    },
+    currentSignal,
+    nextAction,
+    recentSignals,
+    ...(activeRound ? { activeRound } : {}),
+    ...(lastUpdateAt ? { lastUpdateAt } : {}),
+  };
+}
+
+function selectManagerProjectRounds(
+  project: ManagerProject,
+  rounds: ManagerRound[],
+): ManagerRound[] {
+  return rounds.filter(
+    (round) => round.projectId === project.id || round.id === project.activeRoundId,
+  );
+}
+
+function selectManagerProjectAgents(
+  project: ManagerProject,
+  roundIds: Set<string>,
+  agents: ManagerAgent[],
+): ManagerAgent[] {
+  return agents.filter(
+    (agent) =>
+      agent.projectId === project.id || Boolean(agent.roundId && roundIds.has(agent.roundId)),
+  );
+}
+
+function selectManagerProjectTasks(
+  project: ManagerProject,
+  roundIds: Set<string>,
+  agents: ManagerAgent[],
+  tasks: ManagerTask[],
+): ManagerTask[] {
+  const taskIds = new Set(agents.map((agent) => agent.taskId).filter(isPresent));
+  return tasks.filter((task) => {
+    const roundId = taskRoundId(task);
+    return (
+      task.projectId === project.id ||
+      taskIds.has(task.id) ||
+      Boolean(roundId && roundIds.has(roundId))
+    );
+  });
+}
+
+function pickManagerProjectActiveRound(
+  project: ManagerProject,
+  rounds: ManagerRound[],
+): ManagerRound | undefined {
+  return (
+    (project.activeRoundId
+      ? rounds.find((round) => round.id === project.activeRoundId)
+      : undefined) ??
+    rounds.find((round) =>
+      ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
+        round.status,
+      ),
+    ) ??
+    rounds[0]
+  );
+}
+
+function managerProjectCurrentSignal(input: {
+  project: ManagerProject;
+  round: ManagerRound | undefined;
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+  runs: ManagerWorkerRun[];
+}): ManagerProjectOverviewSignal {
+  const failedTask = input.tasks.find(
+    (task) => !task.acknowledgedAt && (task.state === "failed" || task.state === "blocked"),
+  );
+  if (failedTask) {
+    return {
+      tone: failedTask.state === "failed" ? "error" : "warning",
+      title: `${failedTask.kind} task ${failedTask.state}`,
+      ...(failedTask.error ? { detail: failedTask.error } : {}),
+      updatedAt: failedTask.updatedAt,
+      taskId: failedTask.id,
+      ...(taskRoundId(failedTask) ? { roundId: taskRoundId(failedTask) } : {}),
+    };
+  }
+  const failedAgent = input.agents.find(
+    (agent) => !agent.acknowledgedAt && ["blocked", "failed", "stale"].includes(agent.status),
+  );
+  if (failedAgent) {
+    return {
+      tone: failedAgent.status === "failed" ? "error" : "warning",
+      title: `${failedAgent.role} agent ${failedAgent.status}`,
+      detail: failedAgent.lastError || failedAgent.lastOutput || failedAgent.lastInstruction,
+      updatedAt: failedAgent.updatedAt,
+      agentId: failedAgent.id,
+      ...(failedAgent.roundId ? { roundId: failedAgent.roundId } : {}),
+      ...(failedAgent.taskId ? { taskId: failedAgent.taskId } : {}),
+    };
+  }
+  if (input.round?.status === "blocked" || input.round?.status === "failed") {
+    return {
+      tone: input.round.status === "failed" ? "error" : "warning",
+      title: `${input.round.title} ${input.round.status}`,
+      detail: input.round.error || input.round.summary,
+      updatedAt: input.round.updatedAt,
+      roundId: input.round.id,
+    };
+  }
+  const runningRun = input.runs.find((run) => isManagerWorkerRunActive(run.status));
+  if (runningRun) {
+    return {
+      tone: "running",
+      title: `${runningRun.agentRole ?? runningRun.agentLabel ?? "worker"} running`,
+      detail: runningRun.outputPreview || runningRun.error,
+      updatedAt: runningRun.updatedAt,
+      ...(runningRun.roundId ? { roundId: runningRun.roundId } : {}),
+      ...(runningRun.agentId ? { agentId: runningRun.agentId } : {}),
+      ...(runningRun.taskId ? { taskId: runningRun.taskId } : {}),
+    };
+  }
+  if (input.round) {
+    return {
+      tone: input.round.status === "completed" ? "success" : "idle",
+      title: input.round.title,
+      detail: input.round.summary || input.round.objective,
+      updatedAt: input.round.updatedAt,
+      roundId: input.round.id,
+    };
+  }
+  return {
+    tone: input.project.status === "blocked" ? "warning" : "idle",
+    title: "No orchestration round",
+    detail: input.project.goal || "Create a round before dispatching workers.",
+    updatedAt: input.project.updatedAt,
+  };
+}
+
+function managerProjectNextAction(input: {
+  project: ManagerProject;
+  round: ManagerRound | undefined;
+  signal: ManagerProjectOverviewSignal;
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+  runs: ManagerWorkerRun[];
+}): ManagerProjectOverviewAction {
+  if (!input.round) {
+    return {
+      kind: "create-round",
+      label: "Create the first round",
+      detail: input.project.goal || "Define the first orchestration objective.",
+    };
+  }
+  if (input.signal.taskId || input.signal.agentId || input.signal.tone === "error") {
+    return {
+      kind: "inspect",
+      label: "Inspect current blocker",
+      detail: input.signal.detail || input.signal.title,
+      ...(input.signal.roundId ? { roundId: input.signal.roundId } : {}),
+      ...(input.signal.agentId ? { agentId: input.signal.agentId } : {}),
+      ...(input.signal.taskId ? { taskId: input.signal.taskId } : {}),
+    };
+  }
+  if (input.runs.some((run) => isManagerWorkerRunActive(run.status))) {
+    return {
+      kind: "wait",
+      label: "Wait for worker results",
+      detail: "Keep watching active runs before closing or dispatching another round.",
+      roundId: input.round.id,
+    };
+  }
+  if (input.tasks.length > 0 || input.agents.some((agent) => agent.status === "completed")) {
+    return {
+      kind: "summarize",
+      label: "Summarize round result",
+      detail: "Ask the manager to compare worker outputs and record the next decision.",
+      roundId: input.round.id,
+    };
+  }
+  return {
+    kind: "dispatch",
+    label: "Dispatch agents",
+    detail: "No worker task has been recorded for the active round.",
+    roundId: input.round.id,
+  };
+}
+
+function managerProjectRecentSignals(input: {
+  round: ManagerRound | undefined;
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+  runs: ManagerWorkerRun[];
+}): ManagerProjectOverviewSignal[] {
+  const signals: ManagerProjectOverviewSignal[] = [];
+  if (input.round) {
+    signals.push({
+      tone:
+        input.round.status === "completed" ? "success" : statusToneForProject(input.round.status),
+      title: input.round.title,
+      detail: input.round.summary || input.round.error || input.round.objective,
+      updatedAt: input.round.updatedAt,
+      roundId: input.round.id,
+    });
+  }
+  for (const agent of input.agents) {
+    signals.push({
+      tone: statusToneForProject(agent.status),
+      title: `${agent.role} ${agent.status}`,
+      detail: agent.lastError || agent.lastOutput || agent.lastInstruction,
+      updatedAt: agent.updatedAt,
+      agentId: agent.id,
+      ...(agent.roundId ? { roundId: agent.roundId } : {}),
+      ...(agent.taskId ? { taskId: agent.taskId } : {}),
+    });
+  }
+  for (const task of input.tasks) {
+    signals.push({
+      tone: statusToneForProject(task.state),
+      title: `${task.kind} ${task.state}`,
+      detail: task.error || task.steps.at(-1)?.summary,
+      updatedAt: task.updatedAt,
+      taskId: task.id,
+      ...(taskRoundId(task) ? { roundId: taskRoundId(task) } : {}),
+    });
+  }
+  for (const run of input.runs) {
+    signals.push({
+      tone: statusToneForProject(run.status),
+      title: `${run.agentRole ?? run.agentLabel ?? "worker"} ${run.status}`,
+      detail: run.error || run.outputPreview,
+      updatedAt: run.updatedAt,
+      ...(run.roundId ? { roundId: run.roundId } : {}),
+      ...(run.agentId ? { agentId: run.agentId } : {}),
+      ...(run.taskId ? { taskId: run.taskId } : {}),
+    });
+  }
+  return signals
+    .filter((signal) => Boolean(signal.updatedAt))
+    .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))
+    .slice(0, 8);
+}
+
+function statusToneForProject(status: string): ManagerProjectOverviewSignal["tone"] {
+  if (["completed", "succeeded", "healthy"].includes(status)) return "success";
+  if (
+    [
+      "dispatching",
+      "running",
+      "collecting",
+      "reviewing",
+      "assigned",
+      "waiting",
+      "pending",
+    ].includes(status)
+  ) {
+    return "running";
+  }
+  if (["blocked", "failed", "cancelled", "stale", "missing"].includes(status)) return "warning";
+  return "idle";
+}
+
+function countManagerProjectArtifacts(agents: ManagerAgent[], tasks: ManagerTask[]): number {
+  const paths = new Set<string>();
+  for (const agent of agents) {
+    for (const path of collectManagerArtifactPaths(
+      [agent.lastInstruction, agent.lastOutput, agent.lastError].join("\n"),
+    )) {
+      paths.add(path);
+    }
+  }
+  for (const task of tasks) {
+    const taskPaths = collectManagerArtifactPaths(
+      [
+        task.error,
+        JSON.stringify(task.params ?? {}),
+        JSON.stringify(task.result ?? {}),
+        ...task.steps.map((step) => `${step.label}\n${step.summary}\n${step.detail ?? ""}`),
+      ].join("\n"),
+    );
+    for (const path of taskPaths) {
+      paths.add(path);
+    }
+  }
+  return paths.size;
+}
+
+function collectManagerArtifactPaths(text: string): string[] {
+  const paths = new Set<string>();
+  const pattern =
+    /(?:^|\s|["'`])([A-Za-z0-9_.~:/\\-]+(?:ORCHESTRATION|AGENTS|PROTOCOL|LOCKS|TASKS|STATE|FAILURES|PROJECT|README|CLAUDE)?[A-Za-z0-9_.~:/\\-]*\.(?:md|ts|tsx|js|jsx|json|css|html|ps1|py|yml|yaml))/gi;
+  for (const match of text.matchAll(pattern)) {
+    const value = (match[1] ?? "").replace(/[),.;:'"`\]]+$/g, "");
+    if (value.length >= 4) paths.add(value);
+  }
+  return [...paths];
+}
+
+function taskRoundId(task: ManagerTask): string | undefined {
+  const params = isRecord(task.params) ? task.params : {};
+  return stringValue(params.roundId);
+}
+
+function latestIsoString(values: Array<string | undefined>): string | undefined {
+  return values
+    .filter((value): value is string => Boolean(value && Number.isFinite(Date.parse(value))))
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
 }
 
 async function repairManagerRoundEvidence(

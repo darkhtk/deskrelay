@@ -26,6 +26,7 @@ import type {
   ManagerProject,
   ManagerProjectCreateRequest,
   ManagerProjectListResponse,
+  ManagerProjectOverviewResponse,
   ManagerProjectResponse,
   ManagerProjectUpdateRequest,
   ManagerRegistrationDiagnosis,
@@ -674,6 +675,11 @@ export const api = {
       `/api/manager/projects/${encodeURIComponent(id)}/runs${
         typeof limit === "number" ? `?limit=${limit}` : ""
       }`,
+    ),
+  managerProjectOverview: (id: string) =>
+    request<ManagerProjectOverviewResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/overview`,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),
   managerTaskLogs: (id: string) =>

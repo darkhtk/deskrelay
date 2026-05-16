@@ -503,6 +503,60 @@ export interface ManagerProjectResponse {
   project: ManagerProject;
 }
 
+export type ManagerProjectOverviewTone = "idle" | "running" | "success" | "warning" | "error";
+
+export type ManagerProjectNextActionKind =
+  | "create-round"
+  | "dispatch"
+  | "wait"
+  | "inspect"
+  | "repair"
+  | "review"
+  | "summarize";
+
+export interface ManagerProjectOverviewSignal {
+  tone: ManagerProjectOverviewTone;
+  title: string;
+  detail?: string | undefined;
+  updatedAt?: string | undefined;
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+}
+
+export interface ManagerProjectOverviewAction {
+  kind: ManagerProjectNextActionKind;
+  label: string;
+  detail?: string | undefined;
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+}
+
+export interface ManagerProjectOverviewCounts {
+  rounds: number;
+  agents: number;
+  runningAgents: number;
+  completedAgents: number;
+  blockedAgents: number;
+  tasks: number;
+  runningTasks: number;
+  failedTasks: number;
+  workerRuns: number;
+  artifacts: number;
+}
+
+export interface ManagerProjectOverviewResponse {
+  generatedAt: string;
+  project: ManagerProject;
+  counts: ManagerProjectOverviewCounts;
+  currentSignal: ManagerProjectOverviewSignal;
+  nextAction: ManagerProjectOverviewAction;
+  recentSignals: ManagerProjectOverviewSignal[];
+  activeRound?: ManagerRound | undefined;
+  lastUpdateAt?: string | undefined;
+}
+
 export interface ManagerAgent {
   id: string;
   projectId?: string;

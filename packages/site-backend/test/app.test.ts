@@ -661,6 +661,11 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/projects/:id/overview",
+          authedRequest("GET", "/api/manager/projects/missing/overview"),
+          [404],
+        ],
+        [
           "GET /api/manager/projects/:id/rounds",
           authedRequest("GET", "/api/manager/projects/missing/rounds"),
           [404],
@@ -2388,6 +2393,28 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     };
     expect(scopedAgentBody.agents?.map((agent) => agent.id)).toEqual([roundBody.agents?.[0]?.id]);
     expect(scopedAgentBody.agents?.[0]?.projectId).toBe(projectId);
+
+    const overview = await setup.app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/overview`),
+    );
+    expect(overview.status).toBe(200);
+    const overviewBody = (await overview.json()) as {
+      project?: { id?: string };
+      activeRound?: { id?: string; title?: string };
+      counts?: { rounds?: number; agents?: number };
+      currentSignal?: { title?: string; roundId?: string };
+      nextAction?: { kind?: string; roundId?: string };
+      recentSignals?: unknown[];
+    };
+    expect(overviewBody.project?.id).toBe(projectId);
+    expect(overviewBody.activeRound?.id).toBe(roundBody.round?.id);
+    expect(overviewBody.activeRound?.title).toBe("Scoped R1");
+    expect(overviewBody.counts?.rounds).toBe(1);
+    expect(overviewBody.counts?.agents).toBe(1);
+    expect(overviewBody.currentSignal?.roundId).toBe(roundBody.round?.id);
+    expect(overviewBody.nextAction?.kind).toBe("dispatch");
+    expect(overviewBody.nextAction?.roundId).toBe(roundBody.round?.id);
+    expect(overviewBody.recentSignals?.length).toBeGreaterThan(0);
 
     const project = await setup.app.fetch(
       authedRequest("GET", `/api/manager/projects/${projectId}`),

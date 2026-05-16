@@ -2,6 +2,7 @@ import type {
   ManagerAgent,
   ManagerProject,
   ManagerProjectCreateRequest,
+  ManagerProjectOverviewResponse,
   ManagerRound,
   ManagerRoundHealthGate,
   ManagerRoundReportResponse,
@@ -35,6 +36,7 @@ interface ManagerOrchestrationPanelProps {
   projects?: ManagerProject[] | undefined;
   archivedProjects?: ManagerProject[] | undefined;
   selectedProject?: ManagerProject | null | undefined;
+  projectOverview?: ManagerProjectOverviewResponse | null | undefined;
   projectLoading?: boolean | undefined;
   projectBusy?: boolean | undefined;
   rounds: ManagerRound[];
@@ -249,6 +251,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             projects={props.projects ?? []}
             archivedProjects={props.archivedProjects ?? []}
             selectedProject={props.selectedProject ?? null}
+            overview={props.projectOverview ?? null}
             activeRound={activeRound()}
             loading={props.projectLoading}
             busy={props.projectBusy}
@@ -289,6 +292,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               <OrchestrationSection title="Command Center" class="manager-section-overview">
                 <OverviewView
                   round={activeRound()}
+                  overview={props.projectOverview ?? null}
                   agents={agents()}
                   tasks={tasks()}
                   hiddenAgentCount={hiddenAgentCount()}
@@ -447,6 +451,7 @@ const ProjectHeader: Component<{
   projects: ManagerProject[];
   archivedProjects: ManagerProject[];
   selectedProject: ManagerProject | null;
+  overview: ManagerProjectOverviewResponse | null;
   activeRound: ManagerRound | undefined;
   loading?: boolean | undefined;
   busy?: boolean | undefined;
@@ -539,6 +544,9 @@ const ProjectHeader: Component<{
               <Show when={current().activeRoundId}>
                 {(roundId) => <span>round {shortId(roundId())}</span>}
               </Show>
+              <Show when={props.overview?.nextAction}>
+                {(action) => <span>{action().label}</span>}
+              </Show>
             </p>
           )}
         </Show>
@@ -581,13 +589,16 @@ const ProjectHeader: Component<{
 
 const OverviewView: Component<{
   round: ManagerRound | undefined;
+  overview: ManagerProjectOverviewResponse | null;
   agents: ManagerAgent[];
   tasks: ManagerTask[];
   hiddenAgentCount: number;
 }> = (props) => {
   const totals = createMemo(() => summarizeTotals(props.agents));
   const artifacts = createMemo(() => buildArtifacts(props.agents, props.tasks));
+  const counts = createMemo(() => props.overview?.counts);
   const lastUpdatedAt = createMemo(() => {
+    if (props.overview?.lastUpdateAt) return props.overview.lastUpdateAt;
     const values = [
       props.round?.updatedAt,
       ...props.agents.map((agent) => agent.updatedAt),
@@ -600,6 +611,7 @@ const OverviewView: Component<{
       props.agents.find((agent) => agent.status === "blocked" || agent.status === "failed") ?? null,
   );
   const nextAction = createMemo(() => {
+    if (props.overview?.nextAction) return props.overview.nextAction.label;
     const blocked = blocker();
     if (blocked) {
       return blocked.taskId
@@ -622,55 +634,60 @@ const OverviewView: Component<{
       <div class="manager-command-hero">
         <div class="manager-command-kicker">
           <span
-            class={`manager-status-dot manager-status-dot-${statusTone(props.round?.status)}`}
+            class={`manager-status-dot manager-status-dot-${overviewTone(props.overview?.currentSignal.tone) ?? statusTone(props.round?.status)}`}
           />
-          <span>{props.round ? statusLabel(props.round.status) : "no round"}</span>
+          <span>
+            {props.overview?.currentSignal.title ??
+              (props.round ? statusLabel(props.round.status) : "no round")}
+          </span>
           <Show when={lastUpdatedAt()}>
             {(updatedAt) => <time>last update {formatTime(updatedAt())}</time>}
           </Show>
         </div>
-        <h3>{props.round?.title ?? "Agent orchestration"}</h3>
-        <p>{props.round?.objective || "No round objective is available yet."}</p>
+        <h3>{props.overview?.activeRound?.title ?? props.round?.title ?? "Agent orchestration"}</h3>
+        <p>
+          {props.overview?.currentSignal.detail ||
+            props.round?.objective ||
+            "No round objective is available yet."}
+        </p>
       </div>
       <div class="manager-command-metrics" aria-label="orchestration metrics">
         <div class="manager-command-metric">
           <span>Agents</span>
-          <strong>{totals().total}</strong>
+          <strong>{counts()?.agents ?? totals().total}</strong>
         </div>
         <div class="manager-command-metric">
           <span>Done</span>
-          <strong>{totals().completed}</strong>
+          <strong>{counts()?.completedAgents ?? totals().completed}</strong>
         </div>
         <div class="manager-command-metric">
           <span>Blocked</span>
-          <strong>{totals().blocked}</strong>
+          <strong>{counts()?.blockedAgents ?? totals().blocked}</strong>
         </div>
         <div class="manager-command-metric">
           <span>Artifacts</span>
-          <strong>{artifacts().length}</strong>
+          <strong>{counts()?.artifacts ?? artifacts().length}</strong>
         </div>
       </div>
       <div class="manager-command-decision">
         <div>
           <span class="manager-overview-label">Current signal</span>
           <p>
-            <Show
-              when={blocker()}
-              fallback={[
-                props.tasks.length > 0
-                  ? `${props.tasks.length} task records collected.`
-                  : "No active blocker detected.",
-                props.hiddenAgentCount > 0 ? `${props.hiddenAgentCount} quiet agents hidden.` : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              {(agent) =>
-                `${agent().role} agent needs attention: ${
-                  agent().lastError || statusLabel(agent().status)
-                }`
-              }
-            </Show>
+            {props.overview?.currentSignal.detail ||
+              (blocker()
+                ? `${blocker()?.role} agent needs attention: ${
+                    blocker()?.lastError || statusLabel(blocker()?.status)
+                  }`
+                : [
+                    props.tasks.length > 0
+                      ? `${props.tasks.length} task records collected.`
+                      : "No active blocker detected.",
+                    props.hiddenAgentCount > 0
+                      ? `${props.hiddenAgentCount} quiet agents hidden.`
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" "))}
           </p>
         </div>
         <div>
@@ -1756,6 +1773,24 @@ function statusTone(status: string | undefined): Tone {
       return "blocked";
     default:
       return "neutral";
+  }
+}
+
+function overviewTone(
+  tone: ManagerProjectOverviewResponse["currentSignal"]["tone"] | undefined,
+): Tone | undefined {
+  switch (tone) {
+    case "success":
+      return "done";
+    case "running":
+      return "running";
+    case "warning":
+    case "error":
+      return "blocked";
+    case "idle":
+      return "neutral";
+    default:
+      return undefined;
   }
 }
 

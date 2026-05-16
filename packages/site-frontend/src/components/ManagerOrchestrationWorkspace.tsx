@@ -3,6 +3,7 @@ import type {
   ManagerAssistantChatContext,
   ManagerProject,
   ManagerProjectCreateRequest,
+  ManagerProjectOverviewResponse,
   ManagerRound,
   ManagerRoundHealthGateResponse,
   ManagerSessionHygieneReport,
@@ -161,6 +162,22 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       pickActiveRound(rounds)
     );
   });
+
+  const [projectOverview] = createResource(
+    () => {
+      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const seq = refreshSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerProjectOverviewResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectOverview(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
 
   createEffect(() => {
     const project = selectedProject();
@@ -470,6 +487,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           projects={managerProjects()?.projects ?? []}
           archivedProjects={managerProjects()?.archived ?? []}
           selectedProject={selectedProject()}
+          projectOverview={projectOverview()}
           projectLoading={managerProjects.loading}
           projectBusy={projectActionBusy()}
           rounds={visibleOrchestration()?.rounds ?? []}
