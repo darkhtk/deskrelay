@@ -1844,7 +1844,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   const [assistantResizeWillClose, setAssistantResizeWillClose] = createSignal(false);
   const [transcriptAtBottom, setTranscriptAtBottom] = createSignal(true);
   let transcriptScroller!: HTMLDivElement;
-  let deviceSelect: HTMLSelectElement | undefined;
   let sidebarResizeCleanup: (() => void) | undefined;
   let assistantResizeCleanup: (() => void) | undefined;
   let lastSelectedSessionDeviceId: string | null = effectiveDeviceId();
@@ -2155,6 +2154,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   function toggleSidebar() {
+    if (mainPanelMode() === "orchestration") return;
     if (isMobileSidebarViewport()) {
       setSidebarOpen((v) => !v);
       return;
@@ -2360,11 +2360,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
   }
 
   function openSidebarForDevicePick() {
-    if (isMobileSidebarViewport()) {
-      setSidebarOpen(true);
-      return;
-    }
-    setDesktopSidebarCollapsed(false);
+    openSettingsOverlay({ tab: "general", deviceId: effectiveDeviceId() });
   }
 
   function openInstructionsWorkspace() {
@@ -3283,20 +3279,6 @@ export const ChatView: Component<ChatViewProps> = (props) => {
     attachmentsApi?.openPicker();
   }
 
-  function syncDeviceSelectValue() {
-    if (!deviceSelect) return;
-    const id = effectiveDeviceId() ?? "";
-    queueMicrotask(() => {
-      if (deviceSelect && deviceSelect.value !== id) deviceSelect.value = id;
-    });
-  }
-
-  createEffect(() => {
-    effectiveDeviceId();
-    devices();
-    syncDeviceSelectValue();
-  });
-
   return (
     <section
       class="signed-in"
@@ -3310,7 +3292,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
         "--assistant-width": `${assistantWidth()}px`,
       }}
     >
-      <Show when={sidebarOpen()}>
+      <Show when={sidebarOpen() && mainPanelMode() !== "orchestration"}>
         <button
           type="button"
           class="sidebar-backdrop"
@@ -3327,7 +3309,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
             class={`device-status-icon device-status-${deviceStatusTone()}`}
             aria-label={deviceStatusLabel()}
             title={deviceStatusLabel()}
-            onClick={() => openSettingsOverlay({ tab: "devices", deviceId: effectiveDeviceId() })}
+            onClick={() => openSettingsOverlay({ tab: "general", deviceId: effectiveDeviceId() })}
           >
             <svg
               aria-hidden="true"
@@ -3341,47 +3323,27 @@ export const ChatView: Component<ChatViewProps> = (props) => {
               <path d="M10.1 10.8a8.7 8.7 0 0 1 7.8 0" />
             </svg>
           </button>
-          <div class="row" style={{ gap: "6px" }}>
-            <select
-              ref={(el) => {
-                deviceSelect = el;
-                syncDeviceSelectValue();
-              }}
-              class="text-input"
-              style={{ flex: "1" }}
-              value={effectiveDeviceId() ?? ""}
-              onChange={(e) => {
-                const v = e.currentTarget.value;
-                if (v === "__settings__") {
-                  openSettingsOverlay({ tab: "devices", deviceId: effectiveDeviceId() });
-                  e.currentTarget.value = effectiveDeviceId() ?? "";
-                } else {
-                  selectDeviceId(v || null);
-                  setSelectedSession(null);
-                  setTranscript([]);
-                  clearContextUsage();
-                  resetConfirmedPermissionMode();
-                  void refetchBehaviors();
-                }
-              }}
+          <button
+            type="button"
+            class="sidebar-device-display"
+            title="설정 > 일반에서 디바이스를 변경합니다"
+            onClick={() => openSettingsOverlay({ tab: "general", deviceId: effectiveDeviceId() })}
+          >
+            <Show
+              when={activeDevice()}
+              fallback={<span>{t("chat.sidebar.device.empty")}</span>}
             >
-              <Show
-                when={(devices() ?? []).length > 0}
-                fallback={<option value="">{t("chat.sidebar.device.empty")}</option>}
-              >
-                <For each={devices() ?? []}>
-                  {(d) => (
-                    <option value={d.id}>
-                      {d.connectionState === "offline"
-                        ? t("chat.sidebar.device.offline-prefix", { label: deviceDisplayName(d) })
-                        : deviceDisplayName(d)}
-                    </option>
-                  )}
-                </For>
-              </Show>
-              <option value="__settings__">{t("chat.sidebar.device.manage")}</option>
-            </select>
-          </div>
+              {(device) => (
+                <span>
+                  {device().connectionState === "offline"
+                    ? t("chat.sidebar.device.offline-prefix", {
+                        label: deviceDisplayName(device()),
+                      })
+                    : deviceDisplayName(device())}
+                </span>
+              )}
+            </Show>
+          </button>
           <Show when={effectiveDeviceId()}>
             <p
               class="sidebar-cli-account"
@@ -3977,7 +3939,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                     aria-pressed={mainPanelMode() !== "orchestration"}
                     onClick={openChatWorkspace}
                   >
-                    일반채팅
+                    일반
                   </button>
                   <button
                     type="button"
@@ -3986,7 +3948,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
                     aria-pressed={mainPanelMode() === "orchestration"}
                     onClick={openOrchestrationWorkspace}
                   >
-                    작업판
+                    작업
                   </button>
                 </div>
               </>

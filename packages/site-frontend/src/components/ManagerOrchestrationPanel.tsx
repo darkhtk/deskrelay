@@ -20,6 +20,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
+import type { ManagerEventConnectionState } from "../manager-events.ts";
 
 type Tone = "neutral" | "running" | "done" | "blocked";
 
@@ -39,6 +40,8 @@ interface ManagerOrchestrationPanelProps {
   hygieneCleanupBusy?: boolean | undefined;
   state?: ManagerStateViewResponse | null | undefined;
   observedTask?: ManagerTaskObservationResponse | null | undefined;
+  eventState?: ManagerEventConnectionState | undefined;
+  eventStateDetail?: string | null | undefined;
   observeBusy?: boolean | undefined;
   acknowledgeBusy?: boolean | undefined;
   actionBusy?: boolean | undefined;
@@ -92,6 +95,11 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const runTotals = createMemo(() => summarizeWorkerRunTotals(props.workerRuns ?? []));
   const currentState = createMemo(() => props.state?.current ?? null);
   const freshnessLabel = createMemo(() => formatFreshness(props.state));
+  const eventConnectionLabel = createMemo(() =>
+    props.eventState && props.eventState !== "connected"
+      ? `events ${props.eventState}${props.eventStateDetail ? `: ${props.eventStateDetail}` : ""}`
+      : null,
+  );
   const activeIssueCount = createMemo(
     () => props.state?.counts.blockers ?? props.state?.blockers.length ?? 0,
   );
@@ -166,6 +174,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             <span>{currentState()?.kind ?? "manager"}</span>
           </Show>
           <Show when={freshnessLabel()}>{(label) => <span>{label()}</span>}</Show>
+          <Show when={eventConnectionLabel()}>{(label) => <span>{label()}</span>}</Show>
           <span>running {totals().running}</span>
           <span>blocked {totals().blocked}</span>
           <span>

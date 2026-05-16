@@ -106,8 +106,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     readManagerOrchestrationCache(),
   );
   let transcriptScroller: HTMLDivElement | undefined;
-  let statusReportTimer: number | undefined;
   let eventRefreshTimer: number | undefined;
+
+  const orchestrationPanelEnabled = createMemo(() => props.showOrchestrationPanel !== false);
 
   const serverDevice = createMemo(() => {
     const devices = props.devices ?? [];
@@ -156,8 +157,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     },
   );
   const [orchestration] = createResource(
-    () => statusReportSeq(),
-    async (): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
+    () => (orchestrationPanelEnabled() ? statusReportSeq() : null),
+    async (seq): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
+      if (seq === null) return null;
       try {
         const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
         const next = { agents: agents.agents, rounds: rounds.rounds };
@@ -181,14 +183,16 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     },
   );
   const visibleOrchestration = createMemo(() => {
+    if (!orchestrationPanelEnabled()) return null;
     const current = orchestration();
     if (current) return current;
     const cached = cachedOrchestrationSnapshot();
     return cached ? { agents: cached.agents, rounds: cached.rounds } : null;
   });
   const [sessionHygiene, { refetch: refetchSessionHygiene }] = createResource(
-    () => statusReportSeq(),
-    async (): Promise<ManagerSessionHygieneReport | null> => {
+    () => (orchestrationPanelEnabled() ? statusReportSeq() : null),
+    async (seq): Promise<ManagerSessionHygieneReport | null> => {
+      if (seq === null) return null;
       try {
         const hygiene = await api.managerSessionHygiene();
         setCachedOrchestrationSnapshot(
@@ -201,7 +205,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     },
   );
   const visibleSessionHygiene = createMemo(
-    () => sessionHygiene() ?? cachedOrchestrationSnapshot()?.hygiene ?? null,
+    () =>
+      orchestrationPanelEnabled()
+        ? (sessionHygiene() ?? cachedOrchestrationSnapshot()?.hygiene ?? null)
+        : null,
   );
 
   const [behaviors] = createResource(
@@ -320,10 +327,12 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     };
   });
   const orchestrationStatus = createMemo(() =>
-    summarizeOrchestration(
-      visibleOrchestration()?.rounds ?? [],
-      visibleOrchestration()?.agents ?? [],
-    ),
+    orchestrationPanelEnabled()
+      ? summarizeOrchestration(
+          visibleOrchestration()?.rounds ?? [],
+          visibleOrchestration()?.agents ?? [],
+        )
+      : null,
   );
   const activeOrchestrationRound = createMemo(() =>
     pickActiveRound(visibleOrchestration()?.rounds ?? []),
@@ -443,10 +452,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   });
 
   createEffect(() => {
-    busy();
-    if (statusReportTimer !== undefined) window.clearInterval(statusReportTimer);
     const intervalMs = busy() ? 5_000 : 30_000;
-    statusReportTimer = window.setInterval(() => setStatusReportSeq((seq) => seq + 1), intervalMs);
+    const timer = window.setInterval(() => setStatusReportSeq((seq) => seq + 1), intervalMs);
+    onCleanup(() => window.clearInterval(timer));
   });
 
   const scheduleManagerEventRefresh = (includeHygiene = false) => {
@@ -460,9 +468,11 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   createManagerEventSubscription({
     onEvent(event) {
-      if (event.type === "assistant.status" || isManagerOrchestrationEvent(event)) {
+      if (event.type === "assistant.status") {
         scheduleManagerEventRefresh();
-      } else if (event.type === "hygiene.updated") {
+      } else if (orchestrationPanelEnabled() && isManagerOrchestrationEvent(event)) {
+        scheduleManagerEventRefresh();
+      } else if (orchestrationPanelEnabled() && event.type === "hygiene.updated") {
         scheduleManagerEventRefresh(true);
       }
     },
@@ -470,7 +480,6 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   onCleanup(() => {
     transcriptScroller = undefined;
-    if (statusReportTimer !== undefined) window.clearInterval(statusReportTimer);
     if (eventRefreshTimer !== undefined) window.clearTimeout(eventRefreshTimer);
   });
 
@@ -628,6 +637,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         managerBrowserContext: props.context ?? null,
         permissionMode: "bypassPermissions",
         conversationId: MANAGER_CONVERSATION_ID,
+        firstEventTimeoutMs: 600_000,
         ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
       });
       if (response.error) {
@@ -822,7 +832,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   return (
     <div class="manager-assistant manager-assistant-chat">
-      <Show when={props.showOrchestrationPanel !== false && orchestrationStatus()}>
+      <Show when={orchestrationStatus()}>
         <ManagerOrchestrationPanel
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}

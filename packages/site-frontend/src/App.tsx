@@ -765,6 +765,15 @@ export const App: Component = () => {
                     onClearAccess={handleSettingsClearAccess}
                     onOpenLanding={reopenLanding}
                     initialSelectedDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
+                    selectedDeviceId={settingsDeviceId() ?? activeWorkspace().deviceId}
+                    onSelectDevice={(deviceId) => {
+                      requestDeviceSelection(deviceId);
+                      setSettingsDeviceId(deviceId);
+                    }}
+                    onOpenDevices={(deviceId) => {
+                      setSettingsDeviceId(deviceId ?? activeWorkspace().deviceId);
+                      setSettingsTab("devices");
+                    }}
                     devicesRevision={devicesRevision()}
                     conversationExport={conversationExport()}
                   />
@@ -1022,6 +1031,9 @@ const GeneralSettings: Component<{
   onClearAccess: () => void;
   onOpenLanding?: () => void;
   initialSelectedDeviceId?: string | null;
+  selectedDeviceId?: string | null;
+  onSelectDevice?: (deviceId: string | null) => void;
+  onOpenDevices?: (deviceId?: string | null) => void;
   devicesRevision?: number;
   section?: "general" | "updates";
   conversationExport?: ConversationExportSnapshot | null;
@@ -1454,6 +1466,25 @@ const GeneralSettings: Component<{
   const deviceUpdateQueueEntry = (deviceId: string): DeviceUpdateQueueEntry | null =>
     (deviceUpdateQueue()?.entries ?? []).find((entry) => entry.deviceId === deviceId) ?? null;
 
+  const selectedSettingsDeviceId = createMemo(() => {
+    const requested = props.selectedDeviceId ?? props.initialSelectedDeviceId ?? "";
+    const list = devices() ?? [];
+    if (requested && list.some((device) => device.id === requested)) return requested;
+    return "";
+  });
+
+  const selectedSettingsDevice = createMemo(() => {
+    const id = selectedSettingsDeviceId();
+    return (devices() ?? []).find((device) => device.id === id) ?? null;
+  });
+
+  const selectedSettingsDeviceSummary = () => {
+    const device = selectedSettingsDevice();
+    if (!device) return "선택된 디바이스 없음";
+    const state = device.connectionState === "offline" ? "오프라인" : "연결됨";
+    return `${deviceDisplayName(device)} · ${state} · ${device.daemonUrl}`;
+  };
+
   const serverUpdateIsRunning = () => serverUpdateStatus()?.state === "running";
 
   const canUpdateServer = () =>
@@ -1638,6 +1669,48 @@ const GeneralSettings: Component<{
 
   return (
     <div class="settings-stack">
+      <section class="settings-card">
+        <div class="settings-card-heading">
+          <h3 class="settings-card-title">디바이스 선택</h3>
+          <SettingsScopeLabel scope="browser" />
+        </div>
+        <p class="settings-card-help">
+          이 브라우저에서 사용할 디바이스를 선택합니다. 세션, 권한, 스킬, 지침은 선택한
+          디바이스 기준으로 갱신됩니다.
+        </p>
+        <div class="settings-row">
+          <select
+            class="text-input"
+            value={selectedSettingsDeviceId()}
+            disabled={devices.loading || (devices() ?? []).length === 0}
+            onChange={(event) => props.onSelectDevice?.(event.currentTarget.value || null)}
+          >
+            <Show
+              when={(devices() ?? []).length > 0}
+              fallback={<option value="">등록된 디바이스 없음</option>}
+            >
+              <For each={devices() ?? []}>
+                {(device) => (
+                  <option value={device.id}>
+                    {device.connectionState === "offline"
+                      ? `${deviceDisplayName(device)} (오프라인)`
+                      : deviceDisplayName(device)}
+                  </option>
+                )}
+              </For>
+            </Show>
+          </select>
+          <button
+            type="button"
+            class="secondary-button"
+            onClick={() => props.onOpenDevices?.(selectedSettingsDeviceId() || null)}
+          >
+            디바이스 관리
+          </button>
+        </div>
+        <p class="settings-card-help">{selectedSettingsDeviceSummary()}</p>
+      </section>
+
       <section class="settings-card">
         <div class="settings-card-heading">
           <h3 class="settings-card-title">{t("settings.theme.title")}</h3>

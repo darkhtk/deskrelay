@@ -18,7 +18,11 @@ import {
   onCleanup,
 } from "solid-js";
 import { type Device, api } from "../api.ts";
-import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
+import {
+  createManagerEventSubscription,
+  type ManagerEventConnectionState,
+  isManagerOrchestrationEvent,
+} from "../manager-events.ts";
 import {
   readManagerOrchestrationCache,
   writeManagerOrchestrationCache,
@@ -46,6 +50,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [observeBusy, setObserveBusy] = createSignal(false);
   const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
+  const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
+  const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
   let eventRefreshTimer: number | undefined;
 
   const [orchestration] = createResource(
@@ -218,6 +224,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
         scheduleEventRefresh(true);
       }
     },
+    onState(state, detail) {
+      setEventState(state);
+      setEventStateDetail(detail ?? null);
+    },
   });
 
   createEffect(() => {
@@ -368,6 +378,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           hygiene={visibleHygiene()}
           state={managerState()}
           observedTask={observedTask()}
+          eventState={eventState()}
+          eventStateDetail={eventStateDetail()}
           observeBusy={observeBusy()}
           hygieneLoading={sessionHygiene.loading}
           hygieneCleanupBusy={hygieneCleanupBusy()}

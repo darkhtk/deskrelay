@@ -983,6 +983,7 @@ export const api = {
       opened = true;
       options.onOpen?.();
     };
+    markOpen();
     while (true) {
       const { value, done } = await reader.read();
       if (done) return;
@@ -1041,6 +1042,7 @@ export const api = {
       opened = true;
       options.onOpen?.();
     };
+    markOpen();
     while (true) {
       const { value, done } = await reader.read();
       if (done) return;
