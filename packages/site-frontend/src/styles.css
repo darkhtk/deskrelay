@@ -4852,7 +4852,32 @@ dialog.approval-modal-root,
   min-width: 160px;
 }
 .settings-update-section {
-  gap: 12px;
+  gap: 16px;
+}
+.settings-update-target-grid {
+  align-items: start;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  min-width: 0;
+}
+.settings-update-target {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.settings-update-target-head {
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text);
+  display: flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 28px;
+  padding-bottom: 8px;
 }
 .settings-update-overall,
 .settings-update-row {
@@ -4892,7 +4917,7 @@ dialog.approval-modal-root,
 .settings-update-device-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 .settings-update-device {
   display: flex;
@@ -4941,6 +4966,16 @@ dialog.approval-modal-root,
 .settings-update-dot.update-phase-pending,
 .settings-update-dot.update-phase-restart_required {
   background: var(--warning);
+}
+@media (max-width: 760px) {
+  .settings-update-target-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-update-overall,
+  .settings-update-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 .settings-worker-section {
   gap: 12px;

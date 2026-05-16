@@ -341,7 +341,10 @@ function browserPresenceClientId(): string {
 
 function shouldHandleBrowserRefreshEvent(event: { id: string; generatedAt: string }): boolean {
   const generatedAt = Date.parse(event.generatedAt);
-  if (!Number.isFinite(generatedAt) || Date.now() - generatedAt > BROWSER_REFRESH_EVENT_MAX_AGE_MS) {
+  if (
+    !Number.isFinite(generatedAt) ||
+    Date.now() - generatedAt > BROWSER_REFRESH_EVENT_MAX_AGE_MS
+  ) {
     return false;
   }
   try {
@@ -1570,95 +1573,111 @@ const GeneralSettings: Component<{
         </button>
       </div>
 
-      <div class="settings-update-row">
-        <div class="settings-update-row-main">
-          <span
-            class={`settings-update-dot update-phase-${updateStatusPhase(serverUpdateStatus())}`}
-          />
-          <span class="settings-update-label">서버</span>
-          <span class="settings-update-detail">{updateStatusText(serverUpdateStatus())}</span>
-        </div>
-        <button
-          type="button"
-          class="secondary-button"
-          disabled={!canUpdateServer()}
-          onClick={() => void updateServer()}
-        >
-          {updating() === "server" || serverUpdateStatus()?.state === "running"
-            ? "진행 중"
-            : canUpdateServer()
-              ? "서버 업데이트"
-              : "최신"}
-        </button>
-      </div>
+      <div class="settings-update-target-grid">
+        <section class="settings-update-target settings-update-server-target">
+          <div class="settings-update-target-head">
+            <span>서버</span>
+            <SettingsScopeLabel scope="server" />
+          </div>
 
-      <div class="settings-update-device-list" aria-label="디바이스별 업데이트 상태">
-        <For each={devices() ?? []}>
-          {(device) => {
-            const state = () => deviceUpdateStates()[device.id] ?? null;
-            const snapshot = () => deviceBuildSnapshot(device.id);
-            const queueEntry = () => deviceUpdateQueueEntry(device.id);
-            const fallbackCommand = () => deviceUpdateFallbackCommand(state(), queueEntry());
-            const phase = () =>
-              deviceUpdatePhase(device, health()?.build, snapshot(), state(), queueEntry());
-            return (
-              <div class="settings-update-device">
-                <div class="settings-update-row">
-                  <div class="settings-update-row-main">
-                    <span class={`settings-update-dot update-phase-${phase()}`} />
-                    <span class="settings-update-label">{deviceDisplayName(device)}</span>
-                    <span class="settings-update-detail">
-                      {deviceUpdateStatusText(
-                        device,
-                        health()?.build,
-                        snapshot(),
-                        state(),
-                        queueEntry(),
+          <div class="settings-update-row">
+            <div class="settings-update-row-main">
+              <span
+                class={`settings-update-dot update-phase-${updateStatusPhase(serverUpdateStatus())}`}
+              />
+              <span class="settings-update-label">서버</span>
+              <span class="settings-update-detail">{updateStatusText(serverUpdateStatus())}</span>
+            </div>
+            <button
+              type="button"
+              class="secondary-button"
+              disabled={!canUpdateServer()}
+              onClick={() => void updateServer()}
+            >
+              {updating() === "server" || serverUpdateStatus()?.state === "running"
+                ? "진행 중"
+                : canUpdateServer()
+                  ? "서버 업데이트"
+                  : "최신"}
+            </button>
+          </div>
+        </section>
+
+        <section class="settings-update-target settings-update-devices-target">
+          <div class="settings-update-target-head">
+            <span>디바이스</span>
+            <SettingsScopeLabel scope="current device" />
+          </div>
+
+          <div class="settings-update-device-list" aria-label="디바이스별 업데이트 상태">
+            <For each={devices() ?? []}>
+              {(device) => {
+                const state = () => deviceUpdateStates()[device.id] ?? null;
+                const snapshot = () => deviceBuildSnapshot(device.id);
+                const queueEntry = () => deviceUpdateQueueEntry(device.id);
+                const fallbackCommand = () => deviceUpdateFallbackCommand(state(), queueEntry());
+                const phase = () =>
+                  deviceUpdatePhase(device, health()?.build, snapshot(), state(), queueEntry());
+                return (
+                  <div class="settings-update-device">
+                    <div class="settings-update-row">
+                      <div class="settings-update-row-main">
+                        <span class={`settings-update-dot update-phase-${phase()}`} />
+                        <span class="settings-update-label">{deviceDisplayName(device)}</span>
+                        <span class="settings-update-detail">
+                          {deviceUpdateStatusText(
+                            device,
+                            health()?.build,
+                            snapshot(),
+                            state(),
+                            queueEntry(),
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        class="secondary-button"
+                        disabled={!canUpdateConnector(device, snapshot())}
+                        onClick={() => void updateConnector(device)}
+                      >
+                        {updating() === device.id
+                          ? "진행 중"
+                          : canUpdateConnector(device, snapshot())
+                            ? "connector 업데이트"
+                            : phase() === "pending"
+                              ? "대기"
+                              : phase() === "restart_required"
+                                ? "재시작 필요"
+                                : connectorRequiresManualRegistration(state() ?? queueEntry())
+                                  ? "명령 필요"
+                                  : phase() === "failed"
+                                    ? "조치 필요"
+                                    : deviceBuildSnapshots.loading || !snapshot()
+                                      ? "확인 중"
+                                      : phase() === "queued"
+                                        ? "업데이트 가능"
+                                        : "최신"}
+                      </button>
+                    </div>
+                    <Show when={fallbackCommand()}>
+                      {(command) => (
+                        <textarea
+                          class="settings-command-textarea"
+                          readOnly
+                          spellcheck={false}
+                          value={command()}
+                        />
                       )}
-                    </span>
+                    </Show>
                   </div>
-                  <button
-                    type="button"
-                    class="secondary-button"
-                    disabled={!canUpdateConnector(device, snapshot())}
-                    onClick={() => void updateConnector(device)}
-                  >
-                    {updating() === device.id
-                      ? "진행 중"
-                      : canUpdateConnector(device, snapshot())
-                        ? "connector 업데이트"
-                        : phase() === "pending"
-                          ? "대기"
-                          : phase() === "restart_required"
-                            ? "재시작 필요"
-                            : connectorRequiresManualRegistration(state() ?? queueEntry())
-                              ? "명령 필요"
-                              : phase() === "failed"
-                                ? "조치 필요"
-                                : deviceBuildSnapshots.loading || !snapshot()
-                                  ? "확인 중"
-                                  : phase() === "queued"
-                                    ? "업데이트 가능"
-                                    : "최신"}
-                  </button>
-                </div>
-                <Show when={fallbackCommand()}>
-                  {(command) => (
-                    <textarea
-                      class="settings-command-textarea"
-                      readOnly
-                      spellcheck={false}
-                      value={command()}
-                    />
-                  )}
-                </Show>
-              </div>
-            );
-          }}
-        </For>
-        <Show when={!devices.loading && (devices() ?? []).length === 0}>
-          <p class="settings-card-help">등록된 디바이스가 없습니다.</p>
-        </Show>
+                );
+              }}
+            </For>
+            <Show when={!devices.loading && (devices() ?? []).length === 0}>
+              <p class="settings-card-help">등록된 디바이스가 없습니다.</p>
+            </Show>
+          </div>
+        </section>
       </div>
     </section>
   );
@@ -1675,8 +1694,8 @@ const GeneralSettings: Component<{
           <SettingsScopeLabel scope="browser" />
         </div>
         <p class="settings-card-help">
-          이 브라우저에서 사용할 디바이스를 선택합니다. 세션, 권한, 스킬, 지침은 선택한
-          디바이스 기준으로 갱신됩니다.
+          이 브라우저에서 사용할 디바이스를 선택합니다. 세션, 권한, 스킬, 지침은 선택한 디바이스
+          기준으로 갱신됩니다.
         </p>
         <div class="settings-row">
           <select
