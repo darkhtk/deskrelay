@@ -17,7 +17,6 @@ import {
   type DeviceCleanupEntry,
   type DeviceUpdateQueueEntry,
   type DeviceUpdateResponse,
-  type SelfBuildVersion,
   type SelfServerUpdateStatus,
   api,
   clearBaseUrl,
@@ -1020,10 +1019,6 @@ const GeneralSettings: Component<{
     () => props.devicesRevision ?? 0,
     () => api.selfUpdateStatus().catch(() => null),
   );
-  const [buildVersions, { refetch: refetchBuildVersions }] = createResource(
-    () => props.devicesRevision ?? 0,
-    () => api.selfBuildVersions().catch(() => null),
-  );
   const [deviceUpdateQueue, { refetch: refetchDeviceUpdateQueue }] = createResource(
     () => props.devicesRevision ?? 0,
     () => api.deviceUpdateQueue().catch(() => ({ entries: [] as DeviceUpdateQueueEntry[] })),
@@ -1066,7 +1061,6 @@ const GeneralSettings: Component<{
     void refetchDevices();
     void refetchHealth();
     void refetchServerUpdateStatus();
-    void refetchBuildVersions();
     void refetchDeviceUpdateQueue();
     void refetchDeviceBuildSnapshots();
   }
@@ -1405,24 +1399,6 @@ const GeneralSettings: Component<{
     !serverUpdateIsRunning() &&
     (canUpdateServer() || canUpdateAnyConnector());
 
-  const canRunBuildVersion = (version: SelfBuildVersion) =>
-    Boolean(version.branch) &&
-    updating() === null &&
-    !buildVersions.loading &&
-    !serverUpdateStatus.loading &&
-    !deviceUpdateQueue.loading &&
-    !serverUpdateIsRunning();
-
-  const buildVersionSourceText = (version: SelfBuildVersion) => {
-    if (version.current) return "현재 실행 중";
-    return version.source === "remote" ? "원격 브랜치" : "로컬 브랜치";
-  };
-
-  const buildVersionRunText = (version: SelfBuildVersion) => {
-    if (updating() !== null || serverUpdateIsRunning()) return "진행 중";
-    return canRunBuildVersion(version) ? "실행" : "대기";
-  };
-
   const overallPhase = () =>
     isTrackedServerUpdateStatus(serverUpdateStatus(), serverUpdateBaseline()) &&
     serverUpdateStatus()?.state === "running"
@@ -1464,55 +1440,6 @@ const GeneralSettings: Component<{
               : "업데이트 없음"}
         </button>
       </div>
-
-      <section class="settings-build-version-panel" aria-label="빌드 버전 실행">
-        <div class="settings-update-target-head">
-          <span>빌드 버전</span>
-          <button
-            type="button"
-            class="secondary-button"
-            disabled={buildVersions.loading}
-            onClick={() => void refetchBuildVersions()}
-          >
-            새로고침
-          </button>
-        </div>
-
-        <div class="settings-build-version-list">
-          <For each={buildVersions()?.versions ?? []}>
-            {(version) => (
-              <button
-                type="button"
-                class="settings-build-version-row"
-                classList={{ "is-current": version.current }}
-                disabled={!canRunBuildVersion(version)}
-                onClick={() => void updateAll(version.branch)}
-                title={`${version.branch} ${version.shortCommit}`}
-              >
-                <span class="settings-build-version-main">
-                  <strong>{version.label}</strong>
-                  <span>{buildVersionSourceText(version)}</span>
-                </span>
-                <span class="settings-build-version-meta">
-                  <Show when={version.version}>{(value) => <span>v{value()}</span>}</Show>
-                  <span>{version.shortCommit}</span>
-                  <span>{version.updateAvailable ? "전환 가능" : "동일 커밋"}</span>
-                </span>
-                <span class="settings-build-version-action">{buildVersionRunText(version)}</span>
-              </button>
-            )}
-          </For>
-          <Show when={buildVersions.loading}>
-            <p class="settings-card-help">빌드 버전 확인 중</p>
-          </Show>
-          <Show when={!buildVersions.loading && (buildVersions()?.versions ?? []).length === 0}>
-            <p class="settings-card-help">실행 가능한 빌드 버전을 찾지 못했습니다.</p>
-          </Show>
-          <Show when={buildVersions()?.error}>
-            {(error) => <p class="settings-card-help">빌드 버전 확인 실패: {error()}</p>}
-          </Show>
-        </div>
-      </section>
 
       <div class="settings-update-target-grid">
         <section class="settings-update-target settings-update-server-target">

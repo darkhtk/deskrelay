@@ -61,7 +61,6 @@ import {
 } from "../manager-project-selection.ts";
 import { Composer } from "./Composer.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
-import { Transcript } from "./Transcript.tsx";
 
 const MANAGER_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_SESSION_LIMIT = 10;
@@ -71,6 +70,15 @@ const STREAM_OPEN_GRACE_MS = 350;
 const MANAGER_ASSISTANT_HISTORY_LIMIT = 240;
 const MANAGER_ASSISTANT_HISTORY_CACHE_BYTES = 2 * 1024 * 1024;
 const STREAM_CLOSE_GRACE_MS = 5_000;
+const MANAGER_ASSISTANT_COLLAPSE_CHARS = 1_400;
+const MANAGER_ASSISTANT_COLLAPSE_LINES = 14;
+const MANAGER_ASSISTANT_PREVIEW_CHARS = 560;
+const MANAGER_ASSISTANT_LOG_PATTERNS = [
+  /\b(?:GET|POST|PUT|PATCH|DELETE)\s+\/api\//i,
+  /\b(?:stdout|stderr|exit code|PowerShell|bun run|Count=)\b/i,
+  /\b(?:project|round|agent|task|worker)_[A-Za-z0-9_-]{6,}\b/,
+  /\b(?:projectId|roundId|taskId|agentId|workerRunId)\b/,
+];
 const ORCHESTRATION_PRESET_PROMPT = [
   "Start or continue a DeskRelay orchestration framework loop.",
   "",
@@ -397,6 +405,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     const cached = assistantHistory()?.events ?? [];
     return cached.length > 0 ? cached : [INITIAL_EVENT];
   });
+  const managerAssistantTranscriptEntries = createMemo(() =>
+    buildManagerAssistantTranscriptEntries(visibleEvents()),
+  );
   const busy = createMemo(() => runIds().length > 0);
   const liveStateStatus = createMemo(() => managerStatusFromState(managerState()));
   const focusedProjectStatus = createMemo(() =>
@@ -1316,11 +1327,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         onScroll={updateTranscriptBottomState}
       >
         <div class="transcript-inner">
-          <Transcript
-            events={visibleEvents()}
-            deviceId={serverDevice()?.id ?? null}
-            cwd={workspace()?.cwd ?? null}
-          />
+          <ManagerAssistantTranscript entries={managerAssistantTranscriptEntries()} />
         </div>
       </div>
 
@@ -1333,7 +1340,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       </Show>
 
       <div class="composer-shell manager-assistant-composer">
-        <Show when={!transcriptAtBottom() && visibleEvents().length > 0}>
+        <Show when={!transcriptAtBottom() && managerAssistantTranscriptEntries().length > 0}>
           <button
             type="button"
             class="scroll-to-bottom-button"
@@ -1384,6 +1391,50 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     </div>
   );
 };
+
+type ManagerAssistantTranscriptRole = "assistant" | "user";
+
+interface ManagerAssistantTranscriptEntry {
+  id: string;
+  role: ManagerAssistantTranscriptRole;
+  text: string;
+  preview: string;
+  collapsed: boolean;
+}
+
+const ManagerAssistantTranscript: Component<{
+  entries: ManagerAssistantTranscriptEntry[];
+}> = (props) => (
+  <Show
+    when={props.entries.length > 0}
+    fallback={<p class="manager-assistant-transcript-empty">{t("tx.empty")}</p>}
+  >
+    <div class="manager-assistant-dialogue">
+      <For each={props.entries}>
+        {(entry) => (
+          <article
+            class={`manager-assistant-dialogue-item manager-assistant-dialogue-${entry.role}`}
+          >
+            <span class="manager-assistant-dialogue-role">
+              {entry.role === "user"
+                ? t("manager.assistant.transcript.user")
+                : t("manager.assistant.transcript.assistant")}
+            </span>
+            <div class="manager-assistant-dialogue-body">
+              <p>{entry.collapsed ? entry.preview : entry.text}</p>
+              <Show when={entry.collapsed}>
+                <details class="manager-assistant-dialogue-details">
+                  <summary>{t("manager.assistant.transcript.details")}</summary>
+                  <pre>{entry.text}</pre>
+                </details>
+              </Show>
+            </div>
+          </article>
+        )}
+      </For>
+    </div>
+  </Show>
+);
 
 export const ManagerAssistantLedger: Component<{
   project: ManagerProject | null;
@@ -1516,8 +1567,102 @@ function managerAssistantSyntheticEvent(text: string): ClaudeStreamEvent {
 
 function isVisibleManagerAssistantReply(event: ClaudeStreamEvent): boolean {
   if (event.type !== "assistant") return false;
+  const text = managerAssistantDisplayText(event);
+  return text.length > 0 && !isManagerAssistantNoiseText(text);
+}
+
+function buildManagerAssistantTranscriptEntries(
+  events: ClaudeStreamEvent[],
+): ManagerAssistantTranscriptEntry[] {
+  return events.flatMap((event, index) => {
+    const role = managerAssistantTranscriptRole(event);
+    if (!role) return [];
+    const text = managerAssistantDisplayText(event);
+    if (!text || isManagerAssistantNoiseText(text)) return [];
+    const collapsed = shouldCollapseManagerAssistantEntry(role, text);
+    return [
+      {
+        id: `${role}-${index}-${text.slice(0, 20)}`,
+        role,
+        text,
+        preview: collapsed ? managerAssistantPreviewText(text) : text,
+        collapsed,
+      },
+    ];
+  });
+}
+
+function managerAssistantTranscriptRole(
+  event: ClaudeStreamEvent,
+): ManagerAssistantTranscriptRole | null {
+  if (event.type === "assistant") return "assistant";
+  if (event.type === "user") return "user";
+  return null;
+}
+
+function managerAssistantDisplayText(event: ClaudeStreamEvent): string {
   const text = managerAssistantEventText(event).trim();
-  return text.length > 0 && text.toLowerCase() !== "no response requested.";
+  if (event.type === "user") return extractManagerAssistantUserRequest(text);
+  return text;
+}
+
+function extractManagerAssistantUserRequest(text: string): string {
+  const browserRequest = /## My request for Codex:\s*\n([\s\S]*)$/i.exec(text);
+  if (browserRequest?.[1]?.trim()) return browserRequest[1].trim();
+
+  const currentRequest =
+    /## Current User Request\s*\n([\s\S]*?)(?:\n## Current User Request ASCII-Safe Copy|\n## Response Requirements|$)/i.exec(
+      text,
+    );
+  if (currentRequest?.[1]?.trim()) return currentRequest[1].trim();
+
+  return text;
+}
+
+function isManagerAssistantNoiseText(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
+  return (
+    normalized.length === 0 ||
+    normalized === "no response requested." ||
+    normalized === "no response requested" ||
+    normalized === "continue from where you left off." ||
+    normalized === "continue from where you left off"
+  );
+}
+
+function shouldCollapseManagerAssistantEntry(
+  role: ManagerAssistantTranscriptRole,
+  text: string,
+): boolean {
+  if (role !== "assistant") return false;
+  const lineCount = text.split(/\r?\n/).filter((line) => line.trim()).length;
+  return (
+    text.length > MANAGER_ASSISTANT_COLLAPSE_CHARS ||
+    lineCount > MANAGER_ASSISTANT_COLLAPSE_LINES ||
+    MANAGER_ASSISTANT_LOG_PATTERNS.some((pattern) => pattern.test(text))
+  );
+}
+
+function managerAssistantPreviewText(text: string): string {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !looksLikeManagerAssistantDiagnosticLine(line));
+  const sourceLines = lines.length > 0 ? lines : [t("manager.assistant.transcript.log-collapsed")];
+  return clipManagerAssistantText(sourceLines.slice(0, 4).join("\n"));
+}
+
+function looksLikeManagerAssistantDiagnosticLine(line: string): boolean {
+  const compact = line.replace(/\s+/g, " ").trim();
+  if (compact.length > 180) return true;
+  return MANAGER_ASSISTANT_LOG_PATTERNS.some((pattern) => pattern.test(compact));
+}
+
+function clipManagerAssistantText(text: string): string {
+  const compact = text.trim();
+  if (compact.length <= MANAGER_ASSISTANT_PREVIEW_CHARS) return compact;
+  return `${compact.slice(0, MANAGER_ASSISTANT_PREVIEW_CHARS - 1)}…`;
 }
 
 function managerAssistantEventText(event: ClaudeStreamEvent): string {

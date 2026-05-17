@@ -281,13 +281,30 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       ...(commandFlowProject?.id === selected.id ? commandFlowProject : {}),
     };
   });
+  const selectedProjectCompleted = createMemo(() => isManagerProjectCompleted(displayProject()));
   const effectiveOverview = createMemo<ManagerProjectOverviewResponse | null>(
     () => props.commandFlow?.overview ?? props.projectOverview ?? null,
   );
-  const effectiveNextAction = createMemo(
-    () => props.commandFlow?.nextAction ?? effectiveOverview()?.nextAction ?? null,
+  const effectiveNextAction = createMemo(() =>
+    selectedProjectCompleted()
+      ? null
+      : (props.commandFlow?.nextAction ?? effectiveOverview()?.nextAction ?? null),
   );
-  const latestStatusReport = createMemo(() => props.assistantStatusReports?.[0] ?? null);
+  const latestStatusReport = createMemo(() => {
+    const reports = props.assistantStatusReports ?? [];
+    const project = displayProject();
+    if (!project) return reports[0] ?? null;
+    const currentRoundId =
+      props.commandFlow?.activeRound?.id ??
+      props.projectOverview?.activeRound?.id ??
+      project.activeRoundId ??
+      null;
+    return (
+      reports.find((report) =>
+        assistantStatusReportMatchesProjectScope(report, project.id, currentRoundId),
+      ) ?? null
+    );
+  });
   const currentJudgmentBrief = createMemo(() =>
     buildManagerCurrentJudgmentBrief({
       project: displayProject(),
@@ -327,9 +344,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const activeIssueCount = createMemo(
     () => props.state?.counts.blockers ?? props.state?.blockers.length ?? 0,
   );
-  const visibleJudgments = createMemo(() =>
-    (props.commandFlow?.judgments ?? []).filter((judgment) => !dismissedJudgmentIds()[judgment.id]),
-  );
+  const visibleJudgments = createMemo(() => {
+    const project = displayProject();
+    if (isManagerProjectCompleted(project)) return [];
+    return (props.commandFlow?.judgments ?? []).filter(
+      (judgment) => !dismissedJudgmentIds()[judgment.id],
+    );
+  });
   const visibleTabGroups = createMemo(() =>
     adminDetailOpen() ? ORCHESTRATION_INFO_TAB_GROUPS : USER_ORCHESTRATION_INFO_TAB_GROUPS,
   );
@@ -1018,6 +1039,9 @@ const ManagerApprovalInbox: Component<{
             {(judgment) => {
               const summary = managerJudgmentDisplaySummary(judgment);
               const reason = managerJudgmentDisplayReason(judgment);
+              const approvalActions = judgment.proposedActions.filter(
+                (action) => action.requiresApproval,
+              );
               return (
                 <article
                   class={`manager-approval-item manager-approval-item-${judgment.priority} manager-approval-verdict-${judgment.verdict}`}
@@ -1044,20 +1068,42 @@ const ManagerApprovalInbox: Component<{
                         </span>
                       </Show>
                     </div>
+                    <Show when={approvalActions[0]}>
+                      {(action) => (
+                        <div class="manager-approval-decision">
+                          <span>{t("manager.orchestration.approval.decision-title")}</span>
+                          <strong>{managerProposedActionLabel(action())}</strong>
+                        </div>
+                      )}
+                    </Show>
                   </div>
                   <div class="manager-approval-actions">
-                    <For
-                      each={judgment.proposedActions.filter((action) => action.requiresApproval)}
-                    >
+                    <For each={approvalActions}>
                       {(action) => (
-                        <button
-                          type="button"
-                          disabled={props.busy || !props.onApprove}
-                          title={action.rationale}
-                          onClick={() => props.onApprove?.(action)}
-                        >
-                          {managerProposedActionLabel(action)}
-                        </button>
+                        <div class="manager-approval-action-card">
+                          <button
+                            type="button"
+                            disabled={props.busy || !props.onApprove}
+                            title={action.rationale}
+                            onClick={() => props.onApprove?.(action)}
+                          >
+                            {managerProposedActionLabel(action)}
+                          </button>
+                          <dl>
+                            <dt>{t("manager.orchestration.approval.approve-effect")}</dt>
+                            <dd>{managerProposedActionEffect(action)}</dd>
+                            <dt>{t("manager.orchestration.approval.ignore-effect")}</dt>
+                            <dd>{managerProposedActionDismissEffect(action)}</dd>
+                          </dl>
+                          <Show when={action.rationale}>
+                            {(rationale) => (
+                              <p title={rationale()}>
+                                {t("manager.orchestration.approval.reason-label")}:{" "}
+                                {clip(rationale(), 140)}
+                              </p>
+                            )}
+                          </Show>
+                        </div>
                       )}
                     </For>
                     <button
@@ -1134,6 +1180,11 @@ const ProjectHeader: Component<{
 }> = (props) => {
   let projectSelectEl!: HTMLSelectElement;
   const project = createMemo(() => props.selectedProject);
+  const headerNextAction = createMemo(() =>
+    isManagerProjectCompleted(project())
+      ? null
+      : (props.nextAction ?? props.overview?.nextAction ?? null),
+  );
   const visibleArchivedProjects = createMemo(() => {
     if (props.advanced) return props.archivedProjects;
     const selectedId = project()?.id;
@@ -1256,7 +1307,7 @@ const ProjectHeader: Component<{
                 <dt>{t("manager.orchestration.project-summary.next")}</dt>
                 <dd>
                   <Show
-                    when={props.nextAction ?? props.overview?.nextAction}
+                    when={headerNextAction()}
                     fallback={t("manager.orchestration.project-summary.next-unknown")}
                   >
                     {(action) => managerProjectOverviewActionLabel(action())}
@@ -2429,6 +2480,9 @@ const OverviewView: Component<{
   );
   const activeBlocker = createMemo(() => pickPrimaryBlocker(props.blockers));
   const nextAction = createMemo(() => {
+    if (isManagerProjectCompleted(props.overview?.project)) {
+      return t("manager.orchestration.current-judgment.completed");
+    }
     const projectBlocker = activeBlocker();
     if (projectBlocker) {
       if (projectBlocker.requiredAction === "user")
@@ -3097,8 +3151,25 @@ const ManagerAssistantLedgerView: Component<{
   reports: ManagerAssistantStatusReport[];
   workerRuns: ManagerWorkerRun[];
 }> = (props) => {
-  const latestReport = createMemo(() => props.reports[0]);
-  const recentReports = createMemo(() => props.reports.slice(0, 4));
+  const projectCompleted = createMemo(() => isManagerProjectCompleted(props.project));
+  const scopedReports = createMemo(() => {
+    if (!props.project) return props.reports;
+    const currentRoundId =
+      props.commandFlow?.activeRound?.id ??
+      props.overview?.activeRound?.id ??
+      props.project.activeRoundId ??
+      null;
+    return props.reports.filter((report) =>
+      assistantStatusReportMatchesProjectScope(report, props.project?.id ?? null, currentRoundId),
+    );
+  });
+  const latestReport = createMemo(() => scopedReports()[0]);
+  const recentReports = createMemo(() => scopedReports().slice(0, 4));
+  const nextActionLabel = createMemo(() =>
+    projectCompleted()
+      ? t("manager.orchestration.current-judgment.completed")
+      : (props.commandFlow?.nextAction.label ?? props.overview?.nextAction.label),
+  );
   const projectId = createMemo(
     () => props.project?.id ?? projectIdFromAssistantReport(latestReport()) ?? null,
   );
@@ -3136,7 +3207,7 @@ const ManagerAssistantLedgerView: Component<{
         <div class="manager-assistant-result-card">
           <div class="manager-assistant-result-title">
             <strong>{props.project?.name ?? latestReport()?.message ?? "최근 실행 결과"}</strong>
-            <span>{props.commandFlow?.nextAction.label ?? props.overview?.nextAction.label}</span>
+            <span>{nextActionLabel()}</span>
           </div>
           <dl class="manager-assistant-result-grid">
             <Show when={projectId()}>
@@ -3629,6 +3700,22 @@ function managerProposedActionLabel(action: ManagerProposedAction): string {
   return managerProposedActionTypeLabel(action.type);
 }
 
+function managerProposedActionEffect(action: ManagerProposedAction): string {
+  const key = `manager.orchestration.proposed-action.effect.${action.type}`;
+  if (action.type === "start_next_round") {
+    return managerProposedActionPayloadBoolean(action.payload, "dryRun")
+      ? t("manager.orchestration.proposed-action.effect.start_next_round.dry-run")
+      : t("manager.orchestration.proposed-action.effect.start_next_round.live");
+  }
+  return t(key);
+}
+
+function managerProposedActionDismissEffect(action: ManagerProposedAction): string {
+  return t("manager.orchestration.approval.dismiss-effect", {
+    action: managerProposedActionLabel(action),
+  });
+}
+
 function managerProposedActionPayloadBoolean(
   payload: Record<string, unknown>,
   key: string,
@@ -3645,7 +3732,10 @@ function buildManagerCurrentJudgmentBrief(input: {
 }): ManagerCurrentJudgmentBrief | null {
   const project = input.commandFlow?.project ?? input.overview?.project ?? input.project ?? null;
   const activeRound = input.commandFlow?.activeRound ?? input.overview?.activeRound;
-  const nextAction = input.commandFlow?.nextAction ?? input.overview?.nextAction ?? null;
+  const projectCompleted = isManagerProjectCompleted(project);
+  const nextAction = projectCompleted
+    ? null
+    : (input.commandFlow?.nextAction ?? input.overview?.nextAction ?? null);
   const approvalJudgments =
     input.commandFlow?.judgments.filter((judgment) => judgment.priority === "approval") ?? [];
   const approvalActions = approvalJudgments.flatMap((judgment) =>
@@ -3668,9 +3758,11 @@ function buildManagerCurrentJudgmentBrief(input: {
   const flowStage = project?.flowStage
     ? managerProjectFlowStageLabel(project.flowStage)
     : statusLabel(project?.status);
-  const nextActionText = nextAction
-    ? managerProjectOverviewActionLabel(nextAction)
-    : t("manager.orchestration.current-judgment.no-next-action");
+  const nextActionText = projectCompleted
+    ? t("manager.orchestration.current-judgment.completed")
+    : nextAction
+      ? managerProjectOverviewActionLabel(nextAction)
+      : t("manager.orchestration.current-judgment.no-next-action");
   const projectText = project
     ? `${project.name} · ${flowStage}`
     : t("manager.orchestration.current-judgment.no-project");
@@ -3699,21 +3791,25 @@ function buildManagerCurrentJudgmentBrief(input: {
     ? t("manager.orchestration.current-judgment.recommend.approve", {
         action: managerProposedActionLabel(primaryApproval),
       })
-    : reportIsStale && currentRoundId
-      ? t("manager.orchestration.current-judgment.recommend.refresh-current-round")
-      : nextAction
-        ? t("manager.orchestration.current-judgment.recommend.next-action", {
-            action: nextActionText,
-          })
-        : t("manager.orchestration.current-judgment.recommend.ask-manager");
+    : projectCompleted
+      ? t("manager.orchestration.current-judgment.recommend.completed")
+      : reportIsStale && currentRoundId
+        ? t("manager.orchestration.current-judgment.recommend.refresh-current-round")
+        : nextAction
+          ? t("manager.orchestration.current-judgment.recommend.next-action", {
+              action: nextActionText,
+            })
+          : t("manager.orchestration.current-judgment.recommend.ask-manager");
   const headline =
     approvalCount > 0
       ? t("manager.orchestration.current-judgment.headline.approval")
-      : reportIsStale
-        ? t("manager.orchestration.current-judgment.headline.stale")
-        : nextAction?.kind === "wait"
-          ? t("manager.orchestration.current-judgment.headline.wait")
-          : t("manager.orchestration.current-judgment.headline.ready");
+      : projectCompleted
+        ? t("manager.orchestration.current-judgment.headline.completed")
+        : reportIsStale
+          ? t("manager.orchestration.current-judgment.headline.stale")
+          : nextAction?.kind === "wait"
+            ? t("manager.orchestration.current-judgment.headline.wait")
+            : t("manager.orchestration.current-judgment.headline.ready");
   const updatedAt = formatAssistantLedgerTime(
     input.commandFlow?.generatedAt ?? input.overview?.generatedAt ?? latestReport?.createdAt,
   );
@@ -3751,6 +3847,23 @@ function roundIdFromStatusReport(
     [report?.detail, report?.message, report?.round],
     /\bround_[A-Za-z0-9_-]+\b/,
   );
+}
+
+function isManagerProjectCompleted(project: ManagerProject | null | undefined): boolean {
+  return project?.status === "completed" || project?.flowStage === "completed";
+}
+
+function assistantStatusReportMatchesProjectScope(
+  report: ManagerAssistantStatusReport | null | undefined,
+  projectId: string | null | undefined,
+  roundId: string | null | undefined,
+): boolean {
+  const reportProjectId = projectIdFromStatusReport(report);
+  const reportRoundId = roundIdFromStatusReport(report);
+  if (!reportProjectId && !reportRoundId) return false;
+  if (projectId && reportProjectId && reportProjectId !== projectId) return false;
+  if (roundId && reportRoundId && reportRoundId !== roundId) return false;
+  return true;
 }
 
 function firstStatusReportMatch(values: Array<string | undefined>, pattern: RegExp): string | null {

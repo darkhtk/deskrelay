@@ -4914,79 +4914,6 @@ dialog.approval-modal-root,
   font-size: 12px;
   line-height: 1.35;
 }
-.settings-build-version-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-.settings-build-version-list {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-.settings-build-version-row {
-  align-items: center;
-  background: var(--surface-muted);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  color: inherit;
-  cursor: pointer;
-  display: grid;
-  font: inherit;
-  gap: 12px;
-  grid-template-columns: minmax(140px, 1fr) minmax(150px, 1fr) auto;
-  min-width: 0;
-  padding: 10px 12px;
-  text-align: left;
-  transition: border-color 120ms ease, background 120ms ease;
-}
-.settings-build-version-row:hover:not(:disabled),
-.settings-build-version-row:focus-visible {
-  background: var(--surface);
-  border-color: var(--accent);
-}
-.settings-build-version-row:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-.settings-build-version-row.is-current {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
-}
-.settings-build-version-main,
-.settings-build-version-meta {
-  display: flex;
-  min-width: 0;
-}
-.settings-build-version-main {
-  flex-direction: column;
-  gap: 2px;
-}
-.settings-build-version-main strong {
-  color: var(--text);
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.settings-build-version-main span,
-.settings-build-version-meta {
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
-.settings-build-version-meta {
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.settings-build-version-action {
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
-  justify-self: end;
-  white-space: nowrap;
-}
 .settings-update-device-list {
   display: flex;
   flex-direction: column;
@@ -5048,13 +4975,6 @@ dialog.approval-modal-root,
   .settings-update-row {
     align-items: flex-start;
     flex-direction: column;
-  }
-  .settings-build-version-row {
-    align-items: flex-start;
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .settings-build-version-action {
-    justify-self: start;
   }
 }
 .settings-worker-section {
@@ -6401,6 +6321,22 @@ dialog.approval-modal-root,
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.manager-approval-decision {
+  background: color-mix(in srgb, var(--warning-soft) 72%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--border-subtle));
+  border-radius: 7px;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+}
+.manager-approval-decision span {
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.manager-approval-decision strong {
+  white-space: normal;
+}
 .manager-approval-meta,
 .manager-approval-evidence {
   align-items: center;
@@ -6420,12 +6356,22 @@ dialog.approval-modal-root,
   padding: 3px 6px;
 }
 .manager-approval-actions {
-  align-items: flex-end;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-  min-width: min(220px, 100%);
+  align-items: stretch;
+  display: grid;
+  gap: 7px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  justify-content: stretch;
+  min-width: 0;
+}
+.manager-approval-action-card {
+  background: color-mix(in srgb, var(--bg-soft) 62%, var(--surface-card));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
 }
 .manager-approval-actions button {
   background: transparent;
@@ -6436,14 +6382,44 @@ dialog.approval-modal-root,
   font: inherit;
   font-size: 11px;
   line-height: 1.25;
-  max-width: 260px;
+  max-width: 100%;
   min-height: 28px;
   padding: 5px 9px;
   white-space: normal;
+  width: 100%;
+}
+.manager-approval-actions > .text-button {
+  justify-self: start;
+  width: auto;
 }
 .manager-approval-actions button:first-child:not(.text-button) {
   border-color: color-mix(in srgb, var(--warning) 52%, var(--border-subtle));
   color: var(--warning);
+}
+.manager-approval-action-card dl {
+  display: grid;
+  gap: 3px 8px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: 0;
+}
+.manager-approval-action-card dt {
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.manager-approval-action-card dd {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.manager-approval-action-card p {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .manager-approval-actions button:hover:not(:disabled) {
   background: var(--accent-soft);
@@ -8727,6 +8703,78 @@ body.manager-orchestration-resizing {
 .manager-assistant-transcript > .transcript-inner > .transcript {
   padding-left: 0;
   padding-right: 0;
+}
+.manager-assistant-dialogue {
+  display: grid;
+  gap: 10px;
+  padding: 2px 0 10px;
+}
+.manager-assistant-dialogue-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.manager-assistant-dialogue-role {
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 0 2px;
+}
+.manager-assistant-dialogue-body {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  min-width: 0;
+  overflow: hidden;
+  padding: 9px 10px;
+}
+.manager-assistant-dialogue-assistant .manager-assistant-dialogue-body {
+  background: color-mix(in srgb, var(--surface-card) 88%, var(--accent-soft));
+}
+.manager-assistant-dialogue-user {
+  justify-items: end;
+}
+.manager-assistant-dialogue-user .manager-assistant-dialogue-body {
+  background: var(--bg-soft);
+  color: var(--text);
+  max-width: min(92%, 520px);
+}
+.manager-assistant-dialogue-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.manager-assistant-dialogue-details {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 8px;
+  padding-top: 7px;
+}
+.manager-assistant-dialogue-details summary {
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11px;
+}
+.manager-assistant-dialogue-details pre {
+  background: color-mix(in srgb, var(--bg-soft) 78%, var(--surface-card));
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  max-height: 360px;
+  max-width: 100%;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+.manager-assistant-transcript-empty {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin: 0;
+  padding: 10px 2px;
 }
 .manager-workspace-assistant .transcript,
 .manager-workspace-assistant .transcript-inner,

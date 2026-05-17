@@ -3595,6 +3595,23 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
         ),
       ).toBe(true);
 
+      const duplicateAcceptReview = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/rounds/${roundId}/review`, {
+          action: "accept",
+          summary: "Duplicate accept should not create another review decision.",
+        }),
+      );
+      expect(duplicateAcceptReview.status).toBe(200);
+      const decisionsAfterDuplicateAccept = await managerDecisionStore.list(projectId);
+      expect(
+        decisionsAfterDuplicateAccept.decisions.filter(
+          (decision) =>
+            decision.roundId === roundId &&
+            decision.tags.includes("review") &&
+            decision.tags.includes("accept"),
+        ),
+      ).toHaveLength(1);
+
       const review = await app.fetch(
         authedRequest("POST", `/api/manager/projects/${projectId}/rounds/${roundId}/review`, {
           action: "user_check_required",
@@ -3629,6 +3646,14 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(directionBody.nextRound?.phase).toBe("replan");
       expect(directionBody.nextRound?.objective).toContain("happy path");
 
+      const staleReview = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/rounds/${roundId}/review`, {
+          action: "accept",
+          summary: "Old round should not accept after a new active round is created.",
+        }),
+      );
+      expect(staleReview.status).toBe(409);
+
       const complete = await app.fetch(
         authedRequest("POST", `/api/manager/projects/${projectId}/complete`, {
           summary: "Happy-path orchestration UX accepted.",
@@ -3644,12 +3669,22 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
           flowStage?: string;
           finalReview?: { acceptedByUser?: boolean };
         };
-        commandFlow?: { readiness?: { stage?: string } };
+        commandFlow?: {
+          readiness?: { stage?: string };
+          judgments?: Array<{
+            proposedActions?: Array<{ requiresApproval?: boolean }>;
+          }>;
+        };
       };
       expect(completeBody.project?.status).toBe("completed");
       expect(completeBody.project?.flowStage).toBe("completed");
       expect(completeBody.project?.finalReview?.acceptedByUser).toBe(true);
       expect(completeBody.commandFlow?.readiness?.stage).toBe("completed");
+      expect(
+        completeBody.commandFlow?.judgments?.flatMap(
+          (judgment) => judgment.proposedActions?.filter((action) => action.requiresApproval) ?? [],
+        ) ?? [],
+      ).toEqual([]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

@@ -598,6 +598,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   function selectManagerProject(projectId: string | null) {
     setProjectFolderOpenError(null);
+    setApprovalActionStatus(null);
+    setApprovalActionError(null);
     setSelectedProjectId(projectId);
     writeSelectedManagerProjectId(projectId);
   }
@@ -883,6 +885,31 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     const projectId = action.projectId || currentProjectId();
     if (!projectId) {
       setApprovalActionError(t("manager.orchestration.approval.error.no-project"));
+      return;
+    }
+    const project = selectedProject();
+    if (
+      project?.id === projectId &&
+      (project.status === "completed" || project.flowStage === "completed")
+    ) {
+      setApprovalActionStatus(null);
+      setApprovalActionError(t("manager.orchestration.approval.error.completed-project"));
+      return;
+    }
+    const actionRoundId = payloadString(action.payload, "roundId") ?? action.roundId;
+    const currentRoundId =
+      projectCommandFlow()?.activeRound?.id ??
+      projectOverview()?.activeRound?.id ??
+      project?.activeRoundId ??
+      activeRound()?.id;
+    if (
+      projectId === currentProjectId() &&
+      actionRoundId &&
+      currentRoundId &&
+      currentRoundId !== actionRoundId
+    ) {
+      setApprovalActionStatus(null);
+      setApprovalActionError(t("manager.orchestration.approval.error.stale-round"));
       return;
     }
     if (projectId !== currentProjectId()) {

@@ -1399,22 +1399,44 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const project = await managerProjectStore.get(c.req.param("id"));
     if (!project) return c.json({ error: "unknown project" }, 404);
+    if (project.status === "completed" || project.flowStage === "completed") {
+      return c.json({ error: "project is already completed" }, 409);
+    }
     const round = await managerOrchestrationStore.getRound(c.req.param("roundId"));
     if (!round || (round.projectId && round.projectId !== project.id)) {
       return c.json({ error: "unknown round" }, 404);
     }
+    if (project.activeRoundId && project.activeRoundId !== round.id) {
+      return c.json(
+        {
+          error: "stale round approval",
+          activeRoundId: project.activeRoundId,
+          roundId: round.id,
+        },
+        409,
+      );
+    }
     const now = new Date();
-    const decision = await managerDecisionStore.create(project.id, {
-      title: managerRoundReviewDecisionTitle(parsed.value.action),
-      detail: parsed.value.summary || round.summary || round.objective,
-      rationale: `Round ${round.id} reviewed as ${parsed.value.action}.`,
-      roundId: round.id,
-      tags: ["review", parsed.value.action],
-      createdBy: "browser",
-    });
+    const existingReviewDecision = (await managerDecisionStore.list(project.id)).decisions.find(
+      (decision) =>
+        decision.status === "active" &&
+        decision.roundId === round.id &&
+        decision.tags.includes("review") &&
+        decision.tags.includes(parsed.value.action),
+    );
+    const decision =
+      existingReviewDecision ??
+      (await managerDecisionStore.create(project.id, {
+        title: managerRoundReviewDecisionTitle(parsed.value.action),
+        detail: parsed.value.summary || round.summary || round.objective,
+        rationale: `Round ${round.id} reviewed as ${parsed.value.action}.`,
+        roundId: round.id,
+        tags: ["review", parsed.value.action],
+        createdBy: "browser",
+      }));
     let blocker: ManagerBlocker | undefined;
     let nextRound: ManagerRound | undefined;
-    if (parsed.value.action === "user_check_required") {
+    if (parsed.value.action === "user_check_required" && !existingReviewDecision) {
       const blockerResult = await managerBlockerStore.create(project.id, {
         title: "User verification required",
         detail: parsed.value.summary || "The round result needs a direct user check.",
@@ -1427,6 +1449,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       blocker = blockerResult.blocker;
     }
     if (
+      !existingReviewDecision &&
       parsed.value.createNextRound &&
       parsed.value.nextObjective &&
       ["request_changes", "replan"].includes(parsed.value.action)
@@ -1576,6 +1599,8 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const project = await managerProjectStore.get(c.req.param("id"));
     if (!project) return c.json({ error: "unknown project" }, 404);
     const now = new Date();
+    const projectAlreadyCompleted =
+      project.status === "completed" || project.flowStage === "completed";
     const finalReview: ManagerProjectFinalReview = {
       summary: parsed.value.summary || project.summary || project.goal,
       goalMatched: parsed.value.goalMatched ?? true,
@@ -1586,21 +1611,29 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       completedAt: now.toISOString(),
       completedBy: "browser",
     };
-    const decision = await managerDecisionStore.create(project.id, {
-      title: "Project final review",
-      detail: finalReview.summary,
-      rationale: finalReview.verificationEvidence || "Final orchestration result recorded.",
-      tags: ["final-review", finalReview.acceptedByUser ? "accepted" : "unaccepted"],
-      createdBy: "browser",
-    });
-    const updatedProject =
-      (await managerProjectStore.update(project.id, {
-        status: "completed",
-        flowStage: "completed",
-        finalReview,
-        summary: finalReview.summary,
-        error: null,
-      })) ?? project;
+    const existingFinalReviewDecision = projectAlreadyCompleted
+      ? (await managerDecisionStore.list(project.id)).decisions.find(
+          (decision) => decision.status === "active" && decision.tags.includes("final-review"),
+        )
+      : undefined;
+    const decision =
+      existingFinalReviewDecision ??
+      (await managerDecisionStore.create(project.id, {
+        title: "Project final review",
+        detail: finalReview.summary,
+        rationale: finalReview.verificationEvidence || "Final orchestration result recorded.",
+        tags: ["final-review", finalReview.acceptedByUser ? "accepted" : "unaccepted"],
+        createdBy: "browser",
+      }));
+    const updatedProject = projectAlreadyCompleted
+      ? project
+      : ((await managerProjectStore.update(project.id, {
+          status: "completed",
+          flowStage: "completed",
+          finalReview,
+          summary: finalReview.summary,
+          error: null,
+        })) ?? project);
     const response: ManagerProjectCompleteResponse = {
       generatedAt: now.toISOString(),
       project: updatedProject,
@@ -6243,6 +6276,7 @@ interface ManagerJudgmentBuildInput {
 }
 
 function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJudgmentPacket[] {
+  if (input.project.status === "completed" || input.project.flowStage === "completed") return [];
   const packets: ManagerJudgmentPacket[] = [];
   const openBlockers = input.blockers.filter((blocker) => blocker.status === "open");
   const userBlockers = openBlockers.filter((blocker) => blocker.requiredAction === "user");
@@ -9942,7 +9976,9 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     ].join("\n"),
     "## Response Requirements\nAnswer only the current user request. Use the active Claude session for conversation memory. Use observed facts for operational claims.",
     "Never answer only `No response requested.`. Every manager-chat user message requires a visible Korean answer, progress update, or failure report.",
-    "Start with the direct answer, current decision, or action taken. Put API evidence, logs, and history after that answer.",
+    "Start with the direct answer, current decision, or action taken in 1-3 concise Korean sentences.",
+    "Do not paste raw execution logs, HTTP payloads, long id lists, or tool transcripts into the manager conversation unless the user explicitly asks for raw detail. Put those details in status reports, task observation, or logs.",
+    "Never echo prompt boilerplate such as `Current Browser Context`, `Current User Request`, `Current User Request ASCII-Safe Copy`, `Continue from where you left off`, or `No response requested` into the user-facing answer.",
     "If the latest assistant status report is for a different project or round than the active command flow, explicitly call that report stale instead of treating it as current.",
     [
       "## Role Selection Reminder",
@@ -10629,6 +10665,8 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Treat browser-provided history as memory only, not as a transcript to continue.",
     "- Do not output artificial conversation labels such as `User:`, `Assistant:`, `A:`, or `B:` unless the user explicitly asks for that format.",
     "- Separate planned checks from observed facts. A bracketed checklist is not evidence that the check ran.",
+    "- Keep manager conversation messages short and decision-oriented. Use assistant status reports, task observations, and logs for verbose evidence.",
+    "- Never echo internal prompt headings, browser context blocks, ASCII-safe copies, or hidden continuation directives in user-facing replies.",
     "",
     "## Supervisor Boundary",
     "",
@@ -10657,6 +10695,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Browser context may include the selected project id, cwd, command-flow stage, next action, active round, open blockers, active decisions, protocol state, and active artifacts. Treat it as a navigation hint, then verify with manager project APIs before mutation.",
     "- For project flow work, read `GET /api/manager/projects/:id/command-flow` first; it is the canonical UX state for draft -> protocol ready -> ready to start -> running -> review -> replanning -> completed.",
     "- `wizardEvents` in command-flow are explicit human-applied intent changes from the wizard. They are signal, not raw UI activity; high-impact events may require replan, pause, or human confirmation before more worker dispatch.",
+    "- Before mutating a project flow, pin the project id, active round id, and proposed action id you intend to operate on. If the active round changes before mutation, stop and report `라운드 변경 감지` instead of chasing the new round.",
     "- If no project is selected but the user's request needs project scope, create or select a manager project before launching rounds, workers, decisions, blockers, or artifacts.",
     "- If the selected session/cwd and selected project cwd disagree, inspect and report the mismatch instead of guessing.",
     "",
