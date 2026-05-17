@@ -1,5 +1,6 @@
 import type {
   ManagerAgent,
+  ManagerAgentResult,
   ManagerArtifact,
   ManagerArtifactUpdateRequest,
   ManagerBlocker,
@@ -10,6 +11,8 @@ import type {
   ManagerDecisionCreateRequest,
   ManagerDecisionUpdateRequest,
   ManagerDirectionChangeRequest,
+  ManagerEvidenceItem,
+  ManagerJudgmentPacket,
   ManagerProject,
   ManagerProjectCharter,
   ManagerProjectCharterUpdateRequest,
@@ -21,7 +24,9 @@ import type {
   ManagerProjectOverviewResponse,
   ManagerProjectProtocolSource,
   ManagerProjectStartRequest,
+  ManagerProposedAction,
   ManagerProtocolState,
+  ManagerProtocolTrace,
   ManagerProtocolUpdateRequest,
   ManagerRound,
   ManagerRoundHealthGate,
@@ -133,6 +138,7 @@ interface ManagerOrchestrationPanelProps {
   onReviewRound?: ((roundId: string, input: ManagerRoundReviewRequest) => void) | undefined;
   onDirectionChange?: ((input: ManagerDirectionChangeRequest) => void) | undefined;
   onCompleteProject?: ((input: ManagerProjectCompleteRequest) => void) | undefined;
+  onApproveProposedAction?: ((action: ManagerProposedAction) => void) | undefined;
 }
 
 interface TimelineEntry {
@@ -188,12 +194,27 @@ const ORCHESTRATION_INFO_TAB_GROUPS: Array<{
   { id: "review", tabs: ["artifacts", "state", "hygiene"] },
 ];
 
+const USER_ORCHESTRATION_INFO_TAB_GROUPS: Array<{
+  id: OrchestrationTabGroup;
+  tabs: OrchestrationInfoTab[];
+}> = [
+  { id: "progress", tabs: ["overview", "agents"] },
+  { id: "protocol", tabs: ["protocol"] },
+  { id: "review", tabs: ["blockers", "artifacts"] },
+];
+
+const USER_ORCHESTRATION_INFO_TABS = new Set<OrchestrationInfoTab>(
+  USER_ORCHESTRATION_INFO_TAB_GROUPS.flatMap((group) => group.tabs),
+);
+
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
   const [expanded, setExpanded] = createSignal(false);
   const [panelHeight, setPanelHeight] = createSignal(readPanelHeight());
-  const [activeTab, setActiveTab] = createSignal<OrchestrationInfoTab>("flow");
+  const [activeTab, setActiveTab] = createSignal<OrchestrationInfoTab>("overview");
+  const [adminDetailOpen, setAdminDetailOpen] = createSignal(false);
   const [projectWizardOpen, setProjectWizardOpen] = createSignal(false);
   const [projectWizardMode, setProjectWizardMode] = createSignal<ProjectWizardMode>("create");
+  const [dismissedJudgmentIds, setDismissedJudgmentIds] = createSignal<Record<string, true>>({});
   let stopResize: (() => void) | undefined;
   const isExpanded = () => Boolean(props.standalone) || expanded();
   const dockProjectWizard = () => Boolean(props.standalone && projectWizardOpen());
@@ -227,8 +248,25 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const runTotals = createMemo(() => summarizeWorkerRunTotals(props.workerRuns ?? []));
   const currentState = createMemo(() => props.state?.current ?? null);
   const selectedProject = createMemo(() => props.selectedProject ?? null);
+  const displayProject = createMemo<ManagerProject | null>(() => {
+    const selected = selectedProject();
+    if (!selected) return null;
+    const overviewProject = props.projectOverview?.project;
+    const commandFlowProject = props.commandFlow?.project;
+    return {
+      ...selected,
+      ...(overviewProject?.id === selected.id ? overviewProject : {}),
+      ...(commandFlowProject?.id === selected.id ? commandFlowProject : {}),
+    };
+  });
+  const effectiveOverview = createMemo<ManagerProjectOverviewResponse | null>(
+    () => props.commandFlow?.overview ?? props.projectOverview ?? null,
+  );
+  const effectiveNextAction = createMemo(
+    () => props.commandFlow?.nextAction ?? effectiveOverview()?.nextAction ?? null,
+  );
   const projectCurrentSignal = createMemo(() =>
-    selectedProject() ? (props.projectOverview?.currentSignal ?? null) : null,
+    selectedProject() ? (effectiveOverview()?.currentSignal ?? null) : null,
   );
   const headlineTone = createMemo(() => {
     const projectTone = overviewTone(projectCurrentSignal()?.tone);
@@ -238,7 +276,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   });
   const headlineTitle = createMemo(
     () =>
-      selectedProject()?.name ??
+      displayProject()?.name ??
       projectCurrentSignal()?.title ??
       currentState()?.title ??
       activeRound()?.title ??
@@ -246,7 +284,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   );
   const headlineDetail = createMemo(() =>
     selectedProject()
-      ? (projectCurrentSignal()?.title ?? selectedProject()?.goal ?? activeRound()?.title)
+      ? (projectCurrentSignal()?.title ?? displayProject()?.goal ?? activeRound()?.title)
       : undefined,
   );
   const freshnessLabel = createMemo(() => formatFreshness(props.state));
@@ -258,6 +296,21 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const activeIssueCount = createMemo(
     () => props.state?.counts.blockers ?? props.state?.blockers.length ?? 0,
   );
+  const visibleJudgments = createMemo(() =>
+    (props.commandFlow?.judgments ?? []).filter((judgment) => !dismissedJudgmentIds()[judgment.id]),
+  );
+  const visibleTabGroups = createMemo(() =>
+    adminDetailOpen() ? ORCHESTRATION_INFO_TAB_GROUPS : USER_ORCHESTRATION_INFO_TAB_GROUPS,
+  );
+  createEffect(() => {
+    const projectId = props.selectedProject?.id;
+    if (!projectId) setDismissedJudgmentIds({});
+  });
+  createEffect(() => {
+    if (!adminDetailOpen() && !USER_ORCHESTRATION_INFO_TABS.has(activeTab())) {
+      setActiveTab("overview");
+    }
+  });
   const openProjectWizard = (mode: ProjectWizardMode) => {
     setProjectWizardMode(mode);
     setProjectWizardOpen(true);
@@ -298,8 +351,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
     <section
       class="manager-orchestration-panel"
       classList={{
+        "manager-orchestration-admin-detail": adminDetailOpen(),
         "manager-orchestration-panel-expanded": isExpanded(),
         "manager-orchestration-panel-standalone": Boolean(props.standalone),
+        "manager-orchestration-user-mode": !adminDetailOpen(),
       }}
       aria-label={t("manager.orchestration.aria.panel")}
       style={{ "--manager-orchestration-panel-height": `${panelHeight()}px` } as JSX.CSSProperties}
@@ -328,12 +383,14 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               </Show>
             }
           >
-            <span class="manager-status-pill">{statusLabel(props.selectedProject?.status)}</span>
+            <span class="manager-status-pill">
+              {statusLabel(displayProject()?.status ?? props.selectedProject?.status)}
+            </span>
           </Show>
         </button>
         <div class="manager-orchestration-summary">
           <Show
-            when={selectedProject()}
+            when={displayProject()}
             fallback={
               <>
                 <Show
@@ -370,7 +427,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               <>
                 <span>{t("manager.orchestration.scope.selected-project")}</span>
                 <span>{managerProjectFlowStageLabel(project().flowStage)}</span>
-                <Show when={props.projectOverview?.nextAction}>
+                <Show when={effectiveNextAction()}>
                   {(action) => <span>{managerProjectOverviewActionLabel(action())}</span>}
                 </Show>
                 <span>
@@ -412,31 +469,66 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             <ProjectHeader
               projects={props.projects ?? []}
               archivedProjects={props.archivedProjects ?? []}
-              selectedProject={props.selectedProject ?? null}
-              overview={props.projectOverview ?? null}
+              selectedProject={displayProject()}
+              overview={effectiveOverview()}
+              nextAction={effectiveNextAction()}
               loading={props.projectLoading}
               busy={props.projectBusy}
               onRefresh={props.onRefreshProjects}
               onSelect={props.onSelectProject}
               onOpenWizard={openProjectWizard}
               onArchive={props.onArchiveProject}
+              advanced={adminDetailOpen()}
             />
-            <GlobalManagerStatus
-              state={props.state}
-              freshnessLabel={freshnessLabel()}
-              eventConnectionLabel={eventConnectionLabel()}
-              totals={totals()}
-              runTotals={runTotals()}
-              issueCount={activeIssueCount()}
-              busy={props.acknowledgeBusy}
-              onAcknowledge={props.onAcknowledgeFailures}
+            <div class="manager-workboard-mode">
+              <div>
+                <strong>
+                  {adminDetailOpen()
+                    ? t("manager.orchestration.mode.admin")
+                    : t("manager.orchestration.mode.user")}
+                </strong>
+                <span>
+                  {adminDetailOpen()
+                    ? t("manager.orchestration.mode.admin-help")
+                    : t("manager.orchestration.mode.user-help")}
+                </span>
+              </div>
+              <button
+                type="button"
+                aria-pressed={adminDetailOpen()}
+                onClick={() => setAdminDetailOpen((current) => !current)}
+              >
+                {adminDetailOpen()
+                  ? t("manager.orchestration.action.hide-admin-detail")
+                  : t("manager.orchestration.action.show-admin-detail")}
+              </button>
+            </div>
+            <Show when={adminDetailOpen()}>
+              <GlobalManagerStatus
+                state={props.state}
+                freshnessLabel={freshnessLabel()}
+                eventConnectionLabel={eventConnectionLabel()}
+                totals={totals()}
+                runTotals={runTotals()}
+                issueCount={activeIssueCount()}
+                busy={props.acknowledgeBusy}
+                onAcknowledge={props.onAcknowledgeFailures}
+              />
+            </Show>
+            <ManagerApprovalInbox
+              judgments={visibleJudgments()}
+              busy={props.flowBusy || props.actionBusy}
+              onApprove={props.onApproveProposedAction}
+              onDismiss={(judgmentId) =>
+                setDismissedJudgmentIds((current) => ({ ...current, [judgmentId]: true }))
+              }
             />
             <nav
               class="manager-orchestration-tab-groups"
               role="tablist"
               aria-label={t("manager.orchestration.aria.information")}
             >
-              <For each={ORCHESTRATION_INFO_TAB_GROUPS}>
+              <For each={visibleTabGroups()}>
                 {(group) => (
                   <div
                     class="manager-orchestration-tab-group"
@@ -481,7 +573,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   class="manager-section-overview"
                 >
                   <CommandFlowView
-                    project={props.selectedProject ?? null}
+                    project={displayProject()}
                     commandFlow={props.commandFlow ?? null}
                     activeRound={activeRound()}
                     busy={props.flowBusy || props.actionBusy}
@@ -501,45 +593,47 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                 >
                   <OverviewView
                     round={activeRound()}
-                    overview={props.projectOverview ?? null}
+                    overview={effectiveOverview()}
                     agents={agents()}
                     tasks={tasks()}
                     blockers={props.blockers ?? []}
                     hiddenAgentCount={hiddenAgentCount()}
                   />
                 </OrchestrationSection>
-                <OrchestrationSection
-                  title={t("manager.orchestration.section.current-state")}
-                  class="manager-section-current"
-                >
-                  <CurrentStateView
-                    state={props.state}
-                    project={props.selectedProject ?? null}
-                    activeRound={activeRound()}
-                    agents={agents()}
-                    busy={props.actionBusy || props.acknowledgeBusy}
-                    onAcknowledge={props.onAcknowledgeFailures}
-                    onCancelTask={props.onCancelTask}
-                    onInspectTask={props.onInspectTask}
-                    onRepairRegistration={props.onRepairRegistration}
-                    onRefresh={props.onRefreshState}
-                    onRetryTask={props.onRetryTask}
-                    onRunUpdateAll={props.onRunUpdateAll}
-                  />
-                </OrchestrationSection>
-                <OrchestrationSection
-                  title={t("manager.orchestration.section.health")}
-                  class="manager-section-health"
-                >
-                  <RoundHealthGateView
-                    health={props.health}
-                    busy={props.actionBusy || props.acknowledgeBusy}
-                    onAcknowledgeRound={props.onAcknowledgeRound}
-                    onInspectTask={props.onInspectTask}
-                    onRepairRound={props.onRepairRound}
-                    onRetryTask={props.onRetryTask}
-                  />
-                </OrchestrationSection>
+                <Show when={adminDetailOpen()}>
+                  <OrchestrationSection
+                    title={t("manager.orchestration.section.current-state")}
+                    class="manager-section-current"
+                  >
+                    <CurrentStateView
+                      state={props.state}
+                      project={displayProject()}
+                      activeRound={activeRound()}
+                      agents={agents()}
+                      busy={props.actionBusy || props.acknowledgeBusy}
+                      onAcknowledge={props.onAcknowledgeFailures}
+                      onCancelTask={props.onCancelTask}
+                      onInspectTask={props.onInspectTask}
+                      onRepairRegistration={props.onRepairRegistration}
+                      onRefresh={props.onRefreshState}
+                      onRetryTask={props.onRetryTask}
+                      onRunUpdateAll={props.onRunUpdateAll}
+                    />
+                  </OrchestrationSection>
+                  <OrchestrationSection
+                    title={t("manager.orchestration.section.health")}
+                    class="manager-section-health"
+                  >
+                    <RoundHealthGateView
+                      health={props.health}
+                      busy={props.actionBusy || props.acknowledgeBusy}
+                      onAcknowledgeRound={props.onAcknowledgeRound}
+                      onInspectTask={props.onInspectTask}
+                      onRepairRound={props.onRepairRound}
+                      onRetryTask={props.onRetryTask}
+                    />
+                  </OrchestrationSection>
+                </Show>
               </Show>
 
               <Show when={activeTab() === "agents"}>
@@ -549,8 +643,12 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                 >
                   <AgentsView
                     agents={agents()}
+                    workerRuns={props.workerRuns ?? []}
+                    agentResults={props.commandFlow?.agentResults ?? []}
+                    evidence={props.commandFlow?.evidence ?? []}
                     busy={props.actionBusy || props.observeBusy}
                     onInspectTask={props.onInspectTask}
+                    advanced={adminDetailOpen()}
                   />
                 </OrchestrationSection>
               </Show>
@@ -620,6 +718,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                     activeRoundId={activeRound()?.id}
                     onCreate={props.onCreateBlocker}
                     onResolve={props.onResolveBlocker}
+                    advanced={adminDetailOpen()}
                   />
                 </OrchestrationSection>
               </Show>
@@ -655,6 +754,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                 >
                   <WorkerRunsView
                     runs={props.workerRuns ?? []}
+                    evidence={props.commandFlow?.evidence ?? []}
                     busy={props.observeBusy || props.actionBusy}
                     onInspectTask={props.onInspectTask}
                   />
@@ -673,6 +773,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                     stored={Boolean(props.artifacts && props.artifacts.length > 0)}
                     onScan={props.onScanArtifacts}
                     onUpdate={props.onUpdateArtifact}
+                    advanced={adminDetailOpen()}
                   />
                 </OrchestrationSection>
               </Show>
@@ -684,11 +785,14 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                 >
                   <ProtocolView
                     protocol={props.protocol ?? null}
+                    trace={props.commandFlow?.protocolTrace ?? []}
+                    evidence={props.commandFlow?.evidence ?? []}
                     busy={props.protocolBusy}
                     activeRoundId={activeRound()?.id}
                     decisions={props.decisions ?? []}
                     onScan={props.onScanProtocol}
                     onUpdate={props.onUpdateProtocol}
+                    advanced={adminDetailOpen()}
                   />
                 </OrchestrationSection>
               </Show>
@@ -770,6 +874,103 @@ const OrchestrationSection: Component<{ title: string; class?: string; children:
   </section>
 );
 
+const ManagerApprovalInbox: Component<{
+  judgments: ManagerJudgmentPacket[];
+  busy?: boolean | undefined;
+  onApprove?: ((action: ManagerProposedAction) => void) | undefined;
+  onDismiss: (judgmentId: string) => void;
+}> = (props) => {
+  const approvalJudgments = createMemo(() =>
+    props.judgments.filter((judgment) => judgment.priority === "approval"),
+  );
+  const visibleJudgments = createMemo(() =>
+    (approvalJudgments().length > 0 ? approvalJudgments() : props.judgments).slice(0, 4),
+  );
+  const approvalCount = createMemo(() => approvalJudgments().length);
+  return (
+    <Show when={props.judgments.length > 0}>
+      <section
+        class="manager-approval-inbox"
+        aria-label={t("manager.orchestration.approval.title")}
+      >
+        <header class="manager-approval-inbox-head">
+          <div>
+            <span>{t("manager.orchestration.approval.kicker")}</span>
+            <strong>
+              {approvalCount() > 0
+                ? t("manager.orchestration.approval.pending", { count: approvalCount() })
+                : t("manager.orchestration.approval.watch")}
+            </strong>
+          </div>
+          <span>{t("manager.orchestration.approval.worker")}</span>
+        </header>
+        <div class="manager-approval-list">
+          <For each={visibleJudgments()}>
+            {(judgment) => {
+              const summary = managerJudgmentDisplaySummary(judgment);
+              const reason = managerJudgmentDisplayReason(judgment);
+              return (
+                <article
+                  class={`manager-approval-item manager-approval-item-${judgment.priority} manager-approval-verdict-${judgment.verdict}`}
+                >
+                  <div class="manager-approval-main">
+                    <div class="manager-approval-meta">
+                      <span>{managerJudgmentPriorityLabel(judgment.priority)}</span>
+                      <span>{managerJudgmentVerdictLabel(judgment.verdict)}</span>
+                      <span>{agentResultConfidenceLabel(judgment.confidence)}</span>
+                    </div>
+                    <strong title={summary}>{clip(summary, 120)}</strong>
+                    <p title={reason}>{clip(reason, 180)}</p>
+                    <div class="manager-approval-evidence">
+                      <span>
+                        {t("manager.orchestration.agent.evidence-count", {
+                          count: judgment.evidenceIds.length,
+                        })}
+                      </span>
+                      <Show when={judgment.protocolTraceIds.length > 0}>
+                        <span>
+                          {t("manager.orchestration.protocol.trace-count", {
+                            count: judgment.protocolTraceIds.length,
+                          })}
+                        </span>
+                      </Show>
+                    </div>
+                  </div>
+                  <div class="manager-approval-actions">
+                    <For
+                      each={judgment.proposedActions.filter((action) => action.requiresApproval)}
+                    >
+                      {(action) => (
+                        <button
+                          type="button"
+                          disabled={props.busy || !props.onApprove}
+                          title={action.rationale}
+                          onClick={() => props.onApprove?.(action)}
+                        >
+                          {t("manager.orchestration.action.approve")}:{" "}
+                          {managerProposedActionTypeLabel(action.type)}
+                        </button>
+                      )}
+                    </For>
+                    <button
+                      type="button"
+                      class="text-button"
+                      disabled={props.busy}
+                      onClick={() => props.onDismiss(judgment.id)}
+                    >
+                      {t("manager.orchestration.action.dismiss")}
+                    </button>
+                  </div>
+                </article>
+              );
+            }}
+          </For>
+        </div>
+      </section>
+    </Show>
+  );
+};
+
 type ProjectWizardKind =
   | "app"
   | "website"
@@ -811,16 +1012,23 @@ const ProjectHeader: Component<{
   archivedProjects: ManagerProject[];
   selectedProject: ManagerProject | null;
   overview: ManagerProjectOverviewResponse | null;
+  nextAction?: ManagerProjectOverviewAction | null | undefined;
   loading?: boolean | undefined;
   busy?: boolean | undefined;
   onRefresh?: (() => void) | undefined;
   onSelect?: ((projectId: string | null) => void) | undefined;
   onOpenWizard: (mode: ProjectWizardMode) => void;
   onArchive?: ((projectId: string) => void) | undefined;
+  advanced?: boolean | undefined;
 }> = (props) => {
   let projectSelectEl!: HTMLSelectElement;
-  const projectOptions = createMemo(() => [...props.projects, ...props.archivedProjects]);
   const project = createMemo(() => props.selectedProject);
+  const visibleArchivedProjects = createMemo(() => {
+    if (props.advanced) return props.archivedProjects;
+    const selectedId = project()?.id;
+    return props.archivedProjects.filter((item) => item.id === selectedId);
+  });
+  const projectOptions = createMemo(() => [...props.projects, ...visibleArchivedProjects()]);
   createEffect(() => {
     const selectedProjectId = project()?.id ?? "";
     if (projectSelectEl && projectSelectEl.value !== selectedProjectId) {
@@ -842,7 +1050,7 @@ const ProjectHeader: Component<{
             <For each={props.projects}>
               {(item) => <option value={item.id}>{item.name}</option>}
             </For>
-            <For each={props.archivedProjects}>
+            <For each={visibleArchivedProjects()}>
               {(item) => (
                 <option value={item.id}>
                   {t("manager.orchestration.project.archived", { name: item.name })}
@@ -869,7 +1077,11 @@ const ProjectHeader: Component<{
               ? t("manager.orchestration.action.loading")
               : t("manager.orchestration.action.refresh")}
           </button>
-          <Show when={Boolean(project() && project()?.status !== "archived" && props.onArchive)}>
+          <Show
+            when={Boolean(
+              props.advanced && project() && project()?.status !== "archived" && props.onArchive,
+            )}
+          >
             <button
               type="button"
               disabled={props.busy}
@@ -905,24 +1117,26 @@ const ProjectHeader: Component<{
                 <dt>{t("manager.orchestration.project-summary.next")}</dt>
                 <dd>
                   <Show
-                    when={props.overview?.nextAction}
+                    when={props.nextAction ?? props.overview?.nextAction}
                     fallback={t("manager.orchestration.project-summary.next-unknown")}
                   >
                     {(action) => managerProjectOverviewActionLabel(action())}
                   </Show>
                 </dd>
               </div>
-              <div>
-                <dt>{t("manager.orchestration.project-summary.workspace")}</dt>
-                <dd title={current().cwd}>{current().cwd}</dd>
-              </div>
-              <Show when={current().activeRoundId}>
-                {(roundId) => (
-                  <div>
-                    <dt>{t("manager.orchestration.project-summary.round")}</dt>
-                    <dd>{t("manager.orchestration.word.round", { id: shortId(roundId()) })}</dd>
-                  </div>
-                )}
+              <Show when={props.advanced}>
+                <div>
+                  <dt>{t("manager.orchestration.project-summary.workspace")}</dt>
+                  <dd title={current().cwd}>{current().cwd}</dd>
+                </div>
+                <Show when={current().activeRoundId}>
+                  {(roundId) => (
+                    <div>
+                      <dt>{t("manager.orchestration.project-summary.round")}</dt>
+                      <dd>{t("manager.orchestration.word.round", { id: shortId(roundId()) })}</dd>
+                    </div>
+                  )}
+                </Show>
               </Show>
               <Show when={current().goal}>
                 {(text) => (
@@ -2603,10 +2817,12 @@ const TaskObservationView: Component<{
 };
 const WorkerRunsView: Component<{
   runs: ManagerWorkerRun[];
+  evidence: ManagerEvidenceItem[];
   busy?: boolean | undefined;
   onInspectTask?: ((taskId: string) => void) | undefined;
 }> = (props) => (
   <div class="manager-worker-runs" aria-label={t("manager.orchestration.aria.worker-runs")}>
+    <EvidenceLedgerView evidence={props.evidence} />
     <div class="manager-worker-run-row manager-worker-run-row-head">
       <span>{t("manager.orchestration.field.worker")}</span>
       <span>{t("manager.orchestration.field.status")}</span>
@@ -2676,68 +2892,520 @@ const WorkerRunsView: Component<{
     </Show>
   </div>
 );
-const AgentsView: Component<{
-  agents: ManagerAgent[];
-  busy?: boolean | undefined;
-  onInspectTask?: ((taskId: string) => void) | undefined;
-}> = (props) => (
-  <div class="manager-agent-table" aria-label={t("manager.orchestration.tab.agents")}>
-    <div class="manager-agent-row manager-agent-row-head">
-      <span>{t("manager.orchestration.field.role")}</span>
-      <span>{t("manager.orchestration.field.status")}</span>
-      <span>{t("manager.orchestration.field.task")}</span>
-      <span>{t("manager.orchestration.field.signal")}</span>
-      <span>{t("manager.orchestration.field.action")}</span>
-    </div>
-    <For each={props.agents}>
-      {(agent) => (
-        <div class={`manager-agent-row manager-agent-row-${statusTone(agent.status)}`}>
-          <span class="manager-agent-role" title={`${agent.label} - ${agent.profile}`}>
-            {agent.role}
-            <small>{clip(agent.profile, 28)}</small>
-          </span>
-          <span class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}>
-            {statusLabel(agent.status)}
-          </span>
-          <span class="manager-agent-task" title={agent.taskId ?? agent.lastInstruction ?? ""}>
-            {agent.taskId
-              ? t("manager.orchestration.word.task", { id: shortId(agent.taskId) })
-              : clip(agent.lastInstruction, 68) || "-"}
-          </span>
-          <span
-            class="manager-agent-work"
-            title={agent.lastError || agent.lastOutput || agent.lastInstruction || ""}
-          >
-            {clip(
-              agent.lastError ||
-                agent.lastOutput ||
-                agent.lastInstruction ||
-                t("manager.orchestration.worker.no-reply"),
-              92,
-            )}
-            <time>{formatTime(agent.lastOutputAt ?? agent.updatedAt)}</time>
-          </span>
-          <span class="manager-agent-action">
-            <Show when={agent.taskId} fallback={<span>-</span>}>
-              {(taskId) => (
-                <button
-                  type="button"
-                  disabled={props.busy || !props.onInspectTask}
-                  onClick={() => props.onInspectTask?.(taskId())}
-                >
-                  {t("manager.orchestration.action.inspect")}
-                </button>
-              )}
-            </Show>
+
+const EvidenceLedgerView: Component<{ evidence: ManagerEvidenceItem[] }> = (props) => {
+  const visible = createMemo(() => props.evidence.slice(0, 8));
+  const counts = createMemo(() => evidenceCounts(props.evidence));
+  return (
+    <Show when={props.evidence.length > 0}>
+      <div class="manager-evidence-ledger" aria-label={t("manager.orchestration.evidence.title")}>
+        <div class="manager-evidence-ledger-head">
+          <strong>{t("manager.orchestration.evidence.title")}</strong>
+          <span>
+            {t("manager.orchestration.evidence.summary", {
+              valid: counts().valid,
+              failed: counts().failed,
+              missing: counts().missing,
+              stale: counts().stale,
+            })}
           </span>
         </div>
-      )}
-    </For>
-    <Show when={props.agents.length === 0}>
-      <p class="manager-orchestration-empty">{t("manager.orchestration.empty.agents")}</p>
+        <div class="manager-evidence-list">
+          <For each={visible()}>
+            {(item) => (
+              <div class={`manager-evidence-item manager-evidence-item-${item.status}`}>
+                <span>{evidenceTypeLabel(item.type)}</span>
+                <strong title={item.detail}>{clip(item.label, 64)}</strong>
+                <small title={item.excerpt ?? item.detail}>
+                  {clip(item.excerpt ?? item.detail, 110)}
+                </small>
+                <em>{evidenceStatusLabel(item.status)}</em>
+              </div>
+            )}
+          </For>
+        </div>
+        <Show when={props.evidence.length > visible().length}>
+          <p class="manager-orchestration-empty">
+            {t("manager.orchestration.evidence.older-hidden", {
+              count: props.evidence.length - visible().length,
+            })}
+          </p>
+        </Show>
+      </div>
     </Show>
-  </div>
-);
+  );
+};
+
+const AgentsView: Component<{
+  agents: ManagerAgent[];
+  workerRuns: ManagerWorkerRun[];
+  agentResults: ManagerAgentResult[];
+  evidence: ManagerEvidenceItem[];
+  busy?: boolean | undefined;
+  onInspectTask?: ((taskId: string) => void) | undefined;
+  advanced?: boolean | undefined;
+}> = (props) => {
+  const briefs = createMemo(() =>
+    buildAgentRoleBriefs(props.agents, props.workerRuns, props.agentResults, props.evidence),
+  );
+  const showRawAgents = createMemo(() => Boolean(props.advanced) || briefs().length === 0);
+  return (
+    <div class="manager-agent-table" aria-label={t("manager.orchestration.tab.agents")}>
+      <Show when={briefs().length > 0}>
+        <div class="manager-agent-role-briefs" aria-label={t("manager.orchestration.agent.briefs")}>
+          <For each={briefs()}>
+            {(brief) => (
+              <article class={`manager-agent-brief manager-agent-brief-${brief.tone}`}>
+                <header>
+                  <span class="manager-agent-brief-role">
+                    <strong>{brief.role}</strong>
+                    <small>{brief.profile}</small>
+                  </span>
+                  <span class={`manager-agent-status manager-agent-status-${brief.tone}`}>
+                    {statusLabel(brief.status)}
+                  </span>
+                </header>
+                <div class="manager-agent-brief-verdict">
+                  <span>{agentResultVerdictLabel(brief.verdict)}</span>
+                  <span>
+                    {t("manager.orchestration.agent.evidence-count", {
+                      count: brief.evidenceCount,
+                    })}
+                  </span>
+                  <span>{agentResultConfidenceLabel(brief.confidence)}</span>
+                </div>
+                <dl>
+                  <div>
+                    <dt>{t("manager.orchestration.agent.assignment")}</dt>
+                    <dd title={brief.assignment}>{clip(brief.assignment, 130)}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("manager.orchestration.agent.output")}</dt>
+                    <dd title={brief.output}>{clip(brief.output, 130)}</dd>
+                  </div>
+                  <Show when={brief.findings.length > 0}>
+                    <div>
+                      <dt>{t("manager.orchestration.agent.findings")}</dt>
+                      <dd title={brief.findings.join("\n")}>
+                        {clip(brief.findings.join(" · "), 130)}
+                      </dd>
+                    </div>
+                  </Show>
+                  <Show when={brief.risks.length > 0}>
+                    <div>
+                      <dt>{t("manager.orchestration.agent.risks")}</dt>
+                      <dd title={brief.risks.join("\n")}>{clip(brief.risks.join(" · "), 130)}</dd>
+                    </div>
+                  </Show>
+                  <div>
+                    <dt>{t("manager.orchestration.field.evidence")}</dt>
+                    <dd title={brief.evidence}>{clip(brief.evidence, 130)}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("manager.orchestration.field.next")}</dt>
+                    <dd title={brief.next}>{clip(brief.next, 130)}</dd>
+                  </div>
+                </dl>
+                <Show when={props.advanced}>
+                  <footer>
+                    <span>{brief.meta}</span>
+                    <Show when={brief.taskId && props.onInspectTask ? brief.taskId : null}>
+                      {(taskId) => (
+                        <button
+                          type="button"
+                          disabled={props.busy}
+                          onClick={() => props.onInspectTask?.(taskId())}
+                        >
+                          {t("manager.orchestration.action.inspect")}
+                        </button>
+                      )}
+                    </Show>
+                  </footer>
+                </Show>
+              </article>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={showRawAgents()}>
+        <div class="manager-agent-row manager-agent-row-head">
+          <span>{t("manager.orchestration.field.role")}</span>
+          <span>{t("manager.orchestration.field.status")}</span>
+          <span>{t("manager.orchestration.field.task")}</span>
+          <span>{t("manager.orchestration.field.signal")}</span>
+          <span>{t("manager.orchestration.field.action")}</span>
+        </div>
+        <For each={props.agents}>
+          {(agent) => (
+            <div class={`manager-agent-row manager-agent-row-${statusTone(agent.status)}`}>
+              <span class="manager-agent-role" title={`${agent.label} - ${agent.profile}`}>
+                {agent.role}
+                <small>{clip(agent.profile, 28)}</small>
+              </span>
+              <span class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}>
+                {statusLabel(agent.status)}
+              </span>
+              <span class="manager-agent-task" title={agent.taskId ?? agent.lastInstruction ?? ""}>
+                {agent.taskId
+                  ? t("manager.orchestration.word.task", { id: shortId(agent.taskId) })
+                  : clip(agent.lastInstruction, 68) || "-"}
+              </span>
+              <span
+                class="manager-agent-work"
+                title={agent.lastError || agent.lastOutput || agent.lastInstruction || ""}
+              >
+                {clip(
+                  agent.lastError ||
+                    agent.lastOutput ||
+                    agent.lastInstruction ||
+                    t("manager.orchestration.worker.no-reply"),
+                  92,
+                )}
+                <time>{formatTime(agent.lastOutputAt ?? agent.updatedAt)}</time>
+              </span>
+              <span class="manager-agent-action">
+                <Show when={agent.taskId} fallback={<span>-</span>}>
+                  {(taskId) => (
+                    <button
+                      type="button"
+                      disabled={props.busy || !props.onInspectTask}
+                      onClick={() => props.onInspectTask?.(taskId())}
+                    >
+                      {t("manager.orchestration.action.inspect")}
+                    </button>
+                  )}
+                </Show>
+              </span>
+            </div>
+          )}
+        </For>
+      </Show>
+      <Show when={props.agents.length === 0}>
+        <p class="manager-orchestration-empty">{t("manager.orchestration.empty.agents")}</p>
+      </Show>
+    </div>
+  );
+};
+
+interface ManagerAgentRoleBrief {
+  role: string;
+  profile: string;
+  status: string;
+  tone: Tone;
+  taskId?: string | undefined;
+  assignment: string;
+  output: string;
+  evidence: string;
+  findings: string[];
+  risks: string[];
+  evidenceCount: number;
+  verdict: ManagerAgentResult["verdict"] | "unknown";
+  confidence: ManagerAgentResult["confidence"] | "unknown";
+  next: string;
+  meta: string;
+}
+
+function buildAgentRoleBriefs(
+  agents: ManagerAgent[],
+  runs: ManagerWorkerRun[],
+  results: ManagerAgentResult[],
+  evidence: ManagerEvidenceItem[],
+): ManagerAgentRoleBrief[] {
+  const usedRunIds = new Set<string>();
+  const briefs: ManagerAgentRoleBrief[] = [];
+  const resultByAgentId = new Map(
+    results.flatMap((result) => (result.agentId ? [[result.agentId, result]] : [])),
+  );
+  const resultByTaskId = new Map(
+    results.flatMap((result) => (result.taskId ? [[result.taskId, result]] : [])),
+  );
+  const usedResultIds = new Set<string>();
+  for (const agent of agents) {
+    const run = findWorkerRunForAgent(agent, runs, usedRunIds);
+    if (run) usedRunIds.add(run.id);
+    const result =
+      resultByAgentId.get(agent.id) ??
+      (agent.taskId ? resultByTaskId.get(agent.taskId) : undefined);
+    if (result) usedResultIds.add(result.id);
+    briefs.push(buildAgentRoleBrief(agent, run, result, evidence));
+  }
+  for (const run of runs) {
+    if (usedRunIds.has(run.id)) continue;
+    const result =
+      (run.agentId ? resultByAgentId.get(run.agentId) : undefined) ??
+      (run.taskId ? resultByTaskId.get(run.taskId) : undefined);
+    if (result) usedResultIds.add(result.id);
+    briefs.push(buildAgentRoleBrief(undefined, run, result, evidence));
+  }
+  for (const result of results) {
+    if (usedResultIds.has(result.id)) continue;
+    briefs.push(buildAgentRoleBrief(undefined, undefined, result, evidence));
+  }
+  return briefs.slice(0, 12);
+}
+
+function findWorkerRunForAgent(
+  agent: ManagerAgent,
+  runs: ManagerWorkerRun[],
+  usedRunIds: Set<string>,
+): ManagerWorkerRun | undefined {
+  const candidates = runs.filter((run) => !usedRunIds.has(run.id));
+  return (
+    candidates.find((run) => run.agentId === agent.id) ??
+    candidates.find((run) => run.taskId && run.taskId === agent.taskId) ??
+    candidates.find((run) => run.agentRole === agent.role)
+  );
+}
+
+function buildAgentRoleBrief(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  result: ManagerAgentResult | undefined,
+  evidence: ManagerEvidenceItem[],
+): ManagerAgentRoleBrief {
+  const status = run?.status ?? agent?.status ?? "unknown";
+  const taskId = run?.taskId ?? agent?.taskId;
+  const output = result?.summary ?? agentRoleOutput(agent, run, status);
+  const linkedEvidence = result
+    ? evidence.filter((item) => result.evidenceIds.includes(item.id))
+    : evidence.filter(
+        (item) =>
+          (agent?.id && item.agentId === agent.id) ||
+          (run?.agentId && item.agentId === run.agentId) ||
+          (taskId && item.taskId === taskId),
+      );
+  return {
+    role:
+      result?.role ??
+      agent?.role ??
+      run?.agentRole ??
+      run?.agentLabel ??
+      t("manager.orchestration.word.worker"),
+    profile: agent?.profile ?? run?.profile ?? "-",
+    status,
+    tone: statusTone(status),
+    taskId,
+    assignment:
+      result?.assignment ||
+      (extractAgentAssignment(agent?.lastInstruction) ??
+        t("manager.orchestration.agent.assignment.missing")),
+    output,
+    evidence: result ? agentResultEvidence(linkedEvidence) : agentRoleEvidence(agent, run),
+    findings: result?.findings ?? [],
+    risks: result?.risks ?? [],
+    evidenceCount: linkedEvidence.length,
+    verdict: result?.verdict ?? "unknown",
+    confidence: result?.confidence ?? "unknown",
+    next: result?.nextRequest ?? agentRoleNextRequest(agent, run, status, output),
+    meta: agentRoleMeta(agent, run),
+  };
+}
+
+function extractAgentAssignment(instruction: string | undefined): string | undefined {
+  const lines =
+    instruction
+      ?.split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean) ?? [];
+  const metadataPrefixes = [
+    "Project:",
+    "CWD:",
+    "Objective:",
+    "Goal:",
+    "Scope:",
+    "Constraints:",
+    "Success criteria:",
+    "Verification plan:",
+    "User checkpoints:",
+    "Final deliverables:",
+  ];
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] ?? "";
+    if (!metadataPrefixes.some((prefix) => line.startsWith(prefix))) return line;
+  }
+  return undefined;
+}
+
+function agentRoleOutput(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  status: string,
+): string {
+  const explicit = agent?.lastError || run?.error || agent?.lastOutput || run?.outputPreview;
+  if (explicit) return explicit;
+  if (["assigned", "pending", "running", "waiting"].includes(status)) {
+    return t("manager.orchestration.agent.output.waiting");
+  }
+  if (["failed", "blocked", "missing"].includes(status)) {
+    return t("manager.orchestration.agent.output.needs-inspection");
+  }
+  if (run?.dryRun && ["succeeded", "completed"].includes(status)) {
+    return t("manager.orchestration.agent.output.dry-run");
+  }
+  if (["succeeded", "completed"].includes(status)) {
+    return t("manager.orchestration.agent.output.completed-no-output");
+  }
+  return t("manager.orchestration.worker.no-reply");
+}
+
+function agentRoleEvidence(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+): string {
+  const parts: string[] = [];
+  if (run) {
+    const issues = run.integrity.filter((item) => item !== "ok");
+    parts.push(
+      issues.length > 0
+        ? t("manager.orchestration.agent.evidence.integrity-issues", {
+            issues: issues.join(", "),
+          })
+        : t("manager.orchestration.agent.evidence.integrity-ok"),
+    );
+    const result = workerRunResultLabel(run);
+    if (result !== "-") parts.push(result);
+    if (run.dryRun) parts.push(t("manager.orchestration.agent.evidence.dry-run"));
+  }
+  const updatedAt = agent?.lastOutputAt ?? agent?.updatedAt ?? run?.updatedAt;
+  if (updatedAt) {
+    parts.push(t("manager.orchestration.agent.evidence.updated", { time: formatTime(updatedAt) }));
+  }
+  const taskId = run?.taskId ?? agent?.taskId;
+  if (taskId) parts.push(t("manager.orchestration.word.task", { id: shortId(taskId) }));
+  return parts.join(" · ") || t("manager.orchestration.agent.evidence.none");
+}
+
+function agentResultEvidence(evidence: ManagerEvidenceItem[]): string {
+  if (evidence.length === 0) return t("manager.orchestration.agent.evidence.none");
+  const counts = evidenceCounts(evidence);
+  const parts = [
+    counts.valid ? t("manager.orchestration.evidence.valid-count", { count: counts.valid }) : "",
+    counts.failed ? t("manager.orchestration.evidence.failed-count", { count: counts.failed }) : "",
+    counts.missing
+      ? t("manager.orchestration.evidence.missing-count", { count: counts.missing })
+      : "",
+    counts.stale ? t("manager.orchestration.evidence.stale-count", { count: counts.stale }) : "",
+  ].filter(Boolean);
+  return parts.join(" 쨌 ");
+}
+
+function evidenceCounts(
+  evidence: ManagerEvidenceItem[],
+): Record<ManagerEvidenceItem["status"], number> {
+  return {
+    valid: evidence.filter((item) => item.status === "valid").length,
+    stale: evidence.filter((item) => item.status === "stale").length,
+    failed: evidence.filter((item) => item.status === "failed").length,
+    missing: evidence.filter((item) => item.status === "missing").length,
+  };
+}
+
+function agentResultVerdictLabel(verdict: ManagerAgentRoleBrief["verdict"]): string {
+  return verdict === "unknown"
+    ? t("manager.orchestration.status.unknown")
+    : t(`manager.orchestration.agent.verdict.${verdict}`);
+}
+
+function agentResultConfidenceLabel(confidence: ManagerAgentRoleBrief["confidence"]): string {
+  return confidence === "unknown"
+    ? t("manager.orchestration.status.unknown")
+    : t(`manager.orchestration.agent.confidence.${confidence}`);
+}
+
+function evidenceStatusLabel(status: ManagerEvidenceItem["status"]): string {
+  return t(`manager.orchestration.evidence.status.${status}`);
+}
+
+function evidenceTypeLabel(type: ManagerEvidenceItem["type"]): string {
+  return t(`manager.orchestration.evidence.type.${type}`);
+}
+
+function protocolTraceResultLabel(result: ManagerProtocolTrace["result"]): string {
+  return t(`manager.orchestration.protocol.trace-result.${result}`);
+}
+
+function managerJudgmentVerdictLabel(verdict: ManagerJudgmentPacket["verdict"]): string {
+  return t(`manager.orchestration.judgment.verdict.${verdict}`);
+}
+
+function managerJudgmentPriorityLabel(priority: ManagerJudgmentPacket["priority"]): string {
+  return t(`manager.orchestration.judgment.priority.${priority}`);
+}
+
+function managerJudgmentDisplaySummary(judgment: ManagerJudgmentPacket): string {
+  if (
+    managerJudgmentHasAction(judgment, "start_next_round") ||
+    managerJudgmentHasAction(judgment, "complete_project")
+  ) {
+    return t("manager.orchestration.judgment.summary.accepted");
+  }
+  if (managerJudgmentHasAction(judgment, "review_round")) {
+    return t("manager.orchestration.judgment.summary.ready-review");
+  }
+  return t(`manager.orchestration.judgment.summary.${judgment.verdict}`);
+}
+
+function managerJudgmentDisplayReason(judgment: ManagerJudgmentPacket): string {
+  if (
+    managerJudgmentHasAction(judgment, "start_next_round") ||
+    managerJudgmentHasAction(judgment, "complete_project")
+  ) {
+    return t("manager.orchestration.judgment.reason.accepted");
+  }
+  if (managerJudgmentHasAction(judgment, "review_round")) {
+    return t("manager.orchestration.judgment.reason.ready-review");
+  }
+  return t(`manager.orchestration.judgment.reason.${judgment.verdict}`);
+}
+
+function managerJudgmentHasAction(
+  judgment: ManagerJudgmentPacket,
+  type: ManagerProposedAction["type"],
+): boolean {
+  return judgment.proposedActions.some((action) => action.type === type);
+}
+
+function managerProposedActionTypeLabel(type: ManagerProposedAction["type"]): string {
+  return t(`manager.orchestration.proposed-action.${type}`);
+}
+
+function agentRoleNextRequest(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  status: string,
+  output: string,
+): string {
+  const taskId = run?.taskId ?? agent?.taskId;
+  const hasIntegrityIssue = Boolean(run?.integrity.some((item) => item !== "ok"));
+  if (hasIntegrityIssue || ["failed", "blocked", "missing"].includes(status)) {
+    return taskId
+      ? t("manager.orchestration.agent.next.inspect-task", { taskId: shortId(taskId) })
+      : t("manager.orchestration.agent.next.manager-review");
+  }
+  if (["assigned", "pending", "running", "waiting"].includes(status)) {
+    return t("manager.orchestration.agent.next.wait");
+  }
+  if (run?.dryRun && ["succeeded", "completed"].includes(status)) {
+    return t("manager.orchestration.agent.next.promote-or-replan");
+  }
+  if (output && output !== t("manager.orchestration.worker.no-reply")) {
+    return t("manager.orchestration.agent.next.review-output");
+  }
+  if (!taskId) return t("manager.orchestration.agent.next.assign");
+  return t("manager.orchestration.agent.next.summarize");
+}
+
+function agentRoleMeta(agent: ManagerAgent | undefined, run: ManagerWorkerRun | undefined): string {
+  const taskId = run?.taskId ?? agent?.taskId;
+  const sessionId = run?.sessionId ?? agent?.sessionId;
+  const parts = [
+    taskId ? t("manager.orchestration.word.task", { id: shortId(taskId) }) : "",
+    sessionId ? `${t("manager.orchestration.field.session")} ${shortId(sessionId)}` : "",
+    run?.dryRun ? t("manager.orchestration.flow.dry-run") : "",
+    formatTime(agent?.lastOutputAt ?? agent?.updatedAt ?? run?.updatedAt),
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
 const DecisionsView: Component<{
   project: ManagerProject | null;
   decisions: ManagerDecision[];
@@ -2908,6 +3576,7 @@ const BlockersView: Component<{
   activeRoundId?: string | undefined;
   onCreate?: ((input: ManagerBlockerCreateRequest) => void) | undefined;
   onResolve?: ((blockerId: string, input?: ManagerBlockerResolveRequest) => void) | undefined;
+  advanced?: boolean | undefined;
 }> = (props) => {
   const [creating, setCreating] = createSignal(false);
   const [title, setTitle] = createSignal("");
@@ -2943,82 +3612,89 @@ const BlockersView: Component<{
 
   return (
     <div class="manager-blocker-board">
-      <div class="manager-blocker-toolbar">
-        <p class="manager-orchestration-empty">{t("manager.orchestration.toolbar.blockers")}</p>
-        <button
-          type="button"
-          disabled={!props.project || props.busy || !props.onCreate}
-          onClick={() => setCreating((value) => !value)}
-        >
-          {creating()
-            ? t("manager.orchestration.action.cancel")
-            : t("manager.orchestration.action.record-blocker")}
-        </button>
-      </div>
-
-      <Show when={creating()}>
-        <form
-          class="manager-blocker-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          <input
-            type="text"
-            value={title()}
-            onInput={(event) => setTitle(event.currentTarget.value)}
-            placeholder={t("manager.orchestration.placeholder.blocker-title")}
-          />
-          <textarea
-            value={detail()}
-            onInput={(event) => setDetail(event.currentTarget.value)}
-            placeholder={t("manager.orchestration.placeholder.blocker-detail")}
-            rows={4}
-          />
-          <select
-            value={severity()}
-            onChange={(event) =>
-              setSeverity(event.currentTarget.value as ManagerBlocker["severity"])
-            }
+      <Show when={props.advanced}>
+        <div class="manager-blocker-toolbar">
+          <p class="manager-orchestration-empty">{t("manager.orchestration.toolbar.blockers")}</p>
+          <button
+            type="button"
+            disabled={!props.project || props.busy || !props.onCreate}
+            onClick={() => setCreating((value) => !value)}
           >
-            <option value="info">{statusLabel("info")}</option>
-            <option value="warning">{statusLabel("warning")}</option>
-            <option value="error">{statusLabel("error")}</option>
-          </select>
-          <select
-            value={requiredAction()}
-            onChange={(event) =>
-              setRequiredAction(event.currentTarget.value as ManagerBlocker["requiredAction"])
-            }
-          >
-            <option value="manager">{t("manager.orchestration.blocker.required.manager")}</option>
-            <option value="worker">{t("manager.orchestration.blocker.required.worker")}</option>
-            <option value="user">{t("manager.orchestration.blocker.required.user")}</option>
-            <option value="none">{t("manager.orchestration.blocker.required.none")}</option>
-          </select>
-          <input
-            type="text"
-            value={owner()}
-            onInput={(event) => setOwner(event.currentTarget.value)}
-            placeholder={t("manager.orchestration.placeholder.owner")}
-          />
-          <input
-            type="text"
-            value={dedupeKey()}
-            onInput={(event) => setDedupeKey(event.currentTarget.value)}
-            placeholder={t("manager.orchestration.placeholder.dedupe-key")}
-          />
-          <button type="submit" disabled={!canCreate()}>
-            {t("manager.orchestration.action.save-blocker")}
+            {creating()
+              ? t("manager.orchestration.action.cancel")
+              : t("manager.orchestration.action.record-blocker")}
           </button>
-        </form>
+        </div>
+
+        <Show when={creating()}>
+          <form
+            class="manager-blocker-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit();
+            }}
+          >
+            <input
+              type="text"
+              value={title()}
+              onInput={(event) => setTitle(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.placeholder.blocker-title")}
+            />
+            <textarea
+              value={detail()}
+              onInput={(event) => setDetail(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.placeholder.blocker-detail")}
+              rows={4}
+            />
+            <select
+              value={severity()}
+              onChange={(event) =>
+                setSeverity(event.currentTarget.value as ManagerBlocker["severity"])
+              }
+            >
+              <option value="info">{statusLabel("info")}</option>
+              <option value="warning">{statusLabel("warning")}</option>
+              <option value="error">{statusLabel("error")}</option>
+            </select>
+            <select
+              value={requiredAction()}
+              onChange={(event) =>
+                setRequiredAction(event.currentTarget.value as ManagerBlocker["requiredAction"])
+              }
+            >
+              <option value="manager">{t("manager.orchestration.blocker.required.manager")}</option>
+              <option value="worker">{t("manager.orchestration.blocker.required.worker")}</option>
+              <option value="user">{t("manager.orchestration.blocker.required.user")}</option>
+              <option value="none">{t("manager.orchestration.blocker.required.none")}</option>
+            </select>
+            <input
+              type="text"
+              value={owner()}
+              onInput={(event) => setOwner(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.placeholder.owner")}
+            />
+            <input
+              type="text"
+              value={dedupeKey()}
+              onInput={(event) => setDedupeKey(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.placeholder.dedupe-key")}
+            />
+            <button type="submit" disabled={!canCreate()}>
+              {t("manager.orchestration.action.save-blocker")}
+            </button>
+          </form>
+        </Show>
       </Show>
 
       <div class="manager-blocker-list">
         <For each={props.blockers}>
           {(blocker) => (
-            <BlockerRow blocker={blocker} busy={props.busy} onResolve={props.onResolve} />
+            <BlockerRow
+              blocker={blocker}
+              busy={props.busy}
+              onResolve={props.onResolve}
+              advanced={props.advanced}
+            />
           )}
         </For>
         <Show when={props.blockers.length === 0}>
@@ -3026,7 +3702,7 @@ const BlockersView: Component<{
         </Show>
       </div>
 
-      <Show when={props.resolvedBlockers.length > 0}>
+      <Show when={Boolean(props.advanced && props.resolvedBlockers.length > 0)}>
         <details class="manager-blocker-resolved">
           <summary>
             {t("manager.orchestration.archive.resolved-blockers", {
@@ -3035,7 +3711,12 @@ const BlockersView: Component<{
           </summary>
           <For each={props.resolvedBlockers.slice(0, 8)}>
             {(blocker) => (
-              <BlockerRow blocker={blocker} busy={props.busy} onResolve={props.onResolve} />
+              <BlockerRow
+                blocker={blocker}
+                busy={props.busy}
+                onResolve={props.onResolve}
+                advanced={props.advanced}
+              />
             )}
           </For>
         </details>
@@ -3048,6 +3729,7 @@ const BlockerRow: Component<{
   blocker: ManagerBlocker;
   busy?: boolean | undefined;
   onResolve?: ((blockerId: string, input?: ManagerBlockerResolveRequest) => void) | undefined;
+  advanced?: boolean | undefined;
 }> = (props) => (
   <article
     class={`manager-blocker-row manager-blocker-row-${props.blocker.severity} manager-blocker-row-${props.blocker.status}`}
@@ -3058,19 +3740,21 @@ const BlockerRow: Component<{
       <div class="manager-blocker-meta">
         <span>{statusLabel(props.blocker.severity)}</span>
         <span>{t(`manager.orchestration.blocker.required.${props.blocker.requiredAction}`)}</span>
-        <span>{t("manager.orchestration.word.owner", { owner: props.blocker.owner })}</span>
-        <time>{formatTime(props.blocker.updatedAt)}</time>
-        <Show when={props.blocker.roundId}>
-          {(roundId) => (
-            <span>{t("manager.orchestration.word.round", { id: shortId(roundId()) })}</span>
-          )}
-        </Show>
-        <Show when={props.blocker.dedupeKey}>
-          {(key) => (
-            <span title={key()}>
-              {t("manager.orchestration.word.key", { key: clip(key(), 32) })}
-            </span>
-          )}
+        <Show when={props.advanced}>
+          <span>{t("manager.orchestration.word.owner", { owner: props.blocker.owner })}</span>
+          <time>{formatTime(props.blocker.updatedAt)}</time>
+          <Show when={props.blocker.roundId}>
+            {(roundId) => (
+              <span>{t("manager.orchestration.word.round", { id: shortId(roundId()) })}</span>
+            )}
+          </Show>
+          <Show when={props.blocker.dedupeKey}>
+            {(key) => (
+              <span title={key()}>
+                {t("manager.orchestration.word.key", { key: clip(key(), 32) })}
+              </span>
+            )}
+          </Show>
         </Show>
       </div>
       <Show when={props.blocker.resolution}>
@@ -3246,27 +3930,32 @@ const ArtifactsView: Component<{
   stored?: boolean | undefined;
   onScan?: (() => void) | undefined;
   onUpdate?: ((artifactId: string, input: ManagerArtifactUpdateRequest) => void) | undefined;
+  advanced?: boolean | undefined;
 }> = (props) => (
-  <div class="manager-artifact-list">
+  <div class="manager-artifact-list" classList={{ "manager-artifact-list-basic": !props.advanced }}>
     <div class="manager-artifact-toolbar">
       <p>
         {props.stored
           ? t("manager.orchestration.toolbar.artifacts-stored")
           : t("manager.orchestration.toolbar.artifacts-derived")}
       </p>
-      <button type="button" disabled={props.busy} onClick={() => props.onScan?.()}>
-        {props.busy
-          ? t("manager.orchestration.action.scanning")
-          : t("manager.orchestration.action.scan-artifacts")}
-      </button>
+      <Show when={props.advanced}>
+        <button type="button" disabled={props.busy} onClick={() => props.onScan?.()}>
+          {props.busy
+            ? t("manager.orchestration.action.scanning")
+            : t("manager.orchestration.action.scan-artifacts")}
+        </button>
+      </Show>
     </div>
     <div class="manager-artifact-row manager-artifact-row-head">
       <span>{t("manager.orchestration.field.file")}</span>
-      <span>{t("manager.orchestration.field.owner")}</span>
       <span>{t("manager.orchestration.field.kind")}</span>
       <span>{t("manager.orchestration.field.status")}</span>
       <span>{t("manager.orchestration.field.updated")}</span>
-      <span>{t("manager.orchestration.field.action")}</span>
+      <Show when={props.advanced}>
+        <span>{t("manager.orchestration.field.owner")}</span>
+        <span>{t("manager.orchestration.field.action")}</span>
+      </Show>
     </div>
     <For each={props.artifacts}>
       {(artifact) => (
@@ -3274,31 +3963,33 @@ const ArtifactsView: Component<{
           <span class="manager-artifact-path" title={artifact.path}>
             {artifact.path}
           </span>
-          <span>{artifact.owner}</span>
           <span>{artifact.kind ?? t("manager.orchestration.status.unknown")}</span>
           <span>{statusLabel(artifact.status)}</span>
           <time>{formatTime(artifact.updatedAt)}</time>
-          <span>
-            <Show when={artifact.id}>
-              {(id) => (
-                <button
-                  type="button"
-                  class="manager-artifact-action"
-                  disabled={props.busy}
-                  onClick={() => props.onUpdate?.(id(), { status: "obsolete" })}
-                >
-                  {t("manager.orchestration.action.obsolete")}
-                </button>
-              )}
-            </Show>
-          </span>
+          <Show when={props.advanced}>
+            <span>{artifact.owner}</span>
+            <span>
+              <Show when={artifact.id}>
+                {(id) => (
+                  <button
+                    type="button"
+                    class="manager-artifact-action"
+                    disabled={props.busy}
+                    onClick={() => props.onUpdate?.(id(), { status: "obsolete" })}
+                  >
+                    {t("manager.orchestration.action.obsolete")}
+                  </button>
+                )}
+              </Show>
+            </span>
+          </Show>
         </div>
       )}
     </For>
     <Show when={props.artifacts.length === 0}>
       <p class="manager-orchestration-empty">{t("manager.orchestration.empty.artifacts")}</p>
     </Show>
-    <Show when={(props.inactiveArtifacts?.length ?? 0) > 0}>
+    <Show when={Boolean(props.advanced && (props.inactiveArtifacts?.length ?? 0) > 0)}>
       <details class="manager-artifact-inactive">
         <summary>
           {t("manager.orchestration.artifact.inactive", {
@@ -3337,13 +4028,51 @@ const ArtifactsView: Component<{
   </div>
 );
 
+const ProtocolTraceView: Component<{
+  trace: ManagerProtocolTrace[];
+  evidence: ManagerEvidenceItem[];
+}> = (props) => {
+  const visible = createMemo(() => props.trace.slice(0, 8));
+  const evidenceById = createMemo(() => new Map(props.evidence.map((item) => [item.id, item])));
+  return (
+    <Show when={props.trace.length > 0}>
+      <div class="manager-protocol-trace" aria-label={t("manager.orchestration.protocol.trace")}>
+        <div class="manager-protocol-trace-head">
+          <strong>{t("manager.orchestration.protocol.trace")}</strong>
+          <span>
+            {t("manager.orchestration.protocol.trace-count", { count: props.trace.length })}
+          </span>
+        </div>
+        <For each={visible()}>
+          {(item) => {
+            const linked = item.evidenceIds
+              .map((id) => evidenceById().get(id))
+              .filter((evidence): evidence is ManagerEvidenceItem => Boolean(evidence));
+            return (
+              <div class={`manager-protocol-trace-row manager-protocol-trace-${item.result}`}>
+                <span>{protocolTraceResultLabel(item.result)}</span>
+                <strong title={item.detail}>{item.sourceFile}</strong>
+                <small title={item.detail}>{clip(item.detail, 120)}</small>
+                <em>{t("manager.orchestration.agent.evidence-count", { count: linked.length })}</em>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </Show>
+  );
+};
+
 const ProtocolView: Component<{
   protocol: ManagerProtocolState | null;
+  trace: ManagerProtocolTrace[];
+  evidence: ManagerEvidenceItem[];
   busy?: boolean | undefined;
   activeRoundId?: string | undefined;
   decisions: ManagerDecision[];
   onScan?: (() => void) | undefined;
   onUpdate?: ((input: ManagerProtocolUpdateRequest) => void) | undefined;
+  advanced?: boolean | undefined;
 }> = (props) => {
   const [version, setVersion] = createSignal("unversioned");
   const [activeRules, setActiveRules] = createSignal("");
@@ -3401,115 +4130,128 @@ const ProtocolView: Component<{
             : t("manager.orchestration.action.scan-protocol")}
         </button>
       </div>
+      <Show when={!props.advanced && (props.protocol?.activeRules.length ?? 0) > 0}>
+        <div class="manager-protocol-rule-summary">
+          <strong>{t("manager.orchestration.protocol.active-rules")}</strong>
+          <ul>
+            <For each={(props.protocol?.activeRules ?? []).slice(0, 5)}>
+              {(rule) => <li>{rule}</li>}
+            </For>
+          </ul>
+        </div>
+      </Show>
       <Show when={(props.protocol?.warnings.length ?? 0) > 0}>
         <ul class="manager-protocol-warnings">
           <For each={props.protocol?.warnings ?? []}>{(warning) => <li>{warning}</li>}</For>
         </ul>
       </Show>
-      <div class="manager-protocol-editor">
-        <label>
-          <span>{t("manager.orchestration.field.version")}</span>
-          <input
-            type="text"
-            value={version()}
-            disabled={props.busy}
-            onInput={(event) => setVersion(event.currentTarget.value)}
-          />
-        </label>
-        <label>
-          <span>{t("manager.orchestration.protocol.active-rules")}</span>
-          <textarea
-            value={activeRules()}
-            disabled={props.busy}
-            rows={4}
-            onInput={(event) => setActiveRules(event.currentTarget.value)}
-            placeholder={t("manager.orchestration.placeholder.active-rules")}
-          />
-        </label>
-        <label>
-          <span>{t("manager.orchestration.field.latest-change")}</span>
-          <input
-            type="text"
-            value={changeSummary()}
-            disabled={props.busy}
-            onInput={(event) => setChangeSummary(event.currentTarget.value)}
-            placeholder={t("manager.orchestration.placeholder.latest-change")}
-          />
-        </label>
-        <div class="manager-protocol-change-row">
+      <Show when={props.advanced}>
+        <ProtocolTraceView trace={props.trace} evidence={props.evidence} />
+        <div class="manager-protocol-editor">
           <label>
-            <span>{t("manager.orchestration.field.decision")}</span>
-            <select
-              value={changeDecisionId()}
-              disabled={props.busy}
-              onChange={(event) => setChangeDecisionId(event.currentTarget.value)}
-            >
-              <option value="">{t("manager.orchestration.protocol.no-linked-decision")}</option>
-              <For each={props.decisions.filter((decision) => decision.status === "active")}>
-                {(decision) => <option value={decision.id}>{decision.title}</option>}
-              </For>
-            </select>
-          </label>
-          <label>
-            <span>{t("manager.orchestration.field.round")}</span>
+            <span>{t("manager.orchestration.field.version")}</span>
             <input
               type="text"
-              value={changeRoundId()}
+              value={version()}
               disabled={props.busy}
-              onInput={(event) => setChangeRoundId(event.currentTarget.value)}
-              placeholder={t("manager.orchestration.placeholder.round-id")}
+              onInput={(event) => setVersion(event.currentTarget.value)}
             />
           </label>
-        </div>
-        <div class="manager-protocol-actions">
-          <button type="button" disabled={props.busy || !props.onUpdate} onClick={save}>
-            {t("manager.orchestration.action.save-protocol")}
-          </button>
-          <button
-            type="button"
-            disabled={props.busy || !props.onUpdate}
-            onClick={() => props.onUpdate?.({ latestChange: null })}
-          >
-            {t("manager.orchestration.action.clear-change")}
-          </button>
-        </div>
-      </div>
-      <div class="manager-artifact-row manager-artifact-row-head">
-        <span>{t("manager.orchestration.field.file")}</span>
-        <span>{t("manager.orchestration.field.role")}</span>
-        <span>{t("manager.orchestration.field.status")}</span>
-        <span>{t("manager.orchestration.field.updated")}</span>
-        <span>{t("manager.orchestration.field.evidence")}</span>
-        <span>{t("manager.orchestration.field.note")}</span>
-      </div>
-      <For each={props.protocol?.files ?? []}>
-        {(file) => (
-          <div class="manager-artifact-row">
-            <span class="manager-artifact-path" title={file.path}>
-              {file.path}
-            </span>
-            <span>{file.role}</span>
-            <span>{statusLabel(file.status)}</span>
-            <time>{file.modifiedAt ? formatTime(file.modifiedAt) : "-"}</time>
-            <span>
-              <Show when={file.excerpt}>
-                {(excerpt) => (
-                  <details class="manager-protocol-excerpt">
-                    <summary>{t("manager.orchestration.protocol.excerpt")}</summary>
-                    <pre>{excerpt()}</pre>
-                  </details>
-                )}
-              </Show>
-            </span>
-            <span>
-              {file.error ??
-                (file.sizeBytes
-                  ? t("manager.orchestration.word.bytes", { count: file.sizeBytes })
-                  : "")}
-            </span>
+          <label>
+            <span>{t("manager.orchestration.protocol.active-rules")}</span>
+            <textarea
+              value={activeRules()}
+              disabled={props.busy}
+              rows={4}
+              onInput={(event) => setActiveRules(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.placeholder.active-rules")}
+            />
+          </label>
+          <label>
+            <span>{t("manager.orchestration.field.latest-change")}</span>
+            <input
+              type="text"
+              value={changeSummary()}
+              disabled={props.busy}
+              onInput={(event) => setChangeSummary(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.placeholder.latest-change")}
+            />
+          </label>
+          <div class="manager-protocol-change-row">
+            <label>
+              <span>{t("manager.orchestration.field.decision")}</span>
+              <select
+                value={changeDecisionId()}
+                disabled={props.busy}
+                onChange={(event) => setChangeDecisionId(event.currentTarget.value)}
+              >
+                <option value="">{t("manager.orchestration.protocol.no-linked-decision")}</option>
+                <For each={props.decisions.filter((decision) => decision.status === "active")}>
+                  {(decision) => <option value={decision.id}>{decision.title}</option>}
+                </For>
+              </select>
+            </label>
+            <label>
+              <span>{t("manager.orchestration.field.round")}</span>
+              <input
+                type="text"
+                value={changeRoundId()}
+                disabled={props.busy}
+                onInput={(event) => setChangeRoundId(event.currentTarget.value)}
+                placeholder={t("manager.orchestration.placeholder.round-id")}
+              />
+            </label>
           </div>
-        )}
-      </For>
+          <div class="manager-protocol-actions">
+            <button type="button" disabled={props.busy || !props.onUpdate} onClick={save}>
+              {t("manager.orchestration.action.save-protocol")}
+            </button>
+            <button
+              type="button"
+              disabled={props.busy || !props.onUpdate}
+              onClick={() => props.onUpdate?.({ latestChange: null })}
+            >
+              {t("manager.orchestration.action.clear-change")}
+            </button>
+          </div>
+        </div>
+        <div class="manager-artifact-row manager-artifact-row-head">
+          <span>{t("manager.orchestration.field.file")}</span>
+          <span>{t("manager.orchestration.field.role")}</span>
+          <span>{t("manager.orchestration.field.status")}</span>
+          <span>{t("manager.orchestration.field.updated")}</span>
+          <span>{t("manager.orchestration.field.evidence")}</span>
+          <span>{t("manager.orchestration.field.note")}</span>
+        </div>
+        <For each={props.protocol?.files ?? []}>
+          {(file) => (
+            <div class="manager-artifact-row">
+              <span class="manager-artifact-path" title={file.path}>
+                {file.path}
+              </span>
+              <span>{file.role}</span>
+              <span>{statusLabel(file.status)}</span>
+              <time>{file.modifiedAt ? formatTime(file.modifiedAt) : "-"}</time>
+              <span>
+                <Show when={file.excerpt}>
+                  {(excerpt) => (
+                    <details class="manager-protocol-excerpt">
+                      <summary>{t("manager.orchestration.protocol.excerpt")}</summary>
+                      <pre>{excerpt()}</pre>
+                    </details>
+                  )}
+                </Show>
+              </span>
+              <span>
+                {file.error ??
+                  (file.sizeBytes
+                    ? t("manager.orchestration.word.bytes", { count: file.sizeBytes })
+                    : "")}
+              </span>
+            </div>
+          )}
+        </For>
+      </Show>
       <Show when={!props.protocol}>
         <p class="manager-orchestration-empty">{t("manager.orchestration.empty.protocol")}</p>
       </Show>

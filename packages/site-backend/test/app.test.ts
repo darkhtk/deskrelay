@@ -689,6 +689,16 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/projects/:id/evidence",
+          authedRequest("GET", "/api/manager/projects/missing/evidence"),
+          [404],
+        ],
+        [
+          "GET /api/manager/projects/:id/judgments",
+          authedRequest("GET", "/api/manager/projects/missing/judgments"),
+          [404],
+        ],
+        [
           "PUT /api/manager/projects/:id/charter",
           authedRequest("PUT", "/api/manager/projects/missing/charter", {
             goal: "route inventory",
@@ -784,6 +794,11 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/projects/:id/protocol-trace",
+          authedRequest("GET", "/api/manager/projects/missing/protocol-trace"),
+          [404],
+        ],
+        [
           "POST /api/manager/projects/:id/protocol/scan",
           authedRequest("POST", "/api/manager/projects/missing/protocol/scan", {}),
           [404],
@@ -869,6 +884,11 @@ describe("API route inventory", () => {
         [
           "GET /api/manager/rounds/:id/worker-runs",
           authedRequest("GET", "/api/manager/rounds/missing/worker-runs"),
+          [404],
+        ],
+        [
+          "GET /api/manager/rounds/:id/agent-results",
+          authedRequest("GET", "/api/manager/rounds/missing/agent-results"),
           [404],
         ],
         [
@@ -3230,6 +3250,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       const created = (await create.json()) as { project?: { id?: string } };
       const projectId = created.project?.id;
       expect(projectId).toBeTruthy();
+      if (!projectId) throw new Error("project id missing");
 
       const charter = await app.fetch(
         authedRequest("PUT", `/api/manager/projects/${projectId}/charter`, {
@@ -3281,6 +3302,64 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(prepareBody.project?.flowStage).toBe("ready_to_start");
       expect(prepareBody.readiness?.ready).toBe(true);
 
+      const staleRound = await managerOrchestrationStore.createRound({
+        projectId,
+        title: "Stale failed round",
+        objective: "Old failure should not control the next healthy round.",
+        phase: "verification",
+      });
+      const staleAgent = await managerOrchestrationStore.createAgent({
+        projectId,
+        roundId: staleRound.id,
+        role: "verifier",
+        instruction: "Record a stale failure fixture.",
+      });
+      const staleTask = await managerTaskStore.create({
+        kind: "run-worker",
+        projectId,
+        dryRun: false,
+        requestedBy: "manager-assistant",
+        params: {
+          profile: "claude-code",
+          prompt: "Record a stale failure fixture.",
+          agentId: staleAgent.id,
+          agentRole: staleAgent.role,
+          roundId: staleRound.id,
+          projectId,
+        },
+        steps: [],
+        result: {
+          profile: "claude-code",
+          exitCode: 1,
+          timedOut: false,
+          durationMs: 1,
+          stdout: "",
+          stderr: "old worker failure",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        },
+      });
+      const failedAt = new Date().toISOString();
+      await managerTaskStore.update(staleTask.id, {
+        state: "failed",
+        completedAt: failedAt,
+        error: "old worker failure",
+      });
+      await managerOrchestrationStore.updateAgent(staleAgent.id, {
+        status: "failed",
+        taskId: staleTask.id,
+        lastError: "old worker failure",
+        lastHeartbeatAt: failedAt,
+      });
+      await managerOrchestrationStore.updateRound(staleRound.id, {
+        status: "failed",
+        agentIds: [staleAgent.id],
+        taskIds: [staleTask.id],
+        completedAt: failedAt,
+        summary: "Old failed round.",
+        error: "old worker failure",
+      });
+
       const start = await app.fetch(
         authedRequest("POST", `/api/manager/projects/${projectId}/start`, {
           phase: "design",
@@ -3293,15 +3372,169 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
         project?: { flowStage?: string; status?: string };
         round?: { id?: string; phase?: string; status?: string };
         dispatch?: { tasks?: Array<{ dryRun?: boolean; state?: string }> };
+        commandFlow?: {
+          project?: { flowStage?: string; status?: string };
+          readiness?: { stage?: string };
+          agentResults?: Array<{
+            role?: string;
+            verdict?: string;
+            evidenceIds?: string[];
+            nextRequest?: string;
+          }>;
+          evidence?: Array<{ type?: string; status?: string }>;
+          protocolTrace?: Array<{ sourceFile?: string; result?: string }>;
+          judgments?: Array<{
+            verdict?: string;
+            priority?: string;
+            proposedActions?: Array<{ type?: string; requiresApproval?: boolean }>;
+          }>;
+        };
       };
       expect(startBody.project?.status).toBe("reviewing");
       expect(startBody.project?.flowStage).toBe("review");
       expect(startBody.round?.phase).toBe("design");
       expect(startBody.round?.status).toBe("completed");
+      expect(startBody.commandFlow?.project?.status).toBe("reviewing");
+      expect(startBody.commandFlow?.project?.flowStage).toBe("review");
+      expect(startBody.commandFlow?.readiness?.stage).toBe("review");
       expect(startBody.dispatch?.tasks?.length).toBeGreaterThan(0);
       expect(startBody.dispatch?.tasks?.every((task) => task.dryRun === true)).toBe(true);
+      expect(startBody.commandFlow?.agentResults?.length).toBeGreaterThan(0);
+      expect(startBody.commandFlow?.agentResults?.map((result) => result.role)).toContain(
+        "architect",
+      );
+      expect(startBody.commandFlow?.agentResults?.[0]?.evidenceIds?.length).toBeGreaterThan(0);
+      expect(startBody.commandFlow?.evidence?.some((item) => item.type === "worker-run")).toBe(
+        true,
+      );
+      expect(startBody.commandFlow?.protocolTrace?.some((item) => item.result === "applied")).toBe(
+        true,
+      );
+      expect(startBody.commandFlow?.judgments?.length).toBeGreaterThan(0);
+      expect(startBody.commandFlow?.judgments?.some((item) => item.priority === "approval")).toBe(
+        true,
+      );
+      expect(
+        startBody.commandFlow?.judgments?.some((item) =>
+          item.proposedActions?.some(
+            (action) => action.type === "review_round" && action.requiresApproval === true,
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        startBody.commandFlow?.judgments?.some((item) =>
+          item.proposedActions?.some(
+            (action) => action.type === "retry_task" || action.type === "repair_round",
+          ),
+        ),
+      ).toBe(false);
       const roundId = startBody.round?.id;
       expect(roundId).toBeTruthy();
+
+      const postStartFlow = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/command-flow`),
+      );
+      expect(postStartFlow.status).toBe(200);
+      const postStartFlowBody = (await postStartFlow.json()) as {
+        project?: { status?: string; flowStage?: string };
+        readiness?: { stage?: string };
+      };
+      expect(postStartFlowBody.project?.status).toBe("reviewing");
+      expect(postStartFlowBody.project?.flowStage).toBe("review");
+      expect(postStartFlowBody.readiness?.stage).toBe("review");
+
+      const evidence = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/evidence`),
+      );
+      expect(evidence.status).toBe(200);
+      const evidenceBody = (await evidence.json()) as {
+        evidence?: Array<{ type?: string; status?: string }>;
+      };
+      expect(evidenceBody.evidence?.some((item) => item.status === "valid")).toBe(true);
+
+      const health = await app.fetch(authedRequest("GET", `/api/manager/rounds/${roundId}/health`));
+      expect(health.status).toBe(200);
+      const healthBody = (await health.json()) as {
+        gate?: { status?: string; issues?: unknown[] };
+      };
+      expect(healthBody.gate?.status).toBe("healthy");
+      expect(healthBody.gate?.issues ?? []).toEqual([]);
+
+      const judgments = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/judgments`),
+      );
+      expect(judgments.status).toBe(200);
+      const judgmentsBody = (await judgments.json()) as {
+        judgments?: Array<{
+          priority?: string;
+          proposedActions?: Array<{ type?: string; requiresApproval?: boolean }>;
+        }>;
+        evidence?: Array<{ status?: string }>;
+        agentResults?: Array<{ verdict?: string }>;
+        protocolTrace?: Array<{ result?: string }>;
+      };
+      expect(judgmentsBody.evidence?.some((item) => item.status === "valid")).toBe(true);
+      expect(judgmentsBody.agentResults?.some((result) => result.verdict === "caution")).toBe(true);
+      expect(judgmentsBody.protocolTrace?.some((trace) => trace.result === "applied")).toBe(true);
+      expect(
+        judgmentsBody.judgments?.some(
+          (judgment) =>
+            judgment.priority === "approval" &&
+            judgment.proposedActions?.some(
+              (action) => action.type === "review_round" && action.requiresApproval === true,
+            ),
+        ),
+      ).toBe(true);
+      expect(
+        judgmentsBody.judgments?.some((judgment) =>
+          judgment.proposedActions?.some(
+            (action) => action.type === "retry_task" || action.type === "repair_round",
+          ),
+        ),
+      ).toBe(false);
+
+      const agentResults = await app.fetch(
+        authedRequest("GET", `/api/manager/rounds/${roundId}/agent-results`),
+      );
+      expect(agentResults.status).toBe(200);
+      const agentResultsBody = (await agentResults.json()) as {
+        results?: Array<{ role?: string; verdict?: string }>;
+      };
+      expect(agentResultsBody.results?.some((result) => result.verdict === "caution")).toBe(true);
+
+      const acceptReview = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/rounds/${roundId}/review`, {
+          action: "accept",
+          summary: "Watch worker approval accepted the round.",
+        }),
+      );
+      expect(acceptReview.status).toBe(200);
+      const acceptReviewBody = (await acceptReview.json()) as {
+        commandFlow?: {
+          judgments?: Array<{
+            proposedActions?: Array<{ type?: string; requiresApproval?: boolean }>;
+          }>;
+        };
+      };
+      expect(
+        acceptReviewBody.commandFlow?.judgments?.some((judgment) =>
+          judgment.proposedActions?.some((action) => action.type === "review_round"),
+        ),
+      ).toBe(false);
+      expect(
+        acceptReviewBody.commandFlow?.judgments?.some((judgment) =>
+          judgment.proposedActions?.some(
+            (action) => action.type === "start_next_round" && action.requiresApproval === true,
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        acceptReviewBody.commandFlow?.judgments?.some((judgment) =>
+          judgment.proposedActions?.some(
+            (action) => action.type === "complete_project" && action.requiresApproval === true,
+          ),
+        ),
+      ).toBe(true);
 
       const review = await app.fetch(
         authedRequest("POST", `/api/manager/projects/${projectId}/rounds/${roundId}/review`, {

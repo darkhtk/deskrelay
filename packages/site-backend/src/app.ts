@@ -15,6 +15,8 @@ import {
   type ManagerAgentListResponse,
   type ManagerAgentMessageRequest,
   type ManagerAgentMessageResponse,
+  type ManagerAgentResult,
+  type ManagerAgentResultListResponse,
   type ManagerAgentRole,
   type ManagerAgentStatus,
   type ManagerArtifact,
@@ -63,7 +65,11 @@ import {
   type ManagerDirectionChangeResponse,
   type ManagerEvent,
   type ManagerEventListResponse,
+  type ManagerEvidenceItem,
+  type ManagerEvidenceListResponse,
   type ManagerInstallStatus,
+  type ManagerJudgmentListResponse,
+  type ManagerJudgmentPacket,
   type ManagerLogResponse,
   type ManagerNetworkAddress,
   type ManagerNetworkKind,
@@ -92,11 +98,14 @@ import {
   type ManagerProjectStartResponse,
   type ManagerProjectStatus,
   type ManagerProjectUpdateRequest,
+  type ManagerProposedAction,
   type ManagerProtocolFile,
   type ManagerProtocolFileRole,
   type ManagerProtocolResponse,
   type ManagerProtocolScanRequest,
   type ManagerProtocolState,
+  type ManagerProtocolTrace,
+  type ManagerProtocolTraceResponse,
   type ManagerProtocolUpdateRequest,
   type ManagerRegistrationDiagnosis,
   type ManagerRound,
@@ -818,6 +827,79 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     );
   });
 
+  app.get("/api/manager/projects/:id/evidence", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const flow = await buildManagerCommandFlow({
+      project,
+      orchestrationStore: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      decisionStore: managerDecisionStore,
+      blockerStore: managerBlockerStore,
+      artifactStore: managerArtifactStore,
+      protocolStore: managerProtocolStore,
+      repoRoot: managerRepoRoot,
+      now: new Date(),
+    });
+    const response: ManagerEvidenceListResponse = {
+      generatedAt: flow.generatedAt,
+      projectId: project.id,
+      evidence: flow.evidence,
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/projects/:id/judgments", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const flow = await buildManagerCommandFlow({
+      project,
+      orchestrationStore: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      decisionStore: managerDecisionStore,
+      blockerStore: managerBlockerStore,
+      artifactStore: managerArtifactStore,
+      protocolStore: managerProtocolStore,
+      repoRoot: managerRepoRoot,
+      now: new Date(),
+    });
+    const response: ManagerJudgmentListResponse = {
+      generatedAt: flow.generatedAt,
+      projectId: project.id,
+      judgments: flow.judgments,
+      evidence: flow.evidence,
+      agentResults: flow.agentResults,
+      protocolTrace: flow.protocolTrace,
+    };
+    return c.json(response);
+  });
+
+  app.get("/api/manager/projects/:id/protocol-trace", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const flow = await buildManagerCommandFlow({
+      project,
+      orchestrationStore: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      decisionStore: managerDecisionStore,
+      blockerStore: managerBlockerStore,
+      artifactStore: managerArtifactStore,
+      protocolStore: managerProtocolStore,
+      repoRoot: managerRepoRoot,
+      now: new Date(),
+    });
+    const response: ManagerProtocolTraceResponse = {
+      generatedAt: flow.generatedAt,
+      projectId: project.id,
+      trace: flow.protocolTrace,
+      evidence: flow.evidence.filter((item) => item.type === "protocol"),
+    };
+    return c.json(response);
+  });
+
   app.put("/api/manager/projects/:id/charter", async (c) => {
     let body: unknown;
     try {
@@ -953,12 +1035,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       (await managerProjectStore.update(project.id, {
         activeRoundId: dispatch.round.id,
         status: projectStatusFromRoundStatus(dispatch.round.status),
-        flowStage:
-          dispatch.round.status === "completed"
-            ? "review"
-            : dispatch.round.status === "blocked" || dispatch.round.status === "failed"
-              ? "replanning"
-              : "running",
+        flowStage: projectFlowStageFromRoundStatus(dispatch.round.status),
         ...(dispatch.round.summary ? { summary: dispatch.round.summary } : {}),
         ...(dispatch.round.error ? { error: dispatch.round.error } : { error: null }),
       })) ?? project;
@@ -1993,6 +2070,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       await managerProjectStore.update(response.round.projectId, {
         activeRoundId: response.round.id,
         status: projectStatusFromRoundStatus(response.round.status),
+        flowStage: projectFlowStageFromRoundStatus(response.round.status),
         ...(response.round.summary ? { summary: response.round.summary } : {}),
         ...(response.round.error ? { error: response.round.error } : { error: null }),
       });
@@ -2025,6 +2103,45 @@ export function createSiteApp(options: SiteAppOptions): Hono {
           now: new Date(),
         }),
       );
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.get("/api/manager/rounds/:id/agent-results", async (c) => {
+    try {
+      await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+      const roundId = c.req.param("id");
+      const round = await managerOrchestrationStore.getRound(roundId);
+      if (!round) return c.json({ error: "unknown round" }, 404);
+      if (!round.projectId) {
+        return c.json({ error: "round is not attached to a manager project" }, 409);
+      }
+      const project = await managerProjectStore.get(round.projectId);
+      if (!project) return c.json({ error: "unknown project" }, 404);
+      const flow = await buildManagerCommandFlow({
+        project,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        decisionStore: managerDecisionStore,
+        blockerStore: managerBlockerStore,
+        artifactStore: managerArtifactStore,
+        protocolStore: managerProtocolStore,
+        repoRoot: managerRepoRoot,
+        now: new Date(),
+      });
+      const results = flow.agentResults.filter((result) => result.roundId === round.id);
+      const evidenceIds = new Set(results.flatMap((result) => result.evidenceIds));
+      const response: ManagerAgentResultListResponse = {
+        generatedAt: flow.generatedAt,
+        projectId: project.id,
+        roundId: round.id,
+        results,
+        evidence: flow.evidence.filter(
+          (item) => item.roundId === round.id || evidenceIds.has(item.id),
+        ),
+      };
+      return c.json(response);
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
     }
@@ -3061,6 +3178,21 @@ const SITE_ROUTE_CAPABILITIES = [
     description: "Read the full project command-flow state for orchestration UX.",
   },
   {
+    method: "GET",
+    path: "/api/manager/projects/:id/evidence",
+    description: "Read derived evidence items used for manager round judgment.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/judgments",
+    description: "Read watch-worker judgment packets and proposed approval actions.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/projects/:id/protocol-trace",
+    description: "Read how project protocol files and rules map to round evidence.",
+  },
+  {
     method: "PUT",
     path: "/api/manager/projects/:id/charter",
     description: "Update the project charter used by manager orchestration.",
@@ -3368,6 +3500,11 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "GET",
     path: "/api/manager/rounds/:id/worker-runs",
     description: "Read the worker run ledger scoped to one orchestration round.",
+  },
+  {
+    method: "GET",
+    path: "/api/manager/rounds/:id/agent-results",
+    description: "Read structured agent results and linked evidence for one round.",
   },
   {
     method: "GET",
@@ -5297,59 +5434,1308 @@ interface ManagerCommandFlowInput {
 async function buildManagerCommandFlow(
   input: ManagerCommandFlowInput,
 ): Promise<ManagerCommandFlowResponse> {
-  const [overview, decisions, blockers, artifacts, protocol, rounds, ledger] = await Promise.all([
-    buildManagerProjectOverview({
-      project: input.project,
-      orchestrationStore: input.orchestrationStore,
-      taskStore: input.taskStore,
-      artifactStore: input.artifactStore,
-      now: input.now,
-    }),
-    input.decisionStore.list(input.project.id),
-    input.blockerStore.list(input.project.id),
-    input.artifactStore.list(input.project.id),
-    buildManagerProjectProtocolState({
-      project: input.project,
-      protocolStore: input.protocolStore,
-      includeExcerpt: false,
-    }),
-    input.orchestrationStore.listRounds(),
-    buildManagerWorkerRunLedger({
-      orchestrationStore: input.orchestrationStore,
-      taskStore: input.taskStore,
-      projectId: input.project.id,
-      limit: 500,
-      now: input.now,
-    }),
-  ]);
+  const [overview, decisions, blockers, artifacts, protocol, rounds, agents, tasks, ledger] =
+    await Promise.all([
+      buildManagerProjectOverview({
+        project: input.project,
+        orchestrationStore: input.orchestrationStore,
+        taskStore: input.taskStore,
+        artifactStore: input.artifactStore,
+        now: input.now,
+      }),
+      input.decisionStore.list(input.project.id),
+      input.blockerStore.list(input.project.id),
+      input.artifactStore.list(input.project.id),
+      buildManagerProjectProtocolState({
+        project: input.project,
+        protocolStore: input.protocolStore,
+        includeExcerpt: false,
+      }),
+      input.orchestrationStore.listRounds(),
+      input.orchestrationStore.listAgents(),
+      input.taskStore.list(500),
+      buildManagerWorkerRunLedger({
+        orchestrationStore: input.orchestrationStore,
+        taskStore: input.taskStore,
+        projectId: input.project.id,
+        limit: 500,
+        now: input.now,
+      }),
+    ]);
   const projectRounds = selectManagerProjectRounds(input.project, rounds);
+  const projectRoundIds = new Set(projectRounds.map((round) => round.id));
+  const projectAgents = selectManagerProjectAgents(input.project, projectRoundIds, agents);
+  const projectTasks = selectManagerProjectTasks(
+    input.project,
+    projectRoundIds,
+    projectAgents,
+    tasks,
+  );
   const activeRound =
     overview.activeRound ??
     (input.project.activeRoundId
       ? projectRounds.find((round) => round.id === input.project.activeRoundId)
       : undefined);
+  const project = managerProjectWithRoundCommandFlowState(input.project, activeRound);
+  const overviewForProject =
+    overview.project === project
+      ? overview
+      : {
+          ...overview,
+          project,
+        };
+  const roundHealthGate = activeRound
+    ? buildManagerRoundHealthGateFromFlow({
+        round: activeRound,
+        agents: projectAgents,
+        runs: ledger.runs,
+        now: input.now,
+      })
+    : undefined;
   const readiness = managerCommandFlowReadiness(
-    input.project,
+    project,
     protocol,
     blockers.blockers,
     input.repoRoot,
   );
+  const evidence = buildManagerEvidenceItems({
+    project,
+    activeRound,
+    rounds: projectRounds,
+    agents: projectAgents,
+    tasks: projectTasks,
+    runs: ledger.runs,
+    artifacts: artifacts.artifacts,
+    protocol,
+    decisions: decisions.decisions,
+    blockers: blockers.blockers,
+    now: input.now,
+  });
+  const agentResults = buildManagerAgentResults({
+    project,
+    activeRound,
+    agents: projectAgents,
+    runs: ledger.runs,
+    evidence,
+    now: input.now,
+  });
+  const protocolTrace = buildManagerProtocolTrace({
+    project,
+    activeRound,
+    protocol,
+    agents: projectAgents,
+    evidence,
+  });
+  const judgments = buildManagerJudgmentPackets({
+    project,
+    activeRound,
+    roundHealthGate,
+    readiness,
+    nextAction: overviewForProject.nextAction,
+    decisions: decisions.decisions,
+    blockers: blockers.blockers,
+    runs: ledger.runs,
+    evidence,
+    agentResults,
+    protocolTrace,
+    now: input.now,
+  });
   return {
     generatedAt: input.now.toISOString(),
-    project: input.project,
-    charter: effectiveProjectCharter(input.project),
-    wizardEvents: [...(input.project.wizardEvents ?? [])].slice(-10).reverse(),
+    project,
+    charter: effectiveProjectCharter(project),
+    wizardEvents: [...(project.wizardEvents ?? [])].slice(-10).reverse(),
     protocol,
-    overview,
+    overview: overviewForProject,
     decisions: decisions.decisions,
     blockers: blockers.blockers,
     artifacts: artifacts.artifacts,
     rounds: projectRounds,
     ...(activeRound ? { activeRound } : {}),
     workerRuns: ledger.runs,
+    evidence,
+    agentResults,
+    protocolTrace,
+    judgments,
     readiness,
-    nextAction: overview.nextAction,
+    nextAction: overviewForProject.nextAction,
   };
+}
+
+function managerProjectWithRoundCommandFlowState(
+  project: ManagerProject,
+  activeRound: ManagerRound | undefined,
+): ManagerProject {
+  if (!activeRound) return project;
+  if (project.status === "archived" || project.status === "completed") return project;
+  if (project.status === "blocked" || project.flowStage === "replanning") return project;
+  if (activeRound.status === "planned") return project;
+  const status = projectStatusFromRoundStatus(activeRound.status);
+  const flowStage = projectFlowStageFromRoundStatus(activeRound.status);
+  if (project.status === status && project.flowStage === flowStage) return project;
+  return {
+    ...project,
+    status,
+    flowStage,
+  };
+}
+
+function buildManagerRoundHealthGateFromFlow(input: {
+  round: ManagerRound;
+  agents: ManagerAgent[];
+  runs: ManagerWorkerRun[];
+  now: Date;
+}): ManagerRoundHealthGate {
+  const agentById = new Map(input.agents.map((agent) => [agent.id, agent]));
+  const presentAgents = input.round.agentIds.map((id) => agentById.get(id)).filter(isPresent);
+  const missingAgentIds = input.round.agentIds.filter((id) => !agentById.has(id));
+  const activeAgentIds = new Set(input.round.agentIds);
+  const activeTaskIds = new Set(input.round.taskIds);
+  const healthRuns = selectManagerRoundHealthRuns(
+    input.runs.filter(
+      (run) =>
+        run.roundId === input.round.id ||
+        Boolean(run.agentId && activeAgentIds.has(run.agentId)) ||
+        Boolean(run.taskId && activeTaskIds.has(run.taskId)),
+    ),
+  );
+  const issues = buildManagerRoundHealthIssues(
+    input.round,
+    presentAgents,
+    healthRuns,
+    missingAgentIds,
+  );
+  const hasBlocked = issues.some((issue) => issue.severity === "blocked");
+  const hasWarning = issues.some((issue) => issue.severity === "warning");
+  const status =
+    hasBlocked || ["blocked", "failed", "cancelled"].includes(input.round.status)
+      ? "blocked"
+      : hasWarning ||
+          healthRuns.some((run) => isManagerWorkerRunActive(run.status)) ||
+          isManagerRoundInProgress(input.round.status)
+        ? "warning"
+        : healthRuns.length === 0 && presentAgents.length === 0
+          ? "unknown"
+          : "healthy";
+  return {
+    generatedAt: input.now.toISOString(),
+    roundId: input.round.id,
+    status,
+    title: input.round.title,
+    summary: managerRoundHealthSummary(status, issues, healthRuns.length),
+    expectedAgents: input.round.agentIds.length,
+    expectedTasks: Math.max(
+      input.round.taskIds.length,
+      presentAgents.filter((agent) => agent.taskId).length,
+    ),
+    actualRuns: healthRuns.length,
+    completedRuns: healthRuns.filter((run) => run.status === "succeeded").length,
+    runningRuns: healthRuns.filter((run) => isManagerWorkerRunActive(run.status)).length,
+    blockedRuns: healthRuns.filter((run) => run.status === "failed" || run.status === "blocked")
+      .length,
+    missingRuns: healthRuns.filter((run) => run.status === "missing").length,
+    issues,
+  };
+}
+
+interface ManagerEvidenceBuildInput {
+  project: ManagerProject;
+  activeRound?: ManagerRound | undefined;
+  rounds: ManagerRound[];
+  agents: ManagerAgent[];
+  tasks: ManagerTask[];
+  runs: ManagerWorkerRun[];
+  artifacts: ManagerArtifact[];
+  protocol: ManagerProtocolState;
+  decisions: ManagerDecision[];
+  blockers: ManagerBlocker[];
+  now: Date;
+}
+
+function buildManagerEvidenceItems(input: ManagerEvidenceBuildInput): ManagerEvidenceItem[] {
+  const evidence = new Map<string, ManagerEvidenceItem>();
+  const put = (item: ManagerEvidenceItem) => {
+    evidence.set(item.id, item);
+  };
+
+  for (const run of input.runs) {
+    if (run.projectId && run.projectId !== input.project.id) continue;
+    put({
+      id: managerEvidenceId("run", run.id),
+      projectId: input.project.id,
+      ...(run.roundId ? { roundId: run.roundId } : {}),
+      ...(run.agentId ? { agentId: run.agentId } : {}),
+      ...(run.taskId ? { taskId: run.taskId } : {}),
+      type: "worker-run",
+      label: `${run.agentRole ?? run.agentLabel ?? run.profile ?? "worker"} ${run.status}`,
+      detail: managerRunEvidenceDetail(run),
+      ...(run.taskId ? { ref: run.taskId } : {}),
+      ...(run.error || run.outputPreview
+        ? { excerpt: clipManagerEvidenceText(run.error || run.outputPreview, 360) }
+        : {}),
+      status: managerRunEvidenceStatus(run),
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    });
+  }
+
+  for (const agent of input.agents) {
+    const excerpt = agent.lastError || agent.lastOutput;
+    if (!excerpt) continue;
+    put({
+      id: managerEvidenceId("agent", agent.id, agent.lastOutputAt ?? agent.updatedAt),
+      projectId: input.project.id,
+      ...(agent.roundId ? { roundId: agent.roundId } : {}),
+      agentId: agent.id,
+      ...(agent.taskId ? { taskId: agent.taskId } : {}),
+      type: "agent-output",
+      label: `${agent.role} output`,
+      detail: agent.lastError ? "Agent reported an error." : "Agent produced output.",
+      ...(agent.taskId ? { ref: agent.taskId } : {}),
+      excerpt: clipManagerEvidenceText(excerpt, 360),
+      status: agent.lastError ? "failed" : managerAgentEvidenceStatus(agent),
+      createdAt: agent.createdAt,
+      updatedAt: agent.lastOutputAt ?? agent.updatedAt,
+    });
+  }
+
+  for (const task of input.tasks) {
+    const error = task.error?.trim();
+    const lastStep = task.steps
+      .filter((step) => step.summary || step.detail)
+      .sort((left, right) =>
+        (right.lastCheckedAt ?? task.updatedAt).localeCompare(left.lastCheckedAt ?? task.updatedAt),
+      )[0];
+    if (!error && !lastStep) continue;
+    const roundId = taskRoundId(task);
+    put({
+      id: managerEvidenceId("task-log", task.id, lastStep?.id ?? task.updatedAt),
+      projectId: input.project.id,
+      ...(roundId ? { roundId } : {}),
+      taskId: task.id,
+      type: "log",
+      label: `${task.kind} ${task.state}`,
+      detail: error ? "Task error captured." : "Latest task step captured.",
+      ref: task.id,
+      excerpt: clipManagerEvidenceText(error || lastStep?.summary || lastStep?.detail, 360),
+      status: error ? "failed" : managerTaskEvidenceStatus(task),
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+    });
+  }
+
+  for (const artifact of input.artifacts) {
+    put({
+      id: managerEvidenceId("artifact", artifact.id),
+      projectId: input.project.id,
+      ...(artifact.roundId ? { roundId: artifact.roundId } : {}),
+      ...(artifact.agentId ? { agentId: artifact.agentId } : {}),
+      ...(artifact.taskId ? { taskId: artifact.taskId } : {}),
+      type: "artifact",
+      label: artifact.path,
+      detail: artifact.note || `${artifact.kind} artifact owned by ${artifact.owner}.`,
+      ref: artifact.path,
+      status: managerArtifactEvidenceStatus(artifact),
+      createdAt: artifact.discoveredAt,
+      updatedAt: artifact.updatedAt,
+    });
+  }
+
+  for (const file of input.protocol.files) {
+    put({
+      id: managerEvidenceId("protocol", file.path),
+      projectId: input.project.id,
+      ...(input.activeRound?.id ? { roundId: input.activeRound.id } : {}),
+      type: "protocol",
+      label: file.path,
+      detail: file.error || `${file.role} protocol file is ${file.status}.`,
+      ref: file.path,
+      ...(file.excerpt ? { excerpt: clipManagerEvidenceText(file.excerpt, 360) } : {}),
+      status: managerProtocolEvidenceStatus(file),
+      createdAt: file.modifiedAt ?? input.project.createdAt,
+      updatedAt: file.modifiedAt ?? input.now.toISOString(),
+    });
+  }
+
+  for (const decision of input.decisions) {
+    put({
+      id: managerEvidenceId("decision", decision.id),
+      projectId: input.project.id,
+      ...(decision.roundId ? { roundId: decision.roundId } : {}),
+      type: "decision",
+      label: decision.title,
+      detail: decision.rationale || decision.detail,
+      ref: decision.id,
+      excerpt: clipManagerEvidenceText(decision.detail, 360),
+      status: decision.status === "active" ? "valid" : "stale",
+      createdAt: decision.createdAt,
+      updatedAt: decision.updatedAt,
+    });
+  }
+
+  for (const blocker of input.blockers) {
+    put({
+      id: managerEvidenceId("blocker", blocker.id),
+      projectId: input.project.id,
+      ...(blocker.roundId ? { roundId: blocker.roundId } : {}),
+      ...(blocker.agentId ? { agentId: blocker.agentId } : {}),
+      ...(blocker.taskId ? { taskId: blocker.taskId } : {}),
+      type: blocker.requiredAction === "user" ? "user-check" : "blocker",
+      label: blocker.title,
+      detail: blocker.detail || blocker.title,
+      ref: blocker.id,
+      status: blocker.status === "open" ? "failed" : "stale",
+      createdAt: blocker.createdAt,
+      updatedAt: blocker.updatedAt,
+    });
+  }
+
+  return [...evidence.values()]
+    .sort((left, right) =>
+      (right.updatedAt ?? right.createdAt).localeCompare(left.updatedAt ?? left.createdAt),
+    )
+    .slice(0, 300);
+}
+
+interface ManagerAgentResultBuildInput {
+  project: ManagerProject;
+  activeRound?: ManagerRound | undefined;
+  agents: ManagerAgent[];
+  runs: ManagerWorkerRun[];
+  evidence: ManagerEvidenceItem[];
+  now: Date;
+}
+
+function buildManagerAgentResults(input: ManagerAgentResultBuildInput): ManagerAgentResult[] {
+  const usedRunIds = new Set<string>();
+  const results: ManagerAgentResult[] = [];
+
+  for (const agent of input.agents) {
+    const run = findManagerAgentResultRun(agent, input.runs, usedRunIds);
+    if (run) usedRunIds.add(run.id);
+    results.push(buildManagerAgentResult(input.project, agent, run, input.evidence, input.now));
+  }
+
+  for (const run of input.runs) {
+    if (usedRunIds.has(run.id)) continue;
+    if (run.projectId && run.projectId !== input.project.id) continue;
+    results.push(buildManagerAgentResult(input.project, undefined, run, input.evidence, input.now));
+  }
+
+  const activeRoundId = input.activeRound?.id;
+  return results
+    .filter((result) => !activeRoundId || result.roundId === activeRoundId)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 40);
+}
+
+function buildManagerAgentResult(
+  project: ManagerProject,
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  evidence: ManagerEvidenceItem[],
+  now: Date,
+): ManagerAgentResult {
+  const role: ManagerAgentRole = (agent?.role ?? run?.agentRole ?? "worker") as ManagerAgentRole;
+  const status = run?.status ?? agent?.status ?? "unknown";
+  const roundId = run?.roundId ?? agent?.roundId;
+  const agentId = agent?.id ?? run?.agentId;
+  const taskId = run?.taskId ?? agent?.taskId;
+  const relatedEvidence = evidence.filter(
+    (item) =>
+      (agent?.id && item.agentId === agent.id) ||
+      (run?.agentId && item.agentId === run.agentId) ||
+      (agent?.taskId && item.taskId === agent.taskId) ||
+      (run?.taskId && item.taskId === run.taskId),
+  );
+  const summary = managerAgentResultSummary(agent, run, status);
+  const changedFiles = collectManagerArtifactPaths(
+    [agent?.lastInstruction, agent?.lastOutput, agent?.lastError, run?.outputPreview, run?.error]
+      .filter(Boolean)
+      .join("\n"),
+  ).slice(0, 12);
+  const risks = managerAgentResultRisks(agent, run, relatedEvidence);
+  const blockers = managerAgentResultBlockers(agent, run, relatedEvidence);
+  const verdict = managerAgentResultVerdict(status, run, relatedEvidence);
+  const updatedAt = agent?.lastOutputAt ?? agent?.updatedAt ?? run?.updatedAt ?? now.toISOString();
+  return {
+    id: managerEvidenceId("agent-result", agent?.id ?? run?.id ?? role),
+    projectId: project.id,
+    ...(roundId ? { roundId } : {}),
+    ...(agentId ? { agentId } : {}),
+    ...(taskId ? { taskId } : {}),
+    role,
+    assignment:
+      extractManagerAgentAssignment(agent?.lastInstruction) ||
+      run?.command ||
+      "No specific assignment was captured.",
+    summary,
+    findings: managerAgentResultFindings(agent, run, summary),
+    changedFiles,
+    risks,
+    blockers,
+    evidenceIds: relatedEvidence.map((item) => item.id).slice(0, 12),
+    nextRequest: managerAgentResultNextRequest(status, run, relatedEvidence),
+    confidence: managerAgentResultConfidence(run, relatedEvidence),
+    verdict,
+    createdAt: agent?.createdAt ?? run?.createdAt ?? now.toISOString(),
+    updatedAt,
+  };
+}
+
+interface ManagerProtocolTraceBuildInput {
+  project: ManagerProject;
+  activeRound?: ManagerRound | undefined;
+  protocol: ManagerProtocolState;
+  agents: ManagerAgent[];
+  evidence: ManagerEvidenceItem[];
+}
+
+function buildManagerProtocolTrace(input: ManagerProtocolTraceBuildInput): ManagerProtocolTrace[] {
+  const protocolAgent = input.agents.find((agent) => agent.role === "protocol");
+  const traces: ManagerProtocolTrace[] = [];
+  for (const file of input.protocol.files) {
+    const evidenceIds = input.evidence
+      .filter((item) => item.type === "protocol" && item.ref === file.path)
+      .map((item) => item.id);
+    traces.push({
+      id: managerEvidenceId("protocol-trace", file.path),
+      projectId: input.project.id,
+      ...(input.activeRound?.id ? { roundId: input.activeRound.id } : {}),
+      ruleId: `${file.role}:${file.path}`,
+      sourceFile: file.path,
+      ...(protocolAgent ? { appliedByAgentId: protocolAgent.id } : {}),
+      evidenceIds,
+      result: managerProtocolTraceResult(file),
+      detail: file.error || `${file.path} is ${file.status}; role=${file.role}.`,
+    });
+  }
+  for (const [index, rule] of input.protocol.activeRules.entries()) {
+    const evidenceIds = input.evidence
+      .filter((item) => item.type === "protocol" && item.ref === "PROTOCOL.md")
+      .map((item) => item.id);
+    traces.push({
+      id: managerEvidenceId("protocol-rule", index, rule),
+      projectId: input.project.id,
+      ...(input.activeRound?.id ? { roundId: input.activeRound.id } : {}),
+      ruleId: `active-rule-${index + 1}`,
+      sourceFile: "PROTOCOL.md",
+      ...(protocolAgent ? { appliedByAgentId: protocolAgent.id } : {}),
+      evidenceIds,
+      result: evidenceIds.length > 0 ? "applied" : "unclear",
+      detail: rule,
+    });
+  }
+  return traces.slice(0, 80);
+}
+
+interface ManagerJudgmentBuildInput {
+  project: ManagerProject;
+  activeRound?: ManagerRound | undefined;
+  roundHealthGate?: ManagerRoundHealthGate | undefined;
+  readiness: ManagerCommandFlowResponse["readiness"];
+  nextAction: ManagerProjectOverviewAction;
+  decisions: ManagerDecision[];
+  blockers: ManagerBlocker[];
+  runs: ManagerWorkerRun[];
+  evidence: ManagerEvidenceItem[];
+  agentResults: ManagerAgentResult[];
+  protocolTrace: ManagerProtocolTrace[];
+  now: Date;
+}
+
+function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJudgmentPacket[] {
+  const packets: ManagerJudgmentPacket[] = [];
+  const openBlockers = input.blockers.filter((blocker) => blocker.status === "open");
+  const userBlockers = openBlockers.filter((blocker) => blocker.requiredAction === "user");
+  const activeRuns = input.runs.filter((run) => isManagerWorkerRunActive(run.status));
+  const protocolProblems = input.protocolTrace.filter(
+    (trace) => trace.result === "violated" || trace.result === "unclear",
+  );
+  const roundId = input.activeRound?.id;
+  const currentRoundAgentIds = new Set(
+    input.agentResults.map((result) => result.agentId).filter(isPresent),
+  );
+  const currentRoundTaskIds = new Set(
+    input.agentResults.map((result) => result.taskId).filter(isPresent),
+  );
+  const scopedEvidence = input.evidence.filter((item) =>
+    managerEvidenceMatchesJudgmentScope(item, roundId, currentRoundAgentIds, currentRoundTaskIds),
+  );
+  const roundExecutionHealthy = input.roundHealthGate?.status === "healthy";
+  const failedEvidence = scopedEvidence.filter(
+    (item) =>
+      (item.status === "failed" || item.status === "missing") &&
+      (!roundExecutionHealthy || item.type === "blocker" || item.type === "user-check"),
+  );
+  const staleEvidence = scopedEvidence.filter((item) => item.status === "stale");
+  const failedResults = roundExecutionHealthy
+    ? []
+    : input.agentResults.filter(
+        (result) => result.verdict === "fail" || result.verdict === "needs_user_check",
+      );
+  const roundReviewDecisions = roundId
+    ? input.decisions.filter(
+        (decision) =>
+          decision.roundId === roundId &&
+          decision.status === "active" &&
+          decision.tags.includes("review"),
+      )
+    : [];
+  const acceptedRoundReview = roundReviewDecisions.some((decision) =>
+    decision.tags.includes("accept"),
+  );
+  const createdAt = input.now.toISOString();
+  const expiresAt = new Date(input.now.getTime() + 5 * 60_000).toISOString();
+  const firstFailedTaskId =
+    failedResults.find((result) => result.taskId)?.taskId ??
+    failedEvidence.find((item) => item.taskId)?.taskId ??
+    input.nextAction.taskId;
+
+  if (!input.readiness.ready) {
+    const evidenceIds = input.evidence
+      .filter((item) => item.type === "protocol" && item.status !== "valid")
+      .map((item) => item.id)
+      .slice(0, 10);
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "blocked",
+        priority: "approval",
+        confidence: "high",
+        summary: "Project is not ready to continue.",
+        reason:
+          input.readiness.warnings[0] ??
+          input.readiness.missingProtocolFiles[0] ??
+          "Readiness gate is not satisfied.",
+        evidenceIds,
+        protocolTraceIds: protocolProblems.map((trace) => trace.id).slice(0, 10),
+        proposedActions: [
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type:
+              input.readiness.missingProtocolFiles.length > 0 ? "scan_protocol" : "prepare_project",
+            risk: "low",
+            requiresApproval: true,
+            title:
+              input.readiness.missingProtocolFiles.length > 0
+                ? "Rescan project protocol"
+                : "Refresh project readiness",
+            rationale:
+              "The watch worker cannot recommend execution until the readiness gate passes.",
+            payload: {},
+            evidenceIds,
+            protocolTraceIds: protocolProblems.map((trace) => trace.id).slice(0, 10),
+          }),
+        ],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (userBlockers.length > 0 || input.readiness.userCheckRequired) {
+    const blockerEvidenceIds = input.evidence
+      .filter((item) => item.type === "user-check" || item.type === "blocker")
+      .map((item) => item.id)
+      .slice(0, 10);
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "user_check",
+        priority: "approval",
+        confidence: "high",
+        summary: "Human confirmation is required before the loop should continue.",
+        reason:
+          userBlockers[0]?.detail ||
+          userBlockers[0]?.title ||
+          "The command flow is waiting on a user checkpoint.",
+        evidenceIds: blockerEvidenceIds,
+        proposedActions: [
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type: "request_user_check",
+            risk: "medium",
+            requiresApproval: true,
+            title: "Request human confirmation",
+            rationale:
+              "The next orchestration step should wait for explicit user or manager confirmation.",
+            payload: {
+              summary:
+                userBlockers[0]?.detail ||
+                userBlockers[0]?.title ||
+                "Please confirm whether the current round should continue.",
+            },
+            evidenceIds: blockerEvidenceIds,
+          }),
+        ],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (failedResults.length > 0 || failedEvidence.length > 0) {
+    const evidenceIds = [
+      ...failedEvidence.map((item) => item.id),
+      ...input.evidence
+        .filter((item) => firstFailedTaskId && item.taskId === firstFailedTaskId)
+        .map((item) => item.id),
+    ].slice(0, 12);
+    const action =
+      firstFailedTaskId &&
+      managerProposedAction({
+        projectId: input.project.id,
+        roundId,
+        taskId: firstFailedTaskId,
+        type: "retry_task",
+        risk: "medium",
+        requiresApproval: true,
+        title: "Retry failed worker task",
+        rationale: "A linked worker result or evidence item is failed or missing.",
+        payload: { taskId: firstFailedTaskId },
+        evidenceIds,
+        agentResultIds: failedResults.map((result) => result.id).slice(0, 10),
+      });
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "retry",
+        priority: "approval",
+        confidence: failedResults.length > 0 ? "high" : "medium",
+        summary: "A worker result needs repair before this round can be trusted.",
+        reason:
+          failedResults[0]?.blockers[0] ||
+          failedEvidence[0]?.detail ||
+          "Failed or missing evidence is linked to the active round.",
+        evidenceIds,
+        agentResultIds: failedResults.map((result) => result.id).slice(0, 10),
+        proposedActions: [
+          ...(action ? [action] : []),
+          ...(roundId
+            ? [
+                managerProposedAction({
+                  projectId: input.project.id,
+                  roundId,
+                  type: "repair_round",
+                  risk: "low",
+                  requiresApproval: true,
+                  title: "Reconcile round evidence",
+                  rationale: "Refresh the round health gate from the latest worker ledger.",
+                  payload: { roundId },
+                  evidenceIds,
+                }),
+              ]
+            : []),
+        ],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (protocolProblems.length > 0 && input.readiness.ready) {
+    const traceIds = protocolProblems.map((trace) => trace.id).slice(0, 12);
+    const evidenceIds = input.evidence
+      .filter(
+        (item) =>
+          item.type === "protocol" &&
+          protocolProblems.some((trace) => trace.evidenceIds.includes(item.id)),
+      )
+      .map((item) => item.id)
+      .slice(0, 12);
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "direction_change",
+        priority: "approval",
+        confidence: "medium",
+        summary: "Protocol trace has unclear or violated items.",
+        reason: protocolProblems[0]?.detail ?? "The protocol trace is not clean.",
+        evidenceIds,
+        protocolTraceIds: traceIds,
+        proposedActions: [
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type: "direction_change",
+            risk: "high",
+            requiresApproval: true,
+            title: "Adjust direction from protocol findings",
+            rationale:
+              "The next round should explicitly address protocol ambiguity before continuing.",
+            payload: {
+              requestedChange: protocolProblems[0]?.detail ?? "Clarify protocol before continuing.",
+              impact: "Protocol ambiguity can make worker results difficult to trust.",
+              currentRoundAction: "keep",
+            },
+            evidenceIds,
+            protocolTraceIds: traceIds,
+          }),
+        ],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (activeRuns.length > 0 || input.nextAction.kind === "wait") {
+    const evidenceIds = input.evidence
+      .filter((item) => activeRuns.some((run) => item.taskId && item.taskId === run.taskId))
+      .map((item) => item.id)
+      .slice(0, 10);
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "wait",
+        priority: "notice",
+        confidence: "high",
+        summary: "Workers are still running.",
+        reason: "The watch worker should keep observing until fresh results arrive.",
+        evidenceIds,
+        proposedActions: [
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type: "wait",
+            risk: "low",
+            requiresApproval: false,
+            title: "Keep watching",
+            rationale:
+              "No manager approval is needed while active worker tasks are still producing signals.",
+            payload: {},
+            evidenceIds,
+          }),
+        ],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (
+    packets.every((packet) => packet.priority !== "approval") &&
+    input.nextAction.kind === "summarize" &&
+    roundId
+  ) {
+    const resultIds = input.agentResults.map((result) => result.id).slice(0, 10);
+    const reviewEvidenceIds = roundReviewDecisions.map((decision) =>
+      managerEvidenceId("decision", decision.id),
+    );
+    const evidenceIds = [
+      ...input.agentResults.flatMap((result) => result.evidenceIds),
+      ...reviewEvidenceIds,
+    ].slice(0, 12);
+    const proposedActions = acceptedRoundReview
+      ? [
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type: "start_next_round",
+            risk: "high",
+            requiresApproval: true,
+            title: "Start the next orchestration round",
+            rationale:
+              "The current round already has an accept review decision, so the manager only needs to choose the next loop action.",
+            payload: {
+              objective:
+                input.project.goal || input.activeRound?.objective || "Continue orchestration.",
+              phase: "implementation",
+              dryRun: true,
+            },
+            evidenceIds,
+            agentResultIds: resultIds,
+          }),
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type: "complete_project",
+            risk: "high",
+            requiresApproval: true,
+            title: "Complete project from accepted round",
+            rationale:
+              "Use this when the accepted round is enough for final user-facing completion.",
+            payload: {
+              summary:
+                roundReviewDecisions[0]?.detail ||
+                input.activeRound?.summary ||
+                input.project.summary ||
+                input.project.goal,
+              acceptedByUser: false,
+              verificationEvidence: "Round was accepted by manager review.",
+            },
+            evidenceIds,
+            agentResultIds: resultIds,
+          }),
+        ]
+      : [
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type: "review_round",
+            risk: "medium",
+            requiresApproval: true,
+            title: "Approve round result",
+            rationale: "Accept the round and let the manager decide whether to start another one.",
+            payload: {
+              roundId,
+              action: "accept",
+              summary: "Watch worker found no blocking evidence.",
+            },
+            evidenceIds,
+            agentResultIds: resultIds,
+          }),
+        ];
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "continue",
+        priority: "approval",
+        confidence: staleEvidence.length > 0 ? "medium" : "high",
+        summary: acceptedRoundReview
+          ? "Round is accepted; choose next loop action."
+          : "Round is ready for manager review.",
+        reason:
+          roundReviewDecisions[0]?.detail ||
+          "The watch worker found no blocking evidence and the next command-flow action is summarize.",
+        evidenceIds,
+        agentResultIds: resultIds,
+        protocolTraceIds: input.protocolTrace.map((trace) => trace.id).slice(0, 10),
+        proposedActions,
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (packets.length === 0 && input.readiness.ready && !input.activeRound) {
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        verdict: "continue",
+        priority: "approval",
+        confidence: "medium",
+        summary: "Project is ready for its first orchestration round.",
+        reason: "Readiness passed and no active round exists.",
+        evidenceIds: input.evidence.slice(0, 8).map((item) => item.id),
+        protocolTraceIds: input.protocolTrace.slice(0, 8).map((trace) => trace.id),
+        proposedActions: [
+          managerProposedAction({
+            projectId: input.project.id,
+            type: "start_next_round",
+            risk: "high",
+            requiresApproval: true,
+            title: "Start first orchestration round",
+            rationale:
+              "The manager can approve a worker round instead of manually reading every readiness detail.",
+            payload: {
+              objective: input.project.goal,
+              phase: "design",
+              dryRun: true,
+            },
+            evidenceIds: input.evidence.slice(0, 8).map((item) => item.id),
+            protocolTraceIds: input.protocolTrace.slice(0, 8).map((trace) => trace.id),
+          }),
+        ],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (packets.length === 0) {
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "continue",
+        priority: "notice",
+        confidence: "medium",
+        summary: "No manager approval is currently required.",
+        reason: input.nextAction.detail ?? input.nextAction.label,
+        evidenceIds: input.evidence.slice(0, 8).map((item) => item.id),
+        agentResultIds: input.agentResults.slice(0, 8).map((result) => result.id),
+        protocolTraceIds: input.protocolTrace.slice(0, 8).map((trace) => trace.id),
+        proposedActions: [],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  return packets
+    .sort(
+      (left, right) =>
+        managerJudgmentPriorityRank(right.priority) - managerJudgmentPriorityRank(left.priority),
+    )
+    .slice(0, 12);
+}
+
+function managerEvidenceMatchesJudgmentScope(
+  item: ManagerEvidenceItem,
+  roundId: string | undefined,
+  agentIds: Set<string>,
+  taskIds: Set<string>,
+): boolean {
+  if (!roundId) return true;
+  if (item.roundId) return item.roundId === roundId;
+  if (item.agentId && agentIds.has(item.agentId)) return true;
+  if (item.taskId && taskIds.has(item.taskId)) return true;
+  return false;
+}
+
+function managerJudgmentPacket(input: {
+  projectId: string;
+  roundId?: string | undefined;
+  verdict: ManagerJudgmentPacket["verdict"];
+  priority: ManagerJudgmentPacket["priority"];
+  confidence: ManagerJudgmentPacket["confidence"];
+  summary: string;
+  reason: string;
+  evidenceIds?: string[] | undefined;
+  agentResultIds?: string[] | undefined;
+  protocolTraceIds?: string[] | undefined;
+  proposedActions?: ManagerProposedAction[] | undefined;
+  createdAt: string;
+  expiresAt?: string | undefined;
+}): ManagerJudgmentPacket {
+  const evidenceIds = [...new Set(input.evidenceIds ?? [])].slice(0, 12);
+  const agentResultIds = [...new Set(input.agentResultIds ?? [])].slice(0, 12);
+  const protocolTraceIds = [...new Set(input.protocolTraceIds ?? [])].slice(0, 12);
+  return {
+    id: managerEvidenceId(
+      "judgment",
+      input.projectId,
+      input.roundId ?? "project",
+      input.verdict,
+      input.priority,
+      evidenceIds.join("|"),
+      agentResultIds.join("|"),
+      protocolTraceIds.join("|"),
+    ),
+    projectId: input.projectId,
+    ...(input.roundId ? { roundId: input.roundId } : {}),
+    verdict: input.verdict,
+    priority: input.priority,
+    confidence: input.confidence,
+    summary: input.summary,
+    reason: input.reason,
+    evidenceIds,
+    agentResultIds,
+    protocolTraceIds,
+    proposedActions: input.proposedActions ?? [],
+    createdAt: input.createdAt,
+    ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+  };
+}
+
+function managerProposedAction(input: {
+  projectId: string;
+  roundId?: string | undefined;
+  agentId?: string | undefined;
+  taskId?: string | undefined;
+  type: ManagerProposedAction["type"];
+  risk: ManagerProposedAction["risk"];
+  requiresApproval: boolean;
+  title: string;
+  rationale: string;
+  payload: Record<string, unknown>;
+  evidenceIds?: string[] | undefined;
+  agentResultIds?: string[] | undefined;
+  protocolTraceIds?: string[] | undefined;
+}): ManagerProposedAction {
+  const evidenceIds = [...new Set(input.evidenceIds ?? [])].slice(0, 12);
+  const agentResultIds = [...new Set(input.agentResultIds ?? [])].slice(0, 12);
+  const protocolTraceIds = [...new Set(input.protocolTraceIds ?? [])].slice(0, 12);
+  return {
+    id: managerEvidenceId(
+      "proposed-action",
+      input.projectId,
+      input.roundId ?? "project",
+      input.taskId ?? input.agentId ?? "",
+      input.type,
+      evidenceIds.join("|"),
+      agentResultIds.join("|"),
+      protocolTraceIds.join("|"),
+    ),
+    projectId: input.projectId,
+    ...(input.roundId ? { roundId: input.roundId } : {}),
+    ...(input.agentId ? { agentId: input.agentId } : {}),
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    type: input.type,
+    risk: input.risk,
+    requiresApproval: input.requiresApproval,
+    title: input.title,
+    rationale: input.rationale,
+    payload: input.payload,
+    evidenceIds,
+    agentResultIds,
+    protocolTraceIds,
+  };
+}
+
+function managerJudgmentPriorityRank(priority: ManagerJudgmentPacket["priority"]): number {
+  if (priority === "approval") return 3;
+  if (priority === "notice") return 2;
+  return 1;
+}
+
+function findManagerAgentResultRun(
+  agent: ManagerAgent,
+  runs: ManagerWorkerRun[],
+  usedRunIds: Set<string>,
+): ManagerWorkerRun | undefined {
+  const candidates = runs.filter((run) => !usedRunIds.has(run.id));
+  return (
+    candidates.find((run) => run.agentId === agent.id) ??
+    candidates.find((run) => run.taskId && run.taskId === agent.taskId) ??
+    candidates.find((run) => run.agentRole === agent.role && run.roundId === agent.roundId)
+  );
+}
+
+function extractManagerAgentAssignment(instruction: string | undefined): string | undefined {
+  const lines =
+    instruction
+      ?.split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean) ?? [];
+  const metadataPrefixes = [
+    "Project:",
+    "CWD:",
+    "Objective:",
+    "Goal:",
+    "Scope:",
+    "Non-goals:",
+    "Constraints:",
+    "Success criteria:",
+    "Verification plan:",
+    "User checkpoints:",
+    "Final deliverables:",
+  ];
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] ?? "";
+    if (!metadataPrefixes.some((prefix) => line.startsWith(prefix))) return line;
+  }
+  return undefined;
+}
+
+function managerAgentResultSummary(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  status: string,
+): string {
+  const explicit = agent?.lastError || run?.error || agent?.lastOutput || run?.outputPreview;
+  if (explicit) return clipManagerEvidenceText(explicit, 420);
+  if (run?.dryRun && ["succeeded", "completed"].includes(status)) {
+    return "Dry-run completed; no live transcript payload was captured.";
+  }
+  if (["succeeded", "completed"].includes(status)) {
+    return "Completed, but no output preview was captured.";
+  }
+  if (["assigned", "pending", "running", "waiting", "waiting_for_device"].includes(status)) {
+    return "Waiting for worker output.";
+  }
+  if (["failed", "blocked", "missing"].includes(status)) {
+    return "Needs inspection before the result can be trusted.";
+  }
+  return "No reply yet.";
+}
+
+function managerAgentResultFindings(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  summary: string,
+): string[] {
+  const findings = splitEvidenceBullets(agent?.lastOutput || run?.outputPreview || summary);
+  if (findings.length > 0) return findings.slice(0, 5);
+  if (run?.status === "succeeded") return ["Worker run completed successfully."];
+  if (run?.status === "missing") return ["Worker task record is missing."];
+  return ["No concrete finding has been captured yet."];
+}
+
+function managerAgentResultRisks(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  evidence: ManagerEvidenceItem[],
+): string[] {
+  const risks: string[] = [];
+  const integrityIssues = run?.integrity.filter((item) => item !== "ok") ?? [];
+  if (integrityIssues.length > 0) {
+    risks.push(`Worker integrity issue: ${integrityIssues.join(", ")}`);
+  }
+  if (run?.dryRun && !agent?.lastOutput && !run.outputPreview) {
+    risks.push("Dry-run did not capture a live transcript payload.");
+  }
+  if (!run) risks.push("No worker run is linked to this agent.");
+  if (evidence.length === 0) risks.push("No evidence item is linked to this role.");
+  if (run?.timedOut) risks.push("Worker timed out.");
+  return risks.slice(0, 6);
+}
+
+function managerAgentResultBlockers(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+  evidence: ManagerEvidenceItem[],
+): string[] {
+  const blockers: string[] = [];
+  if (agent?.lastError) blockers.push(agent.lastError);
+  if (run?.error) blockers.push(run.error);
+  for (const item of evidence) {
+    if (item.status === "failed" || item.status === "missing") blockers.push(item.detail);
+  }
+  return [...new Set(blockers.map((item) => clipManagerEvidenceText(item, 220)))].slice(0, 6);
+}
+
+function managerAgentResultNextRequest(
+  status: string,
+  run: ManagerWorkerRun | undefined,
+  evidence: ManagerEvidenceItem[],
+): string {
+  if (["failed", "blocked", "missing"].includes(status)) {
+    return run?.taskId
+      ? `Inspect task ${run.taskId} and decide retry or direction change.`
+      : "Manager review is needed before continuing.";
+  }
+  if (evidence.some((item) => item.type === "user-check" && item.status === "failed")) {
+    return "Ask the human to resolve the open check before continuing.";
+  }
+  if (
+    ["pending", "running", "waiting", "waiting_for_device", "restart_required"].includes(status)
+  ) {
+    return "Wait for a fresh signal before changing direction.";
+  }
+  if (run?.dryRun) return "Summarize the dry run, then choose real run or replan.";
+  return "Review the output and turn it into the next round instruction.";
+}
+
+function managerAgentResultVerdict(
+  status: string,
+  run: ManagerWorkerRun | undefined,
+  evidence: ManagerEvidenceItem[],
+): ManagerAgentResult["verdict"] {
+  if (evidence.some((item) => item.type === "user-check" && item.status === "failed")) {
+    return "needs_user_check";
+  }
+  if (
+    ["failed", "blocked", "missing", "cancelled"].includes(status) ||
+    evidence.some((item) => item.status === "failed" || item.status === "missing")
+  ) {
+    return "fail";
+  }
+  if (
+    run?.dryRun ||
+    evidence.some((item) => item.status === "stale") ||
+    ["pending", "running", "waiting", "waiting_for_device", "restart_required"].includes(status)
+  ) {
+    return "caution";
+  }
+  return "pass";
+}
+
+function managerAgentResultConfidence(
+  run: ManagerWorkerRun | undefined,
+  evidence: ManagerEvidenceItem[],
+): ManagerAgentResult["confidence"] {
+  if (!run || evidence.length === 0) return "low";
+  if (run.dryRun && !run.outputPreview) return "medium";
+  if (run.status === "succeeded" && evidence.some((item) => item.status === "valid")) return "high";
+  return "medium";
+}
+
+function managerRunEvidenceDetail(run: ManagerWorkerRun): string {
+  const issues = run.integrity.filter((item) => item !== "ok");
+  return [
+    run.dryRun ? "dry-run" : "live run",
+    run.durationMs ? `${run.durationMs}ms` : "",
+    typeof run.exitCode === "number" ? `exit ${run.exitCode}` : "",
+    issues.length > 0 ? `integrity: ${issues.join(", ")}` : "integrity ok",
+    run.timedOut ? "timed out" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function managerRunEvidenceStatus(run: ManagerWorkerRun): ManagerEvidenceItem["status"] {
+  if (run.status === "missing" || run.integrity.includes("missing-task")) return "missing";
+  if (
+    ["failed", "blocked", "cancelled"].includes(run.status) ||
+    run.timedOut ||
+    run.integrity.some((item) => item !== "ok" && item !== "missing-session")
+  ) {
+    return "failed";
+  }
+  if (
+    run.integrity.includes("stale-agent") ||
+    ["pending", "running", "waiting_for_device", "restart_required"].includes(run.status)
+  ) {
+    return "stale";
+  }
+  return "valid";
+}
+
+function managerAgentEvidenceStatus(agent: ManagerAgent): ManagerEvidenceItem["status"] {
+  if (["failed", "blocked", "cancelled"].includes(agent.status)) return "failed";
+  if (agent.status === "stale") return "stale";
+  return "valid";
+}
+
+function managerTaskEvidenceStatus(task: ManagerTask): ManagerEvidenceItem["status"] {
+  if (["failed", "blocked", "cancelled"].includes(task.state)) return "failed";
+  if (task.state === "restart_required") return "stale";
+  return "valid";
+}
+
+function managerArtifactEvidenceStatus(artifact: ManagerArtifact): ManagerEvidenceItem["status"] {
+  if (artifact.status === "missing") return "missing";
+  if (artifact.status === "failed") return "failed";
+  if (artifact.status === "obsolete") return "stale";
+  return "valid";
+}
+
+function managerProtocolEvidenceStatus(file: ManagerProtocolFile): ManagerEvidenceItem["status"] {
+  if (file.status === "missing") return "missing";
+  if (file.status === "error" || file.status === "too_large") return "failed";
+  return "valid";
+}
+
+function managerProtocolTraceResult(file: ManagerProtocolFile): ManagerProtocolTrace["result"] {
+  if (file.status === "present") return "applied";
+  if (file.status === "missing") return "skipped";
+  if (file.status === "error") return "violated";
+  return "unclear";
+}
+
+function splitEvidenceBullets(value: string | undefined): string[] {
+  const text = value?.trim();
+  if (!text) return [];
+  return text
+    .split(/\r?\n|(?:^|\s)[-*]\s+/)
+    .map((line) => line.replace(/^[-*]\s+/, "").trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 8)
+    .map((line) => clipManagerEvidenceText(line, 220));
+}
+
+function managerEvidenceId(...parts: Array<string | number | undefined>): string {
+  return parts
+    .filter((part) => part !== undefined && `${part}`.trim())
+    .join(":")
+    .replace(/[^A-Za-z0-9_:-]+/g, "_")
+    .slice(0, 160);
+}
+
+function clipManagerEvidenceText(value: string | undefined, max: number): string {
+  const text = value?.replace(/\s+/g, " ").trim() ?? "";
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3))}...`;
 }
 
 function effectiveProjectCharter(project: ManagerProject): ManagerProjectCharter {
@@ -11708,6 +13094,13 @@ function projectStatusFromRoundStatus(status: ManagerRoundStatus): ManagerProjec
   if (status === "completed") return "reviewing";
   if (status === "blocked" || status === "failed" || status === "cancelled") return "blocked";
   if (status === "planned") return "planning";
+  return "running";
+}
+
+function projectFlowStageFromRoundStatus(status: ManagerRoundStatus): ManagerCommandFlowStage {
+  if (status === "completed") return "review";
+  if (status === "blocked" || status === "failed" || status === "cancelled") return "replanning";
+  if (status === "planned") return "protocol_ready";
   return "running";
 }
 

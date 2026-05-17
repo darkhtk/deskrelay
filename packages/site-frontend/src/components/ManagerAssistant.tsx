@@ -1,11 +1,24 @@
 import type {
   ManagerAgent,
+  ManagerArtifactUpdateRequest,
   ManagerAssistantChatContext,
+  ManagerBlockerCreateRequest,
+  ManagerBlockerResolveRequest,
   ManagerCommandFlowResponse,
+  ManagerDecisionCreateRequest,
+  ManagerDecisionUpdateRequest,
+  ManagerDirectionChangeRequest,
   ManagerProject,
+  ManagerProjectCharterUpdateRequest,
+  ManagerProjectCompleteRequest,
+  ManagerProjectCreateRequest,
   ManagerProjectOverviewResponse,
+  ManagerProjectStartRequest,
+  ManagerProposedAction,
+  ManagerProtocolUpdateRequest,
   ManagerRound,
   ManagerRoundHealthGateResponse,
+  ManagerRoundReviewRequest,
   ManagerSessionHygieneReport,
   ManagerWorkerRun,
   ManagerWorkerRunLedgerResponse,
@@ -36,6 +49,7 @@ import {
   describeCliActionFromClaudeEvent,
 } from "../claude/cli-action.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
+import { t } from "../i18n.ts";
 import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
 import {
   readManagerOrchestrationCache,
@@ -56,6 +70,7 @@ const MANAGER_SESSION_MAX_BYTES = 8 * 1024 * 1024;
 const STREAM_OPEN_GRACE_MS = 350;
 const MANAGER_ASSISTANT_HISTORY_LIMIT = 240;
 const MANAGER_ASSISTANT_HISTORY_CACHE_BYTES = 2 * 1024 * 1024;
+const STREAM_CLOSE_GRACE_MS = 5_000;
 const ORCHESTRATION_PRESET_PROMPT = [
   "Start or continue a DeskRelay orchestration framework loop.",
   "",
@@ -192,7 +207,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       }
     },
   );
-  const [managerProjects] = createResource(
+  const [managerProjects, { refetch: refetchManagerProjects }] = createResource(
     () => statusReportSeq(),
     async () => {
       try {
@@ -796,7 +811,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       }
     } finally {
       if (!chatAccepted && !streamSawRun) abort.abort();
-      await streamPromise;
+      await waitForManagerStreamClose(streamPromise, abort);
       removeRun(runId);
       if (capturedSessionId) await persistManagerSession(capturedSessionId, current.cwd);
       setStatus((currentStatus) => (currentStatus?.tone === "warning" ? currentStatus : null));
@@ -968,6 +983,241 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     }
   };
 
+  const currentProjectId = () => focusedProjectId() ?? focusedProject()?.id ?? null;
+
+  async function runManagerProjectMutation(
+    mutation: () => Promise<unknown>,
+    nextProjectId?: string | null,
+  ) {
+    if (managerActionBusy()) return;
+    setManagerActionBusy(true);
+    setError(null);
+    try {
+      await mutation();
+      if (nextProjectId !== undefined) focusManagerProject(nextProjectId);
+      await refetchManagerProjects();
+      try {
+        mutateManagerState(await api.managerState());
+      } catch {
+        // The project command-flow refresh is still enough to update the workboard.
+      }
+      setStatusReportSeq((seq) => seq + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManagerActionBusy(false);
+    }
+  }
+
+  const createManagerProject = async (input: ManagerProjectCreateRequest) => {
+    await runManagerProjectMutation(async () => {
+      const response = await api.createManagerProject(input);
+      focusManagerProject(response.project.id);
+    });
+  };
+
+  const archiveManagerProject = async (projectId: string) => {
+    await runManagerProjectMutation(
+      async () => {
+        await api.archiveManagerProject(projectId);
+      },
+      currentProjectId() === projectId ? null : currentProjectId(),
+    );
+  };
+
+  const createProjectDecision = async (input: ManagerDecisionCreateRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.createManagerProjectDecision(projectId, input));
+  };
+
+  const updateProjectDecision = async (decisionId: string, input: ManagerDecisionUpdateRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() =>
+      api.updateManagerProjectDecision(projectId, decisionId, input),
+    );
+  };
+
+  const createProjectBlocker = async (input: ManagerBlockerCreateRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.createManagerProjectBlocker(projectId, input));
+  };
+
+  const resolveProjectBlocker = async (
+    blockerId: string,
+    input: ManagerBlockerResolveRequest = {},
+  ) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() =>
+      api.resolveManagerProjectBlocker(projectId, blockerId, input),
+    );
+  };
+
+  const scanProjectArtifacts = async () => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.scanManagerProjectArtifacts(projectId));
+  };
+
+  const updateProjectArtifact = async (artifactId: string, input: ManagerArtifactUpdateRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() =>
+      api.updateManagerProjectArtifact(projectId, artifactId, input),
+    );
+  };
+
+  const scanProjectProtocol = async () => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.scanManagerProjectProtocol(projectId));
+  };
+
+  const updateProjectProtocol = async (input: ManagerProtocolUpdateRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.updateManagerProjectProtocol(projectId, input));
+  };
+
+  const updateProjectCharter = async (input: ManagerProjectCharterUpdateRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.updateManagerProjectCharter(projectId, input));
+  };
+
+  const prepareProjectFlow = async () => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.prepareManagerProject(projectId));
+  };
+
+  const startProjectFlow = async (input: ManagerProjectStartRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.startManagerProject(projectId, input));
+  };
+
+  const reviewProjectRound = async (roundId: string, input: ManagerRoundReviewRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.reviewManagerProjectRound(projectId, roundId, input));
+  };
+
+  const changeProjectDirection = async (input: ManagerDirectionChangeRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.changeManagerProjectDirection(projectId, input));
+  };
+
+  const completeProjectFlow = async (input: ManagerProjectCompleteRequest) => {
+    const projectId = currentProjectId();
+    if (!projectId) return;
+    await runManagerProjectMutation(() => api.completeManagerProject(projectId, input));
+  };
+
+  async function approveProposedAction(action: ManagerProposedAction) {
+    if (action.projectId && action.projectId !== currentProjectId()) {
+      focusManagerProject(action.projectId);
+    }
+    switch (action.type) {
+      case "wait":
+        await refreshManagerStateNow();
+        return;
+      case "prepare_project":
+        await prepareProjectFlow();
+        return;
+      case "scan_protocol":
+        await scanProjectProtocol();
+        return;
+      case "inspect_task": {
+        const taskId = payloadString(action.payload, "taskId") ?? action.taskId;
+        if (taskId) await inspectManagerTask(taskId);
+        return;
+      }
+      case "retry_task": {
+        const taskId = payloadString(action.payload, "taskId") ?? action.taskId;
+        if (taskId) await retryManagerTask(taskId);
+        return;
+      }
+      case "repair_round": {
+        const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
+        if (roundId) await repairManagerRound(roundId);
+        return;
+      }
+      case "review_round": {
+        const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
+        if (!roundId) return;
+        const summary = payloadString(action.payload, "summary");
+        const nextObjective = payloadString(action.payload, "nextObjective");
+        await reviewProjectRound(roundId, {
+          action: managerReviewAction(payloadString(action.payload, "action")) ?? "accept",
+          ...(summary ? { summary } : {}),
+          ...(nextObjective ? { nextObjective } : {}),
+        });
+        return;
+      }
+      case "start_next_round": {
+        const phase = managerStartPhase(payloadString(action.payload, "phase"));
+        await startProjectFlow({
+          objective:
+            payloadString(action.payload, "objective") ??
+            focusedProject()?.goal ??
+            t("manager.orchestration.flow.default-round-objective"),
+          ...(phase ? { phase } : {}),
+          dryRun: payloadBoolean(action.payload, "dryRun") ?? true,
+        });
+        return;
+      }
+      case "direction_change": {
+        const impact = payloadString(action.payload, "impact");
+        const currentRoundAction = managerDirectionRoundAction(
+          payloadString(action.payload, "currentRoundAction"),
+        );
+        const nextObjective = payloadString(action.payload, "nextObjective");
+        await changeProjectDirection({
+          requestedChange:
+            payloadString(action.payload, "requestedChange") ??
+            t("manager.orchestration.approval.default-direction-change"),
+          ...(impact ? { impact } : {}),
+          ...(currentRoundAction ? { currentRoundAction } : {}),
+          ...(nextObjective ? { nextObjective } : {}),
+        });
+        return;
+      }
+      case "request_user_check": {
+        const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
+        const summary =
+          payloadString(action.payload, "summary") ??
+          t("manager.orchestration.approval.default-user-check");
+        if (roundId) {
+          await reviewProjectRound(roundId, { action: "user_check_required", summary });
+          return;
+        }
+        await createProjectBlocker({
+          title: t("manager.orchestration.approval.default-user-check-title"),
+          detail: summary,
+          severity: "warning",
+          requiredAction: "user",
+          source: "manager",
+        });
+        return;
+      }
+      case "complete_project":
+        await completeProjectFlow({
+          summary:
+            payloadString(action.payload, "summary") ??
+            t("manager.orchestration.approval.default-complete-summary"),
+          acceptedByUser: payloadBoolean(action.payload, "acceptedByUser") ?? false,
+          verificationEvidence:
+            payloadString(action.payload, "verificationEvidence") ?? action.rationale,
+        });
+        return;
+    }
+  }
+
   const runOrchestrationPreset = () => {
     void send(ORCHESTRATION_PRESET_PROMPT);
   };
@@ -976,10 +1226,19 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     <div class="manager-assistant manager-assistant-chat">
       <Show when={orchestrationStatus()}>
         <ManagerOrchestrationPanel
+          projects={managerProjects()?.projects ?? []}
+          archivedProjects={managerProjects()?.archived ?? []}
           selectedProject={focusedProject()}
           commandFlow={focusedProjectCommandFlow()}
           projectOverview={focusedProjectOverview()}
           projectLoading={managerProjects.loading}
+          projectBusy={managerActionBusy()}
+          flowBusy={managerActionBusy() || focusedProjectCommandFlow.loading}
+          decisions={focusedProjectCommandFlow()?.decisions ?? []}
+          blockers={focusedProjectCommandFlow()?.blockers ?? []}
+          artifacts={focusedProjectCommandFlow()?.artifacts ?? []}
+          protocol={focusedProjectCommandFlow()?.protocol ?? null}
+          protocolBusy={managerActionBusy() || focusedProjectCommandFlow.loading}
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
@@ -1004,6 +1263,25 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           onRefreshState={() => void refreshManagerStateNow()}
           onRetryTask={(taskId) => void retryManagerTask(taskId)}
           onRunUpdateAll={() => void runUpdateAll()}
+          onRefreshProjects={() => void refetchManagerProjects()}
+          onSelectProject={(projectId) => focusManagerProject(projectId)}
+          onCreateProject={(input) => void createManagerProject(input)}
+          onArchiveProject={(projectId) => void archiveManagerProject(projectId)}
+          onCreateDecision={(input) => void createProjectDecision(input)}
+          onUpdateDecision={(decisionId, input) => void updateProjectDecision(decisionId, input)}
+          onCreateBlocker={(input) => void createProjectBlocker(input)}
+          onResolveBlocker={(blockerId, input) => void resolveProjectBlocker(blockerId, input)}
+          onScanArtifacts={() => void scanProjectArtifacts()}
+          onUpdateArtifact={(artifactId, input) => void updateProjectArtifact(artifactId, input)}
+          onScanProtocol={() => void scanProjectProtocol()}
+          onUpdateProtocol={(input) => void updateProjectProtocol(input)}
+          onUpdateCharter={(input) => void updateProjectCharter(input)}
+          onPrepareProject={() => void prepareProjectFlow()}
+          onStartProject={(input) => void startProjectFlow(input)}
+          onReviewRound={(roundId, input) => void reviewProjectRound(roundId, input)}
+          onDirectionChange={(input) => void changeProjectDirection(input)}
+          onCompleteProject={(input) => void completeProjectFlow(input)}
+          onApproveProposedAction={(action) => void approveProposedAction(action)}
         />
       </Show>
       <ManagerAssistantLedger
@@ -1189,6 +1467,70 @@ const ManagerAssistantLedger: Component<{
     </Show>
   );
 };
+
+async function waitForManagerStreamClose(
+  streamPromise: Promise<void>,
+  abort: AbortController,
+): Promise<void> {
+  const settled = await Promise.race([
+    streamPromise.then(() => true),
+    new Promise<boolean>((resolve) =>
+      window.setTimeout(() => {
+        resolve(false);
+      }, STREAM_CLOSE_GRACE_MS),
+    ),
+  ]);
+  if (settled) return;
+  abort.abort();
+  await streamPromise.catch(() => undefined);
+}
+
+function payloadString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function payloadBoolean(payload: Record<string, unknown>, key: string): boolean | undefined {
+  const value = payload[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function managerReviewAction(
+  value: string | undefined,
+): ManagerRoundReviewRequest["action"] | undefined {
+  if (
+    value === "accept" ||
+    value === "request_changes" ||
+    value === "user_check_required" ||
+    value === "replan" ||
+    value === "stop"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function managerStartPhase(
+  value: string | undefined,
+): ManagerProjectStartRequest["phase"] | undefined {
+  if (
+    value === "design" ||
+    value === "implementation" ||
+    value === "feedback" ||
+    value === "verification" ||
+    value === "replan"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function managerDirectionRoundAction(
+  value: string | undefined,
+): ManagerDirectionChangeRequest["currentRoundAction"] | undefined {
+  if (value === "keep" || value === "cancel" || value === "supersede") return value;
+  return undefined;
+}
 
 function chooseManagerSession(
   sessions: ClaudeSessionSummary[],

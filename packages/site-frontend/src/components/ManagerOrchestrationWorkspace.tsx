@@ -19,6 +19,7 @@ import type {
   ManagerProjectListResponse,
   ManagerProjectOverviewResponse,
   ManagerProjectStartRequest,
+  ManagerProposedAction,
   ManagerProtocolResponse,
   ManagerProtocolUpdateRequest,
   ManagerRound,
@@ -39,6 +40,7 @@ import {
   onCleanup,
 } from "solid-js";
 import { type Device, api } from "../api.ts";
+import { t } from "../i18n.ts";
 import {
   type ManagerEventConnectionState,
   createManagerEventSubscription,
@@ -839,6 +841,103 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function approveProposedAction(action: ManagerProposedAction) {
+    switch (action.type) {
+      case "wait":
+        await refreshManagerStateNow();
+        return;
+      case "prepare_project":
+        await prepareProjectFlow();
+        return;
+      case "scan_protocol":
+        await scanProjectProtocol();
+        return;
+      case "inspect_task": {
+        const taskId = payloadString(action.payload, "taskId") ?? action.taskId;
+        if (taskId) await inspectManagerTask(taskId);
+        return;
+      }
+      case "retry_task": {
+        const taskId = payloadString(action.payload, "taskId") ?? action.taskId;
+        if (taskId) await retryManagerTask(taskId);
+        return;
+      }
+      case "repair_round": {
+        const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
+        if (roundId) await repairManagerRound(roundId);
+        return;
+      }
+      case "review_round": {
+        const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
+        if (!roundId) return;
+        const summary = payloadString(action.payload, "summary");
+        const nextObjective = payloadString(action.payload, "nextObjective");
+        await reviewProjectRound(roundId, {
+          action: managerReviewAction(payloadString(action.payload, "action")) ?? "accept",
+          ...(summary ? { summary } : {}),
+          ...(nextObjective ? { nextObjective } : {}),
+        });
+        return;
+      }
+      case "start_next_round": {
+        const phase = managerStartPhase(payloadString(action.payload, "phase"));
+        await startProjectFlow({
+          objective:
+            payloadString(action.payload, "objective") ??
+            selectedProject()?.goal ??
+            t("manager.orchestration.flow.default-round-objective"),
+          ...(phase ? { phase } : {}),
+          dryRun: payloadBoolean(action.payload, "dryRun") ?? true,
+        });
+        return;
+      }
+      case "direction_change": {
+        const impact = payloadString(action.payload, "impact");
+        const currentRoundAction = managerDirectionRoundAction(
+          payloadString(action.payload, "currentRoundAction"),
+        );
+        const nextObjective = payloadString(action.payload, "nextObjective");
+        await changeProjectDirection({
+          requestedChange:
+            payloadString(action.payload, "requestedChange") ??
+            t("manager.orchestration.approval.default-direction-change"),
+          ...(impact ? { impact } : {}),
+          ...(currentRoundAction ? { currentRoundAction } : {}),
+          ...(nextObjective ? { nextObjective } : {}),
+        });
+        return;
+      }
+      case "request_user_check": {
+        const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
+        const summary =
+          payloadString(action.payload, "summary") ??
+          t("manager.orchestration.approval.default-user-check");
+        if (roundId) {
+          await reviewProjectRound(roundId, { action: "user_check_required", summary });
+          return;
+        }
+        await createProjectBlocker({
+          title: t("manager.orchestration.approval.default-user-check-title"),
+          detail: summary,
+          severity: "warning",
+          requiredAction: "user",
+          source: "manager",
+        });
+        return;
+      }
+      case "complete_project":
+        await completeProjectFlow({
+          summary:
+            payloadString(action.payload, "summary") ??
+            t("manager.orchestration.approval.default-complete-summary"),
+          acceptedByUser: payloadBoolean(action.payload, "acceptedByUser") ?? false,
+          verificationEvidence:
+            payloadString(action.payload, "verificationEvidence") ?? action.rationale,
+        });
+        return;
+    }
+  }
+
   return (
     <div
       class="manager-workspace"
@@ -915,6 +1014,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onReviewRound={(roundId, input) => void reviewProjectRound(roundId, input)}
           onDirectionChange={(input) => void changeProjectDirection(input)}
           onCompleteProject={(input) => void completeProjectFlow(input)}
+          onApproveProposedAction={(action) => void approveProposedAction(action)}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">
@@ -940,6 +1040,53 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     </div>
   );
 };
+
+function payloadString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function payloadBoolean(payload: Record<string, unknown>, key: string): boolean | undefined {
+  const value = payload[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function managerReviewAction(
+  value: string | undefined,
+): ManagerRoundReviewRequest["action"] | undefined {
+  if (
+    value === "accept" ||
+    value === "request_changes" ||
+    value === "user_check_required" ||
+    value === "replan" ||
+    value === "stop"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function managerStartPhase(
+  value: string | undefined,
+): ManagerProjectStartRequest["phase"] | undefined {
+  if (
+    value === "design" ||
+    value === "implementation" ||
+    value === "feedback" ||
+    value === "verification" ||
+    value === "replan"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function managerDirectionRoundAction(
+  value: string | undefined,
+): ManagerDirectionChangeRequest["currentRoundAction"] | undefined {
+  if (value === "keep" || value === "cancel" || value === "supersede") return value;
+  return undefined;
+}
 
 function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
   const unacknowledged = rounds.filter((round) => !round.acknowledgedAt);

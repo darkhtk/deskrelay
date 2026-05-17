@@ -1153,6 +1153,161 @@ export interface ManagerRoundReportResponse {
   summary: string;
 }
 
+export type ManagerEvidenceType =
+  | "worker-run"
+  | "agent-output"
+  | "artifact"
+  | "protocol"
+  | "decision"
+  | "blocker"
+  | "log"
+  | "user-check";
+
+export type ManagerEvidenceStatus = "valid" | "stale" | "failed" | "missing";
+
+export interface ManagerEvidenceItem {
+  id: string;
+  projectId: string;
+  roundId?: string;
+  agentId?: string;
+  taskId?: string;
+  type: ManagerEvidenceType;
+  label: string;
+  detail: string;
+  ref?: string;
+  excerpt?: string;
+  status: ManagerEvidenceStatus;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type ManagerAgentResultVerdict = "pass" | "caution" | "fail" | "needs_user_check";
+
+export interface ManagerAgentResult {
+  id: string;
+  projectId: string;
+  roundId?: string;
+  agentId?: string;
+  taskId?: string;
+  role: ManagerAgentRole;
+  assignment: string;
+  summary: string;
+  findings: string[];
+  changedFiles: string[];
+  risks: string[];
+  blockers: string[];
+  evidenceIds: string[];
+  nextRequest: string;
+  confidence: "low" | "medium" | "high";
+  verdict: ManagerAgentResultVerdict;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ManagerProtocolTraceResult = "applied" | "skipped" | "violated" | "unclear";
+
+export interface ManagerProtocolTrace {
+  id: string;
+  projectId: string;
+  roundId?: string;
+  ruleId: string;
+  sourceFile: string;
+  appliedByAgentId?: string;
+  evidenceIds: string[];
+  result: ManagerProtocolTraceResult;
+  detail: string;
+}
+
+export type ManagerJudgmentVerdict =
+  | "continue"
+  | "retry"
+  | "direction_change"
+  | "user_check"
+  | "complete"
+  | "blocked"
+  | "wait";
+
+export type ManagerJudgmentPriority = "silent" | "notice" | "approval";
+
+export type ManagerProposedActionType =
+  | "wait"
+  | "prepare_project"
+  | "scan_protocol"
+  | "inspect_task"
+  | "retry_task"
+  | "repair_round"
+  | "review_round"
+  | "start_next_round"
+  | "direction_change"
+  | "request_user_check"
+  | "complete_project";
+
+export type ManagerProposedActionRisk = "low" | "medium" | "high";
+
+export interface ManagerProposedAction {
+  id: string;
+  projectId: string;
+  roundId?: string;
+  agentId?: string;
+  taskId?: string;
+  type: ManagerProposedActionType;
+  risk: ManagerProposedActionRisk;
+  requiresApproval: boolean;
+  title: string;
+  rationale: string;
+  payload: Record<string, unknown>;
+  evidenceIds: string[];
+  agentResultIds: string[];
+  protocolTraceIds: string[];
+}
+
+export interface ManagerJudgmentPacket {
+  id: string;
+  projectId: string;
+  roundId?: string;
+  verdict: ManagerJudgmentVerdict;
+  priority: ManagerJudgmentPriority;
+  confidence: "low" | "medium" | "high";
+  summary: string;
+  reason: string;
+  evidenceIds: string[];
+  agentResultIds: string[];
+  protocolTraceIds: string[];
+  proposedActions: ManagerProposedAction[];
+  createdAt: string;
+  expiresAt?: string;
+}
+
+export interface ManagerEvidenceListResponse {
+  generatedAt: string;
+  projectId: string;
+  evidence: ManagerEvidenceItem[];
+}
+
+export interface ManagerAgentResultListResponse {
+  generatedAt: string;
+  projectId?: string;
+  roundId: string;
+  results: ManagerAgentResult[];
+  evidence: ManagerEvidenceItem[];
+}
+
+export interface ManagerProtocolTraceResponse {
+  generatedAt: string;
+  projectId: string;
+  trace: ManagerProtocolTrace[];
+  evidence: ManagerEvidenceItem[];
+}
+
+export interface ManagerJudgmentListResponse {
+  generatedAt: string;
+  projectId: string;
+  judgments: ManagerJudgmentPacket[];
+  evidence: ManagerEvidenceItem[];
+  agentResults: ManagerAgentResult[];
+  protocolTrace: ManagerProtocolTrace[];
+}
+
 export interface ManagerCommandFlowReadiness {
   ready: boolean;
   stage: ManagerCommandFlowStage;
@@ -1174,6 +1329,10 @@ export interface ManagerCommandFlowResponse {
   rounds: ManagerRound[];
   activeRound?: ManagerRound;
   workerRuns: ManagerWorkerRun[];
+  evidence: ManagerEvidenceItem[];
+  agentResults: ManagerAgentResult[];
+  protocolTrace: ManagerProtocolTrace[];
+  judgments: ManagerJudgmentPacket[];
   readiness: ManagerCommandFlowReadiness;
   nextAction: ManagerProjectOverviewAction;
 }

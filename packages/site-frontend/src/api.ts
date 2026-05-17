@@ -7,6 +7,7 @@ import type {
   ManagerAgentListResponse,
   ManagerAgentMessageRequest,
   ManagerAgentMessageResponse,
+  ManagerAgentResultListResponse,
   ManagerArtifactListResponse,
   ManagerArtifactResponse,
   ManagerArtifactScanRequest,
@@ -35,7 +36,9 @@ import type {
   ManagerDirectionChangeResponse,
   ManagerEvent,
   ManagerEventListResponse,
+  ManagerEvidenceListResponse,
   ManagerInstallStatus,
+  ManagerJudgmentListResponse,
   ManagerLogResponse,
   ManagerNetworkStatus,
   ManagerProcessStatus,
@@ -56,6 +59,7 @@ import type {
   ManagerProjectUpdateRequest,
   ManagerProtocolResponse,
   ManagerProtocolScanRequest,
+  ManagerProtocolTraceResponse,
   ManagerProtocolUpdateRequest,
   ManagerRegistrationDiagnosis,
   ManagerRegistrationFailureAnalysis,
@@ -735,6 +739,16 @@ export const api = {
       "GET",
       `/api/manager/projects/${encodeURIComponent(id)}/command-flow`,
     ),
+  managerProjectEvidence: (id: string) =>
+    request<ManagerEvidenceListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/evidence`,
+    ),
+  managerProjectJudgments: (id: string) =>
+    request<ManagerJudgmentListResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/judgments`,
+    ),
   updateManagerProjectCharter: (id: string, input: ManagerProjectCharterUpdateRequest) =>
     request<ManagerProjectCharterResponse>(
       "PUT",
@@ -842,6 +856,11 @@ export const api = {
       "PATCH",
       `/api/manager/projects/${encodeURIComponent(id)}/protocol`,
       input,
+    ),
+  managerProjectProtocolTrace: (id: string) =>
+    request<ManagerProtocolTraceResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/protocol-trace`,
     ),
   reviewManagerProjectRound: (
     projectId: string,
@@ -991,6 +1010,11 @@ export const api = {
       `/api/manager/rounds/${encodeURIComponent(id)}/worker-runs${
         typeof limit === "number" ? `?limit=${limit}` : ""
       }`,
+    ),
+  managerRoundAgentResults: (id: string) =>
+    request<ManagerAgentResultListResponse>(
+      "GET",
+      `/api/manager/rounds/${encodeURIComponent(id)}/agent-results`,
     ),
   managerRoundHealth: (id: string) =>
     request<ManagerRoundHealthGateResponse>(
