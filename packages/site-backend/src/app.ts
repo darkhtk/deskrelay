@@ -7576,7 +7576,7 @@ async function runDefaultManagerAssistantCli(
   const command =
     assistantOptions?.command ?? process.env.DESKRELAY_MANAGER_ASSISTANT_CLI ?? "claude";
   const args = managerAssistantSessionArgs(
-    managerAssistantStreamArgs(
+    buildManagerAssistantCliArgs(
       command,
       assistantOptions?.args ??
         parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS),
@@ -7643,7 +7643,7 @@ async function runDefaultManagerAssistantCliStream(
     assistantOptions?.args ??
     parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_ASSISTANT_ARGS);
   const args = managerAssistantSessionArgs(
-    managerAssistantStreamArgs(command, baseArgs),
+    buildManagerAssistantCliArgs(command, baseArgs),
     input.managerSessionId,
   );
   const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
@@ -7799,10 +7799,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isDefaultClaudeCommand(command: string): boolean {
-  const normalized = command.trim().replaceAll("\\", "/").toLowerCase();
-  return (
-    normalized === "claude" || normalized.endsWith("/claude") || normalized.endsWith("/claude.cmd")
-  );
+  const normalized = command
+    .trim()
+    .replaceAll("\\", "/")
+    .toLowerCase()
+    .replace(/^"+|"+$/g, "");
+  const basename = normalized.split("/").pop() ?? normalized;
+  return basename === "claude" || basename === "claude.cmd" || basename === "claude.exe";
 }
 
 function managerAssistantSessionArgs(args: string[], sessionId: string | undefined): string[] {
@@ -7828,7 +7831,7 @@ function cmdQuote(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-function managerAssistantStreamArgs(command: string, args: string[]): string[] {
+export function buildManagerAssistantCliArgs(command: string, args: string[]): string[] {
   const normalized: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -7840,9 +7843,19 @@ function managerAssistantStreamArgs(command: string, args: string[]): string[] {
     if (arg?.startsWith("--output-format=")) continue;
     normalized.push(arg);
   }
-  if (!normalized.includes("--verbose")) normalized.push("--verbose");
-  normalized.push("--output-format", "stream-json");
-  return managerAssistantPermissionArgs(managerAssistantWindowsToolSafetyArgs(command, normalized));
+  const printable = managerAssistantPrintArgs(command, normalized);
+  if (!printable.includes("--verbose")) printable.push("--verbose");
+  printable.push("--output-format", "stream-json");
+  return managerAssistantPermissionArgs(managerAssistantWindowsToolSafetyArgs(command, printable));
+}
+
+function managerAssistantPrintArgs(command: string, args: string[]): string[] {
+  if (!isDefaultClaudeCommand(command) || managerAssistantHasPrintArg(args)) return args;
+  return ["-p", ...args];
+}
+
+function managerAssistantHasPrintArg(args: string[]): boolean {
+  return args.some((arg) => arg === "-p" || arg === "--print" || arg.startsWith("--print="));
 }
 
 function managerAssistantWindowsToolSafetyArgs(command: string, args: string[]): string[] {
@@ -8566,7 +8579,7 @@ function buildManagerWorkerProfiles(options: SiteAppOptions): ManagerWorkerProfi
         "Runs a separate Claude CLI process for implementation, verification, and repo work.",
       command: defaultClaudeWorkerCommand,
       args: managerAssistantStructuredInputArgs(
-        managerAssistantStreamArgs(
+        buildManagerAssistantCliArgs(
           defaultClaudeWorkerCommand,
           parseManagerAssistantArgs(process.env.DESKRELAY_MANAGER_WORKER_CLAUDE_ARGS),
         ),

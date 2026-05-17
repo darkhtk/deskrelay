@@ -3,7 +3,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Hono } from "hono";
-import { type SiteAppOptions, buildManagerAssistantPrompt, createSiteApp } from "../src/app.ts";
+import {
+  type SiteAppOptions,
+  buildManagerAssistantCliArgs,
+  buildManagerAssistantPrompt,
+  createSiteApp,
+} from "../src/app.ts";
 import { InMemoryDeviceRegistry } from "../src/device-registry.ts";
 import type {
   DeviceUpdateEntryInput,
@@ -1922,6 +1927,23 @@ describe("manager task API", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test("manager assistant defaults Claude commands to print mode", () => {
+    const args = buildManagerAssistantCliArgs("C:\\Users\\darkh\\.local\\bin\\claude.exe", [
+      "--output-format",
+      "json",
+    ]);
+
+    expect(args).toContain("-p");
+    expect(args).toContain("--verbose");
+    expect(args).toContain("--output-format");
+    expect(args).toContain("stream-json");
+    expect(args).not.toContain("json");
+
+    const explicitPrint = buildManagerAssistantCliArgs("claude", ["--print"]);
+    const printArgs = explicitPrint.filter((arg) => arg === "-p" || arg === "--print");
+    expect(printArgs).toEqual(["--print"]);
   });
 
   test("manager assistant preserves Korean prompt when invoking the CLI", async () => {
