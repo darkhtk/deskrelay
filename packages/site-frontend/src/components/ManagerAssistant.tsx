@@ -1357,10 +1357,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         <Show when={visibleStatus()}>
           {(guidance) => (
             <output class={`composer-status composer-status-${guidance().tone}`} aria-live="polite">
-              <span class="composer-status-main">{guidance().main}</span>
-              <Show when={guidance().detail}>
-                {(detail) => <span class="composer-status-detail">{detail()}</span>}
-              </Show>
+              <span class="composer-status-main">{managerComposerActionLabel(guidance())}</span>
             </output>
           )}
         </Show>
@@ -1717,6 +1714,19 @@ function managerStatusFromEnvelope(
     if (line) return { tone: "thinking", main: "Claude CLI 메시지", detail: line.slice(0, 160) };
   }
   return null;
+}
+
+function managerComposerActionLabel(status: ManagerVisibleStatus): string {
+  const text = status.main.trim();
+  if (/오류|error|failed|실패/i.test(text)) return "오류";
+  if (/승인|approval|permission/i.test(text)) return "승인 대기";
+  if (/요청|접수|queued/i.test(text)) return "요청 접수";
+  if (/대기|wait|idle/i.test(text)) return "대기 중";
+  if (/수신|응답|response/i.test(text)) return "응답 수신 중";
+  if (/실행|진행|running|thinking/i.test(text)) return "진행 중";
+  if (status.tone === "warning") return "확인 필요";
+  if (status.tone === "thinking") return "진행 중";
+  return "대기 중";
 }
 
 function managerStatusFromReport(
