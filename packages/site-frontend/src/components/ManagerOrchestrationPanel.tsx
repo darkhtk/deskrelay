@@ -3,6 +3,7 @@ import type {
   ManagerAgentResult,
   ManagerArtifact,
   ManagerArtifactUpdateRequest,
+  ManagerAssistantStatusReport,
   ManagerBlocker,
   ManagerBlockerCreateRequest,
   ManagerBlockerResolveRequest,
@@ -87,6 +88,7 @@ interface ManagerOrchestrationPanelProps {
   report?: ManagerRoundReportResponse | null | undefined;
   health?: ManagerRoundHealthGate | null | undefined;
   workerRuns?: ManagerWorkerRun[] | undefined;
+  assistantStatusReports?: ManagerAssistantStatusReport[] | undefined;
   hygiene?: ManagerSessionHygieneReport | null | undefined;
   projectHygiene?: ManagerProjectHygieneReport | null | undefined;
   hygieneLoading?: boolean | undefined;
@@ -564,6 +566,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                   activeTab() === "flow" || activeTab() === "overview",
                 "manager-orchestration-tab-panel-single":
                   activeTab() !== "flow" && activeTab() !== "overview",
+                "manager-orchestration-tab-panel-agents": activeTab() === "agents",
               }}
               role="tabpanel"
             >
@@ -600,6 +603,24 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                     hiddenAgentCount={hiddenAgentCount()}
                   />
                 </OrchestrationSection>
+                <Show
+                  when={
+                    props.assistantStatusReports?.length ||
+                    displayProject() ||
+                    effectiveOverview() ||
+                    props.commandFlow
+                  }
+                >
+                  <OrchestrationSection title="실행 기록" class="manager-section-ledger">
+                    <ManagerAssistantLedgerView
+                      project={displayProject()}
+                      overview={effectiveOverview()}
+                      commandFlow={props.commandFlow}
+                      reports={props.assistantStatusReports ?? []}
+                      workerRuns={props.workerRuns ?? []}
+                    />
+                  </OrchestrationSection>
+                </Show>
                 <Show when={adminDetailOpen()}>
                   <OrchestrationSection
                     title={t("manager.orchestration.section.current-state")}
@@ -2932,6 +2953,103 @@ const EvidenceLedgerView: Component<{ evidence: ManagerEvidenceItem[] }> = (prop
           </p>
         </Show>
       </div>
+    </Show>
+  );
+};
+
+const ManagerAssistantLedgerView: Component<{
+  project: ManagerProject | null | undefined;
+  overview: ManagerProjectOverviewResponse | null | undefined;
+  commandFlow: ManagerCommandFlowResponse | null | undefined;
+  reports: ManagerAssistantStatusReport[];
+  workerRuns: ManagerWorkerRun[];
+}> = (props) => {
+  const latestReport = createMemo(() => props.reports[0]);
+  const recentReports = createMemo(() => props.reports.slice(0, 4));
+  const projectId = createMemo(
+    () => props.project?.id ?? projectIdFromAssistantReport(latestReport()) ?? null,
+  );
+  const roundId = createMemo(
+    () =>
+      props.overview?.activeRound?.id ??
+      props.project?.activeRoundId ??
+      roundIdFromAssistantReport(latestReport()) ??
+      null,
+  );
+  const completedRuns = createMemo(
+    () =>
+      props.workerRuns.filter((run) => ["succeeded", "completed"].includes(String(run.status)))
+        .length,
+  );
+  const failedRuns = createMemo(
+    () =>
+      props.workerRuns.filter((run) =>
+        ["failed", "blocked", "cancelled", "missing"].includes(String(run.status)),
+      ).length,
+  );
+  const shouldRender = createMemo(() =>
+    Boolean(props.project || latestReport() || props.overview || props.commandFlow),
+  );
+
+  return (
+    <Show when={shouldRender()}>
+      <section class="manager-assistant-ledger" aria-label="관리 Assistant 실행 기록">
+        <div class="manager-assistant-ledger-head">
+          <strong>실행 기록</strong>
+          <Show when={latestReport()}>
+            {(report) => <span>{formatAssistantLedgerTime(report().createdAt)}</span>}
+          </Show>
+        </div>
+        <div class="manager-assistant-result-card">
+          <div class="manager-assistant-result-title">
+            <strong>{props.project?.name ?? latestReport()?.message ?? "최근 실행 결과"}</strong>
+            <span>{props.commandFlow?.nextAction.label ?? props.overview?.nextAction.label}</span>
+          </div>
+          <dl class="manager-assistant-result-grid">
+            <Show when={projectId()}>
+              {(id) => (
+                <>
+                  <dt>프로젝트</dt>
+                  <dd>{id()}</dd>
+                </>
+              )}
+            </Show>
+            <Show when={roundId()}>
+              {(id) => (
+                <>
+                  <dt>라운드</dt>
+                  <dd>{id()}</dd>
+                </>
+              )}
+            </Show>
+            <dt>단계</dt>
+            <dd>{props.project?.flowStage ?? props.commandFlow?.readiness.stage ?? "-"}</dd>
+            <dt>준비</dt>
+            <dd>{props.commandFlow?.readiness.ready ? "ready" : "check"}</dd>
+            <dt>작업자</dt>
+            <dd>
+              {props.workerRuns.length > 0
+                ? `${completedRuns()}/${props.workerRuns.length} 완료${
+                    failedRuns() ? `, 실패 ${failedRuns()}` : ""
+                  }`
+                : "-"}
+            </dd>
+          </dl>
+          <Show when={latestReport()?.detail}>{(detail) => <p>{detail()}</p>}</Show>
+        </div>
+        <Show when={recentReports().length > 0}>
+          <ol class="manager-assistant-report-list">
+            <For each={recentReports()}>
+              {(report) => (
+                <li class={`manager-assistant-report manager-assistant-report-${report.level}`}>
+                  <span>{report.phase}</span>
+                  <strong>{report.message}</strong>
+                </li>
+              )}
+            </For>
+          </ol>
+        </Show>
+      </section>
     </Show>
   );
 };
@@ -5545,6 +5663,36 @@ function formatTime(value: string | undefined): string {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(time));
+}
+
+function formatAssistantLedgerTime(value: string | undefined): string {
+  return formatTime(value);
+}
+
+function projectIdFromAssistantReport(
+  report: ManagerAssistantStatusReport | null | undefined,
+): string | null {
+  return firstAssistantReportMatch([report?.detail, report?.message], /\bproject_[A-Za-z0-9_-]+\b/);
+}
+
+function roundIdFromAssistantReport(
+  report: ManagerAssistantStatusReport | null | undefined,
+): string | null {
+  return firstAssistantReportMatch(
+    [report?.detail, report?.message, report?.round],
+    /\bround_[A-Za-z0-9_-]+\b/,
+  );
+}
+
+function firstAssistantReportMatch(
+  values: Array<string | undefined>,
+  pattern: RegExp,
+): string | null {
+  for (const value of values) {
+    const match = value?.match(pattern);
+    if (match?.[0]) return match[0];
+  }
+  return null;
 }
 
 function clip(value: string | undefined, max: number): string {

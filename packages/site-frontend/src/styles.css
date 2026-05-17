@@ -5735,7 +5735,10 @@ dialog.approval-modal-root,
   display: flex;
   flex-direction: column;
   grid-area: board;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .manager-workspace-assistant {
   background: var(--surface);
@@ -5796,14 +5799,16 @@ dialog.approval-modal-root,
 }
 .manager-orchestration-panel-standalone {
   border-bottom: 0;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   height: auto;
+  min-height: 100%;
 }
 .manager-orchestration-panel-expanded {
   height: var(--manager-orchestration-panel-height, 280px);
 }
 .manager-orchestration-panel-standalone.manager-orchestration-panel-expanded {
   height: auto;
+  min-height: 100%;
 }
 .manager-orchestration-panel-head {
   align-items: center;
@@ -5943,7 +5948,20 @@ dialog.approval-modal-root,
   grid-template-columns: minmax(0, 66fr) minmax(360px, 34fr);
 }
 .manager-orchestration-panel-standalone .manager-orchestration-body {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
   padding: 4px 16px 16px;
+}
+.manager-orchestration-panel-standalone .manager-orchestration-workboard {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
+}
+.manager-orchestration-panel-standalone .manager-orchestration-tab-panel {
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
 }
 .manager-project-header {
   background: var(--surface-card);
@@ -6763,8 +6781,18 @@ dialog.approval-modal-root,
 .manager-orchestration-tab-panel-single {
   grid-template-columns: minmax(0, 1fr);
 }
+.manager-orchestration-tab-panel-agents {
+  align-content: stretch;
+}
 .manager-section-overview {
   grid-column: 1 / -1;
+}
+.manager-section-agents,
+.manager-section-ledger {
+  grid-column: 1 / -1;
+}
+.manager-section-agents {
+  align-content: start;
 }
 .manager-section-timeline,
 .manager-section-artifacts,
@@ -7311,6 +7339,11 @@ body.manager-orchestration-resizing {
   display: grid;
   gap: 1px;
 }
+.manager-section-agents .manager-agent-table {
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
 .manager-agent-lanes {
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
@@ -7321,6 +7354,9 @@ body.manager-orchestration-resizing {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   margin-bottom: 12px;
   min-width: 0;
+}
+.manager-section-agents .manager-agent-role-briefs {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
 }
 .manager-agent-brief {
   background: var(--surface-subtle);
@@ -7409,6 +7445,11 @@ body.manager-orchestration-resizing {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.manager-section-agents .manager-agent-brief dd {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 .manager-agent-brief button {
   background: transparent;
@@ -7568,6 +7609,12 @@ body.manager-orchestration-resizing {
     minmax(72px, 0.45fr);
   min-height: 42px;
   padding-left: 8px;
+}
+.manager-section-agents .manager-agent-row {
+  grid-template-columns:
+    minmax(160px, 0.8fr) minmax(110px, 0.45fr) minmax(180px, 0.8fr) minmax(360px, 2fr)
+    minmax(92px, 0.35fr);
+  min-width: 920px;
 }
 .manager-agent-row-head {
   border-top: 0;
@@ -8389,6 +8436,10 @@ body.manager-orchestration-resizing {
   flex: 0 0 auto;
   gap: 8px;
   padding: 10px 14px;
+}
+.manager-section-ledger .manager-assistant-ledger {
+  border-bottom: 0;
+  padding: 0;
 }
 .manager-assistant-ledger-head,
 .manager-assistant-result-title,

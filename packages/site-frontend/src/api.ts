@@ -516,7 +516,7 @@ async function request<R = unknown>(method: string, path: string, body?: unknown
   const init: RequestInit = { method, headers };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
-    headers["content-type"] = "application/json";
+    headers["content-type"] = "application/json; charset=utf-8";
   }
   const res = await fetch(`${resolveBaseUrl()}${path}`, init);
   const parsed = await readResponse(res);
@@ -554,7 +554,7 @@ async function requestEventStream<E>(
 ): Promise<void> {
   const method = options.method ?? "POST";
   const headers: Record<string, string> = {};
-  if (method !== "GET") headers["content-type"] = "application/json";
+  if (method !== "GET") headers["content-type"] = "application/json; charset=utf-8";
   const token = getToken();
   if (token) headers.authorization = `Bearer ${token}`;
   const res = await fetch(`${resolveBaseUrl()}${path}`, {

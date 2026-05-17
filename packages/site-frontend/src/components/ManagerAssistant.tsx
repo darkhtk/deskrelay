@@ -1284,13 +1284,6 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           onApproveProposedAction={(action) => void approveProposedAction(action)}
         />
       </Show>
-      <ManagerAssistantLedger
-        project={focusedProject()}
-        overview={focusedProjectOverview()}
-        commandFlow={focusedProjectCommandFlow()}
-        reports={statusReports()?.reports ?? assistantHistory()?.reports ?? []}
-        workerRuns={visibleWorkerRuns()?.runs ?? focusedProjectCommandFlow()?.workerRuns ?? []}
-      />
       <div
         ref={transcriptScroller}
         class="transcript manager-assistant-transcript"
@@ -1369,7 +1362,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   );
 };
 
-const ManagerAssistantLedger: Component<{
+export const ManagerAssistantLedger: Component<{
   project: ManagerProject | null;
   overview: ManagerProjectOverviewResponse | null | undefined;
   commandFlow: ManagerCommandFlowResponse | null | undefined;

@@ -3,6 +3,7 @@ import type {
   ManagerArtifactListResponse,
   ManagerArtifactUpdateRequest,
   ManagerAssistantChatContext,
+  ManagerAssistantStatusReportResponse,
   ManagerBlockerCreateRequest,
   ManagerBlockerListResponse,
   ManagerBlockerResolveRequest,
@@ -173,6 +174,17 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     async (): Promise<ManagerStateViewResponse | null> => {
       try {
         return await api.managerState();
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const [assistantStatus] = createResource(
+    () => refreshSeq(),
+    async (): Promise<ManagerAssistantStatusReportResponse | null> => {
+      try {
+        return await api.managerAssistantStatus(8);
       } catch {
         return null;
       }
@@ -970,6 +982,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           report={visibleActiveRoundReport()}
           health={visibleRoundHealth()?.gate}
           workerRuns={visibleWorkerRuns()?.runs ?? []}
+          assistantStatusReports={assistantStatus()?.reports ?? []}
           hygiene={visibleHygiene()}
           projectHygiene={projectHygiene()}
           state={managerState()}
