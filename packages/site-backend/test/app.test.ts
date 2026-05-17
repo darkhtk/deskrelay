@@ -3560,7 +3560,11 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       const acceptReviewBody = (await acceptReview.json()) as {
         commandFlow?: {
           judgments?: Array<{
-            proposedActions?: Array<{ type?: string; requiresApproval?: boolean }>;
+            proposedActions?: Array<{
+              type?: string;
+              requiresApproval?: boolean;
+              payload?: { dryRun?: boolean };
+            }>;
           }>;
         };
       };
@@ -3573,6 +3577,13 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
         acceptReviewBody.commandFlow?.judgments?.some((judgment) =>
           judgment.proposedActions?.some(
             (action) => action.type === "start_next_round" && action.requiresApproval === true,
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        acceptReviewBody.commandFlow?.judgments?.some((judgment) =>
+          judgment.proposedActions?.some(
+            (action) => action.type === "start_next_round" && action.payload?.dryRun === false,
           ),
         ),
       ).toBe(true);

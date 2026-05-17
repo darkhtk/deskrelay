@@ -166,6 +166,20 @@ interface ArtifactEntry {
   note?: string | undefined;
 }
 
+type ManagerCurrentJudgmentBrief = {
+  tone: "ready" | "thinking" | "warning";
+  headline: string;
+  project: string;
+  round: string;
+  nextAction: string;
+  approval: string;
+  report: string;
+  recommendation: string;
+  reportIsStale: boolean;
+  approvalCount: number;
+  updatedAt?: string;
+};
+
 const COMMAND_FLOW_STAGES = [
   "draft",
   "protocol_ready",
@@ -272,6 +286,15 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   );
   const effectiveNextAction = createMemo(
     () => props.commandFlow?.nextAction ?? effectiveOverview()?.nextAction ?? null,
+  );
+  const latestStatusReport = createMemo(() => props.assistantStatusReports?.[0] ?? null);
+  const currentJudgmentBrief = createMemo(() =>
+    buildManagerCurrentJudgmentBrief({
+      project: displayProject(),
+      overview: effectiveOverview(),
+      commandFlow: props.commandFlow,
+      latestReport: latestStatusReport(),
+    }),
   );
   const projectCurrentSignal = createMemo(() =>
     selectedProject() ? (effectiveOverview()?.currentSignal ?? null) : null,
@@ -491,6 +514,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               onOpenFolder={props.onOpenProjectFolder}
               advanced={adminDetailOpen()}
             />
+            <ManagerCurrentJudgmentCard brief={currentJudgmentBrief()} />
             <div class="manager-workboard-mode">
               <div>
                 <strong>
@@ -906,6 +930,50 @@ const OrchestrationSection: Component<{ title: string; class?: string; children:
   </section>
 );
 
+const ManagerCurrentJudgmentCard: Component<{
+  brief: ManagerCurrentJudgmentBrief | null;
+}> = (props) => (
+  <Show when={props.brief}>
+    {(brief) => (
+      <section
+        class={`manager-current-judgment manager-assistant-current manager-assistant-current-${brief().tone}`}
+        aria-label={t("manager.orchestration.current-judgment.aria")}
+      >
+        <header class="manager-assistant-current-head">
+          <div>
+            <span>{t("manager.orchestration.current-judgment.title")}</span>
+            <strong>{brief().headline}</strong>
+          </div>
+          <Show when={brief().updatedAt}>{(updatedAt) => <time>{updatedAt()}</time>}</Show>
+        </header>
+        <dl class="manager-assistant-current-grid">
+          <div>
+            <dt>{t("manager.orchestration.current-judgment.project")}</dt>
+            <dd>{brief().project}</dd>
+          </div>
+          <div>
+            <dt>{t("manager.orchestration.current-judgment.round")}</dt>
+            <dd>{brief().round}</dd>
+          </div>
+          <div>
+            <dt>{t("manager.orchestration.current-judgment.next-action")}</dt>
+            <dd>{brief().nextAction}</dd>
+          </div>
+          <div class={brief().approvalCount > 0 ? "needs-approval" : ""}>
+            <dt>{t("manager.orchestration.current-judgment.approval")}</dt>
+            <dd>{brief().approval}</dd>
+          </div>
+          <div class={brief().reportIsStale ? "is-stale" : ""}>
+            <dt>{t("manager.orchestration.current-judgment.report")}</dt>
+            <dd>{brief().report}</dd>
+          </div>
+        </dl>
+        <p>{brief().recommendation}</p>
+      </section>
+    )}
+  </Show>
+);
+
 const ManagerApprovalInbox: Component<{
   judgments: ManagerJudgmentPacket[];
   busy?: boolean | undefined;
@@ -988,7 +1056,7 @@ const ManagerApprovalInbox: Component<{
                           title={action.rationale}
                           onClick={() => props.onApprove?.(action)}
                         >
-                          {managerProposedActionTypeLabel(action.type)}
+                          {managerProposedActionLabel(action)}
                         </button>
                       )}
                     </For>
@@ -3552,6 +3620,153 @@ function managerProposedActionTypeLabel(type: ManagerProposedAction["type"]): st
   return t(`manager.orchestration.proposed-action.${type}`);
 }
 
+function managerProposedActionLabel(action: ManagerProposedAction): string {
+  if (action.type === "start_next_round") {
+    return managerProposedActionPayloadBoolean(action.payload, "dryRun")
+      ? t("manager.orchestration.proposed-action.start_next_round.dry-run")
+      : t("manager.orchestration.proposed-action.start_next_round.live");
+  }
+  return managerProposedActionTypeLabel(action.type);
+}
+
+function managerProposedActionPayloadBoolean(
+  payload: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = payload[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function buildManagerCurrentJudgmentBrief(input: {
+  project: ManagerProject | null;
+  overview: ManagerProjectOverviewResponse | null | undefined;
+  commandFlow: ManagerCommandFlowResponse | null | undefined;
+  latestReport: ManagerAssistantStatusReport | null | undefined;
+}): ManagerCurrentJudgmentBrief | null {
+  const project = input.commandFlow?.project ?? input.overview?.project ?? input.project ?? null;
+  const activeRound = input.commandFlow?.activeRound ?? input.overview?.activeRound;
+  const nextAction = input.commandFlow?.nextAction ?? input.overview?.nextAction ?? null;
+  const approvalJudgments =
+    input.commandFlow?.judgments.filter((judgment) => judgment.priority === "approval") ?? [];
+  const approvalActions = approvalJudgments.flatMap((judgment) =>
+    judgment.proposedActions.filter((action) => action.requiresApproval),
+  );
+  const approvalCount = approvalActions.length || approvalJudgments.length;
+  const latestReport = input.latestReport;
+  if (!project && !activeRound && !nextAction && !latestReport && approvalCount === 0) return null;
+
+  const currentProjectId = project?.id ?? null;
+  const currentRoundId = activeRound?.id ?? project?.activeRoundId ?? null;
+  const reportProjectId = projectIdFromStatusReport(latestReport);
+  const reportRoundId = roundIdFromStatusReport(latestReport);
+  const reportIsStale = Boolean(
+    latestReport &&
+      ((currentProjectId && reportProjectId && reportProjectId !== currentProjectId) ||
+        (currentRoundId && reportRoundId && reportRoundId !== currentRoundId)),
+  );
+
+  const flowStage = project?.flowStage
+    ? managerProjectFlowStageLabel(project.flowStage)
+    : statusLabel(project?.status);
+  const nextActionText = nextAction
+    ? managerProjectOverviewActionLabel(nextAction)
+    : t("manager.orchestration.current-judgment.no-next-action");
+  const projectText = project
+    ? `${project.name} · ${flowStage}`
+    : t("manager.orchestration.current-judgment.no-project");
+  const roundText = activeRound
+    ? `${activeRound.title} · ${statusLabel(activeRound.status)} · ${shortManagerId(activeRound.id)}`
+    : currentRoundId
+      ? t("manager.orchestration.current-judgment.active-round-id", {
+          id: shortManagerId(currentRoundId),
+        })
+      : t("manager.orchestration.current-judgment.no-round");
+  const reportText = latestReport
+    ? `${t(
+        reportIsStale
+          ? "manager.orchestration.current-judgment.stale-report"
+          : "manager.orchestration.current-judgment.latest-report",
+      )}: ${latestReport.message}`
+    : t("manager.orchestration.current-judgment.no-report");
+  const approvalText =
+    approvalCount > 0
+      ? t("manager.orchestration.current-judgment.pending-approval", { count: approvalCount })
+      : input.commandFlow?.judgments.length
+        ? t("manager.orchestration.current-judgment.no-approval")
+        : t("manager.orchestration.current-judgment.no-judgment");
+  const primaryApproval = approvalActions[0];
+  const recommendation = primaryApproval
+    ? t("manager.orchestration.current-judgment.recommend.approve", {
+        action: managerProposedActionLabel(primaryApproval),
+      })
+    : reportIsStale && currentRoundId
+      ? t("manager.orchestration.current-judgment.recommend.refresh-current-round")
+      : nextAction
+        ? t("manager.orchestration.current-judgment.recommend.next-action", {
+            action: nextActionText,
+          })
+        : t("manager.orchestration.current-judgment.recommend.ask-manager");
+  const headline =
+    approvalCount > 0
+      ? t("manager.orchestration.current-judgment.headline.approval")
+      : reportIsStale
+        ? t("manager.orchestration.current-judgment.headline.stale")
+        : nextAction?.kind === "wait"
+          ? t("manager.orchestration.current-judgment.headline.wait")
+          : t("manager.orchestration.current-judgment.headline.ready");
+  const updatedAt = formatAssistantLedgerTime(
+    input.commandFlow?.generatedAt ?? input.overview?.generatedAt ?? latestReport?.createdAt,
+  );
+
+  return {
+    tone:
+      approvalCount > 0 || reportIsStale
+        ? "warning"
+        : nextAction?.kind === "wait"
+          ? "thinking"
+          : "ready",
+    headline,
+    project: projectText,
+    round: roundText,
+    nextAction: nextActionText,
+    approval: approvalText,
+    report: reportText,
+    recommendation,
+    reportIsStale,
+    approvalCount,
+    ...(updatedAt ? { updatedAt } : {}),
+  };
+}
+
+function projectIdFromStatusReport(
+  report: ManagerAssistantStatusReport | null | undefined,
+): string | null {
+  return firstStatusReportMatch([report?.detail, report?.message], /\bproject_[A-Za-z0-9_-]+\b/);
+}
+
+function roundIdFromStatusReport(
+  report: ManagerAssistantStatusReport | null | undefined,
+): string | null {
+  return firstStatusReportMatch(
+    [report?.detail, report?.message, report?.round],
+    /\bround_[A-Za-z0-9_-]+\b/,
+  );
+}
+
+function firstStatusReportMatch(values: Array<string | undefined>, pattern: RegExp): string | null {
+  for (const value of values) {
+    const match = value?.match(pattern);
+    if (match?.[0]) return match[0];
+  }
+  return null;
+}
+
+function shortManagerId(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 12) return trimmed;
+  return trimmed.slice(0, 8);
+}
+
 function managerStartButtonLabel(dryRun: boolean): string {
   return dryRun
     ? t("manager.orchestration.action.start-dry-run")
@@ -3562,10 +3777,7 @@ function managerRoundReviewActionButtonLabel(action: ManagerRoundReviewRequest["
   return t(`manager.orchestration.review-action.${action}`);
 }
 
-function confirmManagerAction(
-  key: string,
-  params: Record<string, string | number> = {},
-): boolean {
+function confirmManagerAction(key: string, params: Record<string, string | number> = {}): boolean {
   if (typeof window === "undefined") return true;
   return window.confirm(t(key, params));
 }

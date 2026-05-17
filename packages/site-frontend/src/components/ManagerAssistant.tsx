@@ -114,20 +114,6 @@ type ManagerVisibleStatus = {
   detail?: string;
 };
 
-type ManagerAssistantCurrentBrief = {
-  tone: "ready" | "thinking" | "warning";
-  headline: string;
-  project: string;
-  round: string;
-  nextAction: string;
-  approval: string;
-  report: string;
-  recommendation: string;
-  reportIsStale: boolean;
-  approvalCount: number;
-  updatedAt?: string;
-};
-
 interface ManagerAssistantHistory {
   events: ClaudeStreamEvent[];
   reports: ManagerAssistantStatusReport[];
@@ -461,14 +447,6 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       detail: "Orchestration 또는 직접 메시지 입력 가능",
     };
   });
-  const currentBrief = createMemo(() =>
-    buildManagerAssistantCurrentBrief({
-      project: focusedProject(),
-      overview: focusedProjectOverview(),
-      commandFlow: focusedProjectCommandFlow(),
-      latestReport: statusReports()?.latest,
-    }),
-  );
   const orchestrationStatus = createMemo(() =>
     orchestrationPanelEnabled()
       ? summarizeOrchestration(
@@ -1215,7 +1193,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             focusedProject()?.goal ??
             t("manager.orchestration.flow.default-round-objective"),
           ...(phase ? { phase } : {}),
-          dryRun: payloadBoolean(action.payload, "dryRun") ?? true,
+          dryRun: payloadBoolean(action.payload, "dryRun") ?? false,
         });
         return;
       }
@@ -1332,7 +1310,6 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           onApproveProposedAction={(action) => void approveProposedAction(action)}
         />
       </Show>
-      <ManagerAssistantCurrentBriefCard brief={currentBrief()} />
       <div
         ref={transcriptScroller}
         class="transcript manager-assistant-transcript"
@@ -1410,50 +1387,6 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     </div>
   );
 };
-
-const ManagerAssistantCurrentBriefCard: Component<{
-  brief: ManagerAssistantCurrentBrief | null;
-}> = (props) => (
-  <Show when={props.brief}>
-    {(brief) => (
-      <section
-        class={`manager-assistant-current manager-assistant-current-${brief().tone}`}
-        aria-label="관리자 대화 현재 판단"
-      >
-        <header class="manager-assistant-current-head">
-          <div>
-            <span>현재 판단</span>
-            <strong>{brief().headline}</strong>
-          </div>
-          <Show when={brief().updatedAt}>{(updatedAt) => <time>{updatedAt()}</time>}</Show>
-        </header>
-        <dl class="manager-assistant-current-grid">
-          <div>
-            <dt>프로젝트</dt>
-            <dd>{brief().project}</dd>
-          </div>
-          <div>
-            <dt>라운드</dt>
-            <dd>{brief().round}</dd>
-          </div>
-          <div>
-            <dt>다음 행동</dt>
-            <dd>{brief().nextAction}</dd>
-          </div>
-          <div class={brief().approvalCount > 0 ? "needs-approval" : ""}>
-            <dt>승인</dt>
-            <dd>{brief().approval}</dd>
-          </div>
-          <div class={brief().reportIsStale ? "is-stale" : ""}>
-            <dt>상태 보고</dt>
-            <dd>{brief().report}</dd>
-          </div>
-        </dl>
-        <p>{brief().recommendation}</p>
-      </section>
-    )}
-  </Show>
-);
 
 export const ManagerAssistantLedger: Component<{
   project: ManagerProject | null;
@@ -1553,208 +1486,6 @@ export const ManagerAssistantLedger: Component<{
     </Show>
   );
 };
-
-function buildManagerAssistantCurrentBrief(input: {
-  project: ManagerProject | null;
-  overview: ManagerProjectOverviewResponse | null | undefined;
-  commandFlow: ManagerCommandFlowResponse | null | undefined;
-  latestReport: ManagerAssistantStatusReport | null | undefined;
-}): ManagerAssistantCurrentBrief | null {
-  const project = input.commandFlow?.project ?? input.overview?.project ?? input.project ?? null;
-  const activeRound = input.commandFlow?.activeRound ?? input.overview?.activeRound;
-  const nextAction = input.commandFlow?.nextAction ?? input.overview?.nextAction ?? null;
-  const approvalJudgments =
-    input.commandFlow?.judgments.filter((judgment) => judgment.priority === "approval") ?? [];
-  const approvalActions = approvalJudgments.flatMap((judgment) =>
-    judgment.proposedActions.filter((action) => action.requiresApproval),
-  );
-  const approvalCount = approvalActions.length || approvalJudgments.length;
-  const latestReport = input.latestReport;
-  if (!project && !activeRound && !nextAction && !latestReport) return null;
-
-  const currentProjectId = project?.id ?? null;
-  const currentRoundId = activeRound?.id ?? project?.activeRoundId ?? null;
-  const reportProjectId = projectIdFromStatusReport(latestReport);
-  const reportRoundId = roundIdFromStatusReport(latestReport);
-  const reportIsStale = Boolean(
-    latestReport &&
-      ((currentProjectId && reportProjectId && reportProjectId !== currentProjectId) ||
-        (currentRoundId && reportRoundId && reportRoundId !== currentRoundId)),
-  );
-  const nextActionText = nextAction
-    ? managerAssistantNextActionLabel(nextAction)
-    : "확인할 다음 행동 없음";
-  const projectText = project
-    ? `${project.name} · ${managerAssistantFlowStageLabel(project.flowStage ?? project.status)}`
-    : "선택된 프로젝트 없음";
-  const roundText = activeRound
-    ? `${activeRound.title} · ${managerAssistantStatusLabel(activeRound.status)} · ${shortManagerId(
-        activeRound.id,
-      )}`
-    : currentRoundId
-      ? `활성 라운드 ${shortManagerId(currentRoundId)}`
-      : "활성 라운드 없음";
-  const reportText = latestReport
-    ? `${reportIsStale ? "이전 보고" : "최신 보고"}: ${latestReport.message}`
-    : "최근 상태 보고 없음";
-  const approvalText =
-    approvalCount > 0
-      ? `${approvalCount}건 대기`
-      : input.commandFlow?.judgments.length
-        ? "승인 필요 없음"
-        : "판정 없음";
-  const primaryApproval = approvalActions[0];
-  const recommendation = primaryApproval
-    ? `승인 게이트에서 "${managerAssistantProposedActionLabel(primaryApproval)}"을 확인하세요.`
-    : reportIsStale && currentRoundId
-      ? "최근 보고가 이전 라운드 기준입니다. 관리자에게 현재 라운드를 다시 관찰하고 요약하게 하세요."
-      : nextAction
-        ? `관리자의 다음 행동은 "${nextActionText}"입니다.`
-        : "관리자에게 질문하거나 새 지시를 보낼 수 있습니다.";
-  const headline =
-    approvalCount > 0
-      ? "승인 대기 중"
-      : reportIsStale
-        ? "보고가 현재 라운드보다 오래됨"
-        : nextAction?.kind === "wait"
-          ? "작업 신호 대기 중"
-          : "현재 흐름 확인됨";
-  const updatedAt = formatAssistantLedgerTime(
-    input.commandFlow?.generatedAt ?? input.overview?.generatedAt ?? latestReport?.createdAt,
-  );
-
-  return {
-    tone:
-      approvalCount > 0 || reportIsStale
-        ? "warning"
-        : nextAction?.kind === "wait"
-          ? "thinking"
-          : "ready",
-    headline,
-    project: projectText,
-    round: roundText,
-    nextAction: nextActionText,
-    approval: approvalText,
-    report: reportText,
-    recommendation,
-    reportIsStale,
-    approvalCount,
-    ...(updatedAt ? { updatedAt } : {}),
-  };
-}
-
-function managerAssistantNextActionLabel(
-  action: ManagerCommandFlowResponse["nextAction"] | ManagerProjectOverviewResponse["nextAction"],
-): string {
-  switch (action.kind) {
-    case "create-round":
-      return "첫 라운드 생성";
-    case "dispatch":
-      return "작업자 배정";
-    case "inspect":
-      return "현재 막힘 확인";
-    case "repair":
-      return "오케스트레이션 상태 복구";
-    case "review":
-      return "라운드 결과 검토";
-    case "summarize":
-      return "라운드 결과 요약";
-    case "wait":
-      return "작업 결과 대기";
-    default:
-      return action.label;
-  }
-}
-
-function managerAssistantProposedActionLabel(action: ManagerProposedAction): string {
-  switch (action.type) {
-    case "prepare_project":
-      return "프로젝트 준비";
-    case "scan_protocol":
-      return "프로토콜 스캔";
-    case "inspect_task":
-      return "작업 검사";
-    case "retry_task":
-      return "작업 재시도";
-    case "repair_round":
-      return "라운드 복구";
-    case "review_round":
-      return "라운드 승인";
-    case "start_next_round":
-      return "다음 라운드 시작";
-    case "direction_change":
-      return "방향 수정";
-    case "request_user_check":
-      return "사용자 확인 요청";
-    case "complete_project":
-      return "프로젝트 종료";
-    case "wait":
-      return "대기";
-    default:
-      return action.title || action.type;
-  }
-}
-
-function managerAssistantFlowStageLabel(stage: string | undefined): string {
-  switch (stage) {
-    case "draft":
-      return "초안";
-    case "prepared":
-      return "준비됨";
-    case "running":
-      return "진행 중";
-    case "review":
-    case "reviewing":
-      return "검토 중";
-    case "completed":
-      return "완료";
-    case "blocked":
-      return "막힘";
-    case "archived":
-      return "보관됨";
-    default:
-      return stage || "상태 없음";
-  }
-}
-
-function managerAssistantStatusLabel(status: string | undefined): string {
-  switch (status) {
-    case "planned":
-      return "계획됨";
-    case "dispatching":
-      return "배정 중";
-    case "running":
-      return "실행 중";
-    case "collecting":
-      return "수집 중";
-    case "reviewing":
-      return "검토 중";
-    case "completed":
-      return "완료";
-    case "blocked":
-      return "막힘";
-    case "failed":
-      return "실패";
-    case "cancelled":
-      return "취소";
-    case "idle":
-      return "대기";
-    case "assigned":
-      return "배정됨";
-    case "waiting":
-      return "대기 중";
-    case "stale":
-      return "오래됨";
-    default:
-      return status || "상태 없음";
-  }
-}
-
-function shortManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length <= 12) return trimmed;
-  return trimmed.slice(0, 8);
-}
 
 async function waitForManagerStreamClose(
   streamPromise: Promise<void>,

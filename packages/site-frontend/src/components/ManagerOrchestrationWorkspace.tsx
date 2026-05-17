@@ -964,7 +964,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
             selectedProject()?.goal ??
             t("manager.orchestration.flow.default-round-objective"),
           ...(phase ? { phase } : {}),
-          dryRun: payloadBoolean(action.payload, "dryRun") ?? true,
+          dryRun: payloadBoolean(action.payload, "dryRun") ?? false,
         });
         return;
       }

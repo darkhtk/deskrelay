@@ -6038,6 +6038,10 @@ dialog.approval-modal-root,
   min-height: auto;
   overflow: visible;
 }
+.manager-current-judgment {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
 .manager-orchestration-panel-standalone .manager-orchestration-tab-panel {
   flex: 0 0 auto;
   min-height: auto;

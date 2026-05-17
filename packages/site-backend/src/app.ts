@@ -6546,7 +6546,7 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
               objective:
                 input.project.goal || input.activeRound?.objective || "Continue orchestration.",
               phase: "implementation",
-              dryRun: true,
+              dryRun: false,
             },
             evidenceIds,
             agentResultIds: resultIds,
