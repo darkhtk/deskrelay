@@ -60,28 +60,27 @@ function staticTranslationRefs(): string[] {
       }
     }
   }
-  return Array.from(refs).sort();
+  return Array.from(refs)
+    .filter((key) => !key.endsWith("."))
+    .sort();
 }
 
 describe("locale dictionaries", () => {
   const dictionaries = localeDictionaries();
   const korean = dictionaries.ko ?? {};
 
-  test("only the Korean locale dictionary is enabled for now", () => {
-    expect(Object.keys(dictionaries).sort()).toEqual(["ko"]);
+  test("Korean is the default locale and English is selectable", () => {
+    expect(Object.keys(dictionaries).sort()).toEqual(["en", "ko"]);
   });
 
-  test("all locale dictionaries expose the same keys as Korean", () => {
+  test("non-Korean locale keys are valid Korean fallback keys", () => {
     const mismatches = Object.entries(dictionaries)
       .filter(([locale]) => locale !== "ko")
-      .flatMap(([locale, messages]) => [
-        ...sortedKeys(korean)
-          .filter((key) => !(key in messages))
-          .map((key) => `${locale} missing ${key}`),
-        ...sortedKeys(messages)
+      .flatMap(([locale, messages]) =>
+        sortedKeys(messages)
           .filter((key) => !(key in korean))
           .map((key) => `${locale} extra ${key}`),
-      ]);
+      );
 
     expect(mismatches).toEqual([]);
   });
@@ -90,8 +89,7 @@ describe("locale dictionaries", () => {
     const mismatches = Object.entries(dictionaries)
       .filter(([locale]) => locale !== "ko")
       .flatMap(([locale, messages]) =>
-        sortedKeys(korean).flatMap((key) => {
-          if (!(key in messages)) return [];
+        sortedKeys(messages).flatMap((key) => {
           const expected = placeholders(korean[key] ?? "").join(",");
           const actual = placeholders(messages[key] ?? "").join(",");
           return expected === actual

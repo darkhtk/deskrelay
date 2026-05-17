@@ -5,24 +5,35 @@ import type {
   ManagerBlocker,
   ManagerBlockerCreateRequest,
   ManagerBlockerResolveRequest,
+  ManagerCommandFlowResponse,
   ManagerDecision,
   ManagerDecisionCreateRequest,
   ManagerDecisionUpdateRequest,
+  ManagerDirectionChangeRequest,
   ManagerProject,
+  ManagerProjectCharter,
+  ManagerProjectCharterUpdateRequest,
+  ManagerProjectCompleteRequest,
   ManagerProjectCreateRequest,
   ManagerProjectHygieneIssue,
   ManagerProjectHygieneReport,
+  ManagerProjectOverviewAction,
   ManagerProjectOverviewResponse,
+  ManagerProjectProtocolSource,
+  ManagerProjectStartRequest,
   ManagerProtocolState,
   ManagerProtocolUpdateRequest,
   ManagerRound,
   ManagerRoundHealthGate,
   ManagerRoundReportResponse,
+  ManagerRoundReviewRequest,
   ManagerSessionHygieneItem,
   ManagerSessionHygieneReport,
   ManagerStateViewResponse,
   ManagerTask,
   ManagerTaskObservationResponse,
+  ManagerWizardIntentEvent,
+  ManagerWizardIntentEventInput,
   ManagerWorkerRun,
 } from "@deskrelay/shared";
 import {
@@ -44,14 +55,17 @@ const HEIGHT_STORAGE_KEY = "cr.manager-orchestration-panel-height";
 const DEFAULT_PANEL_HEIGHT = 280;
 const MIN_PANEL_HEIGHT = 160;
 const MAX_PANEL_HEIGHT = 620;
+let mermaidDiagramInstance = 0;
 
 interface ManagerOrchestrationPanelProps {
   projects?: ManagerProject[] | undefined;
   archivedProjects?: ManagerProject[] | undefined;
   selectedProject?: ManagerProject | null | undefined;
+  commandFlow?: ManagerCommandFlowResponse | null | undefined;
   projectOverview?: ManagerProjectOverviewResponse | null | undefined;
   projectLoading?: boolean | undefined;
   projectBusy?: boolean | undefined;
+  flowBusy?: boolean | undefined;
   decisions?: ManagerDecision[] | undefined;
   archivedDecisions?: ManagerDecision[] | undefined;
   decisionBusy?: boolean | undefined;
@@ -113,6 +127,12 @@ interface ManagerOrchestrationPanelProps {
     | undefined;
   onScanProtocol?: (() => void) | undefined;
   onUpdateProtocol?: ((input: ManagerProtocolUpdateRequest) => void) | undefined;
+  onUpdateCharter?: ((input: ManagerProjectCharterUpdateRequest) => void) | undefined;
+  onPrepareProject?: (() => void) | undefined;
+  onStartProject?: ((input: ManagerProjectStartRequest) => void) | undefined;
+  onReviewRound?: ((roundId: string, input: ManagerRoundReviewRequest) => void) | undefined;
+  onDirectionChange?: ((input: ManagerDirectionChangeRequest) => void) | undefined;
+  onCompleteProject?: ((input: ManagerProjectCompleteRequest) => void) | undefined;
 }
 
 interface TimelineEntry {
@@ -132,7 +152,18 @@ interface ArtifactEntry {
   note?: string | undefined;
 }
 
+const COMMAND_FLOW_STAGES = [
+  "draft",
+  "protocol_ready",
+  "ready_to_start",
+  "running",
+  "review",
+  "replanning",
+  "completed",
+] as const;
+
 type OrchestrationInfoTab =
+  | "flow"
   | "overview"
   | "agents"
   | "state"
@@ -145,26 +176,27 @@ type OrchestrationInfoTab =
   | "timeline"
   | "hygiene";
 
-const ORCHESTRATION_INFO_TABS: OrchestrationInfoTab[] = [
-  "overview",
-  "agents",
-  "state",
-  "decisions",
-  "blockers",
-  "graph",
-  "runs",
-  "artifacts",
-  "protocol",
-  "timeline",
-  "hygiene",
+type OrchestrationTabGroup = "intent" | "protocol" | "progress" | "review";
+
+const ORCHESTRATION_INFO_TAB_GROUPS: Array<{
+  id: OrchestrationTabGroup;
+  tabs: OrchestrationInfoTab[];
+}> = [
+  { id: "intent", tabs: ["flow", "decisions", "blockers"] },
+  { id: "protocol", tabs: ["protocol"] },
+  { id: "progress", tabs: ["overview", "agents", "runs", "graph", "timeline"] },
+  { id: "review", tabs: ["artifacts", "state", "hygiene"] },
 ];
 
 export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps> = (props) => {
   const [expanded, setExpanded] = createSignal(false);
   const [panelHeight, setPanelHeight] = createSignal(readPanelHeight());
-  const [activeTab, setActiveTab] = createSignal<OrchestrationInfoTab>("overview");
+  const [activeTab, setActiveTab] = createSignal<OrchestrationInfoTab>("flow");
+  const [projectWizardOpen, setProjectWizardOpen] = createSignal(false);
+  const [projectWizardMode, setProjectWizardMode] = createSignal<ProjectWizardMode>("create");
   let stopResize: (() => void) | undefined;
   const isExpanded = () => Boolean(props.standalone) || expanded();
+  const dockProjectWizard = () => Boolean(props.standalone && projectWizardOpen());
   const activeRound = createMemo(() => {
     const projectRoundId = props.selectedProject?.activeRoundId;
     return (
@@ -194,6 +226,29 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const totals = createMemo(() => summarizeTotals(agents()));
   const runTotals = createMemo(() => summarizeWorkerRunTotals(props.workerRuns ?? []));
   const currentState = createMemo(() => props.state?.current ?? null);
+  const selectedProject = createMemo(() => props.selectedProject ?? null);
+  const projectCurrentSignal = createMemo(() =>
+    selectedProject() ? (props.projectOverview?.currentSignal ?? null) : null,
+  );
+  const headlineTone = createMemo(() => {
+    const projectTone = overviewTone(projectCurrentSignal()?.tone);
+    if (projectTone) return projectTone;
+    const state = currentState();
+    return state ? currentStateTone(state.tone) : statusTone(activeRound()?.status);
+  });
+  const headlineTitle = createMemo(
+    () =>
+      selectedProject()?.name ??
+      projectCurrentSignal()?.title ??
+      currentState()?.title ??
+      activeRound()?.title ??
+      t("manager.orchestration.title"),
+  );
+  const headlineDetail = createMemo(() =>
+    selectedProject()
+      ? (projectCurrentSignal()?.title ?? selectedProject()?.goal ?? activeRound()?.title)
+      : undefined,
+  );
   const freshnessLabel = createMemo(() => formatFreshness(props.state));
   const eventConnectionLabel = createMemo(() =>
     props.eventState && props.eventState !== "connected"
@@ -203,6 +258,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const activeIssueCount = createMemo(
     () => props.state?.counts.blockers ?? props.state?.blockers.length ?? 0,
   );
+  const openProjectWizard = (mode: ProjectWizardMode) => {
+    setProjectWizardMode(mode);
+    setProjectWizardOpen(true);
+  };
 
   onCleanup(() => {
     stopResize?.();
@@ -254,54 +313,82 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             if (!props.standalone) setExpanded((current) => !current);
           }}
         >
-          <span
-            class={`manager-status-dot manager-status-dot-${currentStateTone(currentState()?.tone) ?? statusTone(activeRound()?.status)}`}
-          />
-          <strong>
-            {currentState()?.title ?? activeRound()?.title ?? t("manager.orchestration.title")}
-          </strong>
-          <Show when={currentState()} fallback={<RoundStatusPill round={activeRound()} />}>
-            {(current) => <span class="manager-status-pill">{current().status}</span>}
+          <span class={`manager-status-dot manager-status-dot-${headlineTone()}`} />
+          <strong>{headlineTitle()}</strong>
+          <Show when={headlineDetail()}>
+            {(detail) => <span class="manager-orchestration-title-detail">{detail()}</span>}
+          </Show>
+          <Show
+            when={projectCurrentSignal()}
+            fallback={
+              <Show when={currentState()} fallback={<RoundStatusPill round={activeRound()} />}>
+                {(current) => (
+                  <span class="manager-status-pill">{statusLabel(current().status)}</span>
+                )}
+              </Show>
+            }
+          >
+            <span class="manager-status-pill">{statusLabel(props.selectedProject?.status)}</span>
           </Show>
         </button>
         <div class="manager-orchestration-summary">
           <Show
-            when={props.state}
+            when={selectedProject()}
             fallback={
-              <span>
-                {t("manager.orchestration.metric.agents-done", {
-                  completed: totals().completed,
-                  total: totals().total,
-                })}
-              </span>
+              <>
+                <Show
+                  when={props.state}
+                  fallback={
+                    <span>
+                      {t("manager.orchestration.metric.agents-done", {
+                        completed: totals().completed,
+                        total: totals().total,
+                      })}
+                    </span>
+                  }
+                >
+                  <span>{currentState()?.kind ?? "manager"}</span>
+                </Show>
+                <Show when={freshnessLabel()}>{(label) => <span>{label()}</span>}</Show>
+                <Show when={eventConnectionLabel()}>{(label) => <span>{label()}</span>}</Show>
+                <span>
+                  {t("manager.orchestration.metric.running", { count: totals().running })}
+                </span>
+                <span>
+                  {t("manager.orchestration.metric.blocked", { count: totals().blocked })}
+                </span>
+                <span>
+                  {t("manager.orchestration.metric.runs", {
+                    active: runTotals().active,
+                    total: runTotals().total,
+                  })}
+                </span>
+              </>
             }
           >
-            <span>{currentState()?.kind ?? "manager"}</span>
+            {(project) => (
+              <>
+                <span>{t("manager.orchestration.scope.selected-project")}</span>
+                <span>{managerProjectFlowStageLabel(project().flowStage)}</span>
+                <Show when={props.projectOverview?.nextAction}>
+                  {(action) => <span>{managerProjectOverviewActionLabel(action())}</span>}
+                </Show>
+                <span>
+                  {t("manager.orchestration.metric.agents-done", {
+                    completed: totals().completed,
+                    total: totals().total,
+                  })}
+                </span>
+                <span>
+                  {t("manager.orchestration.metric.runs", {
+                    active: runTotals().active,
+                    total: runTotals().total,
+                  })}
+                </span>
+              </>
+            )}
           </Show>
-          <Show when={freshnessLabel()}>{(label) => <span>{label()}</span>}</Show>
-          <Show when={eventConnectionLabel()}>{(label) => <span>{label()}</span>}</Show>
-          <span>{t("manager.orchestration.metric.running", { count: totals().running })}</span>
-          <span>{t("manager.orchestration.metric.blocked", { count: totals().blocked })}</span>
-          <span>
-            {t("manager.orchestration.metric.runs", {
-              active: runTotals().active,
-              total: runTotals().total,
-            })}
-          </span>
         </div>
-        <Show when={activeIssueCount() > 0 && Boolean(props.onAcknowledgeFailures)}>
-          <button
-            type="button"
-            class="manager-orchestration-ack"
-            disabled={props.acknowledgeBusy}
-            onClick={() => props.onAcknowledgeFailures?.()}
-            title={t("manager.orchestration.recovery.acknowledge-title")}
-          >
-            {props.acknowledgeBusy
-              ? t("manager.orchestration.action.acknowledging")
-              : t("manager.orchestration.action.acknowledge")}
-          </button>
-        </Show>
         <Show when={!props.standalone}>
           <button
             type="button"
@@ -317,277 +404,346 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       </header>
 
       <Show when={isExpanded()}>
-        <div class="manager-orchestration-body">
-          <ProjectHeader
-            projects={props.projects ?? []}
-            archivedProjects={props.archivedProjects ?? []}
-            selectedProject={props.selectedProject ?? null}
-            overview={props.projectOverview ?? null}
-            activeRound={activeRound()}
-            loading={props.projectLoading}
-            busy={props.projectBusy}
-            onRefresh={props.onRefreshProjects}
-            onSelect={props.onSelectProject}
-            onCreate={props.onCreateProject}
-            onArchive={props.onArchiveProject}
-          />
-          <nav
-            class="manager-orchestration-tabs"
-            role="tablist"
-            aria-label={t("manager.orchestration.aria.information")}
-          >
-            <For each={ORCHESTRATION_INFO_TABS}>
-              {(tab) => (
-                <button
-                  type="button"
-                  role="tab"
-                  class="manager-orchestration-tab"
-                  classList={{ "is-active": activeTab() === tab }}
-                  aria-selected={activeTab() === tab}
-                  onClick={() => setActiveTab(tab)}
-                >
-                  {t(`manager.orchestration.tab.${tab}`)}
-                </button>
-              )}
-            </For>
-          </nav>
-          <div
-            class="manager-orchestration-tab-panel"
-            classList={{
-              "manager-orchestration-tab-panel-wide": activeTab() === "overview",
-              "manager-orchestration-tab-panel-single": activeTab() !== "overview",
-            }}
-            role="tabpanel"
-          >
-            <Show when={activeTab() === "overview"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.command-center")}
-                class="manager-section-overview"
-              >
-                <OverviewView
-                  round={activeRound()}
-                  overview={props.projectOverview ?? null}
-                  agents={agents()}
-                  tasks={tasks()}
-                  blockers={props.blockers ?? []}
-                  hiddenAgentCount={hiddenAgentCount()}
-                />
-              </OrchestrationSection>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.current-state")}
-                class="manager-section-current"
-              >
-                <CurrentStateView
-                  state={props.state}
-                  busy={props.actionBusy || props.acknowledgeBusy}
-                  onAcknowledge={props.onAcknowledgeFailures}
-                  onCancelTask={props.onCancelTask}
-                  onInspectTask={props.onInspectTask}
-                  onRepairRegistration={props.onRepairRegistration}
-                  onRefresh={props.onRefreshState}
-                  onRetryTask={props.onRetryTask}
-                  onRunUpdateAll={props.onRunUpdateAll}
-                />
-              </OrchestrationSection>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.health")}
-                class="manager-section-health"
-              >
-                <RoundHealthGateView
-                  health={props.health}
-                  busy={props.actionBusy || props.acknowledgeBusy}
-                  onAcknowledgeRound={props.onAcknowledgeRound}
-                  onInspectTask={props.onInspectTask}
-                  onRepairRound={props.onRepairRound}
-                  onRetryTask={props.onRetryTask}
-                />
-              </OrchestrationSection>
-            </Show>
-
-            <Show when={activeTab() === "agents"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.theater")}
-                class="manager-section-agents"
-              >
-                <AgentsView
-                  agents={agents()}
-                  busy={props.actionBusy || props.observeBusy}
-                  onInspectTask={props.onInspectTask}
-                />
-              </OrchestrationSection>
-            </Show>
-
-            <Show when={activeTab() === "state"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.current-state")}
-                class="manager-section-current"
-              >
-                <CurrentStateView
-                  state={props.state}
-                  busy={props.actionBusy || props.acknowledgeBusy}
-                  onAcknowledge={props.onAcknowledgeFailures}
-                  onCancelTask={props.onCancelTask}
-                  onInspectTask={props.onInspectTask}
-                  onRepairRegistration={props.onRepairRegistration}
-                  onRefresh={props.onRefreshState}
-                  onRetryTask={props.onRetryTask}
-                  onRunUpdateAll={props.onRunUpdateAll}
-                />
-              </OrchestrationSection>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.health")}
-                class="manager-section-health"
-              >
-                <RoundHealthGateView
-                  health={props.health}
-                  busy={props.actionBusy || props.acknowledgeBusy}
-                  onAcknowledgeRound={props.onAcknowledgeRound}
-                  onInspectTask={props.onInspectTask}
-                  onRepairRound={props.onRepairRound}
-                  onRetryTask={props.onRetryTask}
-                />
-              </OrchestrationSection>
-            </Show>
-
-            <Show when={activeTab() === "decisions"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.decisions")}
-                class="manager-section-decisions"
-              >
-                <DecisionsView
-                  project={props.selectedProject ?? null}
-                  decisions={props.decisions ?? []}
-                  archivedDecisions={props.archivedDecisions ?? []}
-                  busy={props.decisionBusy}
-                  activeRoundId={activeRound()?.id}
-                  onCreate={props.onCreateDecision}
-                  onUpdate={props.onUpdateDecision}
-                />
-              </OrchestrationSection>
-            </Show>
-
-            <Show when={activeTab() === "blockers"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.blockers")}
-                class="manager-section-blockers"
-              >
-                <BlockersView
-                  project={props.selectedProject ?? null}
-                  blockers={props.blockers ?? []}
-                  resolvedBlockers={props.resolvedBlockers ?? []}
-                  busy={props.blockerBusy}
-                  activeRoundId={activeRound()?.id}
-                  onCreate={props.onCreateBlocker}
-                  onResolve={props.onResolveBlocker}
-                />
-              </OrchestrationSection>
-            </Show>
-
-            <Show when={activeTab() === "graph"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.graph")}
-                class="manager-section-flow"
-              >
-                <MermaidFlowView
-                  round={activeRound()}
-                  agents={agents()}
-                  tasks={tasks()}
-                  hiddenAgentCount={hiddenAgentCount()}
-                />
-              </OrchestrationSection>
-            </Show>
-
-            <Show when={activeTab() === "runs"}>
-              <Show when={props.observedTask}>
-                {(observation) => (
-                  <OrchestrationSection
-                    title={t("manager.orchestration.section.task-observation")}
-                    class="manager-section-observation"
+        <div
+          class="manager-orchestration-body"
+          classList={{ "manager-orchestration-body-wizard-open": dockProjectWizard() }}
+        >
+          <div class="manager-orchestration-workboard">
+            <ProjectHeader
+              projects={props.projects ?? []}
+              archivedProjects={props.archivedProjects ?? []}
+              selectedProject={props.selectedProject ?? null}
+              overview={props.projectOverview ?? null}
+              loading={props.projectLoading}
+              busy={props.projectBusy}
+              onRefresh={props.onRefreshProjects}
+              onSelect={props.onSelectProject}
+              onOpenWizard={openProjectWizard}
+              onArchive={props.onArchiveProject}
+            />
+            <GlobalManagerStatus
+              state={props.state}
+              freshnessLabel={freshnessLabel()}
+              eventConnectionLabel={eventConnectionLabel()}
+              totals={totals()}
+              runTotals={runTotals()}
+              issueCount={activeIssueCount()}
+              busy={props.acknowledgeBusy}
+              onAcknowledge={props.onAcknowledgeFailures}
+            />
+            <nav
+              class="manager-orchestration-tab-groups"
+              role="tablist"
+              aria-label={t("manager.orchestration.aria.information")}
+            >
+              <For each={ORCHESTRATION_INFO_TAB_GROUPS}>
+                {(group) => (
+                  <div
+                    class="manager-orchestration-tab-group"
+                    classList={{
+                      "is-active": group.tabs.includes(activeTab()),
+                    }}
                   >
-                    <TaskObservationView observation={observation()} busy={props.observeBusy} />
-                  </OrchestrationSection>
+                    <span>{t(`manager.orchestration.tab-group.${group.id}`)}</span>
+                    <div>
+                      <For each={group.tabs}>
+                        {(tab) => (
+                          <button
+                            type="button"
+                            role="tab"
+                            class="manager-orchestration-tab"
+                            classList={{ "is-active": activeTab() === tab }}
+                            aria-selected={activeTab() === tab}
+                            onClick={() => setActiveTab(tab)}
+                          >
+                            {t(`manager.orchestration.tab.${tab}`)}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </div>
                 )}
+              </For>
+            </nav>
+            <div
+              class="manager-orchestration-tab-panel"
+              classList={{
+                "manager-orchestration-tab-panel-wide":
+                  activeTab() === "flow" || activeTab() === "overview",
+                "manager-orchestration-tab-panel-single":
+                  activeTab() !== "flow" && activeTab() !== "overview",
+              }}
+              role="tabpanel"
+            >
+              <Show when={activeTab() === "flow"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.command-flow")}
+                  class="manager-section-overview"
+                >
+                  <CommandFlowView
+                    project={props.selectedProject ?? null}
+                    commandFlow={props.commandFlow ?? null}
+                    activeRound={activeRound()}
+                    busy={props.flowBusy || props.actionBusy}
+                    onUpdateCharter={props.onUpdateCharter}
+                    onPrepare={props.onPrepareProject}
+                    onStart={props.onStartProject}
+                    onReview={props.onReviewRound}
+                    onDirectionChange={props.onDirectionChange}
+                    onComplete={props.onCompleteProject}
+                  />
+                </OrchestrationSection>
               </Show>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.runs")}
-                class="manager-section-worker-runs"
-              >
-                <WorkerRunsView
-                  runs={props.workerRuns ?? []}
-                  busy={props.observeBusy || props.actionBusy}
-                  onInspectTask={props.onInspectTask}
-                />
-              </OrchestrationSection>
-            </Show>
+              <Show when={activeTab() === "overview"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.command-center")}
+                  class="manager-section-overview"
+                >
+                  <OverviewView
+                    round={activeRound()}
+                    overview={props.projectOverview ?? null}
+                    agents={agents()}
+                    tasks={tasks()}
+                    blockers={props.blockers ?? []}
+                    hiddenAgentCount={hiddenAgentCount()}
+                  />
+                </OrchestrationSection>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.current-state")}
+                  class="manager-section-current"
+                >
+                  <CurrentStateView
+                    state={props.state}
+                    project={props.selectedProject ?? null}
+                    activeRound={activeRound()}
+                    agents={agents()}
+                    busy={props.actionBusy || props.acknowledgeBusy}
+                    onAcknowledge={props.onAcknowledgeFailures}
+                    onCancelTask={props.onCancelTask}
+                    onInspectTask={props.onInspectTask}
+                    onRepairRegistration={props.onRepairRegistration}
+                    onRefresh={props.onRefreshState}
+                    onRetryTask={props.onRetryTask}
+                    onRunUpdateAll={props.onRunUpdateAll}
+                  />
+                </OrchestrationSection>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.health")}
+                  class="manager-section-health"
+                >
+                  <RoundHealthGateView
+                    health={props.health}
+                    busy={props.actionBusy || props.acknowledgeBusy}
+                    onAcknowledgeRound={props.onAcknowledgeRound}
+                    onInspectTask={props.onInspectTask}
+                    onRepairRound={props.onRepairRound}
+                    onRetryTask={props.onRetryTask}
+                  />
+                </OrchestrationSection>
+              </Show>
 
-            <Show when={activeTab() === "artifacts"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.artifacts")}
-                class="manager-section-artifacts"
-              >
-                <ArtifactsView
-                  artifacts={artifacts()}
-                  inactiveArtifacts={inactiveArtifacts()}
-                  busy={props.artifactBusy}
-                  stored={Boolean(props.artifacts && props.artifacts.length > 0)}
-                  onScan={props.onScanArtifacts}
-                  onUpdate={props.onUpdateArtifact}
-                />
-              </OrchestrationSection>
-            </Show>
+              <Show when={activeTab() === "agents"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.theater")}
+                  class="manager-section-agents"
+                >
+                  <AgentsView
+                    agents={agents()}
+                    busy={props.actionBusy || props.observeBusy}
+                    onInspectTask={props.onInspectTask}
+                  />
+                </OrchestrationSection>
+              </Show>
 
-            <Show when={activeTab() === "protocol"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.protocol")}
-                class="manager-section-protocol"
-              >
-                <ProtocolView
-                  protocol={props.protocol ?? null}
-                  busy={props.protocolBusy}
-                  activeRoundId={activeRound()?.id}
-                  decisions={props.decisions ?? []}
-                  onScan={props.onScanProtocol}
-                  onUpdate={props.onUpdateProtocol}
-                />
-              </OrchestrationSection>
-            </Show>
+              <Show when={activeTab() === "state"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.current-state")}
+                  class="manager-section-current"
+                >
+                  <CurrentStateView
+                    state={props.state}
+                    project={props.selectedProject ?? null}
+                    activeRound={activeRound()}
+                    agents={agents()}
+                    busy={props.actionBusy || props.acknowledgeBusy}
+                    onAcknowledge={props.onAcknowledgeFailures}
+                    onCancelTask={props.onCancelTask}
+                    onInspectTask={props.onInspectTask}
+                    onRepairRegistration={props.onRepairRegistration}
+                    onRefresh={props.onRefreshState}
+                    onRetryTask={props.onRetryTask}
+                    onRunUpdateAll={props.onRunUpdateAll}
+                  />
+                </OrchestrationSection>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.health")}
+                  class="manager-section-health"
+                >
+                  <RoundHealthGateView
+                    health={props.health}
+                    busy={props.actionBusy || props.acknowledgeBusy}
+                    onAcknowledgeRound={props.onAcknowledgeRound}
+                    onInspectTask={props.onInspectTask}
+                    onRepairRound={props.onRepairRound}
+                    onRetryTask={props.onRetryTask}
+                  />
+                </OrchestrationSection>
+              </Show>
 
-            <Show when={activeTab() === "timeline"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.timeline")}
-                class="manager-section-timeline"
-              >
-                <TimelineView entries={timeline()} />
-              </OrchestrationSection>
-            </Show>
+              <Show when={activeTab() === "decisions"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.decisions")}
+                  class="manager-section-decisions"
+                >
+                  <DecisionsView
+                    project={props.selectedProject ?? null}
+                    decisions={props.decisions ?? []}
+                    archivedDecisions={props.archivedDecisions ?? []}
+                    busy={props.decisionBusy}
+                    activeRoundId={activeRound()?.id}
+                    onCreate={props.onCreateDecision}
+                    onUpdate={props.onUpdateDecision}
+                  />
+                </OrchestrationSection>
+              </Show>
 
-            <Show when={activeTab() === "hygiene"}>
-              <OrchestrationSection
-                title={t("manager.orchestration.section.hygiene")}
-                class="manager-section-hygiene"
-              >
-                <HygieneView
-                  report={props.hygiene}
-                  projectReport={props.projectHygiene}
-                  loading={props.hygieneLoading}
-                  projectLoading={props.projectHygieneLoading}
-                  cleanupBusy={props.hygieneCleanupBusy}
-                  projectCleanupBusy={props.projectHygieneCleanupBusy}
-                  onRefresh={props.onRefreshHygiene}
-                  onCleanup={props.onCleanupHygiene}
-                  onRefreshProject={props.onRefreshProjectHygiene}
-                  onCleanupProject={props.onCleanupProjectHygiene}
-                />
-              </OrchestrationSection>
-            </Show>
+              <Show when={activeTab() === "blockers"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.blockers")}
+                  class="manager-section-blockers"
+                >
+                  <BlockersView
+                    project={props.selectedProject ?? null}
+                    blockers={props.blockers ?? []}
+                    resolvedBlockers={props.resolvedBlockers ?? []}
+                    busy={props.blockerBusy}
+                    activeRoundId={activeRound()?.id}
+                    onCreate={props.onCreateBlocker}
+                    onResolve={props.onResolveBlocker}
+                  />
+                </OrchestrationSection>
+              </Show>
+
+              <Show when={activeTab() === "graph"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.graph")}
+                  class="manager-section-flow"
+                >
+                  <MermaidFlowView
+                    round={activeRound()}
+                    agents={agents()}
+                    tasks={tasks()}
+                    hiddenAgentCount={hiddenAgentCount()}
+                  />
+                </OrchestrationSection>
+              </Show>
+
+              <Show when={activeTab() === "runs"}>
+                <Show when={props.observedTask}>
+                  {(observation) => (
+                    <OrchestrationSection
+                      title={t("manager.orchestration.section.task-observation")}
+                      class="manager-section-observation"
+                    >
+                      <TaskObservationView observation={observation()} busy={props.observeBusy} />
+                    </OrchestrationSection>
+                  )}
+                </Show>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.runs")}
+                  class="manager-section-worker-runs"
+                >
+                  <WorkerRunsView
+                    runs={props.workerRuns ?? []}
+                    busy={props.observeBusy || props.actionBusy}
+                    onInspectTask={props.onInspectTask}
+                  />
+                </OrchestrationSection>
+              </Show>
+
+              <Show when={activeTab() === "artifacts"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.artifacts")}
+                  class="manager-section-artifacts"
+                >
+                  <ArtifactsView
+                    artifacts={artifacts()}
+                    inactiveArtifacts={inactiveArtifacts()}
+                    busy={props.artifactBusy}
+                    stored={Boolean(props.artifacts && props.artifacts.length > 0)}
+                    onScan={props.onScanArtifacts}
+                    onUpdate={props.onUpdateArtifact}
+                  />
+                </OrchestrationSection>
+              </Show>
+
+              <Show when={activeTab() === "protocol"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.protocol")}
+                  class="manager-section-protocol"
+                >
+                  <ProtocolView
+                    protocol={props.protocol ?? null}
+                    busy={props.protocolBusy}
+                    activeRoundId={activeRound()?.id}
+                    decisions={props.decisions ?? []}
+                    onScan={props.onScanProtocol}
+                    onUpdate={props.onUpdateProtocol}
+                  />
+                </OrchestrationSection>
+              </Show>
+
+              <Show when={activeTab() === "timeline"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.timeline")}
+                  class="manager-section-timeline"
+                >
+                  <TimelineView entries={timeline()} />
+                </OrchestrationSection>
+              </Show>
+
+              <Show when={activeTab() === "hygiene"}>
+                <OrchestrationSection
+                  title={t("manager.orchestration.section.hygiene")}
+                  class="manager-section-hygiene"
+                >
+                  <HygieneView
+                    report={props.hygiene}
+                    projectReport={props.projectHygiene}
+                    loading={props.hygieneLoading}
+                    projectLoading={props.projectHygieneLoading}
+                    cleanupBusy={props.hygieneCleanupBusy}
+                    projectCleanupBusy={props.projectHygieneCleanupBusy}
+                    onRefresh={props.onRefreshHygiene}
+                    onCleanup={props.onCleanupHygiene}
+                    onRefreshProject={props.onRefreshProjectHygiene}
+                    onCleanupProject={props.onCleanupProjectHygiene}
+                  />
+                </OrchestrationSection>
+              </Show>
+            </div>
           </div>
+          <ProjectWizardDialog
+            open={projectWizardOpen()}
+            mode={projectWizardMode()}
+            project={props.selectedProject ?? null}
+            commandFlow={props.commandFlow ?? null}
+            activeRound={activeRound()}
+            busy={props.projectBusy}
+            docked={dockProjectWizard()}
+            onModeChange={setProjectWizardMode}
+            onClose={() => setProjectWizardOpen(false)}
+            onCreate={props.onCreateProject}
+            onUpdateCharter={props.onUpdateCharter}
+            onComplete={props.onCompleteProject}
+          />
         </div>
         <Show when={!props.standalone}>
           <button
             type="button"
             class="manager-orchestration-resize-handle"
-            aria-label="Resize orchestration panel"
-            title="Resize height"
+            aria-label={t("manager.orchestration.aria.resize-panel")}
+            title={t("manager.orchestration.action.resize")}
             onPointerDown={startResize}
           />
         </Show>
@@ -614,71 +770,104 @@ const OrchestrationSection: Component<{ title: string; class?: string; children:
   </section>
 );
 
+type ProjectWizardKind =
+  | "app"
+  | "website"
+  | "automation"
+  | "document"
+  | "data"
+  | "game"
+  | "existing"
+  | "other";
+
+type ProjectWizardMode = "create" | "change" | "review";
+
+type ManagerProjectCharterTextField =
+  | "goal"
+  | "scope"
+  | "nonGoals"
+  | "constraints"
+  | "successCriteria"
+  | "preferredApproach"
+  | "verificationPlan"
+  | "userCheckpoints"
+  | "finalDeliverables";
+
+const PROJECT_WIZARD_KINDS: ProjectWizardKind[] = [
+  "app",
+  "website",
+  "automation",
+  "document",
+  "data",
+  "game",
+  "existing",
+  "other",
+];
+
+const PROJECT_WIZARD_MODES: ProjectWizardMode[] = ["create", "change", "review"];
+
 const ProjectHeader: Component<{
   projects: ManagerProject[];
   archivedProjects: ManagerProject[];
   selectedProject: ManagerProject | null;
   overview: ManagerProjectOverviewResponse | null;
-  activeRound: ManagerRound | undefined;
   loading?: boolean | undefined;
   busy?: boolean | undefined;
   onRefresh?: (() => void) | undefined;
   onSelect?: ((projectId: string | null) => void) | undefined;
-  onCreate?: ((input: ManagerProjectCreateRequest) => void) | undefined;
+  onOpenWizard: (mode: ProjectWizardMode) => void;
   onArchive?: ((projectId: string) => void) | undefined;
 }> = (props) => {
-  const [creating, setCreating] = createSignal(false);
-  const [name, setName] = createSignal("");
-  const [cwd, setCwd] = createSignal("");
-  const [goal, setGoal] = createSignal("");
+  let projectSelectEl!: HTMLSelectElement;
   const projectOptions = createMemo(() => [...props.projects, ...props.archivedProjects]);
   const project = createMemo(() => props.selectedProject);
-  const canCreate = createMemo(() => Boolean(cwd().trim() && props.onCreate && !props.busy));
-  const submit = () => {
-    const value = cwd().trim();
-    if (!value || !props.onCreate) return;
-    props.onCreate({
-      cwd: value,
-      ...(name().trim() ? { name: name().trim() } : {}),
-      ...(goal().trim() ? { goal: goal().trim() } : {}),
-      ...(props.activeRound?.id ? { activeRoundId: props.activeRound.id } : {}),
-    });
-    setCreating(false);
-    setName("");
-    setCwd("");
-    setGoal("");
-  };
+  createEffect(() => {
+    const selectedProjectId = project()?.id ?? "";
+    if (projectSelectEl && projectSelectEl.value !== selectedProjectId) {
+      projectSelectEl.value = selectedProjectId;
+    }
+  });
   return (
-    <section class="manager-project-header" aria-label="Manager project">
+    <section class="manager-project-header" aria-label={t("manager.orchestration.project.aria")}>
       <div class="manager-project-header-main">
         <div class="manager-project-selector-row">
-          <span class="manager-project-label">Project</span>
+          <span class="manager-project-label">{t("manager.orchestration.project.label")}</span>
           <select
+            ref={projectSelectEl}
             value={project()?.id ?? ""}
             disabled={props.busy || projectOptions().length === 0}
             onChange={(event) => props.onSelect?.(event.currentTarget.value || null)}
           >
-            <option value="">No project selected</option>
+            <option value="">{t("manager.orchestration.project.none")}</option>
             <For each={props.projects}>
               {(item) => <option value={item.id}>{item.name}</option>}
             </For>
             <For each={props.archivedProjects}>
-              {(item) => <option value={item.id}>{item.name} (archived)</option>}
+              {(item) => (
+                <option value={item.id}>
+                  {t("manager.orchestration.project.archived", { name: item.name })}
+                </option>
+              )}
             </For>
           </select>
+          <button type="button" disabled={props.busy} onClick={() => props.onOpenWizard("create")}>
+            {t("manager.orchestration.action.new")}
+          </button>
           <button
             type="button"
-            disabled={props.busy}
-            onClick={() => setCreating((value) => !value)}
+            disabled={props.busy || !project()}
+            onClick={() => props.onOpenWizard("change")}
           >
-            {creating() ? "Cancel" : "New"}
+            {t("manager.orchestration.action.wizard")}
           </button>
           <button
             type="button"
             disabled={props.busy || props.loading}
             onClick={() => props.onRefresh?.()}
           >
-            {props.loading ? "Loading" : "Refresh"}
+            {props.loading
+              ? t("manager.orchestration.action.loading")
+              : t("manager.orchestration.action.refresh")}
           </button>
           <Show when={Boolean(project() && project()?.status !== "archived" && props.onArchive)}>
             <button
@@ -689,68 +878,1160 @@ const ProjectHeader: Component<{
                 if (current) props.onArchive?.(current.id);
               }}
             >
-              Archive
+              {t("manager.orchestration.action.archive")}
             </button>
           </Show>
         </div>
         <Show
           when={project()}
           fallback={
-            <p class="manager-project-summary">
-              No project is pinned yet. Current rounds are still visible, but they are not grouped
-              by project.
-            </p>
+            <p class="manager-project-summary">{t("manager.orchestration.project.summary-none")}</p>
           }
         >
           {(current) => (
-            <p class="manager-project-summary">
-              <strong>{current().name}</strong>
-              <span>{current().status}</span>
-              <span>{current().cwd}</span>
-              <Show when={current().goal}>{(text) => <span>{text()}</span>}</Show>
+            <dl class="manager-project-summary manager-project-summary-grid">
+              <div>
+                <dt>{t("manager.orchestration.project-summary.project")}</dt>
+                <dd>
+                  <strong>{current().name}</strong>
+                  <span>{statusLabel(current().status)}</span>
+                </dd>
+              </div>
+              <div>
+                <dt>{t("manager.orchestration.project-summary.stage")}</dt>
+                <dd>{managerProjectFlowStageLabel(current().flowStage)}</dd>
+              </div>
+              <div>
+                <dt>{t("manager.orchestration.project-summary.next")}</dt>
+                <dd>
+                  <Show
+                    when={props.overview?.nextAction}
+                    fallback={t("manager.orchestration.project-summary.next-unknown")}
+                  >
+                    {(action) => managerProjectOverviewActionLabel(action())}
+                  </Show>
+                </dd>
+              </div>
+              <div>
+                <dt>{t("manager.orchestration.project-summary.workspace")}</dt>
+                <dd title={current().cwd}>{current().cwd}</dd>
+              </div>
               <Show when={current().activeRoundId}>
-                {(roundId) => <span>round {shortId(roundId())}</span>}
+                {(roundId) => (
+                  <div>
+                    <dt>{t("manager.orchestration.project-summary.round")}</dt>
+                    <dd>{t("manager.orchestration.word.round", { id: shortId(roundId()) })}</dd>
+                  </div>
+                )}
               </Show>
-              <Show when={props.overview?.nextAction}>
-                {(action) => <span>{action().label}</span>}
+              <Show when={current().goal}>
+                {(text) => (
+                  <div>
+                    <dt>{t("manager.orchestration.project-summary.goal")}</dt>
+                    <dd>{clip(text(), 160)}</dd>
+                  </div>
+                )}
               </Show>
-            </p>
+            </dl>
           )}
         </Show>
       </div>
-      <Show when={creating()}>
-        <form
-          class="manager-project-create"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          <input
-            type="text"
-            value={name()}
-            onInput={(event) => setName(event.currentTarget.value)}
-            placeholder="Project name"
-          />
-          <input
-            type="text"
-            value={cwd()}
-            onInput={(event) => setCwd(event.currentTarget.value)}
-            placeholder="C:\path\to\project"
-            required
-          />
-          <input
-            type="text"
-            value={goal()}
-            onInput={(event) => setGoal(event.currentTarget.value)}
-            placeholder="Goal"
-          />
-          <button type="submit" disabled={!canCreate()}>
-            Create
-          </button>
-        </form>
-      </Show>
     </section>
+  );
+};
+
+const GlobalManagerStatus: Component<{
+  state: ManagerStateViewResponse | null | undefined;
+  freshnessLabel: string | undefined;
+  eventConnectionLabel: string | null | undefined;
+  totals: ReturnType<typeof summarizeTotals>;
+  runTotals: ReturnType<typeof summarizeWorkerRunTotals>;
+  issueCount: number;
+  busy?: boolean | undefined;
+  onAcknowledge?: (() => void) | undefined;
+}> = (props) => {
+  const current = createMemo(() => props.state?.current ?? null);
+  const hasGlobalSignal = createMemo(
+    () =>
+      Boolean(props.state) ||
+      Boolean(props.freshnessLabel) ||
+      Boolean(props.eventConnectionLabel) ||
+      props.issueCount > 0 ||
+      props.totals.total > 0 ||
+      props.runTotals.total > 0,
+  );
+
+  return (
+    <Show when={hasGlobalSignal()}>
+      <details class="manager-global-status">
+        <summary>
+          <span>{t("manager.orchestration.global.title")}</span>
+          <Show when={current()}>{(item) => <span>{statusLabel(item().status)}</span>}</Show>
+          <Show when={props.issueCount > 0}>
+            <span>
+              {t("manager.orchestration.global.issue-count", { count: props.issueCount })}
+            </span>
+          </Show>
+          <span>{t("manager.orchestration.metric.running", { count: props.totals.running })}</span>
+          <span>
+            {t("manager.orchestration.metric.runs", {
+              active: props.runTotals.active,
+              total: props.runTotals.total,
+            })}
+          </span>
+        </summary>
+        <div class="manager-global-status-body">
+          <Show when={current()} fallback={<p>{t("manager.orchestration.global.empty")}</p>}>
+            {(item) => (
+              <dl>
+                <div>
+                  <dt>{t("manager.orchestration.field.kind")}</dt>
+                  <dd>{item().kind}</dd>
+                </div>
+                <div>
+                  <dt>{t("manager.orchestration.field.state")}</dt>
+                  <dd>{statusLabel(item().status)}</dd>
+                </div>
+                <div>
+                  <dt>{t("manager.orchestration.field.signal")}</dt>
+                  <dd>{item().title}</dd>
+                </div>
+                <Show when={item().detail}>
+                  {(detail) => (
+                    <div>
+                      <dt>{t("manager.orchestration.field.detail")}</dt>
+                      <dd>{clip(detail(), 140)}</dd>
+                    </div>
+                  )}
+                </Show>
+              </dl>
+            )}
+          </Show>
+          <div class="manager-global-status-meta">
+            <Show when={props.freshnessLabel}>{(label) => <span>{label()}</span>}</Show>
+            <Show when={props.eventConnectionLabel}>{(label) => <span>{label()}</span>}</Show>
+            <span>
+              {t("manager.orchestration.metric.blocked", { count: props.totals.blocked })}
+            </span>
+            <Show when={props.issueCount > 0 && Boolean(props.onAcknowledge)}>
+              <button
+                type="button"
+                disabled={props.busy}
+                onClick={() => props.onAcknowledge?.()}
+                title={t("manager.orchestration.recovery.acknowledge-title")}
+              >
+                {props.busy
+                  ? t("manager.orchestration.action.acknowledging")
+                  : t("manager.orchestration.action.acknowledge")}
+              </button>
+            </Show>
+          </div>
+        </div>
+      </details>
+    </Show>
+  );
+};
+
+const ProjectWizardDialog: Component<{
+  open: boolean;
+  mode: ProjectWizardMode;
+  project: ManagerProject | null;
+  commandFlow: ManagerCommandFlowResponse | null;
+  activeRound: ManagerRound | undefined;
+  busy?: boolean | undefined;
+  docked?: boolean | undefined;
+  onModeChange: (mode: ProjectWizardMode) => void;
+  onClose: () => void;
+  onCreate?: ((input: ManagerProjectCreateRequest) => void) | undefined;
+  onUpdateCharter?: ((input: ManagerProjectCharterUpdateRequest) => void) | undefined;
+  onComplete?: ((input: ManagerProjectCompleteRequest) => void) | undefined;
+}> = (props) => {
+  const [name, setName] = createSignal("");
+  const [cwd, setCwd] = createSignal("");
+  const [goal, setGoal] = createSignal("");
+  const [intent, setIntent] = createSignal("");
+  const [kind, setKind] = createSignal<ProjectWizardKind>("app");
+  const [audience, setAudience] = createSignal("");
+  const [useCase, setUseCase] = createSignal("");
+  const [scope, setScope] = createSignal("");
+  const [constraints, setConstraints] = createSignal("");
+  const [successCriteria, setSuccessCriteria] = createSignal("");
+  const [nonGoals, setNonGoals] = createSignal("");
+  const [preferredApproach, setPreferredApproach] = createSignal("");
+  const [verificationPlan, setVerificationPlan] = createSignal("");
+  const [userCheckpoints, setUserCheckpoints] = createSignal("");
+  const [finalDeliverables, setFinalDeliverables] = createSignal("");
+  const [protocolSource, setProtocolSource] =
+    createSignal<ManagerProjectProtocolSource>("base-copy");
+  const [finalSummary, setFinalSummary] = createSignal("");
+  const [remainingRisks, setRemainingRisks] = createSignal("");
+  const [verificationEvidence, setVerificationEvidence] = createSignal("");
+  const [finalArtifacts, setFinalArtifacts] = createSignal("");
+  const [acceptedByUser, setAcceptedByUser] = createSignal(false);
+
+  const activeRound = createMemo(() => props.commandFlow?.activeRound ?? props.activeRound);
+  const currentCharter = createMemo(() => commandFlowCharter(props.project, props.commandFlow));
+  const generatedName = createMemo(() => projectWizardName(intent(), kind()));
+  const projectName = createMemo(() => name().trim() || generatedName());
+  const projectGoal = createMemo(() => goal().trim() || projectWizardGoal(intent()));
+  const createCharter = createMemo<Partial<ManagerProjectCharter>>(() =>
+    buildProjectWizardCharter({
+      goal: projectGoal(),
+      intent: intent(),
+      kind: kind(),
+      audience: audience(),
+      useCase: useCase(),
+      constraints: constraints(),
+      successCriteria: successCriteria(),
+      nonGoals: nonGoals(),
+      preferredApproach: preferredApproach(),
+    }),
+  );
+  const editedCharter = createMemo<ManagerProjectCharterUpdateRequest>(() => ({
+    goal: goal(),
+    scope: scope(),
+    nonGoals: nonGoals(),
+    constraints: constraints(),
+    successCriteria: successCriteria(),
+    preferredApproach: preferredApproach(),
+    verificationPlan: verificationPlan(),
+    userCheckpoints: userCheckpoints(),
+    finalDeliverables: finalDeliverables(),
+    updatedBy: "browser",
+  }));
+  const charterPreview = createMemo<Partial<ManagerProjectCharter>>(() =>
+    props.mode === "create" ? createCharter() : editedCharter(),
+  );
+  const cwdIssue = createMemo(() => {
+    if (props.mode !== "create" || !cwd().trim()) return "";
+    return isLikelyAbsoluteWorkspacePath(cwd())
+      ? ""
+      : t("manager.orchestration.project-wizard.warning.cwd-absolute");
+  });
+  const modeGuidance = createMemo(() => projectWizardModeGuidance(props.mode));
+  const wizardEventPreview = createMemo<ManagerWizardIntentEventInput | undefined>(() => {
+    if (props.mode === "create") {
+      return buildProjectWizardIntentEvent(createCharter(), protocolSource(), activeRound()?.id);
+    }
+    if (props.mode === "change") {
+      return buildCharterApplyWizardIntentEvent(
+        currentCharter(),
+        editedCharter(),
+        props.commandFlow?.readiness.stage,
+        activeRound()?.id,
+      );
+    }
+    return undefined;
+  });
+  const canCreate = createMemo(() =>
+    Boolean(cwd().trim() && !cwdIssue() && projectGoal().trim() && props.onCreate && !props.busy),
+  );
+  const canApply = createMemo(() =>
+    Boolean(props.project && props.onUpdateCharter && wizardEventPreview() && !props.busy),
+  );
+  const canComplete = createMemo(() =>
+    Boolean(props.project && props.onComplete && finalSummary().trim() && !props.busy),
+  );
+
+  const resetCreateWizard = () => {
+    setName("");
+    setCwd("");
+    setGoal("");
+    setIntent("");
+    setKind("app");
+    setAudience("");
+    setUseCase("");
+    setScope("");
+    setConstraints("");
+    setSuccessCriteria("");
+    setNonGoals("");
+    setPreferredApproach("");
+    setVerificationPlan("");
+    setUserCheckpoints("");
+    setFinalDeliverables("");
+    setProtocolSource("base-copy");
+  };
+
+  createEffect(() => {
+    if (!props.open) return;
+    if (props.mode === "create") {
+      resetCreateWizard();
+      return;
+    }
+    const charter = currentCharter();
+    setName(props.project?.name ?? "");
+    setCwd(props.project?.cwd ?? "");
+    setGoal(charter.goal);
+    setIntent(charter.goal || props.project?.goal || "");
+    setKind("existing");
+    setAudience("");
+    setUseCase("");
+    setScope(charter.scope);
+    setNonGoals(charter.nonGoals);
+    setConstraints(charter.constraints);
+    setSuccessCriteria(charter.successCriteria);
+    setPreferredApproach(charter.preferredApproach);
+    setVerificationPlan(charter.verificationPlan);
+    setUserCheckpoints(charter.userCheckpoints);
+    setFinalDeliverables(charter.finalDeliverables);
+    setFinalSummary(props.project?.finalReview?.summary || props.project?.summary || charter.goal);
+    setRemainingRisks(props.project?.finalReview?.remainingRisks || "");
+    setVerificationEvidence(props.project?.finalReview?.verificationEvidence || "");
+    setFinalArtifacts((props.project?.finalReview?.artifacts ?? []).join("\n"));
+    setAcceptedByUser(Boolean(props.project?.finalReview?.acceptedByUser));
+  });
+
+  const submitCreate = () => {
+    const value = cwd().trim();
+    const nextGoal = projectGoal().trim();
+    if (!value || !nextGoal || !props.onCreate) return;
+    props.onCreate({
+      cwd: value,
+      ...(projectName().trim() ? { name: projectName().trim() } : {}),
+      goal: nextGoal,
+      protocolSource: protocolSource(),
+      charter: createCharter(),
+      wizardEvent: buildProjectWizardIntentEvent(createCharter(), protocolSource(), undefined),
+    });
+    props.onClose();
+  };
+
+  const applyChange = () => {
+    const wizardEvent = wizardEventPreview();
+    if (!props.project || !props.onUpdateCharter || !wizardEvent) return;
+    props.onUpdateCharter({
+      ...editedCharter(),
+      wizardEvent,
+    });
+    props.onClose();
+  };
+
+  const completeProject = () => {
+    if (!props.project || !props.onComplete || !finalSummary().trim()) return;
+    props.onComplete({
+      summary: finalSummary(),
+      acceptedByUser: acceptedByUser(),
+      goalMatched: acceptedByUser(),
+      remainingRisks: remainingRisks(),
+      verificationEvidence: verificationEvidence(),
+      artifacts: splitList(finalArtifacts()),
+    });
+    props.onClose();
+  };
+
+  return (
+    <Show when={props.open}>
+      <div
+        class="manager-wizard-dialog-root"
+        classList={{ "manager-wizard-dialog-root-docked": Boolean(props.docked) }}
+      >
+        <button
+          type="button"
+          class="manager-wizard-dialog-backdrop"
+          aria-label={t("manager.orchestration.action.cancel")}
+          onClick={() => props.onClose()}
+        />
+        <dialog
+          open
+          class="manager-wizard-dialog"
+          classList={{ "manager-wizard-dialog-docked": Boolean(props.docked) }}
+          aria-modal={props.docked ? "false" : "true"}
+          aria-labelledby="manager-wizard-dialog-title"
+        >
+          <header class="manager-wizard-dialog-head">
+            <div>
+              <span>{t("manager.orchestration.project-wizard.window-kicker")}</span>
+              <h3 id="manager-wizard-dialog-title">{projectWizardModeTitle(props.mode)}</h3>
+            </div>
+            <button
+              type="button"
+              class="manager-wizard-dialog-close"
+              aria-label={t("manager.orchestration.action.cancel")}
+              onClick={() => props.onClose()}
+            >
+              x
+            </button>
+          </header>
+          <div
+            class="manager-wizard-dialog-modes"
+            role="tablist"
+            aria-label={t("manager.orchestration.project-wizard.mode-label")}
+          >
+            <For each={PROJECT_WIZARD_MODES}>
+              {(item) => (
+                <button
+                  type="button"
+                  role="tab"
+                  class="manager-wizard-dialog-mode"
+                  classList={{ "is-active": props.mode === item }}
+                  aria-selected={props.mode === item}
+                  disabled={item !== "create" && !props.project}
+                  onClick={() => props.onModeChange(item)}
+                >
+                  {projectWizardModeLabel(item)}
+                </button>
+              )}
+            </For>
+          </div>
+          <p class="manager-wizard-dialog-guidance">{modeGuidance()}</p>
+          <div class="manager-wizard-dialog-body">
+            <Show when={props.mode === "create"}>
+              <form
+                class="manager-project-create manager-wizard-dialog-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitCreate();
+                }}
+              >
+                <label class="manager-project-wizard-field">
+                  <span>{t("manager.orchestration.project-wizard.field.project-name")}</span>
+                  <input
+                    type="text"
+                    value={name()}
+                    onInput={(event) => setName(event.currentTarget.value)}
+                    placeholder={
+                      generatedName() || t("manager.orchestration.placeholder.project-name")
+                    }
+                  />
+                </label>
+                <label class="manager-project-wizard-field manager-project-wizard-intent">
+                  <span>{t("manager.orchestration.project-wizard.field.intent")}</span>
+                  <textarea
+                    value={intent()}
+                    onInput={(event) => setIntent(event.currentTarget.value)}
+                    placeholder={t("manager.orchestration.project-wizard.placeholder.intent")}
+                    rows={3}
+                    required
+                  />
+                </label>
+                <div
+                  class="manager-project-wizard-kinds"
+                  aria-label={t("manager.orchestration.project-wizard.field.kind")}
+                >
+                  <For each={PROJECT_WIZARD_KINDS}>
+                    {(item) => (
+                      <button
+                        type="button"
+                        class="manager-project-wizard-kind"
+                        classList={{ "is-active": kind() === item }}
+                        aria-pressed={kind() === item}
+                        onClick={() => setKind(item)}
+                      >
+                        {projectWizardKindLabel(item)}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <div class="manager-project-wizard-grid">
+                  <label class="manager-project-wizard-field">
+                    <span>{t("manager.orchestration.project-wizard.field.cwd")}</span>
+                    <input
+                      type="text"
+                      value={cwd()}
+                      onInput={(event) => setCwd(event.currentTarget.value)}
+                      placeholder={t("manager.orchestration.placeholder.project-cwd")}
+                      aria-label={t("manager.orchestration.project-wizard.field.cwd")}
+                      aria-invalid={cwdIssue() ? "true" : "false"}
+                      required
+                    />
+                    <span
+                      class="manager-project-wizard-help"
+                      classList={{ "is-warning": Boolean(cwdIssue()) }}
+                    >
+                      {cwdIssue() || t("manager.orchestration.project-wizard.help.cwd")}
+                    </span>
+                  </label>
+                  <label class="manager-project-wizard-field">
+                    <span>{t("manager.orchestration.project-wizard.field.goal")}</span>
+                    <input
+                      type="text"
+                      value={goal()}
+                      onInput={(event) => setGoal(event.currentTarget.value)}
+                      placeholder={
+                        projectGoal() || t("manager.orchestration.placeholder.project-goal")
+                      }
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field">
+                    <span>{t("manager.orchestration.project-wizard.field.audience")}</span>
+                    <input
+                      type="text"
+                      value={audience()}
+                      onInput={(event) => setAudience(event.currentTarget.value)}
+                      placeholder={t("manager.orchestration.project-wizard.placeholder.audience")}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field">
+                    <span>{t("manager.orchestration.project-wizard.field.use-case")}</span>
+                    <input
+                      type="text"
+                      value={useCase()}
+                      onInput={(event) => setUseCase(event.currentTarget.value)}
+                      placeholder={t("manager.orchestration.project-wizard.placeholder.use-case")}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field">
+                    <span>{t("manager.orchestration.project.protocol-source")}</span>
+                    <select
+                      value={protocolSource()}
+                      onChange={(event) =>
+                        setProtocolSource(event.currentTarget.value as ManagerProjectProtocolSource)
+                      }
+                    >
+                      <option value="base-copy">
+                        {t("manager.orchestration.project.protocol-source.base-copy")}
+                      </option>
+                      <option value="blank">
+                        {t("manager.orchestration.project.protocol-source.blank")}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.success")}</span>
+                    <textarea
+                      value={successCriteria()}
+                      onInput={(event) => setSuccessCriteria(event.currentTarget.value)}
+                      placeholder={projectWizardDefaultSuccess(kind())}
+                      rows={2}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.constraints")}</span>
+                    <textarea
+                      value={constraints()}
+                      onInput={(event) => setConstraints(event.currentTarget.value)}
+                      placeholder={t("manager.orchestration.project-wizard.generated.constraints")}
+                      rows={2}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.non-goals")}</span>
+                    <textarea
+                      value={nonGoals()}
+                      onInput={(event) => setNonGoals(event.currentTarget.value)}
+                      placeholder={t("manager.orchestration.project-wizard.generated.non-goals")}
+                      rows={2}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.approach")}</span>
+                    <textarea
+                      value={preferredApproach()}
+                      onInput={(event) => setPreferredApproach(event.currentTarget.value)}
+                      placeholder={t("manager.orchestration.project-wizard.generated.approach")}
+                      rows={2}
+                    />
+                  </label>
+                </div>
+              </form>
+            </Show>
+            <Show when={props.mode === "change"}>
+              <form
+                class="manager-project-create manager-wizard-dialog-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  applyChange();
+                }}
+              >
+                <label class="manager-project-wizard-field">
+                  <span>{t("manager.orchestration.project-wizard.field.goal")}</span>
+                  <input
+                    type="text"
+                    value={goal()}
+                    onInput={(event) => setGoal(event.currentTarget.value)}
+                    placeholder={t("manager.orchestration.placeholder.project-goal")}
+                  />
+                </label>
+                <div class="manager-project-wizard-grid">
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.scope")}</span>
+                    <textarea
+                      value={scope()}
+                      onInput={(event) => setScope(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.constraints")}</span>
+                    <textarea
+                      value={constraints()}
+                      onInput={(event) => setConstraints(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.success")}</span>
+                    <textarea
+                      value={successCriteria()}
+                      onInput={(event) => setSuccessCriteria(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.verification")}</span>
+                    <textarea
+                      value={verificationPlan()}
+                      onInput={(event) => setVerificationPlan(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.checkpoints")}</span>
+                    <textarea
+                      value={userCheckpoints()}
+                      onInput={(event) => setUserCheckpoints(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.deliverables")}</span>
+                    <textarea
+                      value={finalDeliverables()}
+                      onInput={(event) => setFinalDeliverables(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.non-goals")}</span>
+                    <textarea
+                      value={nonGoals()}
+                      onInput={(event) => setNonGoals(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                  <label class="manager-project-wizard-field manager-project-wizard-wide">
+                    <span>{t("manager.orchestration.project-wizard.field.approach")}</span>
+                    <textarea
+                      value={preferredApproach()}
+                      onInput={(event) => setPreferredApproach(event.currentTarget.value)}
+                      rows={3}
+                    />
+                  </label>
+                </div>
+              </form>
+            </Show>
+            <Show when={props.mode === "review"}>
+              <form
+                class="manager-project-create manager-wizard-dialog-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  completeProject();
+                }}
+              >
+                <label class="manager-project-wizard-field manager-project-wizard-wide">
+                  <span>{t("manager.orchestration.project-wizard.field.review-summary")}</span>
+                  <textarea
+                    value={finalSummary()}
+                    onInput={(event) => setFinalSummary(event.currentTarget.value)}
+                    rows={4}
+                  />
+                </label>
+                <label class="manager-project-wizard-field manager-project-wizard-wide">
+                  <span>
+                    {t("manager.orchestration.project-wizard.field.verification-evidence")}
+                  </span>
+                  <textarea
+                    value={verificationEvidence()}
+                    onInput={(event) => setVerificationEvidence(event.currentTarget.value)}
+                    rows={3}
+                  />
+                </label>
+                <label class="manager-project-wizard-field manager-project-wizard-wide">
+                  <span>{t("manager.orchestration.project-wizard.field.remaining-risks")}</span>
+                  <textarea
+                    value={remainingRisks()}
+                    onInput={(event) => setRemainingRisks(event.currentTarget.value)}
+                    rows={3}
+                  />
+                </label>
+                <label class="manager-project-wizard-field manager-project-wizard-wide">
+                  <span>{t("manager.orchestration.project-wizard.field.final-artifacts")}</span>
+                  <textarea
+                    value={finalArtifacts()}
+                    onInput={(event) => setFinalArtifacts(event.currentTarget.value)}
+                    rows={3}
+                  />
+                </label>
+                <label class="manager-flow-check">
+                  <input
+                    type="checkbox"
+                    checked={acceptedByUser()}
+                    onChange={(event) => setAcceptedByUser(event.currentTarget.checked)}
+                  />
+                  <span>{t("manager.orchestration.project-wizard.field.accepted")}</span>
+                </label>
+              </form>
+            </Show>
+            <aside
+              class="manager-project-wizard-summary manager-wizard-dialog-preview"
+              aria-label={t("manager.orchestration.project-wizard.summary")}
+            >
+              <div class="manager-project-wizard-summary-head">
+                <strong>
+                  {props.mode === "create"
+                    ? projectName() || t("manager.orchestration.project-wizard.summary")
+                    : props.project?.name || t("manager.orchestration.project-wizard.summary")}
+                </strong>
+                <span>
+                  {props.mode === "create"
+                    ? projectProtocolSourceLabel(protocolSource())
+                    : projectWizardModeLabel(props.mode)}
+                </span>
+              </div>
+              <dl>
+                <For each={projectWizardSummaryRows(charterPreview())}>
+                  {(row) => (
+                    <div>
+                      <dt>{row.label}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  )}
+                </For>
+              </dl>
+              <Show
+                when={wizardEventPreview()}
+                fallback={
+                  <p class="manager-wizard-dialog-event-empty">
+                    {t("manager.orchestration.project-wizard.event.no-change")}
+                  </p>
+                }
+              >
+                {(event) => (
+                  <div class="manager-wizard-dialog-event">
+                    <span>{t("manager.orchestration.project-wizard.event.preview")}</span>
+                    <strong>{wizardIntentEventInputLabel(event())}</strong>
+                  </div>
+                )}
+              </Show>
+              <p class="manager-wizard-dialog-next">{modeGuidance()}</p>
+            </aside>
+          </div>
+          <footer class="manager-wizard-dialog-footer">
+            <button type="button" onClick={() => props.onClose()}>
+              {t("manager.orchestration.action.cancel")}
+            </button>
+            <Show when={props.mode === "create"}>
+              <button type="button" disabled={!canCreate()} onClick={submitCreate}>
+                {t("manager.orchestration.action.create")}
+              </button>
+            </Show>
+            <Show when={props.mode === "change"}>
+              <button type="button" disabled={!canApply()} onClick={applyChange}>
+                {t("manager.orchestration.action.apply-wizard")}
+              </button>
+            </Show>
+            <Show when={props.mode === "review"}>
+              <button type="button" disabled={!canComplete()} onClick={completeProject}>
+                {t("manager.orchestration.action.complete-project")}
+              </button>
+            </Show>
+          </footer>
+        </dialog>
+      </div>
+    </Show>
+  );
+};
+
+const CommandFlowView: Component<{
+  project: ManagerProject | null;
+  commandFlow: ManagerCommandFlowResponse | null;
+  activeRound: ManagerRound | undefined;
+  busy: boolean | undefined;
+  onUpdateCharter?: ((input: ManagerProjectCharterUpdateRequest) => void) | undefined;
+  onPrepare?: (() => void) | undefined;
+  onStart?: ((input: ManagerProjectStartRequest) => void) | undefined;
+  onReview?: ((roundId: string, input: ManagerRoundReviewRequest) => void) | undefined;
+  onDirectionChange?: ((input: ManagerDirectionChangeRequest) => void) | undefined;
+  onComplete?: ((input: ManagerProjectCompleteRequest) => void) | undefined;
+}> = (props) => {
+  const [goal, setGoal] = createSignal("");
+  const [scope, setScope] = createSignal("");
+  const [nonGoals, setNonGoals] = createSignal("");
+  const [constraints, setConstraints] = createSignal("");
+  const [successCriteria, setSuccessCriteria] = createSignal("");
+  const [preferredApproach, setPreferredApproach] = createSignal("");
+  const [verificationPlan, setVerificationPlan] = createSignal("");
+  const [userCheckpoints, setUserCheckpoints] = createSignal("");
+  const [finalDeliverables, setFinalDeliverables] = createSignal("");
+  const [phase, setPhase] =
+    createSignal<NonNullable<ManagerProjectStartRequest["phase"]>>("design");
+  const [startObjective, setStartObjective] = createSignal("");
+  const [dryRun, setDryRun] = createSignal(true);
+  const [reviewAction, setReviewAction] =
+    createSignal<ManagerRoundReviewRequest["action"]>("accept");
+  const [reviewSummary, setReviewSummary] = createSignal("");
+  const [reviewNextObjective, setReviewNextObjective] = createSignal("");
+  const [directionChange, setDirectionChange] = createSignal("");
+  const [directionImpact, setDirectionImpact] = createSignal("");
+  const [directionNextObjective, setDirectionNextObjective] = createSignal("");
+  const [roundAction, setRoundAction] =
+    createSignal<NonNullable<ManagerDirectionChangeRequest["currentRoundAction"]>>("keep");
+  const [finalSummary, setFinalSummary] = createSignal("");
+  const [remainingRisks, setRemainingRisks] = createSignal("");
+  const [verificationEvidence, setVerificationEvidence] = createSignal("");
+  const [finalArtifacts, setFinalArtifacts] = createSignal("");
+  const [acceptedByUser, setAcceptedByUser] = createSignal(false);
+
+  const charter = createMemo(() => commandFlowCharter(props.project, props.commandFlow));
+  const activeRound = createMemo(() => props.commandFlow?.activeRound ?? props.activeRound);
+  const readiness = createMemo(() => props.commandFlow?.readiness ?? null);
+  const wizardEvents = createMemo(
+    () => props.commandFlow?.wizardEvents ?? props.project?.wizardEvents ?? [],
+  );
+  const disabled = createMemo(() => props.busy || !props.project);
+
+  createEffect(() => {
+    const value = charter();
+    setGoal(value.goal);
+    setScope(value.scope);
+    setNonGoals(value.nonGoals);
+    setConstraints(value.constraints);
+    setSuccessCriteria(value.successCriteria);
+    setPreferredApproach(value.preferredApproach);
+    setVerificationPlan(value.verificationPlan);
+    setUserCheckpoints(value.userCheckpoints);
+    setFinalDeliverables(value.finalDeliverables);
+    setStartObjective(value.goal || props.project?.goal || "");
+    setFinalSummary(props.project?.summary || value.goal || "");
+  });
+
+  const saveCharter = () => {
+    const nextCharter: ManagerProjectCharterUpdateRequest = {
+      goal: goal(),
+      scope: scope(),
+      nonGoals: nonGoals(),
+      constraints: constraints(),
+      successCriteria: successCriteria(),
+      preferredApproach: preferredApproach(),
+      verificationPlan: verificationPlan(),
+      userCheckpoints: userCheckpoints(),
+      finalDeliverables: finalDeliverables(),
+      updatedBy: "browser",
+    };
+    const wizardEvent = buildCharterApplyWizardIntentEvent(
+      charter(),
+      nextCharter,
+      readiness()?.stage,
+      activeRound()?.id,
+    );
+    props.onUpdateCharter?.({
+      ...nextCharter,
+      ...(wizardEvent ? { wizardEvent } : {}),
+    });
+  };
+
+  const start = () => {
+    props.onStart?.({
+      objective: startObjective(),
+      phase: phase(),
+      dryRun: dryRun(),
+    });
+  };
+
+  const review = () => {
+    const round = activeRound();
+    if (!round) return;
+    props.onReview?.(round.id, {
+      action: reviewAction(),
+      summary: reviewSummary(),
+      nextObjective: reviewNextObjective(),
+      createNextRound: Boolean(reviewNextObjective().trim()),
+    });
+  };
+
+  const changeDirection = () => {
+    props.onDirectionChange?.({
+      requestedChange: directionChange(),
+      impact: directionImpact(),
+      currentRoundAction: roundAction(),
+      nextObjective: directionNextObjective(),
+    });
+  };
+
+  const complete = () => {
+    props.onComplete?.({
+      summary: finalSummary(),
+      acceptedByUser: acceptedByUser(),
+      goalMatched: acceptedByUser(),
+      remainingRisks: remainingRisks(),
+      verificationEvidence: verificationEvidence(),
+      artifacts: splitList(finalArtifacts()),
+    });
+  };
+
+  return (
+    <Show
+      when={props.project}
+      fallback={<p class="manager-orchestration-empty">{t("manager.orchestration.empty.flow")}</p>}
+    >
+      <div class="manager-command-flow">
+        <div class="manager-command-flow-stage">
+          <For each={COMMAND_FLOW_STAGES}>
+            {(stage) => (
+              <span
+                class="manager-flow-node"
+                classList={{
+                  "manager-flow-node-running": readiness()?.stage === stage,
+                  "manager-flow-node-done": commandFlowStageDone(stage, readiness()?.stage),
+                }}
+              >
+                <strong>{t(`manager.orchestration.flow.stage.${stage}`)}</strong>
+              </span>
+            )}
+          </For>
+        </div>
+        <Show when={wizardEvents().length > 0}>
+          <div
+            class="manager-wizard-events"
+            aria-label={t("manager.orchestration.wizard-events.title")}
+          >
+            <strong>{t("manager.orchestration.wizard-events.title")}</strong>
+            <div>
+              <For each={wizardEvents().slice(0, 3)}>
+                {(event) => (
+                  <span class={`manager-wizard-event manager-wizard-event-${event.impact}`}>
+                    {wizardIntentEventLabel(event)}
+                  </span>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+        <div class="manager-command-flow-grid">
+          <form
+            class="manager-flow-form manager-flow-charter"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveCharter();
+            }}
+          >
+            <h5>{t("manager.orchestration.flow.charter")}</h5>
+            <textarea
+              value={goal()}
+              onInput={(event) => setGoal(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.goal")}
+            />
+            <textarea
+              value={scope()}
+              onInput={(event) => setScope(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.scope")}
+            />
+            <textarea
+              value={constraints()}
+              onInput={(event) => setConstraints(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.constraints")}
+            />
+            <textarea
+              value={successCriteria()}
+              onInput={(event) => setSuccessCriteria(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.success")}
+            />
+            <div class="manager-flow-collapsible">
+              <textarea
+                value={preferredApproach()}
+                onInput={(event) => setPreferredApproach(event.currentTarget.value)}
+                placeholder={t("manager.orchestration.flow.approach")}
+              />
+              <textarea
+                value={verificationPlan()}
+                onInput={(event) => setVerificationPlan(event.currentTarget.value)}
+                placeholder={t("manager.orchestration.flow.verification")}
+              />
+              <textarea
+                value={userCheckpoints()}
+                onInput={(event) => setUserCheckpoints(event.currentTarget.value)}
+                placeholder={t("manager.orchestration.flow.checkpoints")}
+              />
+              <textarea
+                value={finalDeliverables()}
+                onInput={(event) => setFinalDeliverables(event.currentTarget.value)}
+                placeholder={t("manager.orchestration.flow.deliverables")}
+              />
+              <textarea
+                value={nonGoals()}
+                onInput={(event) => setNonGoals(event.currentTarget.value)}
+                placeholder={t("manager.orchestration.flow.non-goals")}
+              />
+            </div>
+            <div class="manager-flow-actions">
+              <button type="submit" disabled={disabled() || !props.onUpdateCharter}>
+                {t("manager.orchestration.action.save-charter")}
+              </button>
+              <button
+                type="button"
+                disabled={disabled() || !props.onPrepare}
+                onClick={() => props.onPrepare?.()}
+              >
+                {t("manager.orchestration.action.prepare")}
+              </button>
+            </div>
+          </form>
+          <div class="manager-flow-form">
+            <h5>{t("manager.orchestration.flow.start")}</h5>
+            <select
+              value={phase()}
+              onChange={(event) =>
+                setPhase(
+                  event.currentTarget.value as NonNullable<ManagerProjectStartRequest["phase"]>,
+                )
+              }
+            >
+              <option value="design">{t("manager.orchestration.flow.phase.design")}</option>
+              <option value="implementation">
+                {t("manager.orchestration.flow.phase.implementation")}
+              </option>
+              <option value="feedback">{t("manager.orchestration.flow.phase.feedback")}</option>
+              <option value="verification">
+                {t("manager.orchestration.flow.phase.verification")}
+              </option>
+              <option value="replan">{t("manager.orchestration.flow.phase.replan")}</option>
+            </select>
+            <textarea
+              value={startObjective()}
+              onInput={(event) => setStartObjective(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.objective")}
+            />
+            <label class="manager-flow-check">
+              <input
+                type="checkbox"
+                checked={dryRun()}
+                onChange={(event) => setDryRun(event.currentTarget.checked)}
+              />
+              <span>{t("manager.orchestration.flow.dry-run")}</span>
+            </label>
+            <Show when={readiness()?.warnings.length}>
+              <ul class="manager-protocol-warnings">
+                <For each={readiness()?.warnings ?? []}>
+                  {(warning) => <li>{managerCommandFlowWarningLabel(warning)}</li>}
+                </For>
+              </ul>
+            </Show>
+            <button
+              type="button"
+              disabled={disabled() || !startObjective().trim() || !props.onStart}
+              onClick={start}
+            >
+              {t("manager.orchestration.action.start-orchestration")}
+            </button>
+          </div>
+          <div class="manager-flow-form">
+            <h5>{t("manager.orchestration.flow.review")}</h5>
+            <select
+              value={reviewAction()}
+              onChange={(event) =>
+                setReviewAction(event.currentTarget.value as ManagerRoundReviewRequest["action"])
+              }
+            >
+              <option value="accept">{t("manager.orchestration.flow.review.accept")}</option>
+              <option value="request_changes">
+                {t("manager.orchestration.flow.review.request-changes")}
+              </option>
+              <option value="user_check_required">
+                {t("manager.orchestration.flow.review.user-check")}
+              </option>
+              <option value="replan">{t("manager.orchestration.flow.review.replan")}</option>
+              <option value="stop">{t("manager.orchestration.flow.review.stop")}</option>
+            </select>
+            <textarea
+              value={reviewSummary()}
+              onInput={(event) => setReviewSummary(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.review-summary")}
+            />
+            <textarea
+              value={reviewNextObjective()}
+              onInput={(event) => setReviewNextObjective(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.next-objective")}
+            />
+            <button
+              type="button"
+              disabled={disabled() || !activeRound() || !props.onReview}
+              onClick={review}
+            >
+              {t("manager.orchestration.action.record-review")}
+            </button>
+          </div>
+          <div class="manager-flow-form">
+            <h5>{t("manager.orchestration.flow.direction")}</h5>
+            <select
+              value={roundAction()}
+              onChange={(event) =>
+                setRoundAction(
+                  event.currentTarget.value as NonNullable<
+                    ManagerDirectionChangeRequest["currentRoundAction"]
+                  >,
+                )
+              }
+            >
+              <option value="keep">{t("manager.orchestration.flow.direction.keep")}</option>
+              <option value="cancel">{t("manager.orchestration.flow.direction.cancel")}</option>
+              <option value="supersede">
+                {t("manager.orchestration.flow.direction.supersede")}
+              </option>
+            </select>
+            <textarea
+              value={directionChange()}
+              onInput={(event) => setDirectionChange(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.direction-change")}
+            />
+            <textarea
+              value={directionImpact()}
+              onInput={(event) => setDirectionImpact(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.direction-impact")}
+            />
+            <textarea
+              value={directionNextObjective()}
+              onInput={(event) => setDirectionNextObjective(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.next-objective")}
+            />
+            <button
+              type="button"
+              disabled={disabled() || !directionChange().trim() || !props.onDirectionChange}
+              onClick={changeDirection}
+            >
+              {t("manager.orchestration.action.record-direction")}
+            </button>
+          </div>
+          <div class="manager-flow-form">
+            <h5>{t("manager.orchestration.flow.complete")}</h5>
+            <textarea
+              value={finalSummary()}
+              onInput={(event) => setFinalSummary(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.final-summary")}
+            />
+            <textarea
+              value={verificationEvidence()}
+              onInput={(event) => setVerificationEvidence(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.verification-evidence")}
+            />
+            <textarea
+              value={remainingRisks()}
+              onInput={(event) => setRemainingRisks(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.remaining-risks")}
+            />
+            <textarea
+              value={finalArtifacts()}
+              onInput={(event) => setFinalArtifacts(event.currentTarget.value)}
+              placeholder={t("manager.orchestration.flow.final-artifacts")}
+            />
+            <label class="manager-flow-check">
+              <input
+                type="checkbox"
+                checked={acceptedByUser()}
+                onChange={(event) => setAcceptedByUser(event.currentTarget.checked)}
+              />
+              <span>{t("manager.orchestration.flow.accepted")}</span>
+            </label>
+            <button
+              type="button"
+              disabled={disabled() || !finalSummary().trim() || !props.onComplete}
+              onClick={complete}
+            >
+              {t("manager.orchestration.action.complete-project")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Show>
   );
 };
 
@@ -780,7 +2061,6 @@ const OverviewView: Component<{
   );
   const activeBlocker = createMemo(() => pickPrimaryBlocker(props.blockers));
   const nextAction = createMemo(() => {
-    if (props.overview?.nextAction) return props.overview.nextAction.label;
     const projectBlocker = activeBlocker();
     if (projectBlocker) {
       if (projectBlocker.requiredAction === "user")
@@ -793,6 +2073,8 @@ const OverviewView: Component<{
         return t("manager.orchestration.next-action.manager", { title: projectBlocker.title });
       return t("manager.orchestration.next-action.track", { title: projectBlocker.title });
     }
+    if (props.overview?.nextAction)
+      return managerProjectOverviewActionLabel(props.overview.nextAction);
     const blocked = blocker();
     if (blocked) {
       return blocked.taskId
@@ -873,7 +2155,7 @@ const OverviewView: Component<{
           <p>
             {props.overview?.currentSignal.detail ||
               (activeBlocker()
-                ? `${activeBlocker()?.severity}: ${activeBlocker()?.title}`
+                ? `${statusLabel(activeBlocker()?.severity)}: ${activeBlocker()?.title}`
                 : blocker()
                   ? `${blocker()?.role} agent needs attention: ${
                       blocker()?.lastError || statusLabel(blocker()?.status)
@@ -907,6 +2189,9 @@ const OverviewView: Component<{
 
 const CurrentStateView: Component<{
   state: ManagerStateViewResponse | null | undefined;
+  project: ManagerProject | null | undefined;
+  activeRound: ManagerRound | undefined;
+  agents: ManagerAgent[];
   busy: boolean | undefined;
   onAcknowledge: (() => void) | undefined;
   onCancelTask: ((taskId: string) => void) | undefined;
@@ -916,8 +2201,22 @@ const CurrentStateView: Component<{
   onRetryTask: ((taskId: string) => void) | undefined;
   onRunUpdateAll: (() => void) | undefined;
 }> = (props) => {
-  const current = createMemo(() => props.state?.current ?? null);
-  const blockers = createMemo(() => props.state?.blockers ?? []);
+  const scope = createMemo(() =>
+    projectManagerStateScope(props.project, props.activeRound, props.agents),
+  );
+  const current = createMemo(() => {
+    const item = props.state?.current ?? null;
+    if (!item) return null;
+    const projectScope = scope();
+    if (!projectScope) return item;
+    return managerStateSignalMatchesProject(item, projectScope) ? item : null;
+  });
+  const blockers = createMemo(() => {
+    const items = props.state?.blockers ?? [];
+    const projectScope = scope();
+    if (!projectScope) return items;
+    return items.filter((item) => managerStateSignalMatchesProject(item, projectScope));
+  });
   const recoveryActions = createMemo(() => props.state?.recoveryActions ?? []);
   const taskId = createMemo(() => current()?.taskId);
   const runRecoveryAction = (id: ManagerStateViewResponse["recoveryActions"][number]["id"]) => {
@@ -938,7 +2237,9 @@ const CurrentStateView: Component<{
         when={current()}
         fallback={
           <p class="manager-orchestration-empty">
-            {t("manager.orchestration.empty.manager-state")}
+            {scope()
+              ? t("manager.orchestration.empty.project-manager-state")
+              : t("manager.orchestration.empty.manager-state")}
           </p>
         }
       >
@@ -949,7 +2250,7 @@ const CurrentStateView: Component<{
                 class={`manager-status-dot manager-status-dot-${currentStateTone(item().tone)}`}
               />
               <strong>{item().title}</strong>
-              <span class="manager-status-pill">{item().status}</span>
+              <span class="manager-status-pill">{statusLabel(item().status)}</span>
             </div>
             <dl class="manager-current-state-grid">
               <div>
@@ -972,7 +2273,9 @@ const CurrentStateView: Component<{
                 {(freshness) => (
                   <div>
                     <dt>{t("manager.orchestration.field.signal")}</dt>
-                    <dd>{freshness().stale ? statusLabel("stale") : formatFreshness(props.state)}</dd>
+                    <dd>
+                      {freshness().stale ? statusLabel("stale") : formatFreshness(props.state)}
+                    </dd>
                   </div>
                 )}
               </Show>
@@ -988,13 +2291,13 @@ const CurrentStateView: Component<{
               </Show>
               <Show when={item().agentId}>
                 {(id) => (
-                  <span>{t("manager.orchestration.word.agent")} {shortId(id())}</span>
+                  <span>
+                    {t("manager.orchestration.word.agent")} {shortId(id())}
+                  </span>
                 )}
               </Show>
               <Show when={item().taskId}>
-                {(id) => (
-                  <span>{t("manager.orchestration.word.task", { id: shortId(id()) })}</span>
-                )}
+                {(id) => <span>{t("manager.orchestration.word.task", { id: shortId(id()) })}</span>}
               </Show>
             </div>
             <div class="manager-current-state-actions">
@@ -1081,7 +2384,7 @@ const CurrentStateView: Component<{
           <For each={blockers().slice(0, 5)}>
             {(blocker) => (
               <li>
-                <span>{blocker.severity}</span>
+                <span>{statusLabel(blocker.severity)}</span>
                 <strong>{blocker.message}</strong>
                 <Show when={blocker.detail}>{(detail) => <small>{detail()}</small>}</Show>
               </li>
@@ -1157,7 +2460,7 @@ const RoundHealthGateView: Component<{
                 <For each={issues().slice(0, 6)}>
                   {(issue) => (
                     <li>
-                      <span>{issue.severity}</span>
+                      <span>{statusLabel(issue.severity)}</span>
                       <strong>{issue.message}</strong>
                       <Show when={issue.detail}>
                         {(detail) => <small>{clip(detail(), 160)}</small>}
@@ -1274,7 +2577,7 @@ const TaskObservationView: Component<{
           <For each={steps()}>
             {(step) => (
               <li>
-                <span>{step.status}</span>
+                <span>{statusLabel(step.status)}</span>
                 <strong>{step.label}</strong>
                 <Show when={step.summary}>{(summary) => <small>{summary()}</small>}</Show>
               </li>
@@ -1369,9 +2672,7 @@ const WorkerRunsView: Component<{
       </p>
     </Show>
     <Show when={props.runs.length === 0}>
-      <p class="manager-orchestration-empty">
-        {t("manager.orchestration.empty.worker-runs")}
-      </p>
+      <p class="manager-orchestration-empty">{t("manager.orchestration.empty.worker-runs")}</p>
     </Show>
   </div>
 );
@@ -1391,7 +2692,7 @@ const AgentsView: Component<{
     <For each={props.agents}>
       {(agent) => (
         <div class={`manager-agent-row manager-agent-row-${statusTone(agent.status)}`}>
-          <span class="manager-agent-role" title={agent.label + " · " + agent.profile}>
+          <span class="manager-agent-role" title={`${agent.label} - ${agent.profile}`}>
             {agent.role}
             <small>{clip(agent.profile, 28)}</small>
           </span>
@@ -1472,16 +2773,15 @@ const DecisionsView: Component<{
   return (
     <div class="manager-decision-board">
       <div class="manager-decision-toolbar">
-        <p class="manager-orchestration-empty">
-          Capture decisions that explain why the manager chose a protocol, role split, or recovery
-          path.
-        </p>
+        <p class="manager-orchestration-empty">{t("manager.orchestration.toolbar.decisions")}</p>
         <button
           type="button"
           disabled={!props.project || props.busy || !props.onCreate}
           onClick={() => setCreating((value) => !value)}
         >
-          {creating() ? "Cancel" : "Record decision"}
+          {creating()
+            ? t("manager.orchestration.action.cancel")
+            : t("manager.orchestration.action.record-decision")}
         </button>
       </div>
 
@@ -1497,22 +2797,22 @@ const DecisionsView: Component<{
             type="text"
             value={title()}
             onInput={(event) => setTitle(event.currentTarget.value)}
-            placeholder="Decision title"
+            placeholder={t("manager.orchestration.placeholder.decision-title")}
           />
           <textarea
             value={detail()}
             onInput={(event) => setDetail(event.currentTarget.value)}
-            placeholder="What was decided, and what should future agents remember?"
+            placeholder={t("manager.orchestration.placeholder.decision-detail")}
             rows={4}
           />
           <input
             type="text"
             value={tags()}
             onInput={(event) => setTags(event.currentTarget.value)}
-            placeholder="tags: protocol, verification"
+            placeholder={t("manager.orchestration.placeholder.tags")}
           />
           <button type="submit" disabled={!canCreate()}>
-            Save decision
+            {t("manager.orchestration.action.save-decision")}
           </button>
         </form>
       </Show>
@@ -1524,13 +2824,17 @@ const DecisionsView: Component<{
           )}
         </For>
         <Show when={props.decisions.length === 0}>
-          <p class="manager-orchestration-empty">No active project decisions recorded yet.</p>
+          <p class="manager-orchestration-empty">{t("manager.orchestration.empty.decisions")}</p>
         </Show>
       </div>
 
       <Show when={props.archivedDecisions.length > 0}>
         <details class="manager-decision-archive">
-          <summary>Archived decisions ({props.archivedDecisions.length})</summary>
+          <summary>
+            {t("manager.orchestration.archive.decisions", {
+              count: props.archivedDecisions.length,
+            })}
+          </summary>
           <For each={props.archivedDecisions.slice(0, 8)}>
             {(decision) => (
               <DecisionRow decision={decision} busy={props.busy} onUpdate={props.onUpdate} />
@@ -1552,13 +2856,19 @@ const DecisionRow: Component<{
       <strong>{props.decision.title}</strong>
       <p>{props.decision.detail}</p>
       <div class="manager-decision-meta">
-        <span>{props.decision.status}</span>
+        <span>{statusLabel(props.decision.status)}</span>
         <time>{formatTime(props.decision.updatedAt)}</time>
         <Show when={props.decision.roundId}>
-          {(roundId) => <span>round {shortId(roundId())}</span>}
+          {(roundId) => (
+            <span>{t("manager.orchestration.word.round", { id: shortId(roundId()) })}</span>
+          )}
         </Show>
         <Show when={props.decision.revisions.length > 0}>
-          <span>{props.decision.revisions.length} revisions</span>
+          <span>
+            {t("manager.orchestration.word.revisions", {
+              count: props.decision.revisions.length,
+            })}
+          </span>
         </Show>
       </div>
       <Show when={props.decision.tags.length > 0}>
@@ -1574,7 +2884,7 @@ const DecisionRow: Component<{
           disabled={props.busy || !props.onUpdate}
           onClick={() => props.onUpdate?.(props.decision.id, { status: "superseded" })}
         >
-          Supersede
+          {t("manager.orchestration.action.supersede")}
         </button>
       </Show>
       <Show when={props.decision.status !== "archived"}>
@@ -1583,7 +2893,7 @@ const DecisionRow: Component<{
           disabled={props.busy || !props.onUpdate}
           onClick={() => props.onUpdate?.(props.decision.id, { status: "archived" })}
         >
-          Archive
+          {t("manager.orchestration.action.archive")}
         </button>
       </Show>
     </div>
@@ -1634,16 +2944,15 @@ const BlockersView: Component<{
   return (
     <div class="manager-blocker-board">
       <div class="manager-blocker-toolbar">
-        <p class="manager-orchestration-empty">
-          Record only actionable blockers. Transient daemon/network noise should stay diagnostic
-          until it needs a clear owner.
-        </p>
+        <p class="manager-orchestration-empty">{t("manager.orchestration.toolbar.blockers")}</p>
         <button
           type="button"
           disabled={!props.project || props.busy || !props.onCreate}
           onClick={() => setCreating((value) => !value)}
         >
-          {creating() ? "Cancel" : "Record blocker"}
+          {creating()
+            ? t("manager.orchestration.action.cancel")
+            : t("manager.orchestration.action.record-blocker")}
         </button>
       </div>
 
@@ -1659,12 +2968,12 @@ const BlockersView: Component<{
             type="text"
             value={title()}
             onInput={(event) => setTitle(event.currentTarget.value)}
-            placeholder="Blocker title"
+            placeholder={t("manager.orchestration.placeholder.blocker-title")}
           />
           <textarea
             value={detail()}
             onInput={(event) => setDetail(event.currentTarget.value)}
-            placeholder="What is blocked, what evidence exists, and what action is required?"
+            placeholder={t("manager.orchestration.placeholder.blocker-detail")}
             rows={4}
           />
           <select
@@ -1673,9 +2982,9 @@ const BlockersView: Component<{
               setSeverity(event.currentTarget.value as ManagerBlocker["severity"])
             }
           >
-            <option value="info">info</option>
-            <option value="warning">warning</option>
-            <option value="error">error</option>
+            <option value="info">{statusLabel("info")}</option>
+            <option value="warning">{statusLabel("warning")}</option>
+            <option value="error">{statusLabel("error")}</option>
           </select>
           <select
             value={requiredAction()}
@@ -1683,25 +2992,25 @@ const BlockersView: Component<{
               setRequiredAction(event.currentTarget.value as ManagerBlocker["requiredAction"])
             }
           >
-            <option value="manager">manager action</option>
-            <option value="worker">worker action</option>
-            <option value="user">user action</option>
-            <option value="none">track only</option>
+            <option value="manager">{t("manager.orchestration.blocker.required.manager")}</option>
+            <option value="worker">{t("manager.orchestration.blocker.required.worker")}</option>
+            <option value="user">{t("manager.orchestration.blocker.required.user")}</option>
+            <option value="none">{t("manager.orchestration.blocker.required.none")}</option>
           </select>
           <input
             type="text"
             value={owner()}
             onInput={(event) => setOwner(event.currentTarget.value)}
-            placeholder="owner"
+            placeholder={t("manager.orchestration.placeholder.owner")}
           />
           <input
             type="text"
             value={dedupeKey()}
             onInput={(event) => setDedupeKey(event.currentTarget.value)}
-            placeholder="dedupe key"
+            placeholder={t("manager.orchestration.placeholder.dedupe-key")}
           />
           <button type="submit" disabled={!canCreate()}>
-            Save blocker
+            {t("manager.orchestration.action.save-blocker")}
           </button>
         </form>
       </Show>
@@ -1713,13 +3022,17 @@ const BlockersView: Component<{
           )}
         </For>
         <Show when={props.blockers.length === 0}>
-          <p class="manager-orchestration-empty">No active project blockers.</p>
+          <p class="manager-orchestration-empty">{t("manager.orchestration.empty.blockers")}</p>
         </Show>
       </div>
 
       <Show when={props.resolvedBlockers.length > 0}>
         <details class="manager-blocker-resolved">
-          <summary>Resolved blockers ({props.resolvedBlockers.length})</summary>
+          <summary>
+            {t("manager.orchestration.archive.resolved-blockers", {
+              count: props.resolvedBlockers.length,
+            })}
+          </summary>
           <For each={props.resolvedBlockers.slice(0, 8)}>
             {(blocker) => (
               <BlockerRow blocker={blocker} busy={props.busy} onResolve={props.onResolve} />
@@ -1743,15 +3056,21 @@ const BlockerRow: Component<{
       <strong>{props.blocker.title}</strong>
       <Show when={props.blocker.detail}>{(detail) => <p>{detail()}</p>}</Show>
       <div class="manager-blocker-meta">
-        <span>{props.blocker.severity}</span>
-        <span>{props.blocker.requiredAction}</span>
-        <span>owner {props.blocker.owner}</span>
+        <span>{statusLabel(props.blocker.severity)}</span>
+        <span>{t(`manager.orchestration.blocker.required.${props.blocker.requiredAction}`)}</span>
+        <span>{t("manager.orchestration.word.owner", { owner: props.blocker.owner })}</span>
         <time>{formatTime(props.blocker.updatedAt)}</time>
         <Show when={props.blocker.roundId}>
-          {(roundId) => <span>round {shortId(roundId())}</span>}
+          {(roundId) => (
+            <span>{t("manager.orchestration.word.round", { id: shortId(roundId()) })}</span>
+          )}
         </Show>
         <Show when={props.blocker.dedupeKey}>
-          {(key) => <span title={key()}>key {clip(key(), 32)}</span>}
+          {(key) => (
+            <span title={key()}>
+              {t("manager.orchestration.word.key", { key: clip(key(), 32) })}
+            </span>
+          )}
         </Show>
       </div>
       <Show when={props.blocker.resolution}>
@@ -1765,11 +3084,11 @@ const BlockerRow: Component<{
           disabled={props.busy || !props.onResolve}
           onClick={() =>
             props.onResolve?.(props.blocker.id, {
-              resolution: "Resolved from workbench.",
+              resolution: t("manager.orchestration.recovery.resolved"),
             })
           }
         >
-          Resolve
+          {t("manager.orchestration.action.resolve")}
         </button>
         <button
           type="button"
@@ -1777,11 +3096,11 @@ const BlockerRow: Component<{
           onClick={() =>
             props.onResolve?.(props.blocker.id, {
               status: "dismissed",
-              resolution: "Dismissed from workbench.",
+              resolution: t("manager.orchestration.recovery.dismissed"),
             })
           }
         >
-          Dismiss
+          {t("manager.orchestration.action.dismiss")}
         </button>
       </Show>
     </div>
@@ -1800,7 +3119,7 @@ const TimelineView: Component<{ entries: TimelineEntry[] }> = (props) => (
       )}
     </For>
     <Show when={props.entries.length === 0}>
-      <li class="manager-orchestration-empty">No events yet.</li>
+      <li class="manager-orchestration-empty">{t("manager.orchestration.empty.events")}</li>
     </Show>
   </ol>
 );
@@ -1816,18 +3135,19 @@ const MermaidFlowView: Component<{
   );
   return (
     <div class="manager-mermaid-flow">
-      <MermaidDiagram source={source()} />
+      <MermaidDiagram source={source()} ariaLabel={t("manager.orchestration.aria.worker-flow")} />
       <details class="manager-mermaid-source">
-        <summary>Mermaid source</summary>
+        <summary>{t("manager.orchestration.graph.source")}</summary>
         <pre>{source()}</pre>
       </details>
     </div>
   );
 };
 
-const MermaidDiagram: Component<{ source: string }> = (props) => {
+const MermaidDiagram: Component<{ source: string; ariaLabel?: string | undefined }> = (props) => {
   const [svg, setSvg] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
+  const diagramId = ++mermaidDiagramInstance;
   let renderId = 0;
 
   createEffect(() => {
@@ -1864,7 +3184,7 @@ const MermaidDiagram: Component<{ source: string }> = (props) => {
           noteBorderColor: dark ? "#8c6a46" : "#e0b875",
         },
       });
-      const result = await mermaid.render(`manager-flow-${currentId}`, source);
+      const result = await mermaid.render(`manager-flow-${diagramId}-${currentId}`, source);
       if (currentId !== renderId) return;
       setSvg(result.svg);
     } catch (err) {
@@ -1874,18 +3194,47 @@ const MermaidDiagram: Component<{ source: string }> = (props) => {
   }
 
   return (
-    <div class="manager-mermaid-render" aria-label="worker flow diagram">
+    <div
+      class="manager-mermaid-render"
+      aria-label={props.ariaLabel ?? t("manager.orchestration.aria.worker-flow")}
+    >
       <Show
         when={!error()}
-        fallback={<p class="manager-orchestration-empty">Mermaid render failed: {error()}</p>}
+        fallback={
+          <p class="manager-orchestration-empty">
+            {t("manager.orchestration.graph.render-failed", { error: error() ?? "" })}
+          </p>
+        }
       >
         <Show
           when={svg()}
-          fallback={<p class="manager-orchestration-empty">Rendering worker flow...</p>}
+          fallback={
+            <p class="manager-orchestration-empty">{t("manager.orchestration.graph.rendering")}</p>
+          }
         >
           {(html) => <div class="manager-mermaid-svg" innerHTML={html()} />}
         </Show>
       </Show>
+    </div>
+  );
+};
+
+const ProtocolPrincipleDiagram: Component<{ protocol: ManagerProtocolState | null }> = (props) => {
+  const source = createMemo(() => buildProtocolPrincipleDiagram(props.protocol));
+  return (
+    <div class="manager-protocol-principle">
+      <div class="manager-protocol-principle-header">
+        <strong>{t("manager.orchestration.protocol.diagram.title")}</strong>
+        <span>{t("manager.orchestration.protocol.diagram.subtitle")}</span>
+      </div>
+      <MermaidDiagram
+        source={source()}
+        ariaLabel={t("manager.orchestration.aria.protocol-principle")}
+      />
+      <details class="manager-mermaid-source">
+        <summary>{t("manager.orchestration.graph.source")}</summary>
+        <pre>{source()}</pre>
+      </details>
     </div>
   );
 };
@@ -1902,20 +3251,22 @@ const ArtifactsView: Component<{
     <div class="manager-artifact-toolbar">
       <p>
         {props.stored
-          ? "Stored project artifacts."
-          : "Derived from recent worker output until the project is scanned."}
+          ? t("manager.orchestration.toolbar.artifacts-stored")
+          : t("manager.orchestration.toolbar.artifacts-derived")}
       </p>
       <button type="button" disabled={props.busy} onClick={() => props.onScan?.()}>
-        {props.busy ? "Scanning..." : "Scan artifacts"}
+        {props.busy
+          ? t("manager.orchestration.action.scanning")
+          : t("manager.orchestration.action.scan-artifacts")}
       </button>
     </div>
     <div class="manager-artifact-row manager-artifact-row-head">
-      <span>File</span>
-      <span>Owner</span>
-      <span>Kind</span>
-      <span>Status</span>
-      <span>Updated</span>
-      <span>Action</span>
+      <span>{t("manager.orchestration.field.file")}</span>
+      <span>{t("manager.orchestration.field.owner")}</span>
+      <span>{t("manager.orchestration.field.kind")}</span>
+      <span>{t("manager.orchestration.field.status")}</span>
+      <span>{t("manager.orchestration.field.updated")}</span>
+      <span>{t("manager.orchestration.field.action")}</span>
     </div>
     <For each={props.artifacts}>
       {(artifact) => (
@@ -1924,7 +3275,7 @@ const ArtifactsView: Component<{
             {artifact.path}
           </span>
           <span>{artifact.owner}</span>
-          <span>{artifact.kind ?? "unknown"}</span>
+          <span>{artifact.kind ?? t("manager.orchestration.status.unknown")}</span>
           <span>{statusLabel(artifact.status)}</span>
           <time>{formatTime(artifact.updatedAt)}</time>
           <span>
@@ -1936,7 +3287,7 @@ const ArtifactsView: Component<{
                   disabled={props.busy}
                   onClick={() => props.onUpdate?.(id(), { status: "obsolete" })}
                 >
-                  Obsolete
+                  {t("manager.orchestration.action.obsolete")}
                 </button>
               )}
             </Show>
@@ -1945,13 +3296,15 @@ const ArtifactsView: Component<{
       )}
     </For>
     <Show when={props.artifacts.length === 0}>
-      <p class="manager-orchestration-empty">
-        No artifact paths detected yet. Scan after worker output references files.
-      </p>
+      <p class="manager-orchestration-empty">{t("manager.orchestration.empty.artifacts")}</p>
     </Show>
     <Show when={(props.inactiveArtifacts?.length ?? 0) > 0}>
       <details class="manager-artifact-inactive">
-        <summary>Inactive artifacts ({props.inactiveArtifacts?.length ?? 0})</summary>
+        <summary>
+          {t("manager.orchestration.artifact.inactive", {
+            count: props.inactiveArtifacts?.length ?? 0,
+          })}
+        </summary>
         <For each={props.inactiveArtifacts ?? []}>
           {(artifact) => (
             <div class="manager-artifact-row">
@@ -1959,7 +3312,7 @@ const ArtifactsView: Component<{
                 {artifact.path}
               </span>
               <span>{artifact.owner}</span>
-              <span>{artifact.kind ?? "unknown"}</span>
+              <span>{artifact.kind ?? t("manager.orchestration.status.unknown")}</span>
               <span>{statusLabel(artifact.status)}</span>
               <time>{formatTime(artifact.updatedAt)}</time>
               <span>
@@ -1971,7 +3324,7 @@ const ArtifactsView: Component<{
                       disabled={props.busy}
                       onClick={() => props.onUpdate?.(id(), { status: "active" })}
                     >
-                      Active
+                      {t("manager.orchestration.action.activate")}
                     </button>
                   )}
                 </Show>
@@ -2031,14 +3384,21 @@ const ProtocolView: Component<{
   };
   return (
     <div class="manager-protocol-view">
+      <ProtocolPrincipleDiagram protocol={props.protocol} />
       <div class="manager-artifact-toolbar">
         <p>
           {props.protocol
-            ? `${presentCount()}/${props.protocol.files.length} core files present · ${props.protocol.version}`
-            : "No protocol scan has loaded yet."}
+            ? t("manager.orchestration.protocol.files-present", {
+                present: presentCount(),
+                total: props.protocol.files.length,
+                version: props.protocol.version,
+              })
+            : t("manager.orchestration.empty.protocol-scan")}
         </p>
         <button type="button" disabled={props.busy} onClick={() => props.onScan?.()}>
-          {props.busy ? "Scanning..." : "Scan protocol"}
+          {props.busy
+            ? t("manager.orchestration.action.scanning")
+            : t("manager.orchestration.action.scan-protocol")}
         </button>
       </div>
       <Show when={(props.protocol?.warnings.length ?? 0) > 0}>
@@ -2048,7 +3408,7 @@ const ProtocolView: Component<{
       </Show>
       <div class="manager-protocol-editor">
         <label>
-          <span>Version</span>
+          <span>{t("manager.orchestration.field.version")}</span>
           <input
             type="text"
             value={version()}
@@ -2057,70 +3417,70 @@ const ProtocolView: Component<{
           />
         </label>
         <label>
-          <span>Active rules</span>
+          <span>{t("manager.orchestration.protocol.active-rules")}</span>
           <textarea
             value={activeRules()}
             disabled={props.busy}
             rows={4}
             onInput={(event) => setActiveRules(event.currentTarget.value)}
-            placeholder="One pinned rule per line"
+            placeholder={t("manager.orchestration.placeholder.active-rules")}
           />
         </label>
         <label>
-          <span>Latest change</span>
+          <span>{t("manager.orchestration.field.latest-change")}</span>
           <input
             type="text"
             value={changeSummary()}
             disabled={props.busy}
             onInput={(event) => setChangeSummary(event.currentTarget.value)}
-            placeholder="What changed and why"
+            placeholder={t("manager.orchestration.placeholder.latest-change")}
           />
         </label>
         <div class="manager-protocol-change-row">
           <label>
-            <span>Decision</span>
+            <span>{t("manager.orchestration.field.decision")}</span>
             <select
               value={changeDecisionId()}
               disabled={props.busy}
               onChange={(event) => setChangeDecisionId(event.currentTarget.value)}
             >
-              <option value="">No linked decision</option>
+              <option value="">{t("manager.orchestration.protocol.no-linked-decision")}</option>
               <For each={props.decisions.filter((decision) => decision.status === "active")}>
                 {(decision) => <option value={decision.id}>{decision.title}</option>}
               </For>
             </select>
           </label>
           <label>
-            <span>Round</span>
+            <span>{t("manager.orchestration.field.round")}</span>
             <input
               type="text"
               value={changeRoundId()}
               disabled={props.busy}
               onInput={(event) => setChangeRoundId(event.currentTarget.value)}
-              placeholder="round id"
+              placeholder={t("manager.orchestration.placeholder.round-id")}
             />
           </label>
         </div>
         <div class="manager-protocol-actions">
           <button type="button" disabled={props.busy || !props.onUpdate} onClick={save}>
-            Save protocol state
+            {t("manager.orchestration.action.save-protocol")}
           </button>
           <button
             type="button"
             disabled={props.busy || !props.onUpdate}
             onClick={() => props.onUpdate?.({ latestChange: null })}
           >
-            Clear change
+            {t("manager.orchestration.action.clear-change")}
           </button>
         </div>
       </div>
       <div class="manager-artifact-row manager-artifact-row-head">
-        <span>File</span>
-        <span>Role</span>
-        <span>Status</span>
-        <span>Updated</span>
-        <span>Evidence</span>
-        <span>Note</span>
+        <span>{t("manager.orchestration.field.file")}</span>
+        <span>{t("manager.orchestration.field.role")}</span>
+        <span>{t("manager.orchestration.field.status")}</span>
+        <span>{t("manager.orchestration.field.updated")}</span>
+        <span>{t("manager.orchestration.field.evidence")}</span>
+        <span>{t("manager.orchestration.field.note")}</span>
       </div>
       <For each={props.protocol?.files ?? []}>
         {(file) => (
@@ -2135,18 +3495,23 @@ const ProtocolView: Component<{
               <Show when={file.excerpt}>
                 {(excerpt) => (
                   <details class="manager-protocol-excerpt">
-                    <summary>excerpt</summary>
+                    <summary>{t("manager.orchestration.protocol.excerpt")}</summary>
                     <pre>{excerpt()}</pre>
                   </details>
                 )}
               </Show>
             </span>
-            <span>{file.error ?? (file.sizeBytes ? `${file.sizeBytes} bytes` : "")}</span>
+            <span>
+              {file.error ??
+                (file.sizeBytes
+                  ? t("manager.orchestration.word.bytes", { count: file.sizeBytes })
+                  : "")}
+            </span>
           </div>
         )}
       </For>
       <Show when={!props.protocol}>
-        <p class="manager-orchestration-empty">Select a project to scan protocol files.</p>
+        <p class="manager-orchestration-empty">{t("manager.orchestration.empty.protocol")}</p>
       </Show>
     </div>
   );
@@ -2183,16 +3548,22 @@ const HygieneView: Component<{
       <div class="manager-hygiene-group">
         <div class="manager-hygiene-head">
           <div>
-            <span class="manager-overview-label">Project hygiene</span>
+            <span class="manager-overview-label">{t("manager.orchestration.hygiene.project")}</span>
             <p>
               <Show
                 when={props.projectReport}
                 fallback={
-                  props.projectLoading ? "Scanning project records..." : "Select a project to scan."
+                  props.projectLoading
+                    ? t("manager.orchestration.hygiene.project-loading")
+                    : t("manager.orchestration.hygiene.project-none")
                 }
               >
                 {(report) =>
-                  `${report().summary.cleanupCandidates} recovery candidates - ${report().summary.protected} protected - ${report().summary.recordedBlockers} recorded`
+                  t("manager.orchestration.hygiene.project-summary", {
+                    cleanup: report().summary.cleanupCandidates,
+                    protected: report().summary.protected,
+                    recorded: report().summary.recordedBlockers,
+                  })
                 }
               </Show>
             </p>
@@ -2203,14 +3574,16 @@ const HygieneView: Component<{
               onClick={() => props.onRefreshProject?.()}
               disabled={props.projectLoading}
             >
-              Refresh
+              {t("manager.orchestration.action.refresh")}
             </button>
             <button
               type="button"
               onClick={() => props.onCleanupProject?.()}
               disabled={props.projectCleanupBusy || projectCleanupIssues().length === 0}
             >
-              {props.projectCleanupBusy ? "Recording..." : "Record blockers"}
+              {props.projectCleanupBusy
+                ? t("manager.orchestration.hygiene.recording")
+                : t("manager.orchestration.hygiene.record-blockers")}
             </button>
           </div>
         </div>
@@ -2232,34 +3605,45 @@ const HygieneView: Component<{
             {(issue) => <ProjectHygieneIssueRow issue={issue} />}
           </For>
           <Show when={visibleProjectIssues().length === 0}>
-            <p class="manager-orchestration-empty">No project hygiene issues were found.</p>
+            <p class="manager-orchestration-empty">
+              {t("manager.orchestration.hygiene.empty.project")}
+            </p>
           </Show>
         </div>
       </div>
       <div class="manager-hygiene-head">
         <div>
-          <span class="manager-overview-label">Session hygiene</span>
+          <span class="manager-overview-label">{t("manager.orchestration.hygiene.session")}</span>
           <p>
             <Show
               when={props.report}
-              fallback={props.loading ? "Scanning manager sessions..." : "No hygiene report yet."}
+              fallback={
+                props.loading
+                  ? t("manager.orchestration.hygiene.session-loading")
+                  : t("manager.orchestration.hygiene.session-none")
+              }
             >
               {(report) =>
-                `${report().summary.cleanupCandidates} cleanup candidates - ${report().summary.preserved} preserved`
+                t("manager.orchestration.hygiene.session-summary", {
+                  cleanup: report().summary.cleanupCandidates,
+                  preserved: report().summary.preserved,
+                })
               }
             </Show>
           </p>
         </div>
         <div class="manager-hygiene-actions">
           <button type="button" onClick={() => props.onRefresh?.()} disabled={props.loading}>
-            Refresh
+            {t("manager.orchestration.action.refresh")}
           </button>
           <button
             type="button"
             onClick={() => props.onCleanup?.()}
             disabled={props.cleanupBusy || cleanupItems().length === 0}
           >
-            {props.cleanupBusy ? "Cleaning..." : "Safe cleanup"}
+            {props.cleanupBusy
+              ? t("manager.orchestration.hygiene.cleanup")
+              : t("manager.orchestration.action.safe-cleanup")}
           </button>
         </div>
       </div>
@@ -2290,7 +3674,9 @@ const HygieneView: Component<{
       <div class="manager-hygiene-list">
         <For each={visibleItems().slice(0, 16)}>{(item) => <HygieneItemRow item={item} />}</For>
         <Show when={visibleItems().length === 0}>
-          <p class="manager-orchestration-empty">No manager sessions were found.</p>
+          <p class="manager-orchestration-empty">
+            {t("manager.orchestration.hygiene.empty.sessions")}
+          </p>
         </Show>
       </div>
     </div>
@@ -2301,12 +3687,12 @@ const ProjectHygieneIssueRow: Component<{ issue: ManagerProjectHygieneIssue }> =
   <div class="manager-hygiene-row">
     <span class={`manager-agent-status manager-agent-status-${projectHygieneTone(props.issue)}`}>
       {props.issue.blockerId
-        ? "recorded"
+        ? t("manager.orchestration.hygiene.action.recorded")
         : props.issue.protected
-          ? "protected"
+          ? t("manager.orchestration.hygiene.action.protected")
           : props.issue.cleanupEligible
-            ? "record"
-            : "check"}
+            ? t("manager.orchestration.hygiene.action.record")
+            : t("manager.orchestration.hygiene.action.check")}
     </span>
     <span class="manager-hygiene-title" title={props.issue.title}>
       {props.issue.title}
@@ -2322,7 +3708,9 @@ const ProjectHygieneIssueRow: Component<{ issue: ManagerProjectHygieneIssue }> =
 const HygieneItemRow: Component<{ item: ManagerSessionHygieneItem }> = (props) => (
   <div class="manager-hygiene-row">
     <span class={`manager-agent-status manager-agent-status-${hygieneTone(props.item)}`}>
-      {props.item.action === "cleanup" ? "cleanup" : "keep"}
+      {props.item.action === "cleanup"
+        ? t("manager.orchestration.hygiene.action.cleanup")
+        : t("manager.orchestration.hygiene.action.keep")}
     </span>
     <span class="manager-hygiene-title" title={props.item.fullTitle || props.item.title || ""}>
       {props.item.title || shortId(props.item.sessionId)}
@@ -2364,6 +3752,345 @@ function writePanelHeight(value: number): void {
 function clampPanelHeight(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_PANEL_HEIGHT;
   return Math.min(MAX_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, Math.round(value)));
+}
+
+function projectWizardKindLabel(value: ProjectWizardKind): string {
+  switch (value) {
+    case "app":
+      return t("manager.orchestration.project-wizard.kind.app");
+    case "website":
+      return t("manager.orchestration.project-wizard.kind.website");
+    case "automation":
+      return t("manager.orchestration.project-wizard.kind.automation");
+    case "document":
+      return t("manager.orchestration.project-wizard.kind.document");
+    case "data":
+      return t("manager.orchestration.project-wizard.kind.data");
+    case "game":
+      return t("manager.orchestration.project-wizard.kind.game");
+    case "existing":
+      return t("manager.orchestration.project-wizard.kind.existing");
+    case "other":
+      return t("manager.orchestration.project-wizard.kind.other");
+  }
+}
+
+function projectWizardModeLabel(value: ProjectWizardMode): string {
+  switch (value) {
+    case "create":
+      return t("manager.orchestration.project-wizard.mode.create");
+    case "change":
+      return t("manager.orchestration.project-wizard.mode.change");
+    case "review":
+      return t("manager.orchestration.project-wizard.mode.review");
+  }
+}
+
+function projectWizardModeTitle(value: ProjectWizardMode): string {
+  switch (value) {
+    case "create":
+      return t("manager.orchestration.project-wizard.title.create");
+    case "change":
+      return t("manager.orchestration.project-wizard.title.change");
+    case "review":
+      return t("manager.orchestration.project-wizard.title.review");
+  }
+}
+
+function projectWizardModeGuidance(value: ProjectWizardMode): string {
+  switch (value) {
+    case "create":
+      return t("manager.orchestration.project-wizard.guidance.create");
+    case "change":
+      return t("manager.orchestration.project-wizard.guidance.change");
+    case "review":
+      return t("manager.orchestration.project-wizard.guidance.review");
+  }
+}
+
+function projectProtocolSourceLabel(value: ManagerProjectProtocolSource): string {
+  return value === "blank"
+    ? t("manager.orchestration.project.protocol-source.blank")
+    : t("manager.orchestration.project.protocol-source.base-copy");
+}
+
+function isLikelyAbsoluteWorkspacePath(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    /^[A-Za-z]:[\\/]/.test(trimmed) ||
+    trimmed.startsWith("\\\\") ||
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("/")
+  );
+}
+
+function projectWizardName(intent: string, kind: ProjectWizardKind): string {
+  return clip(projectWizardGoal(intent), 54) || projectWizardKindLabel(kind);
+}
+
+function projectWizardGoal(intent: string): string {
+  return clip(compactWizardText(firstWizardSentence(intent)), 160);
+}
+
+function buildProjectWizardCharter(input: {
+  goal: string;
+  intent: string;
+  kind: ProjectWizardKind;
+  audience: string;
+  useCase: string;
+  constraints: string;
+  successCriteria: string;
+  nonGoals: string;
+  preferredApproach: string;
+}): Partial<ManagerProjectCharter> {
+  const intent = compactWizardText(input.intent);
+  const kind = projectWizardKindLabel(input.kind);
+  const audience = compactWizardText(input.audience);
+  const useCase = compactWizardText(input.useCase);
+  const constraints = compactWizardText(input.constraints);
+  const successCriteria = compactWizardText(input.successCriteria);
+  const nonGoals = compactWizardText(input.nonGoals);
+  const preferredApproach = compactWizardText(input.preferredApproach);
+  return {
+    goal: compactWizardText(input.goal),
+    scope: joinWizardLines([
+      `${t("manager.orchestration.project-wizard.summary.kind")}: ${kind}`,
+      intent ? `${t("manager.orchestration.project-wizard.summary.intent")}: ${intent}` : "",
+      useCase ? `${t("manager.orchestration.project-wizard.summary.use-case")}: ${useCase}` : "",
+      audience ? `${t("manager.orchestration.project-wizard.summary.audience")}: ${audience}` : "",
+    ]),
+    nonGoals: nonGoals || t("manager.orchestration.project-wizard.generated.non-goals"),
+    constraints: joinWizardLines([
+      constraints,
+      t("manager.orchestration.project-wizard.generated.constraints"),
+    ]),
+    successCriteria: successCriteria || projectWizardDefaultSuccess(input.kind),
+    preferredApproach:
+      preferredApproach || t("manager.orchestration.project-wizard.generated.approach"),
+    verificationPlan: projectWizardDefaultVerification(input.kind),
+    userCheckpoints: joinWizardLines([
+      t("manager.orchestration.project-wizard.checkpoint.before-start"),
+      t("manager.orchestration.project-wizard.checkpoint.after-round"),
+      t("manager.orchestration.project-wizard.checkpoint.before-final"),
+    ]),
+    finalDeliverables: projectWizardDefaultDeliverable(input.kind),
+    updatedBy: "browser",
+  };
+}
+
+function buildProjectWizardIntentEvent(
+  charter: Partial<ManagerProjectCharter>,
+  protocolSource: ManagerProjectProtocolSource,
+  roundId: string | undefined,
+): ManagerWizardIntentEventInput {
+  return {
+    kind: "charter-applied",
+    fields: [
+      ...projectWizardCharterFields(charter),
+      {
+        field: "protocolSource",
+        after: projectProtocolSourceLabel(protocolSource),
+      },
+    ],
+    impact: protocolSource === "blank" ? "high" : "medium",
+    managerAction: "refresh-readiness",
+    ...(roundId ? { roundId } : {}),
+    note: t("manager.orchestration.project-wizard.event.created"),
+  };
+}
+
+function buildCharterApplyWizardIntentEvent(
+  before: ManagerProjectCharter,
+  after: ManagerProjectCharterUpdateRequest,
+  stage: ManagerCommandFlowResponse["readiness"]["stage"] | undefined,
+  roundId: string | undefined,
+): ManagerWizardIntentEventInput | undefined {
+  const fields = charterApplyWizardFields(before, after);
+  if (fields.length === 0) return undefined;
+  const impact = wizardImpactForFields(fields);
+  const runningStage = stage === "running" || stage === "review" || stage === "replanning";
+  return {
+    kind: "charter-applied",
+    fields,
+    impact,
+    managerAction: runningStage ? (impact === "high" ? "replan" : "continue") : "refresh-readiness",
+    ...(roundId ? { roundId } : {}),
+    note: t("manager.orchestration.project-wizard.event.charter-applied"),
+  };
+}
+
+function projectWizardCharterFields(
+  charter: Partial<ManagerProjectCharter>,
+): ManagerWizardIntentEventInput["fields"] {
+  const fields: Array<[ManagerProjectCharterTextField, string | undefined]> = [
+    ["goal", charter.goal],
+    ["scope", charter.scope],
+    ["nonGoals", charter.nonGoals],
+    ["constraints", charter.constraints],
+    ["successCriteria", charter.successCriteria],
+    ["preferredApproach", charter.preferredApproach],
+    ["verificationPlan", charter.verificationPlan],
+    ["userCheckpoints", charter.userCheckpoints],
+    ["finalDeliverables", charter.finalDeliverables],
+  ];
+  return fields.flatMap(([field, after]) =>
+    typeof after === "string" && after.trim() ? [{ field, after: after.trim() }] : [],
+  );
+}
+
+function charterApplyWizardFields(
+  before: ManagerProjectCharter,
+  after: ManagerProjectCharterUpdateRequest,
+): ManagerWizardIntentEventInput["fields"] {
+  const fields: ManagerProjectCharterTextField[] = [
+    "goal",
+    "scope",
+    "nonGoals",
+    "constraints",
+    "successCriteria",
+    "preferredApproach",
+    "verificationPlan",
+    "userCheckpoints",
+    "finalDeliverables",
+  ];
+  return fields.flatMap((field) => {
+    const beforeValue = typeof before[field] === "string" ? before[field].trim() : "";
+    const afterValue = typeof after[field] === "string" ? after[field].trim() : "";
+    if (!afterValue || beforeValue === afterValue) return [];
+    return [
+      {
+        field,
+        ...(beforeValue ? { before: beforeValue } : {}),
+        after: afterValue,
+      },
+    ];
+  });
+}
+
+function wizardImpactForFields(
+  fields: ManagerWizardIntentEventInput["fields"],
+): ManagerWizardIntentEvent["impact"] {
+  const highImpact = new Set(["goal", "constraints", "nonGoals", "protocolSource"]);
+  const mediumImpact = new Set([
+    "successCriteria",
+    "verificationPlan",
+    "userCheckpoints",
+    "finalDeliverables",
+  ]);
+  if (fields.some((field) => highImpact.has(field.field))) return "high";
+  if (fields.some((field) => mediumImpact.has(field.field))) return "medium";
+  return "low";
+}
+
+function wizardIntentEventLabel(event: ManagerWizardIntentEvent): string {
+  const fields = event.fields.map((field) => field.field).join(", ");
+  return t("manager.orchestration.wizard-events.item", {
+    impact: t(`manager.orchestration.wizard-events.impact.${event.impact}`),
+    action: t(`manager.orchestration.wizard-events.action.${event.managerAction}`),
+    fields,
+  });
+}
+
+function wizardIntentEventInputLabel(event: ManagerWizardIntentEventInput): string {
+  const fields = event.fields.map((field) => field.field).join(", ");
+  const impact = event.impact ?? "unknown";
+  const action = event.managerAction ?? "record";
+  return t("manager.orchestration.wizard-events.item", {
+    impact: t(`manager.orchestration.wizard-events.impact.${impact}`),
+    action: t(`manager.orchestration.wizard-events.action.${action}`),
+    fields,
+  });
+}
+
+function projectWizardSummaryRows(
+  charter: Partial<ManagerProjectCharter>,
+): Array<{ label: string; value: string }> {
+  return [
+    { label: t("manager.orchestration.project-wizard.field.goal"), value: charter.goal ?? "" },
+    { label: t("manager.orchestration.project-wizard.field.scope"), value: charter.scope ?? "" },
+    {
+      label: t("manager.orchestration.project-wizard.field.success"),
+      value: charter.successCriteria ?? "",
+    },
+    {
+      label: t("manager.orchestration.project-wizard.field.verification"),
+      value: charter.verificationPlan ?? "",
+    },
+    {
+      label: t("manager.orchestration.project-wizard.field.checkpoints"),
+      value: charter.userCheckpoints ?? "",
+    },
+    {
+      label: t("manager.orchestration.project-wizard.field.deliverables"),
+      value: charter.finalDeliverables ?? "",
+    },
+  ].filter((row) => row.value.trim());
+}
+
+function projectWizardDefaultSuccess(kind: ProjectWizardKind): string {
+  switch (kind) {
+    case "app":
+      return t("manager.orchestration.project-wizard.success.app");
+    case "website":
+      return t("manager.orchestration.project-wizard.success.website");
+    case "automation":
+      return t("manager.orchestration.project-wizard.success.automation");
+    case "document":
+      return t("manager.orchestration.project-wizard.success.document");
+    case "data":
+      return t("manager.orchestration.project-wizard.success.data");
+    case "game":
+      return t("manager.orchestration.project-wizard.success.game");
+    case "existing":
+      return t("manager.orchestration.project-wizard.success.existing");
+    case "other":
+      return t("manager.orchestration.project-wizard.success.other");
+  }
+}
+
+function projectWizardDefaultVerification(kind: ProjectWizardKind): string {
+  return t("manager.orchestration.project-wizard.generated.verification", {
+    kind: projectWizardKindLabel(kind),
+  });
+}
+
+function projectWizardDefaultDeliverable(kind: ProjectWizardKind): string {
+  switch (kind) {
+    case "app":
+      return t("manager.orchestration.project-wizard.deliverable.app");
+    case "website":
+      return t("manager.orchestration.project-wizard.deliverable.website");
+    case "automation":
+      return t("manager.orchestration.project-wizard.deliverable.automation");
+    case "document":
+      return t("manager.orchestration.project-wizard.deliverable.document");
+    case "data":
+      return t("manager.orchestration.project-wizard.deliverable.data");
+    case "game":
+      return t("manager.orchestration.project-wizard.deliverable.game");
+    case "existing":
+      return t("manager.orchestration.project-wizard.deliverable.existing");
+    case "other":
+      return t("manager.orchestration.project-wizard.deliverable.other");
+  }
+}
+
+function firstWizardSentence(value: string): string {
+  const compact = compactWizardText(value);
+  const firstLine = compact.split(/\n+/)[0] ?? "";
+  return firstLine.split(/(?<=[.!?。！？])\s+/)[0] ?? firstLine;
+}
+
+function compactWizardText(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function joinWizardLines(values: string[]): string {
+  return values.map(compactWizardText).filter(Boolean).join("\n");
 }
 
 function summarizeTotals(agents: ManagerAgent[]) {
@@ -2445,6 +4172,82 @@ function dedupeManagerAgents(agents: ManagerAgent[]): ManagerAgent[] {
   });
 }
 
+function commandFlowCharter(
+  project: ManagerProject | null,
+  commandFlow: ManagerCommandFlowResponse | null,
+): ManagerProjectCharter {
+  const charter = commandFlow?.charter ?? project?.charter;
+  const updatedAt = charter?.updatedAt ?? project?.updatedAt;
+  return {
+    goal: charter?.goal || project?.goal || "",
+    scope: charter?.scope ?? "",
+    nonGoals: charter?.nonGoals ?? "",
+    constraints: charter?.constraints ?? "",
+    successCriteria: charter?.successCriteria ?? "",
+    preferredApproach: charter?.preferredApproach ?? "",
+    verificationPlan: charter?.verificationPlan ?? "",
+    userCheckpoints: charter?.userCheckpoints ?? "",
+    finalDeliverables: charter?.finalDeliverables ?? "",
+    ...(updatedAt ? { updatedAt } : {}),
+    updatedBy: charter?.updatedBy ?? "system",
+  };
+}
+
+function commandFlowStageDone(
+  stage: (typeof COMMAND_FLOW_STAGES)[number],
+  current: string | undefined,
+): boolean {
+  if (!current) return false;
+  const currentIndex = COMMAND_FLOW_STAGES.indexOf(current as (typeof COMMAND_FLOW_STAGES)[number]);
+  const stageIndex = COMMAND_FLOW_STAGES.indexOf(stage);
+  return currentIndex > stageIndex;
+}
+
+function managerProjectFlowStageLabel(stage: ManagerProject["flowStage"]): string {
+  return stage
+    ? t(`manager.orchestration.flow.stage.${stage}`)
+    : t("manager.orchestration.flow.stage.draft");
+}
+
+function managerProjectOverviewActionLabel(action: ManagerProjectOverviewAction): string {
+  switch (action.kind) {
+    case "create-round":
+      return t("manager.orchestration.next-action.create-round");
+    case "dispatch":
+      return t("manager.orchestration.next-action.dispatch");
+    case "inspect":
+      return t("manager.orchestration.next-action.inspect");
+    case "repair":
+      return t("manager.orchestration.next-action.repair");
+    case "review":
+      return t("manager.orchestration.next-action.review");
+    case "summarize":
+      return t("manager.orchestration.next-action.summarize");
+    case "wait":
+      return t("manager.orchestration.next-action.wait");
+    default:
+      return action.label;
+  }
+}
+
+function managerCommandFlowWarningLabel(warning: string): string {
+  switch (warning) {
+    case "Project charter goal is not recorded.":
+      return t("manager.orchestration.flow.warning.missing-goal");
+    case "A user verification blocker is open.":
+      return t("manager.orchestration.flow.warning.user-check");
+    default:
+      return warning;
+  }
+}
+
+function splitList(value: string): string[] {
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function isShadowAgent(agent: ManagerAgent, agents: ManagerAgent[]): boolean {
   if (agent.taskId) return false;
   if (agent.status !== "idle" && agent.status !== "assigned") return false;
@@ -2522,10 +4325,10 @@ function buildWorkerFlowDiagram(
     "    classDef running fill:transparent,stroke:#d39b2f,stroke-width:2px;",
     "    classDef done fill:transparent,stroke:#2f8f5b,stroke-width:2px;",
     "    classDef blocked fill:transparent,stroke:#c94f45,stroke-width:2px;",
-    `    R["${mermaidText(round?.title ?? "Agent orchestration", 68)}"]:::${statusTone(round?.status)}`,
-    `    O["${mermaidText(round?.objective || "No objective recorded", 84)}"]:::neutral`,
-    '    D["Dispatch workers"]:::running',
-    '    C["Collect results"]:::neutral',
+    `    R["${mermaidText(round?.title ?? t("manager.orchestration.title"), 68)}"]:::${statusTone(round?.status)}`,
+    `    O["${mermaidText(round?.objective || t("manager.orchestration.overview.no-round-objective"), 84)}"]:::neutral`,
+    `    D["${t("manager.orchestration.graph.dispatch-workers")}"]:::running`,
+    `    C["${t("manager.orchestration.graph.collect-results")}"]:::neutral`,
     "    R --> O --> D",
   ];
 
@@ -2564,7 +4367,9 @@ function buildWorkerFlowDiagram(
   }
 
   if (hiddenCount > 0) {
-    lines.push(`    H["${hiddenCount} quiet workers hidden"]:::neutral`);
+    lines.push(
+      `    H["${t("manager.orchestration.graph.hidden-workers", { count: hiddenCount })}"]:::neutral`,
+    );
     lines.push("    D -.-> H");
   }
   lines.push(
@@ -2577,18 +4382,74 @@ function buildWorkerFlowDiagram(
   return lines.join("\n");
 }
 
+function buildProtocolPrincipleDiagram(protocol: ManagerProtocolState | null): string {
+  const version = protocol?.version ?? t("manager.orchestration.protocol.diagram.blank");
+  const rules = (protocol?.activeRules ?? []).slice(0, 4);
+  const lines = [
+    "flowchart TD",
+    "    classDef source fill:transparent,stroke:#6f7f8f,stroke-width:2px;",
+    "    classDef cycle fill:transparent,stroke:#8d867b;",
+    "    classDef gate fill:transparent,stroke:#d39b2f,stroke-width:2px;",
+    "    classDef rule fill:transparent,stroke:#2f8f5b,stroke-width:2px;",
+    "    classDef failure fill:transparent,stroke:#c94f45,stroke-width:2px;",
+    `    Charter["${mermaidText(
+      `${t("manager.orchestration.protocol.diagram.charter")} - ${version}`,
+      84,
+    )}"]:::source`,
+    `    Observe["${mermaidText(t("manager.orchestration.protocol.diagram.observe"), 72)}"]:::cycle`,
+    `    Plan["${mermaidText(t("manager.orchestration.protocol.diagram.plan"), 72)}"]:::cycle`,
+    `    Delegate["${mermaidText(
+      t("manager.orchestration.protocol.diagram.delegate"),
+      72,
+    )}"]:::cycle`,
+    `    Inspect["${mermaidText(t("manager.orchestration.protocol.diagram.inspect"), 72)}"]:::cycle`,
+    `    Verify{"${mermaidText(t("manager.orchestration.protocol.diagram.verify"), 72)}"}:::gate`,
+    `    Improve["${mermaidText(t("manager.orchestration.protocol.diagram.improve"), 72)}"]:::rule`,
+    `    Report["${mermaidText(t("manager.orchestration.protocol.diagram.report"), 72)}"]:::cycle`,
+    `    Adapter["${mermaidText(t("manager.orchestration.protocol.diagram.adapter"), 72)}"]:::source`,
+    `    Runtime["${mermaidText(t("manager.orchestration.protocol.diagram.runtime"), 72)}"]:::gate`,
+    `    Failure["${mermaidText(t("manager.orchestration.protocol.diagram.failure"), 72)}"]:::failure`,
+    "    Charter --> Observe --> Plan --> Delegate --> Inspect --> Verify",
+    "    Verify --> Improve --> Report --> Observe",
+    "    Verify --> Failure --> Improve",
+    "    Delegate --> Adapter",
+    "    Verify --> Runtime",
+  ];
+
+  if (rules.length > 0) {
+    rules.forEach((rule, index) => {
+      const ruleId = `Rule${index}`;
+      lines.push(`    ${ruleId}["${mermaidText(rule, 96)}"]:::rule`);
+      lines.push(`    Improve -.-> ${ruleId}`);
+    });
+  } else {
+    lines.push(
+      `    Rules["${mermaidText(t("manager.orchestration.protocol.diagram.no-rules"), 72)}"]:::rule`,
+    );
+    lines.push("    Improve -.-> Rules");
+  }
+
+  return lines.join("\n");
+}
+
 function currentFlowSignal(agents: ManagerAgent[], tasks: ManagerTask[]): string {
   const blockedAgent = agents.find((agent) =>
     ["blocked", "failed", "stale"].includes(agent.status),
   );
-  if (blockedAgent) return `${blockedAgent.role} needs attention`;
+  if (blockedAgent) {
+    return t("manager.orchestration.graph.needs-attention", { role: blockedAgent.role });
+  }
   const activeCount = agents.filter((agent) =>
     ["assigned", "running", "waiting"].includes(agent.status),
   ).length;
-  if (activeCount > 0) return `${activeCount} workers running`;
+  if (activeCount > 0) {
+    return t("manager.orchestration.graph.workers-running", { count: activeCount });
+  }
   const blockedTask = tasks.find((task) => ["blocked", "failed"].includes(task.state));
   if (blockedTask) return `${blockedTask.kind} ${statusLabel(blockedTask.state)}`;
-  return agents.length > 0 ? `${agents.length} worker records visible` : "No active worker signal";
+  return agents.length > 0
+    ? t("manager.orchestration.graph.worker-records", { count: agents.length })
+    : t("manager.orchestration.graph.no-worker-signal");
 }
 
 function buildTimeline(
@@ -2600,14 +4461,14 @@ function buildTimeline(
   if (round) {
     entries.push({
       at: round.createdAt,
-      label: `${round.title} created`,
+      label: t("manager.orchestration.timeline.round-created", { title: round.title }),
       detail: round.objective,
       tone: "neutral",
     });
     if (round.startedAt) {
       entries.push({
         at: round.startedAt,
-        label: "Round started",
+        label: t("manager.orchestration.timeline.round-started"),
         detail: statusLabel(round.status),
         tone: "running",
       });
@@ -2615,7 +4476,7 @@ function buildTimeline(
     if (round.completedAt) {
       entries.push({
         at: round.completedAt,
-        label: "Round finished",
+        label: t("manager.orchestration.timeline.round-finished"),
         detail: round.summary || round.error,
         tone: round.status === "completed" ? "done" : "blocked",
       });
@@ -2633,7 +4494,10 @@ function buildTimeline(
     const lastStep = task.steps[task.steps.length - 1];
     entries.push({
       at: task.completedAt ?? task.startedAt ?? task.updatedAt,
-      label: `task ${shortId(task.id)} ${statusLabel(task.state)}`,
+      label: t("manager.orchestration.timeline.task", {
+        id: shortId(task.id),
+        status: statusLabel(task.state),
+      }),
       detail: task.error || lastStep?.summary,
       tone: statusTone(task.state),
     });
@@ -2692,7 +4556,7 @@ function artifactEntryFromStored(artifact: ManagerArtifact): ArtifactEntry {
 function collectArtifactPaths(text: string): string[] {
   const paths = new Set<string>();
   const pattern =
-    /(?:^|\s|["'`])([A-Za-z0-9_.~:/\\-]+(?:ORCHESTRATION|AGENTS|PROTOCOL|LOCKS|TASKS|STATE|FAILURES|PROJECT|README|CLAUDE)?[A-Za-z0-9_.~:/\\-]*\.(?:md|ts|tsx|js|jsx|json|css|html|ps1|py|yml|yaml))/gi;
+    /(?:^|\s|["'`])([A-Za-z0-9_.~:/\\-]+(?:ORCHESTRATION|AGENTS|PROTOCOL|REVIEW|TASKS|STATE|FAILURES|PROJECT|README|CLAUDE)?[A-Za-z0-9_.~:/\\-]*\.(?:md|ts|tsx|js|jsx|json|css|html|ps1|py|yml|yaml))/gi;
   for (const match of text.matchAll(pattern)) {
     const value = (match[1] ?? "").replace(/[),.;:'"`\]]+$/g, "");
     if (value.length >= 4) paths.add(value);
@@ -2767,6 +4631,42 @@ function currentStateTone(tone: ManagerStateViewResponse["current"]["tone"] | un
   }
 }
 
+interface ProjectManagerStateScope {
+  roundIds: Set<string>;
+  agentIds: Set<string>;
+  taskIds: Set<string>;
+}
+
+function projectManagerStateScope(
+  project: ManagerProject | null | undefined,
+  activeRound: ManagerRound | undefined,
+  agents: ManagerAgent[],
+): ProjectManagerStateScope | null {
+  if (!project) return null;
+  const roundIds = new Set<string>();
+  const agentIds = new Set<string>();
+  const taskIds = new Set<string>();
+  if (project.activeRoundId) roundIds.add(project.activeRoundId);
+  if (activeRound?.id) roundIds.add(activeRound.id);
+  for (const agent of agents) {
+    agentIds.add(agent.id);
+    if (agent.roundId) roundIds.add(agent.roundId);
+    if (agent.taskId) taskIds.add(agent.taskId);
+  }
+  return { roundIds, agentIds, taskIds };
+}
+
+function managerStateSignalMatchesProject(
+  signal: { roundId?: string; agentId?: string; taskId?: string },
+  scope: ProjectManagerStateScope,
+): boolean {
+  return Boolean(
+    (signal.roundId && scope.roundIds.has(signal.roundId)) ||
+      (signal.agentId && scope.agentIds.has(signal.agentId)) ||
+      (signal.taskId && scope.taskIds.has(signal.taskId)),
+  );
+}
+
 function roundHealthTone(status: ManagerRoundHealthGate["status"] | undefined): Tone {
   switch (status) {
     case "healthy":
@@ -2783,18 +4683,17 @@ function roundHealthTone(status: ManagerRoundHealthGate["status"] | undefined): 
 function healthIssueActionLabel(issue: ManagerRoundHealthGate["issues"][number]): string {
   switch (issue.action) {
     case "retry-worker":
-      return "Retry";
+      return t("manager.orchestration.action.retry");
     case "inspect-worker":
-      return "Inspect";
+      return t("manager.orchestration.action.inspect");
     case "repair-round":
-      return "Repair";
+      return t("manager.orchestration.action.repair");
     case "acknowledge":
-      return "Acknowledge";
+      return t("manager.orchestration.action.acknowledge");
     default:
       return "";
   }
 }
-
 function hygieneTone(item: ManagerSessionHygieneItem): Tone {
   if (item.action === "cleanup") return "blocked";
   if (item.category === "current_manager") return "done";
@@ -2809,70 +4708,36 @@ function projectHygieneTone(issue: ManagerProjectHygieneIssue): Tone {
 }
 
 function statusLabel(status: string | undefined): string {
-  switch (status) {
-    case "planned":
-      return "planned";
-    case "dispatching":
-      return "dispatching";
-    case "running":
-      return "running";
-    case "collecting":
-      return "collecting";
-    case "reviewing":
-      return "reviewing";
-    case "completed":
-      return "completed";
-    case "blocked":
-      return "blocked";
-    case "failed":
-      return "failed";
-    case "cancelled":
-      return "cancelled";
-    case "idle":
-      return "idle";
-    case "assigned":
-      return "assigned";
-    case "waiting":
-      return "waiting";
-    case "stale":
-      return "stale";
-    case "pending":
-      return "pending";
-    case "waiting_for_device":
-      return "waiting for device";
-    case "restart_required":
-      return "restart required";
-    case "succeeded":
-      return "succeeded";
-    case "acknowledged":
-      return "acknowledged";
-    default:
-      return status ?? "unknown";
-  }
+  return status
+    ? t(`manager.orchestration.status.${status}`)
+    : t("manager.orchestration.status.unknown");
 }
-
 function workerRunResultLabel(run: ManagerWorkerRun): string {
-  if (run.status === "missing") return "missing task";
-  if (run.timedOut) return "timeout";
+  if (run.status === "missing") return t("manager.orchestration.result.missing-task");
+  if (run.timedOut) return t("manager.orchestration.result.timeout");
   if (typeof run.exitCode === "number") {
-    return `exit ${run.exitCode}${run.durationMs ? ` · ${formatDuration(run.durationMs)}` : ""}`;
+    return run.durationMs
+      ? t("manager.orchestration.result.exit-duration", {
+          code: run.exitCode,
+          duration: formatDuration(run.durationMs),
+        })
+      : t("manager.orchestration.result.exit", { code: run.exitCode });
   }
   if (run.durationMs) return formatDuration(run.durationMs);
   if (run.completedAt) return formatTime(run.completedAt);
-  if (run.startedAt) return `started ${formatTime(run.startedAt)}`;
+  if (run.startedAt)
+    return t("manager.orchestration.result.started", { time: formatTime(run.startedAt) });
   return "-";
 }
-
 function workerRunResultTitle(run: ManagerWorkerRun): string {
   return [
-    run.command ? `command: ${run.command}` : "",
-    run.startedAt ? `started: ${run.startedAt}` : "",
-    run.completedAt ? `completed: ${run.completedAt}` : "",
+    run.command ? `${t("manager.orchestration.field.command")}: ${run.command}` : "",
+    run.startedAt ? t("manager.orchestration.result.started", { time: run.startedAt }) : "",
+    run.completedAt ? `${t("manager.orchestration.status.completed")}: ${run.completedAt}` : "",
   ]
     .filter(Boolean)
     .join("\n");
 }
-
 function workerRunSignal(run: ManagerWorkerRun): string {
   const issues = run.integrity.filter((item) => item !== "ok");
   if (issues.length > 0) return issues.join(", ");
@@ -2883,13 +4748,14 @@ function workerRunSignal(run: ManagerWorkerRun): string {
 
 function formatFreshness(state: ManagerStateViewResponse | null | undefined): string | undefined {
   if (!state?.freshness) return undefined;
-  if (state.freshness.stale) return "signal stale";
+  if (state.freshness.stale) return statusLabel("stale");
   if (typeof state.freshness.ageMs === "number") {
-    return `updated ${formatRelativeDuration(state.freshness.ageMs)} ago`;
+    return t("manager.orchestration.overview.last-update", {
+      time: formatRelativeDuration(state.freshness.ageMs),
+    });
   }
-  return "updated now";
+  return t("manager.orchestration.overview.last-update", { time: formatRelativeDuration(0) });
 }
-
 function formatDuration(ms: number): string {
   if (!Number.isFinite(ms)) return "-";
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
@@ -2910,47 +4776,11 @@ function formatRelativeDuration(ms: number): string {
 }
 
 function formatHygieneCategory(value: string): string {
-  switch (value) {
-    case "current_manager":
-      return "Current manager";
-    case "manager_history":
-      return "Manager history";
-    case "internal_only":
-      return "Internal only";
-    case "worker_session":
-      return "Worker";
-    case "orphan":
-      return "Orphan";
-    case "unreadable":
-      return "Unreadable";
-    default:
-      return value;
-  }
+  return t(`manager.orchestration.kind.${value}`);
 }
-
 function formatProjectHygieneKind(value: string): string {
-  switch (value) {
-    case "missing-task":
-      return "Missing task";
-    case "missing-agent":
-      return "Missing agent";
-    case "orphan-task":
-      return "Orphan task";
-    case "stale-agent":
-      return "Stale agent";
-    case "synthetic-failure":
-      return "Synthetic failure";
-    case "missing-session":
-      return "Missing session";
-    case "missing-active-round":
-      return "Missing active round";
-    case "archived-active-state":
-      return "Archived active";
-    default:
-      return value;
-  }
+  return t(`manager.orchestration.project-kind.${value}`);
 }
-
 function parseDecisionTags(value: string): string[] {
   const seen = new Set<string>();
   const tags: string[] = [];

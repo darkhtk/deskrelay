@@ -4,6 +4,7 @@ import type {
   ManagerDecisionUpdateRequest,
   ManagerEvent,
   ManagerEventInput,
+  ManagerWizardIntentEvent,
 } from "@deskrelay/shared";
 import type { ManagerArtifactStore } from "./manager-artifact-store.ts";
 import type { ManagerBlockerStore } from "./manager-blocker-store.ts";
@@ -150,11 +151,20 @@ export function withManagerProjectEvents(
     async create(input) {
       const project = await store.create(input);
       bus.emit({ type: "project.created", project });
+      for (const event of project.wizardEvents ?? []) {
+        bus.emit({ type: "wizard.intent", event });
+      }
       return project;
     },
     async update(id, patch) {
+      const before = await store.get(id);
       const project = await store.update(id, patch);
-      if (project) bus.emit({ type: "project.updated", project });
+      if (project) {
+        bus.emit({ type: "project.updated", project });
+        for (const event of newWizardIntentEvents(before?.wizardEvents, project.wizardEvents)) {
+          bus.emit({ type: "wizard.intent", event });
+        }
+      }
       return project;
     },
     async archive(id) {
@@ -163,6 +173,15 @@ export function withManagerProjectEvents(
       return project;
     },
   };
+}
+
+function newWizardIntentEvents(
+  before: ManagerWizardIntentEvent[] | undefined,
+  after: ManagerWizardIntentEvent[] | undefined,
+): ManagerWizardIntentEvent[] {
+  if (!after?.length) return [];
+  const beforeIds = new Set((before ?? []).map((event) => event.id));
+  return after.filter((event) => !beforeIds.has(event.id));
 }
 
 export function withManagerDecisionEvents(

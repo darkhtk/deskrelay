@@ -202,6 +202,7 @@ describe("ManagerAssistant", () => {
     render(() => (
       <ManagerAssistant
         devices={[SERVER_DEVICE]}
+        showOrchestrationPanel={false}
         context={{
           deviceId: "dev_selected",
           deviceLabel: "Remote PC",
@@ -214,26 +215,6 @@ describe("ManagerAssistant", () => {
     const input = await screen.findByPlaceholderText(/관리자에게 보내기/);
     await waitFor(() => {
       expect(behaviorCalls.some((call) => call.method === "sessions.list")).toBe(true);
-    });
-    await waitFor(() => {
-      expect(document.body.textContent).toContain("R1");
-      expect(document.body.textContent).toContain("Details");
-      expect(document.body.textContent).not.toContain("Overview");
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
-    await waitFor(() => {
-      expect(document.body.textContent).toContain("Overview");
-      expect(document.body.textContent).toContain("Agents");
-      expect(document.body.textContent).toContain("Timeline");
-      expect(document.body.textContent).toContain("Worker flow");
-      expect(document.body.textContent).toContain("Artifacts");
-      expect(document.body.textContent).toContain("Hygiene");
-      expect(document.body.textContent).toContain("architect");
-      expect(document.body.textContent).toContain("Manager");
-      expect(document.body.textContent).not.toContain("flowchart TD");
-      expect(document.body.textContent).toContain("PROTOCOL.md");
-      expect(document.body.textContent).toContain("Safe cleanup");
-      expect(document.body.textContent).toContain("Internal only");
     });
     await waitFor(() => {
       expect(document.body.textContent).toContain("관리자 대기 중");

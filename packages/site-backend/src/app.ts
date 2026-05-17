@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   type DiagnosticCheck,
   type DiagnosticReport,
@@ -50,6 +50,8 @@ import {
   type ManagerBlockerSeverity,
   type ManagerBlockerSource,
   type ManagerCapabilities,
+  type ManagerCommandFlowResponse,
+  type ManagerCommandFlowStage,
   type ManagerDecision,
   type ManagerDecisionCreateRequest,
   type ManagerDecisionListResponse,
@@ -57,6 +59,8 @@ import {
   type ManagerDecisionStatus,
   type ManagerDecisionUpdateRequest,
   type ManagerDeviceActions,
+  type ManagerDirectionChangeRequest,
+  type ManagerDirectionChangeResponse,
   type ManagerEvent,
   type ManagerEventListResponse,
   type ManagerInstallStatus,
@@ -65,7 +69,14 @@ import {
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
   type ManagerProject,
+  type ManagerProjectCharter,
+  type ManagerProjectCharterResponse,
+  type ManagerProjectCharterUpdateRequest,
+  type ManagerProjectCompleteRequest,
+  type ManagerProjectCompleteResponse,
   type ManagerProjectCreateRequest,
+  type ManagerProjectDirectionChange,
+  type ManagerProjectFinalReview,
   type ManagerProjectHygieneCleanupRequest,
   type ManagerProjectHygieneCleanupResponse,
   type ManagerProjectHygieneIssue,
@@ -75,7 +86,10 @@ import {
   type ManagerProjectOverviewAction,
   type ManagerProjectOverviewResponse,
   type ManagerProjectOverviewSignal,
+  type ManagerProjectProtocolSource,
   type ManagerProjectResponse,
+  type ManagerProjectStartRequest,
+  type ManagerProjectStartResponse,
   type ManagerProjectStatus,
   type ManagerProjectUpdateRequest,
   type ManagerProtocolFile,
@@ -94,8 +108,11 @@ import {
   type ManagerRoundHealthGateResponse,
   type ManagerRoundHealthIssue,
   type ManagerRoundListResponse,
+  type ManagerRoundPhase,
   type ManagerRoundRepairResponse,
   type ManagerRoundReportResponse,
+  type ManagerRoundReviewRequest,
+  type ManagerRoundReviewResponse,
   type ManagerRoundStatus,
   type ManagerRouteCapability,
   type ManagerSecurityBoundary,
@@ -120,6 +137,10 @@ import {
   type ManagerUpdatePlan,
   type ManagerUpdateStatus,
   type ManagerUpdateTargetStatus,
+  type ManagerWizardIntentAction,
+  type ManagerWizardIntentEventInput,
+  type ManagerWizardIntentEventKind,
+  type ManagerWizardIntentImpact,
   type ManagerWorkerCheckResult,
   type ManagerWorkerListResponse,
   type ManagerWorkerProfile,
@@ -225,6 +246,7 @@ export interface SiteAppOptions {
   managerBlockerStore?: ManagerBlockerStore;
   managerArtifactStore?: ManagerArtifactStore;
   managerProtocolStore?: ManagerProtocolStore;
+  managerProtocolBasePath?: string | null;
   managerAssistant?: ManagerAssistantOptions;
   managerWorkers?: ManagerWorkerProfileConfig[];
   logDir?: string;
@@ -257,8 +279,10 @@ export interface ManagerAssistantOptions {
 }
 
 interface ManagerAssistantContextStores {
+  repoRoot: string;
   projectStore: ManagerProjectStore;
   orchestrationStore: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
   decisionStore: ManagerDecisionStore;
   blockerStore: ManagerBlockerStore;
   artifactStore: ManagerArtifactStore;
@@ -308,11 +332,54 @@ const MANAGER_PROTOCOL_CORE_FILES: Array<{
   { file: "ORCHESTRATION.md", role: "orchestration" },
   { file: "AGENTS.md", role: "agents" },
   { file: "PROTOCOL.md", role: "protocol" },
-  { file: "LOCKS.md", role: "locks" },
+  { file: "REVIEW.md", role: "review" },
   { file: "TASKS.md", role: "tasks" },
   { file: "STATE.md", role: "state" },
   { file: "FAILURES.md", role: "failures" },
   { file: "PROJECT.md", role: "project" },
+  { file: "WORKER-CONTRACT.md", role: "other" },
+  { file: "PROMPT-TEMPLATES.md", role: "other" },
+  { file: "SPEC-SCHEMA.md", role: "other" },
+  { file: "VERIFICATION.md", role: "other" },
+];
+const MANAGER_PROTOCOL_BASE_VERSION = "orchestration-lab-base";
+const DEFAULT_MANAGER_PROTOCOL_BASE_PATH =
+  process.env.DESKRELAY_MANAGER_PROTOCOL_BASE_PATH?.trim() ||
+  "C:\\Users\\darkh\\Projects\\orchestration-lab";
+const MANAGER_PROTOCOL_BASE_FILES = [
+  "AGENTS.md",
+  "ARCHITECTURE.md",
+  "ARTIFACTS.md",
+  "DIAGNOSTICS.md",
+  "FAILURES.md",
+  "LAB-LAYOUT.md",
+  "ORCHESTRATION.md",
+  "PROJECT.md",
+  "PROMPT-TEMPLATES.md",
+  "PROTOCOL.md",
+  "QUALITY-STANDARDS.md",
+  "QUICKSTART.md",
+  "REVIEW.md",
+  "SPEC-SCHEMA.md",
+  "STATE.md",
+  "TASKS.md",
+  "VERIFICATION.md",
+  "WORKER-CONTRACT.md",
+  "dispatch-probe.ps1",
+  "dispatch.ps1",
+  "evaluate-spec.ps1",
+  "invoke-adapter.ps1",
+  "lib-common.ps1",
+  "regenerate-views.ps1",
+  "render-prompt.ps1",
+  "smoke.ps1",
+  "validate-spec.ps1",
+];
+const MANAGER_PROTOCOL_BASE_RULES = [
+  "The manager supervises orchestration; workers perform substantive implementation.",
+  "Every worker prompt declares objective, allowed paths, forbidden actions, expected artifacts, verification, final report, verbatim strings, and canonical examples when needed.",
+  "Filesystem inspection and declared verification are canonical; worker process exit state is advisory.",
+  "Failures update FAILURES.md and drive protocol deltas before the round closes.",
 ];
 const MANAGER_PROTOCOL_MAX_FILE_BYTES = 200_000;
 const MANAGER_PROTOCOL_EXCERPT_CHARS = 1_600;
@@ -379,8 +446,10 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     managerEventBus,
   );
   const managerAssistantContextStores: ManagerAssistantContextStores = {
+    repoRoot: managerRepoRoot,
     projectStore: managerProjectStore,
     orchestrationStore: managerOrchestrationStore,
+    taskStore: managerTaskStore,
     decisionStore: managerDecisionStore,
     blockerStore: managerBlockerStore,
     artifactStore: managerArtifactStore,
@@ -606,7 +675,31 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     const parsed = parseManagerProjectCreateRequest(body);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     try {
+      const seed =
+        parsed.value.protocolSource === "base-copy"
+          ? await seedManagerProjectProtocolFromBase(
+              parsed.value.cwd,
+              options.managerProtocolBasePath,
+            )
+          : undefined;
       const project = await managerProjectStore.create(parsed.value);
+      if (seed) {
+        const decision = await managerDecisionStore.create(project.id, {
+          title: "Seed orchestration base protocol",
+          detail: `Copied ${seed.copied.length} base protocol file(s) from ${seed.sourceRoot}. ${seed.skipped.length} existing file(s) were kept for customization.`,
+          rationale: "The project was created from the DeskRelay orchestration-lab base protocol.",
+          tags: ["protocol", "base"],
+          createdBy: "system",
+        });
+        await managerProtocolStore.update(project.id, {
+          version: MANAGER_PROTOCOL_BASE_VERSION,
+          activeRules: MANAGER_PROTOCOL_BASE_RULES,
+          latestChange: {
+            summary: `Seeded from orchestration-lab base (${seed.copied.length} copied, ${seed.skipped.length} existing).`,
+            decisionId: decision.id,
+          },
+        });
+      }
       const response: ManagerProjectResponse = {
         generatedAt: new Date().toISOString(),
         project,
@@ -704,6 +797,189 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         now: new Date(),
       }),
     );
+  });
+
+  app.get("/api/manager/projects/:id/command-flow", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    return c.json(
+      await buildManagerCommandFlow({
+        project,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        decisionStore: managerDecisionStore,
+        blockerStore: managerBlockerStore,
+        artifactStore: managerArtifactStore,
+        protocolStore: managerProtocolStore,
+        repoRoot: managerRepoRoot,
+        now: new Date(),
+      }),
+    );
+  });
+
+  app.put("/api/manager/projects/:id/charter", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProjectCharterUpdateRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const current = await managerProjectStore.get(c.req.param("id"));
+    if (!current) return c.json({ error: "unknown project" }, 404);
+    const beforeCharter = effectiveProjectCharter(current);
+    const charter = mergeManagerProjectCharter(current, parsed.value, new Date());
+    const wizardEvent =
+      parsed.value.wizardEvent ??
+      buildManagerCharterWizardEvent(current, beforeCharter, charter, new Date());
+    const project = await managerProjectStore.update(current.id, {
+      charter,
+      goal: charter.goal || current.goal,
+      flowStage: current.flowStage === "draft" || !current.flowStage ? "draft" : current.flowStage,
+      ...(wizardEvent ? { wizardEvent } : {}),
+    });
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const response: ManagerProjectCharterResponse = {
+      generatedAt: new Date().toISOString(),
+      projectId: project.id,
+      charter: project.charter ?? charter,
+      project,
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/prepare", async (c) => {
+    const current = await managerProjectStore.get(c.req.param("id"));
+    if (!current) return c.json({ error: "unknown project" }, 404);
+    const protocol = await buildManagerProjectProtocolState({
+      project: current,
+      protocolStore: managerProtocolStore,
+      includeExcerpt: false,
+    });
+    const stage = protocol.files.some((file) => file.status === "present")
+      ? managerCommandFlowReadiness(current, protocol, [], managerRepoRoot).ready
+        ? "ready_to_start"
+        : "protocol_ready"
+      : "draft";
+    const project =
+      (await managerProjectStore.update(current.id, {
+        flowStage: stage,
+      })) ?? current;
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    return c.json(
+      await buildManagerCommandFlow({
+        project,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        decisionStore: managerDecisionStore,
+        blockerStore: managerBlockerStore,
+        artifactStore: managerArtifactStore,
+        protocolStore: managerProtocolStore,
+        repoRoot: managerRepoRoot,
+        now: new Date(),
+      }),
+    );
+  });
+
+  app.post("/api/manager/projects/:id/start", async (c) => {
+    let body: unknown = {};
+    try {
+      const text = await c.req.text();
+      body = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProjectStartRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const commandFlowPreflight = await buildManagerCommandFlow({
+      project,
+      orchestrationStore: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      decisionStore: managerDecisionStore,
+      blockerStore: managerBlockerStore,
+      artifactStore: managerArtifactStore,
+      protocolStore: managerProtocolStore,
+      repoRoot: managerRepoRoot,
+      now: new Date(),
+    });
+    if (!commandFlowPreflight.readiness.ready) {
+      return c.json(
+        {
+          error: "project is not ready to start",
+          readiness: commandFlowPreflight.readiness,
+          commandFlow: commandFlowPreflight,
+        },
+        409,
+      );
+    }
+    const phase = parsed.value.phase ?? "design";
+    const charter = effectiveProjectCharter(project);
+    const objective = parsed.value.objective?.trim() || project.goal || charter.goal;
+    if (!objective.trim()) return c.json({ error: "project start objective is required" }, 400);
+    const round = await managerOrchestrationStore.createRound({
+      projectId: project.id,
+      title: parsed.value.title?.trim() || managerRoundTitleForPhase(phase),
+      objective,
+      phase,
+    });
+    const assignments = parsed.value.assignments?.length
+      ? parsed.value.assignments
+      : defaultManagerProjectAssignments(project, charter, phase, objective);
+    await managerProjectStore.update(project.id, {
+      activeRoundId: round.id,
+      status: "running",
+      flowStage: "running",
+    });
+    const dispatch = await dispatchManagerRound({
+      round,
+      request: {
+        assignments,
+        dryRun: parsed.value.dryRun ?? false,
+      },
+      store: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      options,
+      fetchImpl,
+      registry,
+      localToken,
+      build,
+      requestUrl: c.req.url,
+    });
+    const updatedProject =
+      (await managerProjectStore.update(project.id, {
+        activeRoundId: dispatch.round.id,
+        status: projectStatusFromRoundStatus(dispatch.round.status),
+        flowStage:
+          dispatch.round.status === "completed"
+            ? "review"
+            : dispatch.round.status === "blocked" || dispatch.round.status === "failed"
+              ? "replanning"
+              : "running",
+        ...(dispatch.round.summary ? { summary: dispatch.round.summary } : {}),
+        ...(dispatch.round.error ? { error: dispatch.round.error } : { error: null }),
+      })) ?? project;
+    const response: ManagerProjectStartResponse = {
+      generatedAt: new Date().toISOString(),
+      project: updatedProject,
+      round: dispatch.round,
+      dispatch,
+      commandFlow: await buildManagerCommandFlow({
+        project: updatedProject,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        decisionStore: managerDecisionStore,
+        blockerStore: managerBlockerStore,
+        artifactStore: managerArtifactStore,
+        protocolStore: managerProtocolStore,
+        repoRoot: managerRepoRoot,
+        now: new Date(),
+      }),
+    };
+    return c.json(response, dispatch.round.status === "blocked" ? 409 : 202);
   });
 
   app.get("/api/manager/projects/:id/hygiene", async (c) => {
@@ -993,6 +1269,238 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         project,
         protocolStore: managerProtocolStore,
         includeExcerpt: true,
+      }),
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/rounds/:roundId/review", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerRoundReviewRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const round = await managerOrchestrationStore.getRound(c.req.param("roundId"));
+    if (!round || (round.projectId && round.projectId !== project.id)) {
+      return c.json({ error: "unknown round" }, 404);
+    }
+    const now = new Date();
+    const decision = await managerDecisionStore.create(project.id, {
+      title: managerRoundReviewDecisionTitle(parsed.value.action),
+      detail: parsed.value.summary || round.summary || round.objective,
+      rationale: `Round ${round.id} reviewed as ${parsed.value.action}.`,
+      roundId: round.id,
+      tags: ["review", parsed.value.action],
+      createdBy: "browser",
+    });
+    let blocker: ManagerBlocker | undefined;
+    let nextRound: ManagerRound | undefined;
+    if (parsed.value.action === "user_check_required") {
+      const blockerResult = await managerBlockerStore.create(project.id, {
+        title: "User verification required",
+        detail: parsed.value.summary || "The round result needs a direct user check.",
+        severity: "warning",
+        owner: "user",
+        requiredAction: "user",
+        source: "browser",
+        roundId: round.id,
+      });
+      blocker = blockerResult.blocker;
+    }
+    if (
+      parsed.value.createNextRound &&
+      parsed.value.nextObjective &&
+      ["request_changes", "replan"].includes(parsed.value.action)
+    ) {
+      nextRound = await managerOrchestrationStore.createRound({
+        projectId: project.id,
+        title: managerRoundTitleForPhase("replan"),
+        objective: parsed.value.nextObjective,
+        phase: "replan",
+      });
+    }
+    const projectPatch: ManagerProjectUpdateRequest = {
+      flowStage:
+        parsed.value.action === "accept"
+          ? "review"
+          : parsed.value.action === "stop"
+            ? "replanning"
+            : "replanning",
+      status: parsed.value.action === "accept" ? "reviewing" : "blocked",
+      summary: parsed.value.summary || decision.detail,
+      ...(nextRound ? { activeRoundId: nextRound.id } : {}),
+    };
+    if (parsed.value.action === "stop") {
+      await managerOrchestrationStore.updateRound(round.id, {
+        status: "cancelled",
+        completedAt: now.toISOString(),
+        summary: parsed.value.summary || "Stopped during user review.",
+      });
+    }
+    const updatedProject = (await managerProjectStore.update(project.id, projectPatch)) ?? project;
+    const response: ManagerRoundReviewResponse = {
+      generatedAt: now.toISOString(),
+      project: updatedProject,
+      decision,
+      ...(blocker ? { blocker } : {}),
+      ...(nextRound ? { nextRound } : {}),
+      commandFlow: await buildManagerCommandFlow({
+        project: updatedProject,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        decisionStore: managerDecisionStore,
+        blockerStore: managerBlockerStore,
+        artifactStore: managerArtifactStore,
+        protocolStore: managerProtocolStore,
+        repoRoot: managerRepoRoot,
+        now,
+      }),
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/direction-change", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerDirectionChangeRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const activeRound = project.activeRoundId
+      ? await managerOrchestrationStore.getRound(project.activeRoundId)
+      : undefined;
+    const now = new Date();
+    if (
+      activeRound &&
+      (parsed.value.currentRoundAction === "cancel" ||
+        parsed.value.currentRoundAction === "supersede")
+    ) {
+      await managerOrchestrationStore.updateRound(activeRound.id, {
+        status: "cancelled",
+        completedAt: now.toISOString(),
+        summary:
+          parsed.value.currentRoundAction === "supersede"
+            ? "Superseded by a direction change."
+            : "Cancelled by a direction change.",
+      });
+    }
+    const decision = await managerDecisionStore.create(project.id, {
+      title: "Direction change",
+      detail: parsed.value.requestedChange,
+      rationale: parsed.value.impact || "User changed the orchestration direction.",
+      ...(activeRound ? { roundId: activeRound.id } : {}),
+      tags: ["direction-change", parsed.value.currentRoundAction ?? "keep"],
+      createdBy: "browser",
+    });
+    let nextRound: ManagerRound | undefined;
+    if (parsed.value.nextObjective) {
+      nextRound = await managerOrchestrationStore.createRound({
+        projectId: project.id,
+        title: managerRoundTitleForPhase("replan"),
+        objective: parsed.value.nextObjective,
+        phase: "replan",
+      });
+    }
+    const directionChange: ManagerProjectDirectionChange = {
+      previousDirection: activeRound?.objective || project.goal,
+      requestedChange: parsed.value.requestedChange,
+      impact: parsed.value.impact ?? "",
+      affectedProtocol: parsed.value.affectedProtocol ?? "",
+      affectedArtifacts: parsed.value.affectedArtifacts ?? "",
+      decisionId: decision.id,
+      ...(nextRound ? { nextRoundId: nextRound.id } : {}),
+      changedAt: now.toISOString(),
+      changedBy: "browser",
+    };
+    const nextStatus: ManagerProjectStatus = project.status === "blocked" ? "blocked" : "planning";
+    const updatedProject =
+      (await managerProjectStore.update(project.id, {
+        status: nextStatus,
+        flowStage: "replanning",
+        lastDirectionChange: directionChange,
+        ...(nextRound ? { activeRoundId: nextRound.id } : {}),
+        summary: parsed.value.requestedChange,
+      })) ?? project;
+    const response: ManagerDirectionChangeResponse = {
+      generatedAt: now.toISOString(),
+      project: updatedProject,
+      decision,
+      ...(nextRound ? { nextRound } : {}),
+      commandFlow: await buildManagerCommandFlow({
+        project: updatedProject,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        decisionStore: managerDecisionStore,
+        blockerStore: managerBlockerStore,
+        artifactStore: managerArtifactStore,
+        protocolStore: managerProtocolStore,
+        repoRoot: managerRepoRoot,
+        now,
+      }),
+    };
+    return c.json(response);
+  });
+
+  app.post("/api/manager/projects/:id/complete", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseManagerProjectCompleteRequest(body);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const now = new Date();
+    const finalReview: ManagerProjectFinalReview = {
+      summary: parsed.value.summary || project.summary || project.goal,
+      goalMatched: parsed.value.goalMatched ?? true,
+      acceptedByUser: parsed.value.acceptedByUser ?? false,
+      remainingRisks: parsed.value.remainingRisks ?? "",
+      verificationEvidence: parsed.value.verificationEvidence ?? "",
+      artifacts: parsed.value.artifacts ?? [],
+      completedAt: now.toISOString(),
+      completedBy: "browser",
+    };
+    const decision = await managerDecisionStore.create(project.id, {
+      title: "Project final review",
+      detail: finalReview.summary,
+      rationale: finalReview.verificationEvidence || "Final orchestration result recorded.",
+      tags: ["final-review", finalReview.acceptedByUser ? "accepted" : "unaccepted"],
+      createdBy: "browser",
+    });
+    const updatedProject =
+      (await managerProjectStore.update(project.id, {
+        status: "completed",
+        flowStage: "completed",
+        finalReview,
+        summary: finalReview.summary,
+        error: null,
+      })) ?? project;
+    const response: ManagerProjectCompleteResponse = {
+      generatedAt: now.toISOString(),
+      project: updatedProject,
+      decision,
+      commandFlow: await buildManagerCommandFlow({
+        project: updatedProject,
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        decisionStore: managerDecisionStore,
+        blockerStore: managerBlockerStore,
+        artifactStore: managerArtifactStore,
+        protocolStore: managerProtocolStore,
+        repoRoot: managerRepoRoot,
+        now,
       }),
     };
     return c.json(response);
@@ -2549,6 +3057,26 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/projects/:id/command-flow",
+    description: "Read the full project command-flow state for orchestration UX.",
+  },
+  {
+    method: "PUT",
+    path: "/api/manager/projects/:id/charter",
+    description: "Update the project charter used by manager orchestration.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/prepare",
+    description: "Evaluate protocol and charter readiness before starting orchestration.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/start",
+    description: "Create and dispatch a project orchestration round from charter state.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/projects/:id/hygiene",
     description: "Detect stale, orphaned, and inconsistent orchestration records for one project.",
   },
@@ -2617,6 +3145,21 @@ const SITE_ROUTE_CAPABILITIES = [
     method: "PATCH",
     path: "/api/manager/projects/:id/protocol",
     description: "Update protocol version, active rules, or latest change metadata.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/rounds/:roundId/review",
+    description: "Record review outcome for a project orchestration round.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/direction-change",
+    description: "Record a direction change and optionally draft the next round.",
+  },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/complete",
+    description: "Record final project review and mark the project completed.",
   },
   { method: "GET", path: "/api/manager/projects/:id", description: "Read one manager project." },
   {
@@ -3125,6 +3668,10 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "manager.action-discovery",
       "manager.security-summary",
       "manager.assistant-chat",
+      "manager.projects",
+      "manager.project-command-flow",
+      "manager.project-protocol",
+      "manager.wizard-intent-events",
       "manager.orchestration-agents",
       "manager.orchestration-rounds",
       "manager.worker-runs",
@@ -3362,9 +3909,11 @@ async function syncManagerAgentsWithTasks(
   taskStore: ManagerTaskStore,
 ): Promise<ManagerAgent[]> {
   const agents = await store.listAgents();
+  const tasks = await taskStore.list(500);
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
   const synced: ManagerAgent[] = [];
   for (const agent of agents) {
-    synced.push((await syncManagerAgentRecordWithTask(store, taskStore, agent)) ?? agent);
+    synced.push((await syncManagerAgentRecordWithTask(store, taskStore, agent, taskById)) ?? agent);
   }
   return synced;
 }
@@ -3383,10 +3932,11 @@ async function syncManagerAgentRecordWithTask(
   store: ManagerOrchestrationStore,
   taskStore: ManagerTaskStore,
   agent: ManagerAgent,
+  taskById?: Map<string, ManagerTask>,
 ): Promise<ManagerAgent | undefined> {
   if (agent.status === "stale") return agent;
   if (!agent.taskId) return agent;
-  const task = await taskStore.get(agent.taskId);
+  const task = taskById ? taskById.get(agent.taskId) : await taskStore.get(agent.taskId);
   if (!task) return agent;
   const status = managerAgentStatusFromTaskState(task.state);
   if (
@@ -4402,6 +4952,72 @@ interface ManagerProjectProtocolStateInput {
   limit?: number;
 }
 
+interface ManagerProtocolSeedResult {
+  sourceRoot: string;
+  copied: string[];
+  skipped: string[];
+}
+
+async function seedManagerProjectProtocolFromBase(
+  projectCwd: string,
+  configuredBasePath: string | null | undefined,
+): Promise<ManagerProtocolSeedResult> {
+  const sourceRoot = resolve(configuredBasePath?.trim() || DEFAULT_MANAGER_PROTOCOL_BASE_PATH);
+  const targetRoot = resolve(projectCwd);
+  const sourceStat = await stat(sourceRoot).catch((error) => {
+    throw new Error(`base protocol source cannot be read: ${errorMessage(error)}`);
+  });
+  if (!sourceStat.isDirectory()) {
+    throw new Error(`base protocol source is not a directory: ${sourceRoot}`);
+  }
+  await mkdir(targetRoot, { recursive: true });
+
+  const copied: string[] = [];
+  const skipped: string[] = [];
+  let foundSource = false;
+
+  for (const file of MANAGER_PROTOCOL_BASE_FILES) {
+    const sourcePath = resolve(sourceRoot, file);
+    const sourceRelative = relative(sourceRoot, sourcePath);
+    if (sourceRelative.startsWith("..") || isAbsolute(sourceRelative)) {
+      skipped.push(file);
+      continue;
+    }
+    const fileStat = await stat(sourcePath).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!fileStat?.isFile()) continue;
+    foundSource = true;
+
+    const targetPath = resolve(targetRoot, file);
+    const targetRelative = relative(targetRoot, targetPath);
+    if (targetRelative.startsWith("..") || isAbsolute(targetRelative)) {
+      skipped.push(file);
+      continue;
+    }
+    const targetExists = await stat(targetPath)
+      .then((targetStat) => targetStat.isFile())
+      .catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      });
+    if (targetExists) {
+      skipped.push(file);
+      continue;
+    }
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, await readFile(sourcePath));
+    copied.push(file);
+  }
+
+  if (!foundSource) {
+    throw new Error(`base protocol source has no known protocol files: ${sourceRoot}`);
+  }
+
+  return { sourceRoot, copied, skipped };
+}
+
 async function buildManagerProjectProtocolState(
   input: ManagerProjectProtocolStateInput,
 ): Promise<ManagerProtocolState> {
@@ -4666,6 +5282,363 @@ function managerProjectNextAction(input: {
   };
 }
 
+interface ManagerCommandFlowInput {
+  project: ManagerProject;
+  orchestrationStore: ManagerOrchestrationStore;
+  taskStore: ManagerTaskStore;
+  decisionStore: ManagerDecisionStore;
+  blockerStore: ManagerBlockerStore;
+  artifactStore: ManagerArtifactStore;
+  protocolStore: ManagerProtocolStore;
+  repoRoot: string;
+  now: Date;
+}
+
+async function buildManagerCommandFlow(
+  input: ManagerCommandFlowInput,
+): Promise<ManagerCommandFlowResponse> {
+  const [overview, decisions, blockers, artifacts, protocol, rounds, ledger] = await Promise.all([
+    buildManagerProjectOverview({
+      project: input.project,
+      orchestrationStore: input.orchestrationStore,
+      taskStore: input.taskStore,
+      artifactStore: input.artifactStore,
+      now: input.now,
+    }),
+    input.decisionStore.list(input.project.id),
+    input.blockerStore.list(input.project.id),
+    input.artifactStore.list(input.project.id),
+    buildManagerProjectProtocolState({
+      project: input.project,
+      protocolStore: input.protocolStore,
+      includeExcerpt: false,
+    }),
+    input.orchestrationStore.listRounds(),
+    buildManagerWorkerRunLedger({
+      orchestrationStore: input.orchestrationStore,
+      taskStore: input.taskStore,
+      projectId: input.project.id,
+      limit: 500,
+      now: input.now,
+    }),
+  ]);
+  const projectRounds = selectManagerProjectRounds(input.project, rounds);
+  const activeRound =
+    overview.activeRound ??
+    (input.project.activeRoundId
+      ? projectRounds.find((round) => round.id === input.project.activeRoundId)
+      : undefined);
+  const readiness = managerCommandFlowReadiness(
+    input.project,
+    protocol,
+    blockers.blockers,
+    input.repoRoot,
+  );
+  return {
+    generatedAt: input.now.toISOString(),
+    project: input.project,
+    charter: effectiveProjectCharter(input.project),
+    wizardEvents: [...(input.project.wizardEvents ?? [])].slice(-10).reverse(),
+    protocol,
+    overview,
+    decisions: decisions.decisions,
+    blockers: blockers.blockers,
+    artifacts: artifacts.artifacts,
+    rounds: projectRounds,
+    ...(activeRound ? { activeRound } : {}),
+    workerRuns: ledger.runs,
+    readiness,
+    nextAction: overview.nextAction,
+  };
+}
+
+function effectiveProjectCharter(project: ManagerProject): ManagerProjectCharter {
+  return {
+    goal: project.charter?.goal || project.goal,
+    scope: project.charter?.scope ?? "",
+    nonGoals: project.charter?.nonGoals ?? "",
+    constraints: project.charter?.constraints ?? "",
+    successCriteria: project.charter?.successCriteria ?? "",
+    preferredApproach: project.charter?.preferredApproach ?? "",
+    verificationPlan: project.charter?.verificationPlan ?? "",
+    userCheckpoints: project.charter?.userCheckpoints ?? "",
+    finalDeliverables: project.charter?.finalDeliverables ?? "",
+    updatedAt: project.charter?.updatedAt ?? project.updatedAt,
+    updatedBy: project.charter?.updatedBy ?? "system",
+  };
+}
+
+function mergeManagerProjectCharter(
+  project: ManagerProject,
+  input: ManagerProjectCharterUpdateRequest,
+  now: Date,
+): ManagerProjectCharter {
+  const current = effectiveProjectCharter(project);
+  return {
+    goal: cleanMaybe(input.goal) ?? current.goal,
+    scope: cleanMaybe(input.scope) ?? current.scope,
+    nonGoals: cleanMaybe(input.nonGoals) ?? current.nonGoals,
+    constraints: cleanMaybe(input.constraints) ?? current.constraints,
+    successCriteria: cleanMaybe(input.successCriteria) ?? current.successCriteria,
+    preferredApproach: cleanMaybe(input.preferredApproach) ?? current.preferredApproach,
+    verificationPlan: cleanMaybe(input.verificationPlan) ?? current.verificationPlan,
+    userCheckpoints: cleanMaybe(input.userCheckpoints) ?? current.userCheckpoints,
+    finalDeliverables: cleanMaybe(input.finalDeliverables) ?? current.finalDeliverables,
+    updatedAt: now.toISOString(),
+    updatedBy: input.updatedBy ?? "browser",
+  };
+}
+
+function buildManagerCharterWizardEvent(
+  project: ManagerProject,
+  before: ManagerProjectCharter,
+  after: ManagerProjectCharter,
+  now: Date,
+): ManagerWizardIntentEventInput | undefined {
+  const fields = managerCharterFieldChanges(before, after);
+  if (!fields.length) return undefined;
+  const readinessStage = project.flowStage ?? projectStatusCommandFlowStage(project.status);
+  const highImpactFields = new Set(["goal", "constraints", "nonGoals"]);
+  const mediumImpactFields = new Set([
+    "successCriteria",
+    "verificationPlan",
+    "userCheckpoints",
+    "finalDeliverables",
+  ]);
+  const impact: ManagerWizardIntentImpact = fields.some((field) =>
+    highImpactFields.has(field.field),
+  )
+    ? "high"
+    : fields.some((field) => mediumImpactFields.has(field.field))
+      ? "medium"
+      : "low";
+  const runningStage =
+    readinessStage === "running" || readinessStage === "review" || readinessStage === "replanning";
+  const managerAction: ManagerWizardIntentAction = runningStage
+    ? impact === "high"
+      ? "replan"
+      : "continue"
+    : "refresh-readiness";
+  return {
+    kind: "charter-applied",
+    fields,
+    impact,
+    managerAction,
+    ...(project.activeRoundId ? { roundId: project.activeRoundId } : {}),
+    note: `Charter was explicitly applied from the project flow at ${now.toISOString()}.`,
+  };
+}
+
+function managerCharterFieldChanges(
+  before: ManagerProjectCharter,
+  after: ManagerProjectCharter,
+): ManagerWizardIntentEventInput["fields"] {
+  const fields: Array<keyof ManagerProjectCharter> = [
+    "goal",
+    "scope",
+    "nonGoals",
+    "constraints",
+    "successCriteria",
+    "preferredApproach",
+    "verificationPlan",
+    "userCheckpoints",
+    "finalDeliverables",
+  ];
+  return fields.flatMap((field) => {
+    const beforeValue = cleanMaybe(before[field]) ?? "";
+    const afterValue = cleanMaybe(after[field]) ?? "";
+    if (beforeValue === afterValue || !afterValue) return [];
+    return [
+      {
+        field,
+        ...(beforeValue ? { before: beforeValue } : {}),
+        after: afterValue,
+      },
+    ];
+  });
+}
+
+function managerCommandFlowReadiness(
+  project: ManagerProject,
+  protocol: ManagerProtocolState,
+  blockers: ManagerBlocker[] = [],
+  repoRoot?: string,
+): ManagerCommandFlowResponse["readiness"] {
+  const missingProtocolFiles = protocol.files
+    .filter((file) => file.status === "missing")
+    .map((file) => file.path);
+  const charter = effectiveProjectCharter(project);
+  const hasGoal = Boolean((charter.goal || project.goal).trim());
+  const userCheckRequired = blockers.some(
+    (blocker) => blocker.status === "open" && blocker.requiredAction === "user",
+  );
+  const cwdBoundary = repoRoot ? resolveManagerWorkerCwd(repoRoot, project.cwd) : undefined;
+  const cwdBoundaryWarning = cwdBoundary && !cwdBoundary.ok ? cwdBoundary.error : undefined;
+  const activeRuntime =
+    project.status === "running" || ["running", "reviewing", "completed"].includes(project.status);
+  const ready =
+    hasGoal && missingProtocolFiles.length === 0 && !userCheckRequired && !cwdBoundaryWarning;
+  const stage = commandFlowStageForProject(project, protocol, ready, activeRuntime);
+  return {
+    ready,
+    stage,
+    missingProtocolFiles,
+    warnings: [
+      ...protocol.warnings,
+      ...(!hasGoal ? ["Project charter goal is not recorded."] : []),
+      ...(cwdBoundaryWarning ? [cwdBoundaryWarning] : []),
+      ...(userCheckRequired ? ["A user verification blocker is open."] : []),
+    ],
+    userCheckRequired,
+  };
+}
+
+function commandFlowStageForProject(
+  project: ManagerProject,
+  protocol: ManagerProtocolState,
+  ready: boolean,
+  activeRuntime: boolean,
+): ManagerCommandFlowStage {
+  if (project.status === "archived") return "archived";
+  if (project.status === "completed" || project.flowStage === "completed") return "completed";
+  if (project.status === "reviewing" || project.flowStage === "review") return "review";
+  if (project.status === "blocked" || project.flowStage === "replanning") return "replanning";
+  if (activeRuntime || project.flowStage === "running") return "running";
+  if (ready) return "ready_to_start";
+  if (protocol.files.some((file) => file.status === "present")) return "protocol_ready";
+  return "draft";
+}
+
+function projectStatusCommandFlowStage(status: ManagerProjectStatus): ManagerCommandFlowStage {
+  if (status === "archived") return "archived";
+  if (status === "completed") return "completed";
+  if (status === "reviewing") return "review";
+  if (status === "running") return "running";
+  if (status === "blocked") return "replanning";
+  return "draft";
+}
+
+function defaultManagerProjectAssignments(
+  project: ManagerProject,
+  charter: ManagerProjectCharter,
+  phase: ManagerRoundPhase,
+  objective: string,
+): ManagerRoundAgentAssignment[] {
+  const base = managerProjectPromptContext(project, charter, objective);
+  const cwd = project.cwd;
+  if (phase === "implementation") {
+    return [
+      {
+        role: "implementer",
+        profile: "claude-code",
+        cwd,
+        prompt: `${base}\n\nImplement the smallest coherent change that satisfies the objective. Report changed files and verification commands.`,
+      },
+      {
+        role: "verifier",
+        profile: "claude-code",
+        cwd,
+        prompt: `${base}\n\nVerify the implementation against the success criteria and report concrete evidence.`,
+      },
+      {
+        role: "critic",
+        profile: "claude-code",
+        cwd,
+        prompt: `${base}\n\nReview for regressions, missing tests, and unresolved constraints.`,
+      },
+    ];
+  }
+  if (phase === "feedback" || phase === "verification") {
+    return [
+      {
+        role: "verifier",
+        profile: "claude-code",
+        cwd,
+        prompt: `${base}\n\nCollect verification evidence and identify whether user confirmation is still needed.`,
+      },
+      {
+        role: "critic",
+        profile: "claude-code",
+        cwd,
+        prompt: `${base}\n\nCompare the result with the charter and list gaps or approval blockers.`,
+      },
+    ];
+  }
+  return [
+    {
+      role: "architect",
+      profile: "claude-code",
+      cwd,
+      prompt: `${base}\n\nDesign the next implementation path. Keep it scoped, testable, and aligned with constraints.`,
+    },
+    {
+      role: "protocol",
+      profile: "claude-code",
+      cwd,
+      prompt: `${base}\n\nCheck whether the project protocol and worker contract are sufficient for this round.`,
+    },
+    {
+      role: "critic",
+      profile: "claude-code",
+      cwd,
+      prompt: `${base}\n\nChallenge the plan, name risks, and propose acceptance criteria for the next round.`,
+    },
+  ];
+}
+
+function managerProjectPromptContext(
+  project: ManagerProject,
+  charter: ManagerProjectCharter,
+  objective: string,
+): string {
+  return [
+    `Project: ${project.name}`,
+    `CWD: ${project.cwd}`,
+    `Objective: ${objective}`,
+    charter.goal ? `Goal: ${charter.goal}` : "",
+    charter.scope ? `Scope: ${charter.scope}` : "",
+    charter.nonGoals ? `Non-goals: ${charter.nonGoals}` : "",
+    charter.constraints ? `Constraints: ${charter.constraints}` : "",
+    charter.successCriteria ? `Success criteria: ${charter.successCriteria}` : "",
+    charter.preferredApproach ? `Preferred approach: ${charter.preferredApproach}` : "",
+    charter.verificationPlan ? `Verification plan: ${charter.verificationPlan}` : "",
+    charter.userCheckpoints ? `User checkpoints: ${charter.userCheckpoints}` : "",
+    charter.finalDeliverables ? `Final deliverables: ${charter.finalDeliverables}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function managerRoundTitleForPhase(phase: ManagerRoundPhase): string {
+  switch (phase) {
+    case "implementation":
+      return "Implementation round";
+    case "feedback":
+      return "Feedback round";
+    case "verification":
+      return "Verification round";
+    case "replan":
+      return "Replan round";
+    default:
+      return "Design round";
+  }
+}
+
+function managerRoundReviewDecisionTitle(action: ManagerRoundReviewRequest["action"]): string {
+  switch (action) {
+    case "accept":
+      return "Round result accepted";
+    case "request_changes":
+      return "Round changes requested";
+    case "user_check_required":
+      return "Round needs user verification";
+    case "replan":
+      return "Round requires replanning";
+    case "stop":
+      return "Round stopped";
+  }
+}
+
 function managerProjectRecentSignals(input: {
   round: ManagerRound | undefined;
   agents: ManagerAgent[];
@@ -4805,7 +5778,7 @@ function countManagerProjectArtifacts(agents: ManagerAgent[], tasks: ManagerTask
 function collectManagerArtifactPaths(text: string): string[] {
   const paths = new Set<string>();
   const pattern =
-    /(?:^|\s|["'`])([A-Za-z0-9_.~:/\\-]+(?:ORCHESTRATION|AGENTS|PROTOCOL|LOCKS|TASKS|STATE|FAILURES|PROJECT|README|CLAUDE)?[A-Za-z0-9_.~:/\\-]*\.(?:md|ts|tsx|js|jsx|json|css|html|ps1|py|yml|yaml))/gi;
+    /(?:^|\s|["'`])([A-Za-z0-9_.~:/\\-]+(?:ORCHESTRATION|AGENTS|PROTOCOL|REVIEW|TASKS|STATE|FAILURES|PROJECT|README|CLAUDE)?[A-Za-z0-9_.~:/\\-]*\.(?:md|ts|tsx|js|jsx|json|css|html|ps1|py|yml|yaml))/gi;
   for (const match of text.matchAll(pattern)) {
     const value = (match[1] ?? "").replace(/[),.;:'"`\]]+$/g, "");
     if (value.length >= 4) paths.add(value);
@@ -6306,43 +7279,43 @@ async function enrichManagerAssistantContext(
     context.projectStatus = project.status;
     context.projectCwd = project.cwd;
     if (project.goal.trim()) context.projectGoal = project.goal;
-    const [rounds, decisions, blockers, artifacts, protocol] = await Promise.all([
-      stores.orchestrationStore.listRounds(),
-      stores.decisionStore.list(project.id),
-      stores.blockerStore.list(project.id),
-      stores.artifactStore.list(project.id),
-      buildManagerProjectProtocolState({
-        project,
-        protocolStore: stores.protocolStore,
-        includeExcerpt: false,
-      }),
-    ]);
+    const commandFlow = await buildManagerCommandFlow({
+      project,
+      orchestrationStore: stores.orchestrationStore,
+      taskStore: stores.taskStore,
+      decisionStore: stores.decisionStore,
+      blockerStore: stores.blockerStore,
+      artifactStore: stores.artifactStore,
+      protocolStore: stores.protocolStore,
+      repoRoot: stores.repoRoot,
+      now: new Date(),
+    });
+    const flowLines = formatManagerCommandFlowContextLines(commandFlow);
+    if (flowLines.length) context.projectCommandFlow = flowLines;
     const activeRound =
-      (project.activeRoundId
-        ? rounds.find((round) => round.id === project.activeRoundId)
-        : undefined) ??
+      commandFlow.activeRound ??
       (context.activeRoundId
-        ? rounds.find((round) => round.id === context.activeRoundId)
+        ? commandFlow.rounds.find((round) => round.id === context.activeRoundId)
         : undefined);
     if (activeRound) {
       context.activeRoundId = activeRound.id;
       context.activeRoundTitle = activeRound.title;
       context.activeRoundStatus = activeRound.status;
     }
-    const activeDecisionLines = decisions.decisions
+    const activeDecisionLines = commandFlow.decisions
       .filter((decision) => decision.status === "active")
       .slice(0, 5)
       .map(formatManagerDecisionContextLine);
     if (activeDecisionLines.length) context.projectDecisions = activeDecisionLines;
-    const openBlockerLines = blockers.blockers.slice(0, 5).map(formatManagerBlockerContextLine);
+    const openBlockerLines = commandFlow.blockers.slice(0, 5).map(formatManagerBlockerContextLine);
     if (openBlockerLines.length) context.projectBlockers = openBlockerLines;
-    const activeArtifactLines = artifacts.artifacts
+    const activeArtifactLines = commandFlow.artifacts
       .slice(0, 8)
       .map(formatManagerArtifactContextLine);
     if (activeArtifactLines.length) context.projectArtifacts = activeArtifactLines;
-    const protocolLines = formatManagerProtocolContextLines(protocol);
+    const protocolLines = formatManagerProtocolContextLines(commandFlow.protocol);
     if (protocolLines.length) context.projectProtocol = protocolLines;
-    warnings.push(...protocol.warnings.slice(0, 2));
+    warnings.push(...commandFlow.readiness.warnings.slice(0, 3));
   } catch (error) {
     warnings.push(`project context enrichment failed: ${errorMessage(error)}`);
   }
@@ -6367,6 +7340,31 @@ function formatManagerArtifactContextLine(artifact: ManagerArtifact): string {
   return `${artifact.path} (${artifact.kind}, ${artifact.status}, owner=${artifact.owner})${
     note ? ` - ${note}` : ""
   }`;
+}
+
+function formatManagerCommandFlowContextLines(flow: ManagerCommandFlowResponse): string[] {
+  const lines = [
+    `stage=${flow.readiness.stage}; ready=${flow.readiness.ready ? "yes" : "no"}`,
+    `next=${flow.nextAction.kind}: ${flow.nextAction.label}`,
+  ];
+  if (flow.activeRound) {
+    lines.push(
+      `active round=${flow.activeRound.id}; title=${flow.activeRound.title}; status=${flow.activeRound.status}; phase=${flow.activeRound.phase}`,
+    );
+  }
+  if (flow.readiness.userCheckRequired) lines.push("user check required");
+  lines.push(
+    ...flow.wizardEvents
+      .slice(0, 3)
+      .map(
+        (event) =>
+          `wizard ${event.impact}: ${event.kind}; action=${event.managerAction}; fields=${event.fields
+            .map((field) => field.field)
+            .join(", ")}${event.roundId ? `; round=${event.roundId}` : ""}`,
+      ),
+  );
+  lines.push(...flow.readiness.warnings.slice(0, 3).map((warning) => `warning: ${warning}`));
+  return lines;
 }
 
 function formatManagerProtocolContextLines(protocol: ManagerProtocolState): string[] {
@@ -7249,6 +8247,8 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     [
       "## Project Context Rule",
       "- For orchestration or project-management work, the Current Browser Context's current project is the primary operating scope.",
+      "- If the request is about project flow, read `GET /api/manager/projects/:id/command-flow` before choosing prepare/start/review/direction-change/complete.",
+      "- Treat command-flow `wizardEvents` as semantic human intent changes; ignore unsaved wizard typing, but react to high-impact applied events before dispatching more work.",
       "- If a current project id is present, verify it with manager project APIs before destructive or broad mutations.",
       "- If no current project is present and the request needs project scope, create or select a manager project before launching rounds, workers, decisions, blockers, or artifacts.",
       "- If browser-selected cwd/session and current project cwd disagree, inspect first and report the mismatch instead of guessing.",
@@ -7943,7 +8943,9 @@ function buildManagedManagerAssistantInstructions(input: {
     "## Manager Project Context",
     "",
     "- For orchestration and project-management work, the selected manager project is the primary operating scope.",
-    "- Browser context may include the selected project id, cwd, active round, open blockers, active decisions, and active artifacts. Treat it as a navigation hint, then verify with manager project APIs before mutation.",
+    "- Browser context may include the selected project id, cwd, command-flow stage, next action, active round, open blockers, active decisions, protocol state, and active artifacts. Treat it as a navigation hint, then verify with manager project APIs before mutation.",
+    "- For project flow work, read `GET /api/manager/projects/:id/command-flow` first; it is the canonical UX state for draft -> protocol ready -> ready to start -> running -> review -> replanning -> completed.",
+    "- `wizardEvents` in command-flow are explicit human-applied intent changes from the wizard. They are signal, not raw UI activity; high-impact events may require replan, pause, or human confirmation before more worker dispatch.",
     "- If no project is selected but the user's request needs project scope, create or select a manager project before launching rounds, workers, decisions, blockers, or artifacts.",
     "- If the selected session/cwd and selected project cwd disagree, inspect and report the mismatch instead of guessing.",
     "",
@@ -9539,11 +10541,13 @@ function normalizeAssistantContext(input: unknown): ManagerAssistantChatContext 
   const projectDecisions = normalizeAssistantContextStringList(input.projectDecisions);
   const projectBlockers = normalizeAssistantContextStringList(input.projectBlockers);
   const projectArtifacts = normalizeAssistantContextStringList(input.projectArtifacts);
+  const projectCommandFlow = normalizeAssistantContextStringList(input.projectCommandFlow);
   const projectProtocol = normalizeAssistantContextStringList(input.projectProtocol);
   const projectWarnings = normalizeAssistantContextStringList(input.projectWarnings);
   if (projectDecisions.length) context.projectDecisions = projectDecisions;
   if (projectBlockers.length) context.projectBlockers = projectBlockers;
   if (projectArtifacts.length) context.projectArtifacts = projectArtifacts;
+  if (projectCommandFlow.length) context.projectCommandFlow = projectCommandFlow;
   if (projectProtocol.length) context.projectProtocol = projectProtocol;
   if (projectWarnings.length) context.projectWarnings = projectWarnings;
   return Object.keys(context).length ? context : undefined;
@@ -9573,6 +10577,7 @@ function formatManagerAssistantBrowserContext(
   appendManagerAssistantContextList(lines, "active project decisions", context.projectDecisions);
   appendManagerAssistantContextList(lines, "open project blockers", context.projectBlockers);
   appendManagerAssistantContextList(lines, "active project artifacts", context.projectArtifacts);
+  appendManagerAssistantContextList(lines, "project command flow", context.projectCommandFlow);
   appendManagerAssistantContextList(lines, "project protocol state", context.projectProtocol);
   appendManagerAssistantContextList(lines, "project context warnings", context.projectWarnings);
   return lines.join("\n");
@@ -9849,6 +10854,26 @@ function parseManagerProjectCreateRequest(
   if (input.status !== undefined && !status) {
     return { ok: false, error: "project status is invalid" };
   }
+  const protocolSource = parseManagerProjectProtocolSource(input.protocolSource);
+  if (input.protocolSource !== undefined && !protocolSource) {
+    return { ok: false, error: "project protocolSource is invalid" };
+  }
+  const flowStage = parseManagerCommandFlowStage(input.flowStage);
+  if (input.flowStage !== undefined && !flowStage) {
+    return { ok: false, error: "project flowStage is invalid" };
+  }
+  const charter =
+    input.charter === undefined ? undefined : parseManagerProjectCharterPatch(input.charter);
+  if (input.charter !== undefined && !charter) {
+    return { ok: false, error: "project charter must be an object" };
+  }
+  const wizardEvent =
+    input.wizardEvent === undefined
+      ? undefined
+      : parseManagerWizardIntentEventInput(input.wizardEvent);
+  if (input.wizardEvent !== undefined && !wizardEvent) {
+    return { ok: false, error: "project wizardEvent must be an object with fields" };
+  }
   return {
     ok: true,
     value: {
@@ -9859,8 +10884,161 @@ function parseManagerProjectCreateRequest(
       ...(typeof input.activeRoundId === "string" && input.activeRoundId.trim()
         ? { activeRoundId: input.activeRoundId.trim() }
         : {}),
+      ...(protocolSource ? { protocolSource } : {}),
+      ...(flowStage ? { flowStage } : {}),
+      ...(charter ? { charter } : {}),
+      ...(wizardEvent ? { wizardEvent } : {}),
     },
   };
+}
+
+function parseManagerProjectProtocolSource(
+  value: unknown,
+): ManagerProjectProtocolSource | undefined {
+  return value === "base-copy" || value === "blank" ? value : undefined;
+}
+
+function parseManagerCommandFlowStage(value: unknown): ManagerCommandFlowStage | undefined {
+  return value === "draft" ||
+    value === "protocol_ready" ||
+    value === "ready_to_start" ||
+    value === "running" ||
+    value === "review" ||
+    value === "replanning" ||
+    value === "completed" ||
+    value === "archived"
+    ? value
+    : undefined;
+}
+
+function parseManagerRoundPhase(value: unknown): ManagerRoundPhase | undefined {
+  return value === "design" ||
+    value === "implementation" ||
+    value === "feedback" ||
+    value === "verification" ||
+    value === "replan"
+    ? value
+    : undefined;
+}
+
+function parseManagerProjectRecordAuthor(
+  value: unknown,
+): ManagerProjectCharter["updatedBy"] | undefined {
+  return value === "browser" || value === "manager" || value === "system" ? value : undefined;
+}
+
+function parseManagerWizardIntentEventInput(
+  input: unknown,
+): ManagerWizardIntentEventInput | undefined {
+  if (!isRecord(input)) return undefined;
+  const kind = parseManagerWizardIntentKind(input.kind);
+  if (!kind) return undefined;
+  const fields = parseManagerWizardIntentFields(input.fields);
+  const note = typeof input.note === "string" ? input.note.trim() : "";
+  if (fields.length === 0 && !note) return undefined;
+  const impact = parseManagerWizardIntentImpact(input.impact);
+  const managerAction = parseManagerWizardIntentAction(input.managerAction);
+  return {
+    kind,
+    fields,
+    ...(impact ? { impact } : {}),
+    ...(managerAction ? { managerAction } : {}),
+    ...(typeof input.roundId === "string" && input.roundId.trim()
+      ? { roundId: input.roundId.trim() }
+      : {}),
+    ...(note ? { note } : {}),
+  };
+}
+
+function parseManagerWizardIntentFields(value: unknown): ManagerWizardIntentEventInput["fields"] {
+  if (!Array.isArray(value)) return [];
+  const fields: ManagerWizardIntentEventInput["fields"] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const field = typeof item.field === "string" ? item.field.trim() : "";
+    const after = typeof item.after === "string" ? item.after.trim() : "";
+    if (!field || !after || seen.has(field)) continue;
+    seen.add(field);
+    fields.push({
+      field,
+      ...(typeof item.before === "string" && item.before.trim()
+        ? { before: item.before.trim() }
+        : {}),
+      after,
+    });
+    if (fields.length >= 20) break;
+  }
+  return fields;
+}
+
+function parseManagerWizardIntentKind(value: unknown): ManagerWizardIntentEventKind | undefined {
+  return value === "charter-applied" ||
+    value === "direction-change-requested" ||
+    value === "checkpoint-requested" ||
+    value === "protocol-source-changed" ||
+    value === "readiness-refresh-requested"
+    ? value
+    : undefined;
+}
+
+function parseManagerWizardIntentImpact(value: unknown): ManagerWizardIntentImpact | undefined {
+  return value === "low" || value === "medium" || value === "high" || value === "unknown"
+    ? value
+    : undefined;
+}
+
+function parseManagerWizardIntentAction(value: unknown): ManagerWizardIntentAction | undefined {
+  return value === "record" ||
+    value === "refresh-readiness" ||
+    value === "continue" ||
+    value === "replan" ||
+    value === "pause" ||
+    value === "ask-human"
+    ? value
+    : undefined;
+}
+
+function parseManagerProjectCharterPatch(
+  input: unknown,
+): Partial<ManagerProjectCharter> | undefined {
+  if (!isRecord(input)) return undefined;
+  const out: Partial<ManagerProjectCharter> = {};
+  for (const field of [
+    "goal",
+    "scope",
+    "nonGoals",
+    "constraints",
+    "successCriteria",
+    "preferredApproach",
+    "verificationPlan",
+    "userCheckpoints",
+    "finalDeliverables",
+  ] as const) {
+    if (typeof input[field] === "string") out[field] = input[field].trim();
+  }
+  const updatedBy = parseManagerProjectRecordAuthor(input.updatedBy);
+  if (updatedBy) out.updatedBy = updatedBy;
+  if (typeof input.updatedAt === "string" && input.updatedAt.trim()) {
+    out.updatedAt = input.updatedAt.trim();
+  }
+  return out;
+}
+
+function parseManagerProjectCharterUpdateRequest(
+  input: unknown,
+): { ok: true; value: ManagerProjectCharterUpdateRequest } | { ok: false; error: string } {
+  const charter = parseManagerProjectCharterPatch(input);
+  if (!charter) return { ok: false, error: "project charter body must be an object" };
+  const value: ManagerProjectCharterUpdateRequest = { ...charter };
+  if (isRecord(input) && input.wizardEvent !== undefined) {
+    const wizardEvent = parseManagerWizardIntentEventInput(input.wizardEvent);
+    if (!wizardEvent) {
+      return { ok: false, error: "project wizardEvent must be an object with fields" };
+    }
+    value.wizardEvent = wizardEvent;
+  }
+  return { ok: true, value };
 }
 
 function parseManagerProjectUpdateRequest(
@@ -9871,11 +11049,22 @@ function parseManagerProjectUpdateRequest(
   if (input.status !== undefined && !status) {
     return { ok: false, error: "project status is invalid" };
   }
+  const flowStage = parseManagerCommandFlowStage(input.flowStage);
+  if (input.flowStage !== undefined && !flowStage) {
+    return { ok: false, error: "project flowStage is invalid" };
+  }
   const value: ManagerProjectUpdateRequest = {};
   if (typeof input.cwd === "string") value.cwd = input.cwd.trim();
   if (typeof input.name === "string") value.name = input.name.trim();
   if (typeof input.goal === "string") value.goal = input.goal.trim();
   if (status) value.status = status;
+  if (flowStage) value.flowStage = flowStage;
+  if (input.charter === null) value.charter = null;
+  else if (input.charter !== undefined) {
+    const charter = parseManagerProjectCharterPatch(input.charter);
+    if (!charter) return { ok: false, error: "project charter must be an object" };
+    value.charter = charter;
+  }
   if (input.activeRoundId === null) value.activeRoundId = null;
   else if (typeof input.activeRoundId === "string")
     value.activeRoundId = input.activeRoundId.trim();
@@ -9883,6 +11072,13 @@ function parseManagerProjectUpdateRequest(
   else if (typeof input.summary === "string") value.summary = input.summary.trim();
   if (input.error === null) value.error = null;
   else if (typeof input.error === "string") value.error = input.error.trim();
+  if (input.wizardEvent !== undefined) {
+    const wizardEvent = parseManagerWizardIntentEventInput(input.wizardEvent);
+    if (!wizardEvent) {
+      return { ok: false, error: "project wizardEvent must be an object with fields" };
+    }
+    value.wizardEvent = wizardEvent;
+  }
   return { ok: true, value };
 }
 
@@ -10202,6 +11398,10 @@ function parseManagerRoundCreateRequest(
   if (!isRecord(input)) return { ok: false, error: "round body must be an object" };
   const objective = typeof input.objective === "string" ? input.objective.trim() : "";
   if (!objective) return { ok: false, error: "round objective is required" };
+  const phase = parseManagerRoundPhase(input.phase);
+  if (input.phase !== undefined && !phase) {
+    return { ok: false, error: "round phase is invalid" };
+  }
   const agents: ManagerRoundCreateRequest["agents"] = [];
   if (Array.isArray(input.agents)) {
     for (const item of input.agents) {
@@ -10230,6 +11430,7 @@ function parseManagerRoundCreateRequest(
         ? { projectId: input.projectId.trim() }
         : {}),
       objective,
+      ...(phase ? { phase } : {}),
       ...(typeof input.title === "string" && input.title.trim()
         ? { title: input.title.trim() }
         : {}),
@@ -10273,6 +11474,130 @@ function parseManagerRoundDispatchRequest(
     value: {
       ...(assignments.length ? { assignments } : {}),
       ...(typeof input.dryRun === "boolean" ? { dryRun: input.dryRun } : {}),
+    },
+  };
+}
+
+function parseManagerProjectStartRequest(
+  input: unknown,
+): { ok: true; value: ManagerProjectStartRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "project start body must be an object" };
+  const phase = parseManagerRoundPhase(input.phase);
+  if (input.phase !== undefined && !phase) {
+    return { ok: false, error: "project start phase is invalid" };
+  }
+  const dispatchParsed = parseManagerRoundDispatchRequest({
+    assignments: input.assignments,
+    dryRun: input.dryRun,
+  });
+  if (!dispatchParsed.ok) return dispatchParsed;
+  return {
+    ok: true,
+    value: {
+      ...(typeof input.title === "string" && input.title.trim()
+        ? { title: input.title.trim() }
+        : {}),
+      ...(typeof input.objective === "string" && input.objective.trim()
+        ? { objective: input.objective.trim() }
+        : {}),
+      ...(phase ? { phase } : {}),
+      ...(typeof input.dryRun === "boolean" ? { dryRun: input.dryRun } : {}),
+      ...(dispatchParsed.value.assignments
+        ? { assignments: dispatchParsed.value.assignments }
+        : {}),
+    },
+  };
+}
+
+function parseManagerRoundReviewRequest(
+  input: unknown,
+): { ok: true; value: ManagerRoundReviewRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "round review body must be an object" };
+  const action = input.action;
+  if (
+    action !== "accept" &&
+    action !== "request_changes" &&
+    action !== "user_check_required" &&
+    action !== "replan" &&
+    action !== "stop"
+  ) {
+    return { ok: false, error: "round review action is invalid" };
+  }
+  return {
+    ok: true,
+    value: {
+      action,
+      ...(typeof input.summary === "string" && input.summary.trim()
+        ? { summary: input.summary.trim() }
+        : {}),
+      ...(typeof input.nextObjective === "string" && input.nextObjective.trim()
+        ? { nextObjective: input.nextObjective.trim() }
+        : {}),
+      ...(typeof input.createNextRound === "boolean"
+        ? { createNextRound: input.createNextRound }
+        : {}),
+    },
+  };
+}
+
+function parseManagerDirectionChangeRequest(
+  input: unknown,
+): { ok: true; value: ManagerDirectionChangeRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "direction change body must be an object" };
+  const requestedChange =
+    typeof input.requestedChange === "string" ? input.requestedChange.trim() : "";
+  if (!requestedChange) return { ok: false, error: "direction change is required" };
+  const currentRoundAction =
+    input.currentRoundAction === "keep" ||
+    input.currentRoundAction === "cancel" ||
+    input.currentRoundAction === "supersede"
+      ? input.currentRoundAction
+      : undefined;
+  if (input.currentRoundAction !== undefined && !currentRoundAction) {
+    return { ok: false, error: "direction change round action is invalid" };
+  }
+  return {
+    ok: true,
+    value: {
+      requestedChange,
+      ...(typeof input.impact === "string" && input.impact.trim()
+        ? { impact: input.impact.trim() }
+        : {}),
+      ...(typeof input.affectedProtocol === "string" && input.affectedProtocol.trim()
+        ? { affectedProtocol: input.affectedProtocol.trim() }
+        : {}),
+      ...(typeof input.affectedArtifacts === "string" && input.affectedArtifacts.trim()
+        ? { affectedArtifacts: input.affectedArtifacts.trim() }
+        : {}),
+      ...(currentRoundAction ? { currentRoundAction } : {}),
+      ...(typeof input.nextObjective === "string" && input.nextObjective.trim()
+        ? { nextObjective: input.nextObjective.trim() }
+        : {}),
+    },
+  };
+}
+
+function parseManagerProjectCompleteRequest(
+  input: unknown,
+): { ok: true; value: ManagerProjectCompleteRequest } | { ok: false; error: string } {
+  if (!isRecord(input)) return { ok: false, error: "project completion body must be an object" };
+  return {
+    ok: true,
+    value: {
+      ...(typeof input.summary === "string" && input.summary.trim()
+        ? { summary: input.summary.trim() }
+        : {}),
+      ...(typeof input.goalMatched === "boolean" ? { goalMatched: input.goalMatched } : {}),
+      ...(typeof input.acceptedByUser === "boolean"
+        ? { acceptedByUser: input.acceptedByUser }
+        : {}),
+      ...(typeof input.remainingRisks === "string" && input.remainingRisks.trim()
+        ? { remainingRisks: input.remainingRisks.trim() }
+        : {}),
+      ...(typeof input.verificationEvidence === "string" && input.verificationEvidence.trim()
+        ? { verificationEvidence: input.verificationEvidence.trim() }
+        : {}),
+      ...(Array.isArray(input.artifacts) ? { artifacts: stringList(input.artifacts) } : {}),
     },
   };
 }
@@ -12160,6 +13485,16 @@ function parseJsonPayload(text: string): unknown {
   } catch {
     return { raw: text };
   }
+}
+
+function cleanMaybe(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() : undefined;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+    : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

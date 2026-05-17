@@ -122,28 +122,28 @@ describe("settings and chrome invariants", () => {
     expect(appSource).not.toContain("M12 2v3M12 19v3M2 12h3M19 12h3");
   });
 
-  test("chat header exposes Chat/Split/AI view switching", () => {
+  test("chat header exposes chat/orchestration workspace switching", () => {
     const chatViewSource = readFileSync(resolve(pkgRoot, "src/components/ChatView.tsx"), "utf8");
     const styles = readFileSync(resolve(pkgRoot, "src/styles.css"), "utf8");
 
-    expect(chatViewSource).toContain('class="chat-view-switch"');
-    expect(chatViewSource).toContain('class="chat-view-switch assistant-dock-view-switch"');
-    expect(chatViewSource).toContain("setChatViewMode");
-    expect(chatViewSource).toContain("currentChatViewMode");
-    expect(chatViewSource).toContain('"split"');
+    expect(chatViewSource).toContain('class="main-panel-switch"');
+    expect(chatViewSource).toContain("setMainPanelMode");
+    expect(chatViewSource).toContain("mainPanelMode");
+    expect(chatViewSource).toContain('"orchestration"');
+    expect(chatViewSource).toContain('"instructions"');
+    expect(chatViewSource).toContain("openChatWorkspace");
+    expect(chatViewSource).toContain("openOrchestrationWorkspace");
     expect(chatViewSource).toContain('"main-chat-collapsed": chatPanelCollapsed()');
-    expect(chatViewSource).toContain('class="chat-assistant-dock"');
-    expect(chatViewSource).toContain('class="chat-assistant-mobile"');
-    expect(chatViewSource).toContain('t("chat.manager-assistant.open")');
-    expect(styles).toContain(".chat-view-switch");
+    expect(chatViewSource).toContain('class="chat"');
+    expect(chatViewSource).toContain("ManagerOrchestrationWorkspace");
+    expect(chatViewSource).toContain("InstructionsWorkspace");
+    expect(styles).toContain(".main-panel-switch");
     expect(styles).toContain(".chat-view-switch-button");
-    expect(styles).toContain(".signed-in.assistant-panel-open");
-    expect(styles).toContain(".chat-assistant-dock");
-    expect(styles).toContain(".assistant-dock-view-switch");
+    expect(styles).toContain(".signed-in.orchestration-mode");
     expect(styles).toContain(".chat.chat-collapsed");
     expect(styles).toContain(".chat-view-switch-button.active");
     expect(styles).toContain('.chat-view-switch-button[aria-pressed="true"]');
-    expect(styles).toContain(".chat-assistant-mobile");
+    expect(styles).toContain(".manager-orchestration-panel");
   });
 
   test("general settings, devices, diagnostics, instructions, and hard refresh live in unified settings", () => {

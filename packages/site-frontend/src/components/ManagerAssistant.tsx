@@ -110,19 +110,33 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   const orchestrationPanelEnabled = createMemo(() => props.showOrchestrationPanel !== false);
 
+  const [workspace] = createResource(
+    () => reloadSeq(),
+    () => api.managerAssistantWorkspace(),
+  );
+
+  const workspaceDevice = createMemo<Device | null>(() => {
+    const info = workspace();
+    if (!info?.deviceId) return null;
+    return {
+      id: info.deviceId,
+      label: info.deviceLabel ?? info.deviceId,
+      daemonUrl: "",
+      registeredAt: "",
+      connectionState: "online",
+    };
+  });
+
   const serverDevice = createMemo(() => {
     const devices = props.devices ?? [];
     return (
       devices.find((device) => deviceDisplayRole(device) === "Server") ??
       devices.find((device) => device.connectionState === "online") ??
+      workspaceDevice() ??
       null
     );
   });
 
-  const [workspace] = createResource(
-    () => reloadSeq(),
-    () => api.managerAssistantWorkspace(),
-  );
   const [
     conversationState,
     { mutate: mutateConversationState, refetch: refetchConversationState },
@@ -204,11 +218,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       }
     },
   );
-  const visibleSessionHygiene = createMemo(
-    () =>
-      orchestrationPanelEnabled()
-        ? (sessionHygiene() ?? cachedOrchestrationSnapshot()?.hygiene ?? null)
-        : null,
+  const visibleSessionHygiene = createMemo(() =>
+    orchestrationPanelEnabled()
+      ? (sessionHygiene() ?? cachedOrchestrationSnapshot()?.hygiene ?? null)
+      : null,
   );
 
   const [behaviors] = createResource(

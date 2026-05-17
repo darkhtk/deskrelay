@@ -453,12 +453,73 @@ export type ManagerProjectStatus =
   | "completed"
   | "archived";
 
+export type ManagerCommandFlowStage =
+  | "draft"
+  | "protocol_ready"
+  | "ready_to_start"
+  | "running"
+  | "review"
+  | "replanning"
+  | "completed"
+  | "archived";
+
+export type ManagerRoundPhase =
+  | "design"
+  | "implementation"
+  | "feedback"
+  | "verification"
+  | "replan";
+
+export type ManagerProjectRecordAuthor = "browser" | "manager" | "system";
+
+export interface ManagerProjectCharter {
+  goal: string;
+  scope: string;
+  nonGoals: string;
+  constraints: string;
+  successCriteria: string;
+  preferredApproach: string;
+  verificationPlan: string;
+  userCheckpoints: string;
+  finalDeliverables: string;
+  updatedAt?: string;
+  updatedBy?: ManagerProjectRecordAuthor;
+}
+
+export interface ManagerProjectDirectionChange {
+  previousDirection: string;
+  requestedChange: string;
+  impact: string;
+  affectedProtocol: string;
+  affectedArtifacts: string;
+  decisionId?: string;
+  nextRoundId?: string;
+  changedAt: string;
+  changedBy: ManagerProjectRecordAuthor;
+}
+
+export interface ManagerProjectFinalReview {
+  summary: string;
+  goalMatched: boolean;
+  acceptedByUser: boolean;
+  remainingRisks: string;
+  verificationEvidence: string;
+  artifacts: string[];
+  completedAt: string;
+  completedBy: ManagerProjectRecordAuthor;
+}
+
 export interface ManagerProject {
   id: string;
   name: string;
   cwd: string;
   goal: string;
   status: ManagerProjectStatus;
+  flowStage?: ManagerCommandFlowStage;
+  charter?: ManagerProjectCharter;
+  wizardEvents?: ManagerWizardIntentEvent[];
+  lastDirectionChange?: ManagerProjectDirectionChange;
+  finalReview?: ManagerProjectFinalReview;
   createdAt: string;
   updatedAt: string;
   activeRoundId?: string;
@@ -467,12 +528,65 @@ export interface ManagerProject {
   error?: string;
 }
 
+export type ManagerProjectProtocolSource = "base-copy" | "blank";
+
+export type ManagerWizardIntentEventKind =
+  | "charter-applied"
+  | "direction-change-requested"
+  | "checkpoint-requested"
+  | "protocol-source-changed"
+  | "readiness-refresh-requested";
+
+export type ManagerWizardIntentImpact = "low" | "medium" | "high" | "unknown";
+
+export type ManagerWizardIntentAction =
+  | "record"
+  | "refresh-readiness"
+  | "continue"
+  | "replan"
+  | "pause"
+  | "ask-human";
+
+export interface ManagerWizardIntentFieldChange {
+  field: string;
+  before?: string;
+  after: string;
+}
+
+export interface ManagerWizardIntentEvent {
+  id: string;
+  projectId: string;
+  roundId?: string;
+  source: "wizard";
+  changedBy: "human";
+  kind: ManagerWizardIntentEventKind;
+  fields: ManagerWizardIntentFieldChange[];
+  impact: ManagerWizardIntentImpact;
+  managerAction: ManagerWizardIntentAction;
+  note?: string;
+  createdAt: string;
+  acknowledgedAt?: string;
+}
+
+export interface ManagerWizardIntentEventInput {
+  kind: ManagerWizardIntentEventKind;
+  fields: ManagerWizardIntentFieldChange[];
+  impact?: ManagerWizardIntentImpact;
+  managerAction?: ManagerWizardIntentAction;
+  note?: string;
+  roundId?: string;
+}
+
 export interface ManagerProjectCreateRequest {
   cwd: string;
   name?: string;
   goal?: string;
   status?: ManagerProjectStatus;
   activeRoundId?: string;
+  protocolSource?: ManagerProjectProtocolSource;
+  charter?: Partial<ManagerProjectCharter>;
+  flowStage?: ManagerCommandFlowStage;
+  wizardEvent?: ManagerWizardIntentEventInput;
 }
 
 export interface ManagerProjectUpdateRequest {
@@ -480,9 +594,14 @@ export interface ManagerProjectUpdateRequest {
   name?: string;
   goal?: string;
   status?: ManagerProjectStatus;
+  flowStage?: ManagerCommandFlowStage;
+  charter?: Partial<ManagerProjectCharter> | null;
+  lastDirectionChange?: ManagerProjectDirectionChange | null;
+  finalReview?: ManagerProjectFinalReview | null;
   activeRoundId?: string | null;
   summary?: string | null;
   error?: string | null;
+  wizardEvent?: ManagerWizardIntentEventInput;
 }
 
 export interface ManagerProjectCorruptRecord {
@@ -500,6 +619,27 @@ export interface ManagerProjectListResponse {
 
 export interface ManagerProjectResponse {
   generatedAt: string;
+  project: ManagerProject;
+}
+
+export interface ManagerProjectCharterUpdateRequest {
+  goal?: string;
+  scope?: string;
+  nonGoals?: string;
+  constraints?: string;
+  successCriteria?: string;
+  preferredApproach?: string;
+  verificationPlan?: string;
+  userCheckpoints?: string;
+  finalDeliverables?: string;
+  updatedBy?: ManagerProjectRecordAuthor;
+  wizardEvent?: ManagerWizardIntentEventInput;
+}
+
+export interface ManagerProjectCharterResponse {
+  generatedAt: string;
+  projectId: string;
+  charter: ManagerProjectCharter;
   project: ManagerProject;
 }
 
@@ -712,7 +852,7 @@ export type ManagerProtocolFileRole =
   | "orchestration"
   | "agents"
   | "protocol"
-  | "locks"
+  | "review"
   | "tasks"
   | "state"
   | "failures"
@@ -967,6 +1107,7 @@ export interface ManagerRound {
   projectId?: string;
   title: string;
   objective: string;
+  phase?: ManagerRoundPhase;
   status: ManagerRoundStatus;
   agentIds: string[];
   taskIds: string[];
@@ -985,6 +1126,7 @@ export interface ManagerRoundCreateRequest {
   projectId?: string;
   title?: string;
   objective: string;
+  phase?: ManagerRoundPhase;
   agents?: Array<Omit<ManagerRoundAgentAssignment, "prompt"> & { prompt?: string }>;
 }
 
@@ -1009,6 +1151,105 @@ export interface ManagerRoundReportResponse {
   agents: ManagerAgent[];
   tasks: ManagerTask[];
   summary: string;
+}
+
+export interface ManagerCommandFlowReadiness {
+  ready: boolean;
+  stage: ManagerCommandFlowStage;
+  missingProtocolFiles: string[];
+  warnings: string[];
+  userCheckRequired: boolean;
+}
+
+export interface ManagerCommandFlowResponse {
+  generatedAt: string;
+  project: ManagerProject;
+  charter: ManagerProjectCharter;
+  wizardEvents: ManagerWizardIntentEvent[];
+  protocol: ManagerProtocolState;
+  overview: ManagerProjectOverviewResponse;
+  decisions: ManagerDecision[];
+  blockers: ManagerBlocker[];
+  artifacts: ManagerArtifact[];
+  rounds: ManagerRound[];
+  activeRound?: ManagerRound;
+  workerRuns: ManagerWorkerRun[];
+  readiness: ManagerCommandFlowReadiness;
+  nextAction: ManagerProjectOverviewAction;
+}
+
+export interface ManagerProjectStartRequest {
+  title?: string;
+  objective?: string;
+  phase?: ManagerRoundPhase;
+  dryRun?: boolean;
+  assignments?: ManagerRoundAgentAssignment[];
+}
+
+export interface ManagerProjectStartResponse {
+  generatedAt: string;
+  project: ManagerProject;
+  round: ManagerRound;
+  dispatch: ManagerRoundDispatchResponse;
+  commandFlow: ManagerCommandFlowResponse;
+}
+
+export type ManagerRoundReviewAction =
+  | "accept"
+  | "request_changes"
+  | "user_check_required"
+  | "replan"
+  | "stop";
+
+export interface ManagerRoundReviewRequest {
+  action: ManagerRoundReviewAction;
+  summary?: string;
+  nextObjective?: string;
+  createNextRound?: boolean;
+}
+
+export interface ManagerRoundReviewResponse {
+  generatedAt: string;
+  project: ManagerProject;
+  decision?: ManagerDecision;
+  blocker?: ManagerBlocker;
+  nextRound?: ManagerRound;
+  commandFlow: ManagerCommandFlowResponse;
+}
+
+export type ManagerDirectionChangeRoundAction = "keep" | "cancel" | "supersede";
+
+export interface ManagerDirectionChangeRequest {
+  requestedChange: string;
+  impact?: string;
+  affectedProtocol?: string;
+  affectedArtifacts?: string;
+  currentRoundAction?: ManagerDirectionChangeRoundAction;
+  nextObjective?: string;
+}
+
+export interface ManagerDirectionChangeResponse {
+  generatedAt: string;
+  project: ManagerProject;
+  decision: ManagerDecision;
+  nextRound?: ManagerRound;
+  commandFlow: ManagerCommandFlowResponse;
+}
+
+export interface ManagerProjectCompleteRequest {
+  summary?: string;
+  goalMatched?: boolean;
+  acceptedByUser?: boolean;
+  remainingRisks?: string;
+  verificationEvidence?: string;
+  artifacts?: string[];
+}
+
+export interface ManagerProjectCompleteResponse {
+  generatedAt: string;
+  project: ManagerProject;
+  decision: ManagerDecision;
+  commandFlow: ManagerCommandFlowResponse;
 }
 
 export type ManagerStateViewTone = "idle" | "running" | "warning" | "error";
@@ -1270,6 +1511,7 @@ export interface ManagerAssistantChatContext {
   projectDecisions?: string[];
   projectBlockers?: string[];
   projectArtifacts?: string[];
+  projectCommandFlow?: string[];
   projectProtocol?: string[];
   projectWarnings?: string[];
 }
@@ -1531,6 +1773,7 @@ export type ManagerEventInput =
   | { type: "snapshot"; snapshot: ManagerEventSnapshot }
   | { type: "project.created"; project: ManagerProject }
   | { type: "project.updated"; project: ManagerProject }
+  | { type: "wizard.intent"; event: ManagerWizardIntentEvent }
   | { type: "decision.created"; decision: ManagerDecision }
   | { type: "decision.updated"; decision: ManagerDecision }
   | { type: "blocker.created"; blocker: ManagerBlocker }

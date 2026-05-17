@@ -6,17 +6,24 @@ import type {
   ManagerBlockerCreateRequest,
   ManagerBlockerListResponse,
   ManagerBlockerResolveRequest,
+  ManagerCommandFlowResponse,
   ManagerDecisionCreateRequest,
   ManagerDecisionListResponse,
   ManagerDecisionUpdateRequest,
+  ManagerDirectionChangeRequest,
   ManagerProject,
+  ManagerProjectCharterUpdateRequest,
+  ManagerProjectCompleteRequest,
   ManagerProjectCreateRequest,
   ManagerProjectHygieneReport,
+  ManagerProjectListResponse,
   ManagerProjectOverviewResponse,
+  ManagerProjectStartRequest,
   ManagerProtocolResponse,
   ManagerProtocolUpdateRequest,
   ManagerRound,
   ManagerRoundHealthGateResponse,
+  ManagerRoundReviewRequest,
   ManagerSessionHygieneReport,
   ManagerStateViewResponse,
   ManagerTaskObservationResponse,
@@ -46,6 +53,18 @@ import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 
 const SELECTED_MANAGER_PROJECT_KEY = "cr.manager.selectedProjectId";
 
+export function resolveSelectedManagerProject(
+  response: ManagerProjectListResponse | null | undefined,
+  selectedProjectId: string | null,
+): ManagerProject | null {
+  if (!response || !selectedProjectId) return null;
+  return (
+    response.projects.find((project) => project.id === selectedProjectId) ??
+    response.archived.find((project) => project.id === selectedProjectId) ??
+    null
+  );
+}
+
 interface ManagerOrchestrationWorkspaceProps {
   context?: ManagerAssistantChatContext | null;
   devices?: Device[];
@@ -72,6 +91,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [blockerActionBusy, setBlockerActionBusy] = createSignal(false);
   const [artifactActionBusy, setArtifactActionBusy] = createSignal(false);
   const [protocolActionBusy, setProtocolActionBusy] = createSignal(false);
+  const [flowActionBusy, setFlowActionBusy] = createSignal(false);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
@@ -156,20 +176,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   );
 
   const visibleHygiene = createMemo(() => sessionHygiene() ?? cachedSnapshot()?.hygiene ?? null);
-  const baseActiveRound = createMemo(() => pickActiveRound(visibleOrchestration()?.rounds ?? []));
   const selectedProject = createMemo<ManagerProject | null>(() => {
-    const response = managerProjects();
-    const projects = response?.projects ?? [];
-    const archived = response?.archived ?? [];
-    const selected = selectedProjectId();
-    return (
-      projects.find((project) => project.id === selected) ??
-      projects.find((project) => project.activeRoundId === baseActiveRound()?.id) ??
-      projects[0] ??
-      archived.find((project) => project.id === selected) ??
-      null
-    );
+    return resolveSelectedManagerProject(managerProjects(), selectedProjectId());
   });
+  const currentProjectId = createMemo(() => selectedProject()?.id ?? null);
   const activeRound = createMemo(() => {
     const rounds = visibleOrchestration()?.rounds ?? [];
     const projectRoundId = selectedProject()?.activeRoundId;
@@ -181,7 +191,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   const [projectOverview] = createResource(
     () => {
-      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const projectId = currentProjectId();
       const seq = refreshSeq();
       return projectId ? { projectId, seq } : null;
     },
@@ -195,9 +205,25 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     },
   );
 
+  const [projectCommandFlow] = createResource(
+    () => {
+      const projectId = currentProjectId();
+      const seq = refreshSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerCommandFlowResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectCommandFlow(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+
   const [projectHygiene, { refetch: refetchProjectHygiene }] = createResource(
     () => {
-      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const projectId = currentProjectId();
       const seq = refreshSeq();
       return projectId ? { projectId, seq } : null;
     },
@@ -213,7 +239,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   const [projectDecisions] = createResource(
     () => {
-      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const projectId = currentProjectId();
       const seq = refreshSeq();
       return projectId ? { projectId, seq } : null;
     },
@@ -229,7 +255,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   const [projectBlockers] = createResource(
     () => {
-      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const projectId = currentProjectId();
       const seq = refreshSeq();
       return projectId ? { projectId, seq } : null;
     },
@@ -245,7 +271,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   const [projectArtifacts] = createResource(
     () => {
-      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const projectId = currentProjectId();
       const seq = refreshSeq();
       return projectId ? { projectId, seq } : null;
     },
@@ -261,7 +287,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   const [projectProtocol] = createResource(
     () => {
-      const projectId = selectedProjectId() ?? selectedProject()?.id;
+      const projectId = currentProjectId();
       const seq = refreshSeq();
       return projectId ? { projectId, seq } : null;
     },
@@ -291,6 +317,15 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       context.activeRoundTitle = round.title;
       context.activeRoundStatus = round.status;
     }
+    const commandFlow = projectCommandFlow();
+    if (commandFlow) {
+      context.projectCommandFlow = [
+        `stage=${commandFlow.readiness.stage}; ready=${commandFlow.readiness.ready ? "yes" : "no"}`,
+        `next=${commandFlow.nextAction.kind}: ${commandFlow.nextAction.label}`,
+        ...(commandFlow.readiness.userCheckRequired ? ["user check required"] : []),
+        ...commandFlow.readiness.warnings.slice(0, 3).map((warning) => `warning: ${warning}`),
+      ];
+    }
     const protocol = projectProtocol()?.protocol;
     if (protocol) {
       const presentFiles = protocol.files
@@ -312,12 +347,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   });
 
   createEffect(() => {
-    const project = selectedProject();
     const currentId = selectedProjectId();
-    if (project && project.id !== currentId) {
-      setSelectedProjectId(project.id);
-      writeSelectedManagerProjectId(project.id);
-    } else if (!project && currentId && managerProjects()) {
+    const response = managerProjects();
+    if (!currentId || !response) return;
+    if (!resolveSelectedManagerProject(response, currentId)) {
       setSelectedProjectId(null);
       writeSelectedManagerProjectId(null);
     }
@@ -353,14 +386,15 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [workerRuns] = createResource(
     () => {
       const round = activeRound();
+      const projectId = currentProjectId();
       const seq = refreshSeq();
-      return round ? { id: round.id, seq } : null;
+      return round ? { id: round.id, projectId, seq } : null;
     },
     async (input): Promise<ManagerWorkerRunLedgerResponse | null> => {
       if (!input) return null;
       try {
-        const ledger = selectedProjectId()
-          ? await api.managerProjectRuns(selectedProjectId() as string)
+        const ledger = input.projectId
+          ? await api.managerProjectRuns(input.projectId)
           : await api.managerRoundWorkerRuns(input.id);
         setCachedSnapshot(
           writeManagerOrchestrationCache({
@@ -463,7 +497,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function cleanupProjectHygiene() {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || projectHygieneCleanupBusy()) return;
     setProjectHygieneCleanupBusy(true);
     try {
@@ -547,7 +581,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     setProjectActionBusy(true);
     try {
       await api.archiveManagerProject(projectId);
-      if (selectedProjectId() === projectId) {
+      if (selectedProjectId() === projectId || selectedProject()?.id === projectId) {
         setSelectedProjectId(null);
         writeSelectedManagerProjectId(null);
       }
@@ -559,7 +593,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function createProjectDecision(input: ManagerDecisionCreateRequest) {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || decisionActionBusy()) return;
     setDecisionActionBusy(true);
     try {
@@ -571,7 +605,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function updateProjectDecision(decisionId: string, input: ManagerDecisionUpdateRequest) {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || decisionActionBusy()) return;
     setDecisionActionBusy(true);
     try {
@@ -583,7 +617,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function createProjectBlocker(input: ManagerBlockerCreateRequest) {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || blockerActionBusy()) return;
     setBlockerActionBusy(true);
     try {
@@ -598,7 +632,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     blockerId: string,
     input: ManagerBlockerResolveRequest = {},
   ) {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || blockerActionBusy()) return;
     setBlockerActionBusy(true);
     try {
@@ -610,7 +644,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function scanProjectArtifacts() {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || artifactActionBusy()) return;
     setArtifactActionBusy(true);
     try {
@@ -622,7 +656,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function updateProjectArtifact(artifactId: string, input: ManagerArtifactUpdateRequest) {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || artifactActionBusy()) return;
     setArtifactActionBusy(true);
     try {
@@ -634,7 +668,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function scanProjectProtocol() {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || protocolActionBusy()) return;
     setProtocolActionBusy(true);
     try {
@@ -646,7 +680,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function updateProjectProtocol(input: ManagerProtocolUpdateRequest) {
-    const projectId = selectedProjectId() ?? selectedProject()?.id;
+    const projectId = currentProjectId();
     if (!projectId || protocolActionBusy()) return;
     setProtocolActionBusy(true);
     try {
@@ -654,6 +688,85 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       setRefreshSeq((seq) => seq + 1);
     } finally {
       setProtocolActionBusy(false);
+    }
+  }
+
+  async function updateProjectCharter(input: ManagerProjectCharterUpdateRequest) {
+    const projectId = currentProjectId();
+    if (!projectId || flowActionBusy()) return;
+    setFlowActionBusy(true);
+    try {
+      await api.updateManagerProjectCharter(projectId, input);
+      await refetchManagerProjects();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setFlowActionBusy(false);
+    }
+  }
+
+  async function prepareProjectFlow() {
+    const projectId = currentProjectId();
+    if (!projectId || flowActionBusy()) return;
+    setFlowActionBusy(true);
+    try {
+      await api.prepareManagerProject(projectId);
+      await refetchManagerProjects();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setFlowActionBusy(false);
+    }
+  }
+
+  async function startProjectFlow(input: ManagerProjectStartRequest) {
+    const projectId = currentProjectId();
+    if (!projectId || flowActionBusy()) return;
+    setFlowActionBusy(true);
+    try {
+      await api.startManagerProject(projectId, input);
+      await refetchManagerProjects();
+      mutateManagerState(await api.managerState());
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setFlowActionBusy(false);
+    }
+  }
+
+  async function reviewProjectRound(roundId: string, input: ManagerRoundReviewRequest) {
+    const projectId = currentProjectId();
+    if (!projectId || flowActionBusy()) return;
+    setFlowActionBusy(true);
+    try {
+      await api.reviewManagerProjectRound(projectId, roundId, input);
+      await refetchManagerProjects();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setFlowActionBusy(false);
+    }
+  }
+
+  async function changeProjectDirection(input: ManagerDirectionChangeRequest) {
+    const projectId = currentProjectId();
+    if (!projectId || flowActionBusy()) return;
+    setFlowActionBusy(true);
+    try {
+      await api.changeManagerProjectDirection(projectId, input);
+      await refetchManagerProjects();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setFlowActionBusy(false);
+    }
+  }
+
+  async function completeProjectFlow(input: ManagerProjectCompleteRequest) {
+    const projectId = currentProjectId();
+    if (!projectId || flowActionBusy()) return;
+    setFlowActionBusy(true);
+    try {
+      await api.completeManagerProject(projectId, input);
+      await refetchManagerProjects();
+      setRefreshSeq((seq) => seq + 1);
+    } finally {
+      setFlowActionBusy(false);
     }
   }
 
@@ -731,9 +844,11 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           projects={managerProjects()?.projects ?? []}
           archivedProjects={managerProjects()?.archived ?? []}
           selectedProject={selectedProject()}
+          commandFlow={projectCommandFlow()}
           projectOverview={projectOverview()}
           projectLoading={managerProjects.loading}
           projectBusy={projectActionBusy()}
+          flowBusy={flowActionBusy() || projectCommandFlow.loading}
           decisions={projectDecisions()?.decisions ?? []}
           archivedDecisions={projectDecisions()?.archived ?? []}
           decisionBusy={decisionActionBusy()}
@@ -788,6 +903,12 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onUpdateArtifact={(artifactId, input) => void updateProjectArtifact(artifactId, input)}
           onScanProtocol={() => void scanProjectProtocol()}
           onUpdateProtocol={(input) => void updateProjectProtocol(input)}
+          onUpdateCharter={(input) => void updateProjectCharter(input)}
+          onPrepareProject={() => void prepareProjectFlow()}
+          onStartProject={(input) => void startProjectFlow(input)}
+          onReviewRound={(roundId, input) => void reviewProjectRound(roundId, input)}
+          onDirectionChange={(input) => void changeProjectDirection(input)}
+          onCompleteProject={(input) => void completeProjectFlow(input)}
         />
       </section>
       <aside class="manager-workspace-assistant" aria-label="Manager Assistant">

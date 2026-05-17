@@ -43,6 +43,7 @@ export type ManagerRoundPatch = Partial<
     | "title"
     | "projectId"
     | "objective"
+    | "phase"
     | "status"
     | "agentIds"
     | "taskIds"
@@ -246,6 +247,7 @@ function createRoundRecord(input: ManagerRoundCreateRequest, now: Date): Manager
     ...(input.projectId?.trim() ? { projectId: input.projectId.trim() } : {}),
     title: input.title?.trim() || "Orchestration round",
     objective: input.objective.trim(),
+    ...(input.phase ? { phase: input.phase } : {}),
     status: "planned",
     agentIds: [],
     taskIds: [],
@@ -337,6 +339,7 @@ function normalizeRound(input: unknown): ManagerRound | null {
   if (!isRoundStatus(input.status)) return null;
   const createdAt = nonEmptyString(input.createdAt) ?? new Date(0).toISOString();
   const projectId = nonEmptyString(input.projectId);
+  const phase = isRoundPhase(input.phase) ? input.phase : undefined;
   const startedAt = nonEmptyString(input.startedAt);
   const completedAt = nonEmptyString(input.completedAt);
   const summary = nonEmptyString(input.summary);
@@ -349,6 +352,7 @@ function normalizeRound(input: unknown): ManagerRound | null {
     ...(projectId ? { projectId } : {}),
     title: nonEmptyString(input.title) ?? "Orchestration round",
     objective: nonEmptyString(input.objective) ?? "",
+    ...(phase ? { phase } : {}),
     status: input.status,
     agentIds: stringArray(input.agentIds),
     taskIds: stringArray(input.taskIds),
@@ -409,6 +413,16 @@ function isRoundStatus(value: unknown): value is ManagerRoundStatus {
     value === "blocked" ||
     value === "failed" ||
     value === "cancelled"
+  );
+}
+
+function isRoundPhase(value: unknown): value is NonNullable<ManagerRound["phase"]> {
+  return (
+    value === "design" ||
+    value === "implementation" ||
+    value === "feedback" ||
+    value === "verification" ||
+    value === "replan"
   );
 }
 

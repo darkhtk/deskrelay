@@ -1,5 +1,5 @@
-import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
 import type { DiagnosticStep, ManagerNetworkProbe, ManagerNetworkStatus } from "@deskrelay/shared";
+import { type Component, For, Show, createEffect, createResource, createSignal } from "solid-js";
 import {
   type DeskRelayBuildInfo,
   type Device,
@@ -369,7 +369,11 @@ export const ConnectionDiagnostics: Component<ConnectionDiagnosticsProps> = (pro
         detail: networkProbeDetail(probe),
         action: action?.label,
         onAction:
-          action?.kind === "devices" ? openDevices : action?.kind === "refresh" ? refresh : undefined,
+          action?.kind === "devices"
+            ? openDevices
+            : action?.kind === "refresh"
+              ? refresh
+              : undefined,
       };
     });
   };
@@ -646,7 +650,7 @@ function networkStatusDetail(
 ): string {
   if (loading) return "checking connector route";
   if (error) return error.message;
-  if (!snapshot) return "network status unavailable";
+  if (!snapshot?.summary) return "network status unavailable";
   if (snapshot.summary.severity === "ok") return "connector route verified";
   return snapshot.summary.message;
 }

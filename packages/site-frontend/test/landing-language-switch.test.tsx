@@ -22,25 +22,35 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("Landing Korean-only locale", () => {
+describe("Landing locale behavior", () => {
   test("does not expose language buttons above the headline", () => {
     render(() => <Landing onTokenLogin={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: "English" })).toBeNull();
     expect(screen.queryByRole("button", { name: "한국어" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "日本語" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Русский" })).toBeNull();
 
     const heading = screen.getByRole("heading", { level: 1 }).textContent ?? "";
     expect(heading).toContain("DeskRelay");
   });
 
-  test("normalizes old locale requests back to Korean", () => {
+  test("English is selectable without adding landing language buttons", () => {
     setLocale("en");
     render(() => <Landing onTokenLogin={vi.fn()} />);
 
-    expect(window.localStorage.getItem("cr.locale")).toBe("ko");
+    expect(window.localStorage.getItem("cr.locale")).toBe("en");
+    expect(t("manager.orchestration.tab.overview")).toBe("Overview");
+    expect(t("manager.worker-settings.profile.claude-code.label")).toBe("Claude Code worker");
+    expect(t("manager.worker-settings.role.implementation")).toBe("implementation");
     const heading = screen.getByRole("heading", { level: 1 }).textContent ?? "";
     expect(heading).toBe(t("landing.headline").replace(/\n/g, ""));
+  });
+
+  test("unsupported locale requests fall back to Korean", () => {
+    setLocale("ja");
+
+    expect(window.localStorage.getItem("cr.locale")).toBe("ko");
+    expect(t("settings.language.title")).toBe("언어");
+    expect(t("manager.worker-settings.profile.claude-code.label")).toBe("Claude Code 작업자");
+    expect(t("manager.worker-settings.role.implementation")).toBe("구현");
   });
 });

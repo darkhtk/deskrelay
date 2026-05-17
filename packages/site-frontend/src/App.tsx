@@ -63,6 +63,7 @@ import {
   instructionScopeEmptyDescription,
   instructionScopePlaceholder,
 } from "./instruction-copy.ts";
+import { createManagerEventSubscription } from "./manager-events.ts";
 import {
   type AppTheme,
   CHAT_FONT_SIZE_MAX,
@@ -87,7 +88,6 @@ import {
   showSessionUsageMeter,
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
-import { createManagerEventSubscription } from "./manager-events.ts";
 
 type SettingsTab =
   | "general"
@@ -958,17 +958,21 @@ const ManagerWorkersSettings: Component = () => {
                     <span class={`settings-update-dot update-phase-${phase()}`} />
                     <div class="settings-worker-copy">
                       <div class="settings-worker-title-row">
-                        <span class="settings-update-label">{profile.label}</span>
+                        <span class="settings-update-label">{workerProfileLabel(profile)}</span>
                         <span class={`settings-worker-risk worker-risk-${profile.risk}`}>
                           {workerRiskText(profile)}
                         </span>
                       </div>
-                      <span class="settings-update-detail">{profile.description}</span>
+                      <span class="settings-update-detail">
+                        {workerProfileDescription(profile)}
+                      </span>
                       <span class="settings-worker-command">
                         {profile.command} {profile.args.join(" ")}
                       </span>
                       <Show when={profile.roles.length > 0}>
-                        <span class="settings-worker-roles">{profile.roles.join(" · ")}</span>
+                        <span class="settings-worker-roles">
+                          {profile.roles.map(workerRoleText).join(" - ")}
+                        </span>
                       </Show>
                       <Show when={check()?.message}>
                         {(message) => <span class="settings-update-detail">{message()}</span>}
@@ -2128,14 +2132,20 @@ function connectorUpdateMessage(result: DeviceUpdateResponse): string {
 function workerCheckMessage(result: ManagerWorkerCheckResult): string {
   if (result.available) {
     const version = result.stdout.trim().split(/\r?\n/).find(Boolean);
-    return version ? `사용 가능 · ${version}` : "사용 가능";
+    return version
+      ? t("manager.worker-settings.check.available-version", { version })
+      : t("manager.worker-settings.check.available");
   }
-  if (result.timedOut) return "사용 불가 · 상태 확인 시간 초과";
-  if (result.error) return `사용 불가 · ${result.error}`;
+  if (result.timedOut) return t("manager.worker-settings.check.unavailable-timeout");
+  if (result.error) {
+    return t("manager.worker-settings.check.unavailable-detail", { detail: result.error });
+  }
   const stderr = result.stderr.trim().split(/\r?\n/).find(Boolean);
   return stderr
-    ? `사용 불가 · ${stderr}`
-    : `사용 불가 · 종료 코드 ${result.exitCode ?? "알 수 없음"}`;
+    ? t("manager.worker-settings.check.unavailable-detail", { detail: stderr })
+    : t("manager.worker-settings.check.unavailable-exit", {
+        code: result.exitCode ?? t("manager.worker-settings.check.unknown"),
+      });
 }
 
 function workerRiskText(profile: ManagerWorkerProfile): string {
@@ -2143,6 +2153,24 @@ function workerRiskText(profile: ManagerWorkerProfile): string {
   if (profile.risk === "destructive") return t("manager.worker-settings.risk.destructive");
   if (profile.risk === "write") return t("manager.worker-settings.risk.write");
   return t("manager.worker-settings.risk.read");
+}
+
+function workerProfileLabel(profile: ManagerWorkerProfile): string {
+  const key = `manager.worker-settings.profile.${profile.id}.label`;
+  const localized = t(key);
+  return localized === key ? profile.label : localized;
+}
+
+function workerProfileDescription(profile: ManagerWorkerProfile): string {
+  const key = `manager.worker-settings.profile.${profile.id}.description`;
+  const localized = t(key);
+  return localized === key ? profile.description : localized;
+}
+
+function workerRoleText(role: string): string {
+  const key = `manager.worker-settings.role.${role}`;
+  const localized = t(key);
+  return localized === key ? role : localized;
 }
 
 function connectorUpdatePhase(result: DeviceUpdateResponse): UpdatePhase {

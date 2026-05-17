@@ -50,6 +50,8 @@ const selfServerRoot = process.env.CR_NAS_DEV_ROOT ?? join(process.cwd(), ".self
 const logDir = process.env.CR_DEV_LOG_DIR ?? join(selfServerRoot, "logs");
 const processFile =
   process.env.CR_DEV_PROCESS_FILE ?? join(selfServerRoot, "state", "dev-processes.json");
+const managerAssistantCwd =
+  cleanEnv(process.env.DESKRELAY_MANAGER_CWD) ?? cleanEnv(process.env.DESKRELAY_MANAGER_REPO_ROOT);
 const registry = deviceRegistryFile
   ? new JsonFileDeviceRegistry(deviceRegistryFile)
   : new InMemoryDeviceRegistry();
@@ -69,6 +71,7 @@ const app = createSiteApp({
   ...(updateNotice ? { updateNotice } : {}),
   ...(localDaemonToken ? { localDaemonToken } : {}),
   ...(process.env.CR_DEV_FRONTEND_URL ? { selfHostUrl: process.env.CR_DEV_FRONTEND_URL } : {}),
+  ...(managerAssistantCwd ? { managerAssistant: { cwd: managerAssistantCwd } } : {}),
   selfServerAutostart,
   selfServerProcess: createPowerShellSelfServerProcessController({
     repoRoot: process.cwd(),
@@ -178,6 +181,11 @@ function resolveAnnouncementUrl(): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed || trimmed === "0" || trimmed.toLowerCase() === "false") return undefined;
   return trimmed;
+}
+
+function cleanEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function defaultDeviceRegistryFile(): string | undefined {

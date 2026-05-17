@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe("ChatView device refresh bridge", () => {
-  test("keeps the selected chat device across reloads and updates it when changed", async () => {
+  test("keeps the selected chat device across reloads and updates it from settings", async () => {
     localStorage.setItem("cr.chat-selected-device-id", OTHER_DEV.id);
     const requestedUrls: string[] = [];
     let sessionsListDeviceId: string | null = null;
@@ -123,20 +123,27 @@ describe("ChatView device refresh bridge", () => {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
 
-    const { container } = render(() => (
-      <ChatView
-        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
-        onSignOut={vi.fn()}
-        onOpenSettings={vi.fn()}
-      />
-    ));
+    const onOpenSettings = vi.fn();
+    let requestDeviceSelection!: (id: string | null) => void;
+    const Harness = () => {
+      const [request, setRequest] = createSignal({ id: null as string | null, seq: 0 });
+      requestDeviceSelection = (id) => setRequest((current) => ({ id, seq: current.seq + 1 }));
+      return (
+        <ChatView
+          me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+          onSignOut={vi.fn()}
+          onOpenSettings={onOpenSettings}
+          requestedDeviceSelection={request()}
+        />
+      );
+    };
 
-    const select = await waitFor(() => {
-      const found = container.querySelector(
-        ".sidebar-section-devices select",
-      ) as HTMLSelectElement | null;
-      if (!found) throw new Error("device select missing");
-      expect(found.value).toBe(OTHER_DEV.id);
+    const { container } = render(() => <Harness />);
+
+    const deviceDisplay = await waitFor(() => {
+      const found = container.querySelector(".sidebar-device-display") as HTMLButtonElement | null;
+      if (!found) throw new Error("device display missing");
+      expect(found.textContent).toContain(OTHER_DEV.label);
       return found;
     });
     await waitFor(() => {
@@ -146,14 +153,20 @@ describe("ChatView device refresh bridge", () => {
       requestedUrls.some((url) => url.endsWith(`/api/devices/${OTHER_DEV.id}/behaviors`)),
     ).toBe(true);
 
-    fireEvent.change(select, { target: { value: DEV.id } });
-    expect(storedSelectedDevice()).toMatchObject({
-      id: DEV.id,
-      label: DEV.label,
-      daemonUrl: DEV.daemonUrl,
+    fireEvent.click(deviceDisplay);
+    expect(onOpenSettings).toHaveBeenCalledWith({ tab: "general", deviceId: OTHER_DEV.id });
+
+    requestDeviceSelection(DEV.id);
+    await waitFor(() => {
+      expect(deviceDisplay.textContent).toContain(DEV.label);
+      expect(storedSelectedDevice()).toMatchObject({
+        id: DEV.id,
+        label: DEV.label,
+        daemonUrl: DEV.daemonUrl,
+      });
     });
     await waitFor(() => {
-      expect(select.value).toBe(DEV.id);
+      expect(sessionsListDeviceId).toBe(DEV.id);
     });
   });
 
@@ -228,10 +241,8 @@ describe("ChatView device refresh bridge", () => {
     ));
 
     await waitFor(() => {
-      const select = container.querySelector(
-        ".sidebar-section-devices select",
-      ) as HTMLSelectElement | null;
-      expect(select?.value).toBe(OTHER_DEV.id);
+      const deviceDisplay = container.querySelector(".sidebar-device-display");
+      expect(deviceDisplay?.textContent).toContain(OTHER_DEV.label);
       expect(sessionsListDeviceId).toBe(OTHER_DEV.id);
       expect(storedSelectedDevice()).toMatchObject({
         id: OTHER_DEV.id,
@@ -289,10 +300,8 @@ describe("ChatView device refresh bridge", () => {
     ));
 
     await waitFor(() => {
-      const select = container.querySelector(
-        ".sidebar-section-devices select",
-      ) as HTMLSelectElement | null;
-      expect(select?.value).toBe(OTHER_DEV.id);
+      const deviceDisplay = container.querySelector(".sidebar-device-display");
+      expect(deviceDisplay?.textContent).toContain(OTHER_DEV.label);
       expect(storedSelectedDevice()).toMatchObject({
         id: OTHER_DEV.id,
         label: OTHER_DEV.label,
@@ -346,10 +355,8 @@ describe("ChatView device refresh bridge", () => {
     ));
 
     await waitFor(() => {
-      const select = container.querySelector(
-        ".sidebar-section-devices select",
-      ) as HTMLSelectElement | null;
-      expect(select?.value).toBe(DEV.id);
+      const deviceDisplay = container.querySelector(".sidebar-device-display");
+      expect(deviceDisplay?.textContent).toContain(DEV.label);
       expect(localStorage.getItem("cr.chat-selected-device-id")).toBeNull();
     });
   });
@@ -2066,8 +2073,8 @@ describe("ChatView device refresh bridge", () => {
     const { container } = render(() => <Harness />);
 
     await waitFor(() => {
-      const picker = container.querySelector("select") as HTMLSelectElement | null;
-      expect(picker?.value).toBe(DEV.id);
+      const deviceDisplay = container.querySelector(".sidebar-device-display");
+      expect(deviceDisplay?.textContent).toContain(DEV.label);
     });
 
     listedDevices = [DEV, OTHER_DEV];
@@ -2075,8 +2082,8 @@ describe("ChatView device refresh bridge", () => {
     bumpDevicesRevision();
 
     await waitFor(() => {
-      const picker = container.querySelector("select") as HTMLSelectElement | null;
-      expect(picker?.value).toBe(OTHER_DEV.id);
+      const deviceDisplay = container.querySelector(".sidebar-device-display");
+      expect(deviceDisplay?.textContent).toContain(OTHER_DEV.label);
     });
     expect(
       requestedUrls.some((url) => url.endsWith(`/api/devices/${OTHER_DEV.id}/behaviors`)),
@@ -2109,15 +2116,19 @@ describe("ChatView device refresh bridge", () => {
     });
 
     let bumpDevicesRevision!: () => void;
+    let requestDeviceSelection!: (id: string) => void;
     const Harness = () => {
       const [revision, setRevision] = createSignal(0);
+      const [request, setRequest] = createSignal({ id: null as string | null, seq: 0 });
       bumpDevicesRevision = () => setRevision((v) => v + 1);
+      requestDeviceSelection = (id) => setRequest((current) => ({ id, seq: current.seq + 1 }));
       return (
         <ChatView
           me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
           onSignOut={vi.fn()}
           onOpenSettings={vi.fn()}
           devicesRevision={revision()}
+          requestedDeviceSelection={request()}
         />
       );
     };
@@ -2125,11 +2136,14 @@ describe("ChatView device refresh bridge", () => {
     const { container } = render(() => <Harness />);
 
     await waitFor(() => {
-      expect(container.textContent).toContain(OTHER_DEV.label);
+      const deviceDisplay = container.querySelector(".sidebar-device-display");
+      expect(deviceDisplay?.textContent).toContain(DEV.label);
     });
-    const picker = container.querySelector("select") as HTMLSelectElement | null;
-    if (!picker) throw new Error("device picker missing");
-    fireEvent.change(picker, { target: { value: OTHER_DEV.id } });
+    requestDeviceSelection(OTHER_DEV.id);
+    await waitFor(() => {
+      const deviceDisplay = container.querySelector(".sidebar-device-display");
+      expect(deviceDisplay?.textContent).toContain(OTHER_DEV.label);
+    });
 
     listedDevices = [DEV];
     requestedUrls.length = 0;

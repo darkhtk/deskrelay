@@ -5837,6 +5837,15 @@ dialog.approval-modal-root,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.manager-orchestration-title-detail {
+  color: var(--text-faint);
+  flex: 1 1 auto;
+  font-size: 11px;
+  min-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .manager-orchestration-summary {
   color: var(--text-muted);
   flex: 0 0 auto;
@@ -5912,17 +5921,40 @@ dialog.approval-modal-root,
   min-height: 0;
   overflow: hidden;
   padding: 2px 14px 12px;
+  position: relative;
+}
+.manager-orchestration-workboard {
+  background: color-mix(in srgb, var(--bg-soft) 62%, var(--bg));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 12px;
+}
+.manager-orchestration-body-wizard-open {
+  align-items: stretch;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 66fr) minmax(360px, 34fr);
 }
 .manager-orchestration-panel-standalone .manager-orchestration-body {
   padding: 4px 16px 16px;
 }
 .manager-project-header {
-  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-coral);
+  border-radius: 8px;
   display: grid;
   flex: 0 0 auto;
   gap: 8px;
   min-width: 0;
-  padding-bottom: 10px;
+  padding: 10px 12px;
 }
 .manager-project-header-main {
   display: grid;
@@ -5971,6 +6003,7 @@ dialog.approval-modal-root,
 }
 .manager-project-summary {
   align-items: center;
+  border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
   display: flex;
   flex-wrap: wrap;
@@ -5978,71 +6011,541 @@ dialog.approval-modal-root,
   gap: 6px 10px;
   margin: 0;
   min-width: 0;
+  padding-top: 8px;
 }
 .manager-project-summary strong {
   color: var(--text);
 }
-.manager-project-summary span {
+.manager-project-summary-grid {
+  align-items: stretch;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+.manager-project-summary-grid div {
+  background: color-mix(in srgb, var(--surface) 70%, var(--surface-card));
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+}
+.manager-project-summary-grid dt {
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.manager-project-summary-grid dd {
+  color: var(--text-muted);
+  display: flex;
+  gap: 6px;
+  line-height: 1.35;
+  margin: 3px 0 0;
+  min-width: 0;
+}
+.manager-project-summary span,
+.manager-project-summary dd {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.manager-project-summary span {
   white-space: nowrap;
+}
+.manager-project-summary dd {
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  display: -webkit-box;
+}
+.manager-global-status {
+  background: color-mix(in srgb, var(--surface-card) 88%, var(--bg-soft));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.manager-global-status summary {
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 6px 10px;
+  list-style: none;
+  min-width: 0;
+  padding: 8px 10px;
+}
+.manager-global-status summary::-webkit-details-marker {
+  display: none;
+}
+.manager-global-status summary::before {
+  color: var(--text-faint);
+  content: "▸";
+  flex: 0 0 auto;
+}
+.manager-global-status[open] summary::before {
+  content: "▾";
+}
+.manager-global-status summary span:first-of-type {
+  color: var(--text);
+  font-weight: 650;
+}
+.manager-global-status-body {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  padding: 9px 10px 10px;
+}
+.manager-global-status-body p {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin: 0;
+}
+.manager-global-status-body dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+.manager-global-status-body dt {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-global-status-body dd {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 2px 0 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.manager-global-status-meta {
+  align-items: center;
+  color: var(--text-faint);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 8px;
+}
+.manager-global-status-meta button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.manager-global-status-meta button:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 .manager-project-create {
   display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(120px, 0.75fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
-.manager-project-create input {
+.manager-project-create input,
+.manager-project-create select,
+.manager-project-create textarea {
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 7px;
   color: var(--text);
   font: inherit;
   font-size: 12px;
+  line-height: 1.35;
   min-width: 0;
   padding: 6px 8px;
+  resize: vertical;
 }
-.manager-orchestration-tabs {
-  align-items: center;
-  border-bottom: 1px solid var(--border-subtle);
+.manager-project-wizard-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.manager-project-wizard-field span {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.manager-project-wizard-field .manager-project-wizard-help {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.35;
+  text-transform: none;
+}
+.manager-project-wizard-field .manager-project-wizard-help.is-warning {
+  color: var(--danger);
+}
+.manager-project-wizard-intent textarea {
+  min-height: 76px;
+}
+.manager-project-wizard-kinds {
   display: flex;
-  flex: 0 0 auto;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.manager-project-create .manager-project-wizard-kind {
+  border-radius: 7px;
+  padding-inline: 9px;
+}
+.manager-project-create .manager-project-wizard-kind.is-active {
+  border-color: color-mix(in srgb, var(--accent-coral) 60%, var(--border-subtle));
+  color: var(--accent-coral);
+}
+.manager-project-wizard-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  min-width: 0;
+}
+.manager-project-wizard-wide {
+  grid-column: span 2;
+}
+.manager-project-wizard-summary {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+.manager-project-wizard-summary-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.manager-project-wizard-summary-head strong,
+.manager-project-wizard-summary-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-project-wizard-summary-head strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.manager-project-wizard-summary-head span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-project-wizard-summary dl {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+.manager-project-wizard-summary dl div {
+  min-width: 0;
+}
+.manager-project-wizard-summary dt {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-project-wizard-summary dd {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 2px 0 0;
+  max-height: 62px;
+  overflow: hidden;
+  white-space: pre-line;
+}
+.manager-project-wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.manager-wizard-dialog-root {
+  inset: 0;
+  position: fixed;
+  z-index: 60;
+}
+.manager-wizard-dialog-root-docked {
+  inset: auto;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+.manager-wizard-dialog-backdrop {
+  background: color-mix(in srgb, var(--surface) 54%, transparent);
+  border: 0;
+  cursor: default;
+  height: 100%;
+  inset: 0;
+  padding: 0;
+  position: absolute;
+  width: 100%;
+}
+.manager-wizard-dialog-root-docked .manager-wizard-dialog-backdrop {
+  display: none;
+}
+.manager-wizard-dialog {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 42%);
+  display: grid;
+  gap: 12px;
+  left: 50%;
+  max-height: calc(100vh - 32px);
+  max-width: 1120px;
+  min-width: 0;
+  overflow: auto;
+  padding: 16px;
+  position: absolute;
+  top: 16px;
+  transform: translateX(-50%);
+  width: calc(100vw - 32px);
+}
+.manager-wizard-dialog-docked {
+  background: var(--surface-card);
+  border-left: 3px solid var(--warning);
+  box-shadow: none;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  height: 100%;
+  left: auto;
+  max-height: none;
+  max-width: none;
+  overflow: hidden;
+  position: relative;
+  top: auto;
+  transform: none;
+  width: 100%;
+}
+.manager-wizard-dialog-head,
+.manager-wizard-dialog-footer {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.manager-wizard-dialog-docked .manager-wizard-dialog-head {
+  background: color-mix(in srgb, var(--warning-soft) 48%, var(--surface-card));
+  border-bottom: 1px solid var(--border-subtle);
+  margin: -16px -16px 0;
+  padding: 14px 16px 12px;
+}
+.manager-wizard-dialog-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.manager-wizard-dialog-head span {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-wizard-dialog-head h3 {
+  color: var(--text);
+  font-size: 18px;
+  letter-spacing: 0;
+  line-height: 1.2;
+  margin: 0;
+}
+.manager-wizard-dialog button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.manager-wizard-dialog button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.manager-wizard-dialog-close {
+  aspect-ratio: 1;
+  line-height: 1;
+  padding: 0;
+  width: 30px;
+}
+.manager-wizard-dialog-modes {
+  background: color-mix(in srgb, var(--bg-soft) 70%, var(--surface-card));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
   min-width: 0;
   overflow-x: auto;
-  padding: 0 0 6px;
+  padding: 6px;
+}
+.manager-wizard-dialog-mode {
+  min-height: 32px;
+}
+.manager-wizard-dialog-mode.is-active {
+  background: var(--surface-card);
+  border-color: color-mix(in srgb, var(--accent-coral) 60%, var(--border-subtle));
+  color: var(--accent-coral);
+}
+.manager-wizard-dialog-guidance,
+.manager-wizard-dialog-next {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+.manager-wizard-dialog-guidance {
+  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-coral) 26%, var(--border-subtle));
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+.manager-wizard-dialog-next {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+}
+.manager-wizard-dialog-body {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.38fr);
+  min-width: 0;
+}
+.manager-wizard-dialog-docked .manager-wizard-dialog-body {
+  grid-template-columns: minmax(0, 1fr);
+  overflow: auto;
+  padding-right: 2px;
+}
+.manager-wizard-dialog-form {
+  align-content: start;
+  min-width: 0;
+}
+.manager-wizard-dialog-docked .manager-wizard-dialog-form {
+  background: color-mix(in srgb, var(--surface-card) 74%, var(--bg-soft));
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-coral);
+  border-radius: 8px;
+  padding: 10px;
+}
+.manager-wizard-dialog-preview {
+  align-self: stretch;
+  background: color-mix(in srgb, var(--bg-soft) 72%, var(--surface-card));
+  border-left: 3px solid var(--border-strong);
+  max-height: calc(100vh - 206px);
+  overflow: auto;
+}
+.manager-wizard-dialog-preview dl {
+  grid-template-columns: minmax(0, 1fr);
+}
+.manager-wizard-dialog-docked .manager-project-wizard-grid,
+.manager-wizard-dialog-docked .manager-project-wizard-summary dl {
+  grid-template-columns: minmax(0, 1fr);
+}
+.manager-wizard-dialog-docked .manager-project-wizard-wide {
+  grid-column: auto;
+}
+.manager-wizard-dialog-docked .manager-wizard-dialog-preview {
+  max-height: none;
+}
+.manager-wizard-dialog-event,
+.manager-wizard-dialog-event-empty {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+  padding-top: 8px;
+}
+.manager-wizard-dialog-event {
+  display: grid;
+  gap: 3px;
+}
+.manager-wizard-dialog-event span {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.manager-wizard-dialog-event strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.manager-wizard-dialog-footer {
+  border-top: 1px solid var(--border-subtle);
+  justify-content: flex-end;
+  padding-top: 12px;
+}
+.manager-wizard-dialog-docked .manager-wizard-dialog-footer {
+  background: var(--surface-card);
+  margin: 0 -16px -16px;
+  padding: 12px 16px 14px;
+  position: sticky;
+  bottom: 0;
+}
+.manager-orchestration-tab-groups {
+  align-items: stretch;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 7px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-width: 0;
+  overflow-x: auto;
+  padding: 8px;
+}
+.manager-orchestration-tab-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  display: grid;
+  gap: 6px;
+  min-width: 142px;
+  padding: 7px;
+}
+.manager-orchestration-tab-group.is-active {
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface-card));
+  border-color: color-mix(in srgb, var(--accent-coral) 40%, var(--border-subtle));
+}
+.manager-orchestration-tab-group > span {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.manager-orchestration-tab-group > div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
 }
 .manager-orchestration-tab {
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
   color: var(--text-muted);
   cursor: pointer;
   flex: 0 0 auto;
   font: inherit;
   font-size: 12px;
-  padding: 0 0 6px;
+  min-height: 30px;
+  padding: 5px 9px;
   position: relative;
   white-space: nowrap;
 }
-.manager-orchestration-tab::after {
-  background: transparent;
-  bottom: -7px;
-  content: "";
-  height: 1px;
-  left: 0;
-  position: absolute;
-  right: 0;
-}
 .manager-orchestration-tab:hover {
+  background: var(--accent-soft);
   color: var(--text);
 }
 .manager-orchestration-tab.is-active {
+  background: var(--surface-card);
+  border-color: color-mix(in srgb, var(--accent-coral) 48%, var(--border-subtle));
   color: var(--accent-coral);
-}
-.manager-orchestration-tab.is-active::after {
-  background: var(--accent-coral);
 }
 .manager-orchestration-tab:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -6050,6 +6553,9 @@ dialog.approval-modal-root,
 }
 .manager-orchestration-tab-panel {
   align-content: start;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
   display: grid;
   flex: 1 1 auto;
   gap: 14px;
@@ -6058,7 +6564,7 @@ dialog.approval-modal-root,
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: 2px;
+  padding: 14px;
 }
 .manager-orchestration-tab-panel-wide {
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
@@ -6103,11 +6609,26 @@ body.manager-orchestration-resizing {
   display: grid;
   gap: 8px;
   min-width: 0;
+  padding-left: 10px;
   padding-top: 10px;
+  position: relative;
+}
+.manager-orchestration-section::before {
+  background: var(--border-strong);
+  border-radius: 999px;
+  bottom: 0;
+  content: "";
+  left: 0;
+  position: absolute;
+  top: 10px;
+  width: 2px;
 }
 .manager-orchestration-section:first-child {
   border-top: 0;
   padding-top: 0;
+}
+.manager-orchestration-section:first-child::before {
+  top: 0;
 }
 .manager-orchestration-section h4 {
   color: var(--text);
@@ -6186,6 +6707,136 @@ body.manager-orchestration-resizing {
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+.manager-command-flow {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.manager-command-flow-stage {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  min-width: 0;
+}
+.manager-wizard-events {
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 8px 10px;
+}
+.manager-wizard-events strong {
+  color: var(--text);
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+.manager-wizard-events > div {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.manager-wizard-event {
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 4px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-wizard-event-high {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border-subtle));
+  color: var(--danger);
+}
+.manager-wizard-event-medium,
+.manager-wizard-event-unknown {
+  border-color: color-mix(in srgb, var(--accent-coral) 45%, var(--border-subtle));
+  color: var(--accent-coral);
+}
+.manager-command-flow-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  min-width: 0;
+}
+.manager-flow-form {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 10px;
+}
+.manager-flow-charter {
+  grid-row: span 4;
+}
+.manager-flow-form h5 {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  margin: 0;
+}
+.manager-flow-form input,
+.manager-flow-form select,
+.manager-flow-form textarea {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  color: var(--text);
+  font: inherit;
+  min-width: 0;
+  padding: 7px 9px;
+}
+.manager-flow-form textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+.manager-flow-collapsible {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+.manager-flow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.manager-flow-actions button,
+.manager-flow-form > button {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  min-height: 28px;
+  padding: 5px 10px;
+}
+.manager-flow-actions button:disabled,
+.manager-flow-form > button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.manager-flow-check {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+.manager-flow-check input {
+  min-width: auto;
+  padding: 0;
 }
 .manager-overview-next p {
   color: var(--text);
@@ -7058,6 +7709,26 @@ body.manager-orchestration-resizing {
   display: grid;
   gap: 10px;
 }
+.manager-protocol-principle {
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+.manager-protocol-principle-header {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.manager-protocol-principle-header strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.manager-protocol-principle-header span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .manager-protocol-editor {
   border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 10px;
@@ -7693,6 +8364,19 @@ body.manager-orchestration-resizing {
   .manager-orchestration-panel-standalone .manager-orchestration-body {
     padding-inline: 10px;
   }
+  .manager-orchestration-body-wizard-open {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+  .manager-orchestration-body-wizard-open .manager-orchestration-workboard {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+  .manager-orchestration-body-wizard-open .manager-orchestration-tab-panel {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
+  }
   .manager-project-selector-row {
     align-items: stretch;
     flex-wrap: wrap;
@@ -7702,6 +8386,49 @@ body.manager-orchestration-resizing {
   }
   .manager-project-create {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-project-wizard-grid,
+  .manager-project-wizard-summary dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-project-wizard-wide {
+    grid-column: auto;
+  }
+  .manager-project-wizard-summary-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .manager-wizard-dialog {
+    max-height: calc(100vh - 20px);
+    padding: 12px;
+    top: 10px;
+    width: calc(100vw - 20px);
+  }
+  .manager-wizard-dialog-docked {
+    height: auto;
+    max-height: none;
+    top: auto;
+    width: 100%;
+  }
+  .manager-wizard-dialog-head,
+  .manager-wizard-dialog-footer {
+    align-items: flex-start;
+  }
+  .manager-wizard-dialog-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-wizard-dialog-docked .manager-wizard-dialog-body {
+    overflow: visible;
+  }
+  .manager-wizard-dialog-preview {
+    max-height: none;
+  }
+  .manager-wizard-events {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .manager-wizard-events > div {
+    justify-content: flex-start;
   }
   .manager-decision-toolbar,
   .manager-blocker-toolbar {
@@ -7718,9 +8445,11 @@ body.manager-orchestration-resizing {
   .manager-blocker-actions {
     justify-content: flex-start;
   }
-  .manager-orchestration-tabs {
-    gap: 14px;
-    padding-bottom: 6px;
+  .manager-orchestration-tab-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-orchestration-tab-group {
+    min-width: 0;
   }
   .manager-orchestration-tab-panel,
   .manager-orchestration-tab-panel-wide,
@@ -7745,6 +8474,8 @@ body.manager-orchestration-resizing {
     display: none;
   }
   .manager-command-board,
+  .manager-command-flow-grid,
+  .manager-flow-collapsible,
   .manager-current-state-grid,
   .manager-round-health-grid,
   .manager-flow {

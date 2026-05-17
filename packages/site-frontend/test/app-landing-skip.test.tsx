@@ -4,6 +4,14 @@ import { App } from "../src/App.tsx";
 import { Landing } from "../src/components/Landing.tsx";
 import { t } from "../src/i18n.ts";
 
+const SERVER_DEVICE = {
+  id: "dev_server",
+  label: "Local dev (HOMEDEV)",
+  daemonUrl: "http://127.0.0.1:18191",
+  registeredAt: "2026-05-13T00:00:00.000Z",
+  connectionState: "online" as const,
+};
+
 beforeEach(() => {
   window.localStorage.clear();
   Object.defineProperty(window, "location", {
@@ -193,47 +201,200 @@ describe("App landing flow", () => {
   test("settings manager assistant streams a server-local CLI chat message", async () => {
     window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     const requests: Array<{ url: string; method: string; body?: string }> = [];
+    const behaviorCalls: Array<{ method?: string; params?: Record<string, unknown> }> = [];
+    let managerSessionAvailable = false;
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      const method = init?.method ?? "GET";
       requests.push({
         url,
-        method: init?.method ?? "GET",
+        method,
         ...(typeof init?.body === "string" ? { body: init.body } : {}),
       });
       if (url.endsWith("/api/devices")) {
-        return new Response(JSON.stringify([]), {
+        return new Response(JSON.stringify([SERVER_DEVICE]), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
       }
-      if (url.endsWith("/api/manager/assistant/chat/stream") && init?.method === "POST") {
-        return new Response(
-          [
-            'data: {"type":"status","status":{"phase":"tool","tone":"thinking","main":"도구 실행 중: Bash","detail":"DeskRelay API /api/manager/system/summary"}}',
-            "",
-            'data: {"type":"message","cwd":"C:\\\\deskrelay","command":"claude -p","durationMs":42,"message":{"id":"assistant-1","role":"assistant","text":"서버 PC의 DeskRelay 폴더에서 확인했습니다.","createdAt":"2026-01-01T00:00:00.000Z"}}',
-            "",
-            "",
-          ].join("\n"),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
-        );
-      }
-      if (url.endsWith("/api/manager/assistant/chat") && init?.method === "POST") {
+      if (url.endsWith("/api/manager/assistant/workspace")) {
         return new Response(
           JSON.stringify({
-            cwd: "C:\\deskrelay",
-            command: "claude -p",
-            durationMs: 42,
-            message: {
-              id: "assistant-1",
-              role: "assistant",
-              text: "서버 PC의 DeskRelay 폴더에서 확인했습니다.",
-              createdAt: "2026-01-01T00:00:00.000Z",
-            },
+            cwd: "C:\\deskrelay\\.deskrelay\\manager-assistant",
+            instructionsPath: "C:\\deskrelay\\.deskrelay\\manager-assistant\\CLAUDE.md",
+            repoRoot: "C:\\deskrelay",
+            deviceId: SERVER_DEVICE.id,
+            deviceLabel: SERVER_DEVICE.label,
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
+      }
+      if (url.endsWith("/api/manager/assistant/conversation")) {
+        return new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/manager/assistant/status?limit=5")) {
+        return new Response(JSON.stringify({ reports: [], latest: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/manager/agents")) {
+        return new Response(
+          JSON.stringify({ generatedAt: "2026-05-13T00:00:00.000Z", agents: [] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      if (url.endsWith("/api/manager/rounds")) {
+        return new Response(
+          JSON.stringify({ generatedAt: "2026-05-13T00:00:00.000Z", rounds: [] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      if (url.endsWith("/api/manager/sessions/hygiene")) {
+        return new Response(
+          JSON.stringify({
+            generatedAt: "2026-05-13T00:00:00.000Z",
+            managerCwd: "C:\\deskrelay\\.deskrelay\\manager-assistant",
+            managerSessionId: null,
+            summary: {
+              total: 0,
+              preserved: 0,
+              cleanupCandidates: 0,
+              currentManagerSession: null,
+              categories: {
+                current_manager: 0,
+                manager_history: 0,
+                internal_only: 0,
+                worker_session: 0,
+                orphan: 0,
+                unreadable: 0,
+                unknown: 0,
+              },
+            },
+            items: [],
+            errors: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.1",
+              loadedAt: "2026-05-13T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/events/spaces/remote-claude.run%3A`)) {
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              kind: "run.started",
+              content: { runId: "r1" },
+            })}`,
+            `data: ${JSON.stringify({
+              kind: "claude.event",
+              content: { type: "system", subtype: "init", session_id: "manager-session-1" },
+            })}`,
+            `data: ${JSON.stringify({
+              kind: "claude.event",
+              content: {
+                type: "assistant",
+                message: {
+                  content: [{ type: "text", text: "서버 PC의 DeskRelay 폴더에서 확인했습니다." }],
+                },
+              },
+            })}`,
+            `data: ${JSON.stringify({ kind: "run.finished", content: { exitCode: 0 } })}`,
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          method?: string;
+          params?: Record<string, unknown>;
+        };
+        behaviorCalls.push(body);
+        if (body.method === "sessions.list") {
+          return new Response(
+            JSON.stringify({
+              result: managerSessionAvailable
+                ? [
+                    {
+                      sessionId: "manager-session-1",
+                      cwd: "C:\\deskrelay\\.deskrelay\\manager-assistant",
+                      title: "Manager session",
+                      modifiedAt: "2026-05-13T00:00:00.000Z",
+                      fileSize: 512,
+                    },
+                  ]
+                : [],
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        if (body.method === "sessions.read") {
+          return new Response(
+            JSON.stringify({
+              result: {
+                sessionId: "manager-session-1",
+                cwd: "C:\\deskrelay\\.deskrelay\\manager-assistant",
+                events: [
+                  {
+                    type: "assistant",
+                    message: {
+                      role: "assistant",
+                      content: [
+                        { type: "text", text: "서버 PC의 DeskRelay 폴더에서 확인했습니다." },
+                      ],
+                    },
+                  },
+                ],
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        if (body.method === "chat") {
+          managerSessionAvailable = true;
+          return new Response(
+            JSON.stringify({ result: { ok: true, runId: body.params?.runId, accepted: true } }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        return new Response(JSON.stringify({ result: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
         status: 200,
@@ -246,8 +407,12 @@ describe("App landing flow", () => {
     fireEvent.click(settings);
     fireEvent.click(await screen.findByRole("button", { name: "관리 Assistant" }));
 
-    const input = await screen.findByPlaceholderText("DeskRelay 관리에 대해 물어보세요...");
-    fireEvent.input(input, { target: { value: "서버 상태 알려줘" } });
+    const input = await screen.findByPlaceholderText(/관리자에게 보내기/);
+    await waitFor(() => {
+      expect(behaviorCalls.some((entry) => entry.method === "sessions.list")).toBe(true);
+    });
+    const prompt = "서버 상태 알려줘";
+    fireEvent.input(input, { target: { value: prompt } });
     const send = container.querySelector<HTMLButtonElement>(
       ".manager-assistant-composer .composer-send",
     );
@@ -255,22 +420,19 @@ describe("App landing flow", () => {
     fireEvent.click(send);
 
     await waitFor(() => {
-      const request = requests.find(
-        (entry) =>
-          entry.url.endsWith("/api/manager/assistant/chat/stream") && entry.method === "POST",
-      );
-      const body = JSON.parse(request?.body ?? "{}") as {
-        message?: string;
-        history?: Array<{ role?: string; text?: string }>;
-        assistantState?: unknown;
-      };
-      expect(body.message).toBe("서버 상태 알려줘");
-      expect(body.history).toBeUndefined();
-      expect(body.assistantState).toBeDefined();
+      const chatCall = behaviorCalls.find((entry) => entry.method === "chat");
+      expect(chatCall?.params?.message).toBe(prompt);
+      expect(chatCall?.params?.managerMode).toBe(true);
+      expect(chatCall?.params?.permissionMode).toBe("bypassPermissions");
+      expect(chatCall?.params?.conversationId).toBe("deskrelay-manager-assistant");
+      expect(chatCall?.params?.cwd).toBe("C:\\deskrelay\\.deskrelay\\manager-assistant");
+      expect(
+        requests.some((entry) =>
+          entry.url.includes(`/api/devices/${SERVER_DEVICE.id}/events/spaces/remote-claude.run%3A`),
+        ),
+      ).toBe(true);
       expect(container.textContent).toContain("서버 PC의 DeskRelay 폴더에서 확인했습니다.");
-      expect(window.localStorage.getItem("cr.manager-assistant.messages:v2")).toContain(
-        "서버 PC의 DeskRelay 폴더에서 확인했습니다.",
-      );
+      expect(window.localStorage.getItem("cr.manager-assistant.messages:v2")).toBeNull();
     });
   });
 

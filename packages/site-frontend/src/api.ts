@@ -25,11 +25,14 @@ import type {
   ManagerBlockerResolveRequest,
   ManagerBlockerResponse,
   ManagerCapabilities,
+  ManagerCommandFlowResponse,
   ManagerDecisionCreateRequest,
   ManagerDecisionListResponse,
   ManagerDecisionResponse,
   ManagerDecisionUpdateRequest,
   ManagerDeviceActions,
+  ManagerDirectionChangeRequest,
+  ManagerDirectionChangeResponse,
   ManagerEvent,
   ManagerEventListResponse,
   ManagerInstallStatus,
@@ -37,6 +40,10 @@ import type {
   ManagerNetworkStatus,
   ManagerProcessStatus,
   ManagerProject,
+  ManagerProjectCharterResponse,
+  ManagerProjectCharterUpdateRequest,
+  ManagerProjectCompleteRequest,
+  ManagerProjectCompleteResponse,
   ManagerProjectCreateRequest,
   ManagerProjectHygieneCleanupRequest,
   ManagerProjectHygieneCleanupResponse,
@@ -44,6 +51,8 @@ import type {
   ManagerProjectListResponse,
   ManagerProjectOverviewResponse,
   ManagerProjectResponse,
+  ManagerProjectStartRequest,
+  ManagerProjectStartResponse,
   ManagerProjectUpdateRequest,
   ManagerProtocolResponse,
   ManagerProtocolScanRequest,
@@ -59,6 +68,8 @@ import type {
   ManagerRoundListResponse,
   ManagerRoundRepairResponse,
   ManagerRoundReportResponse,
+  ManagerRoundReviewRequest,
+  ManagerRoundReviewResponse,
   ManagerSecurityBoundary,
   ManagerSecurityBoundarySummary,
   ManagerSessionHygieneCleanupRequest,
@@ -719,6 +730,28 @@ export const api = {
       "GET",
       `/api/manager/projects/${encodeURIComponent(id)}/overview`,
     ),
+  managerProjectCommandFlow: (id: string) =>
+    request<ManagerCommandFlowResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/command-flow`,
+    ),
+  updateManagerProjectCharter: (id: string, input: ManagerProjectCharterUpdateRequest) =>
+    request<ManagerProjectCharterResponse>(
+      "PUT",
+      `/api/manager/projects/${encodeURIComponent(id)}/charter`,
+      input,
+    ),
+  prepareManagerProject: (id: string) =>
+    request<ManagerCommandFlowResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/prepare`,
+    ),
+  startManagerProject: (id: string, input: ManagerProjectStartRequest) =>
+    request<ManagerProjectStartResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/start`,
+      input,
+    ),
   managerProjectHygiene: (id: string) =>
     request<ManagerProjectHygieneReport>(
       "GET",
@@ -808,6 +841,28 @@ export const api = {
     request<ManagerProtocolResponse>(
       "PATCH",
       `/api/manager/projects/${encodeURIComponent(id)}/protocol`,
+      input,
+    ),
+  reviewManagerProjectRound: (
+    projectId: string,
+    roundId: string,
+    input: ManagerRoundReviewRequest,
+  ) =>
+    request<ManagerRoundReviewResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(projectId)}/rounds/${encodeURIComponent(roundId)}/review`,
+      input,
+    ),
+  changeManagerProjectDirection: (id: string, input: ManagerDirectionChangeRequest) =>
+    request<ManagerDirectionChangeResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/direction-change`,
+      input,
+    ),
+  completeManagerProject: (id: string, input: ManagerProjectCompleteRequest) =>
+    request<ManagerProjectCompleteResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/complete`,
       input,
     ),
   managerTask: (id: string) => request<ManagerTask>("GET", `/api/manager/tasks/${id}`),

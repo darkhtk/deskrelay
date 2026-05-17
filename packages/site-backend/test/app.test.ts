@@ -333,6 +333,10 @@ describe("/api/* auth gate", () => {
     expect(body.scope).toBe("server");
     expect(body.features).toContain("process.restart");
     expect(body.features).toContain("manager.system-summary");
+    expect(body.features).toContain("manager.projects");
+    expect(body.features).toContain("manager.project-command-flow");
+    expect(body.features).toContain("manager.project-protocol");
+    expect(body.features).toContain("manager.wizard-intent-events");
     expect(body.routes?.some((route) => route.path === "/api/devices/:id/process/restart")).toBe(
       true,
     );
@@ -675,6 +679,31 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/projects/:id/command-flow",
+          authedRequest("GET", "/api/manager/projects/missing/command-flow"),
+          [404],
+        ],
+        [
+          "PUT /api/manager/projects/:id/charter",
+          authedRequest("PUT", "/api/manager/projects/missing/charter", {
+            goal: "route inventory",
+          }),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/prepare",
+          authedRequest("POST", "/api/manager/projects/missing/prepare"),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/start",
+          authedRequest("POST", "/api/manager/projects/missing/start", {
+            objective: "route inventory",
+            dryRun: true,
+          }),
+          [404],
+        ],
+        [
           "GET /api/manager/projects/:id/hygiene",
           authedRequest("GET", "/api/manager/projects/missing/hygiene"),
           [404],
@@ -779,6 +808,27 @@ describe("API route inventory", () => {
         [
           "GET /api/manager/projects/:id/runs",
           authedRequest("GET", "/api/manager/projects/missing/runs"),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/rounds/:roundId/review",
+          authedRequest("POST", "/api/manager/projects/missing/rounds/missing/review", {
+            action: "accept",
+          }),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/direction-change",
+          authedRequest("POST", "/api/manager/projects/missing/direction-change", {
+            requestedChange: "route inventory",
+          }),
+          [404],
+        ],
+        [
+          "POST /api/manager/projects/:id/complete",
+          authedRequest("POST", "/api/manager/projects/missing/complete", {
+            summary: "route inventory",
+          }),
           [404],
         ],
         [
@@ -2921,6 +2971,78 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     );
   });
 
+  test("manager project creation can seed protocol files from the base protocol", async () => {
+    const base = mkdtempSync(join(tmpdir(), "deskrelay-protocol-base-"));
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-protocol-project-"));
+    writeFileSync(join(base, "ORCHESTRATION.md"), "# Base orchestration\n", "utf8");
+    writeFileSync(join(base, "PROTOCOL.md"), "# Base protocol\n", "utf8");
+    writeFileSync(join(base, "WORKER-CONTRACT.md"), "# Worker contract\n", "utf8");
+    writeFileSync(join(base, "dispatch.ps1"), "Write-Output 'dispatch'\n", "utf8");
+    writeFileSync(join(cwd, "PROTOCOL.md"), "# Existing project protocol\n", "utf8");
+    const { app } = makeApp({ managerProtocolBasePath: base });
+
+    const projectCreate = await app.fetch(
+      authedRequest("POST", "/api/manager/projects", {
+        name: "Seeded Protocol Project",
+        cwd,
+        goal: "customize the base protocol",
+        protocolSource: "base-copy",
+      }),
+    );
+    expect(projectCreate.status).toBe(201);
+    const projectBody = (await projectCreate.json()) as { project?: { id?: string } };
+    const projectId = projectBody.project?.id ?? "";
+    expect(projectId).toBeTruthy();
+    expect(readFileSync(join(cwd, "ORCHESTRATION.md"), "utf8")).toContain("Base orchestration");
+    expect(readFileSync(join(cwd, "PROTOCOL.md"), "utf8")).toContain("Existing project protocol");
+    expect(readFileSync(join(cwd, "WORKER-CONTRACT.md"), "utf8")).toContain("Worker contract");
+    expect(readFileSync(join(cwd, "dispatch.ps1"), "utf8")).toContain("dispatch");
+
+    const protocol = await app.fetch(
+      authedRequest("GET", `/api/manager/projects/${projectId}/protocol`),
+    );
+    expect(protocol.status).toBe(200);
+    const protocolBody = (await protocol.json()) as {
+      protocol?: {
+        version?: string;
+        activeRules?: string[];
+        latestChange?: { summary?: string; decisionId?: string };
+        files?: Array<{ path?: string; status?: string; excerpt?: string }>;
+        warnings?: string[];
+      };
+    };
+    expect(protocolBody.protocol?.version).toBe("orchestration-lab-base");
+    expect(protocolBody.protocol?.activeRules?.[0]).toContain("manager supervises");
+    expect(protocolBody.protocol?.latestChange?.summary).toContain("Seeded from");
+    expect(protocolBody.protocol?.latestChange?.decisionId).toBeTruthy();
+    expect(
+      protocolBody.protocol?.files?.find((file) => file.path === "WORKER-CONTRACT.md")?.status,
+    ).toBe("present");
+    expect(
+      protocolBody.protocol?.files?.find((file) => file.path === "WORKER-CONTRACT.md")?.excerpt,
+    ).toContain("Worker contract");
+    expect(protocolBody.protocol?.warnings ?? []).not.toContain(
+      "Latest protocol change is not linked to a project decision.",
+    );
+  });
+
+  test("manager project creation rejects an invalid protocol source", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-protocol-invalid-"));
+    const { app } = makeApp();
+
+    const projectCreate = await app.fetch(
+      authedRequest("POST", "/api/manager/projects", {
+        name: "Invalid Protocol Source",
+        cwd,
+        protocolSource: "template",
+      }),
+    );
+
+    expect(projectCreate.status).toBe(400);
+    const body = (await projectCreate.json()) as { error?: string };
+    expect(body.error).toBe("project protocolSource is invalid");
+  });
+
   test("manager project protocol scan exposes missing files and stores protocol state", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-protocol-"));
     writeFileSync(
@@ -3023,6 +3145,333 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(scanBody.protocol?.files?.find((file) => file.path === "PROTOCOL.md")?.excerpt).toBe(
       undefined,
     );
+  });
+
+  test("manager project command flow drives prepare, start, review, direction change, and completion", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-command-flow-"));
+    const protocolFiles = [
+      "ORCHESTRATION.md",
+      "AGENTS.md",
+      "PROTOCOL.md",
+      "REVIEW.md",
+      "TASKS.md",
+      "STATE.md",
+      "FAILURES.md",
+      "PROJECT.md",
+      "WORKER-CONTRACT.md",
+      "PROMPT-TEMPLATES.md",
+      "SPEC-SCHEMA.md",
+      "VERIFICATION.md",
+    ];
+    for (const file of protocolFiles) {
+      writeFileSync(join(cwd, file), `# ${file}\n\nCommand flow fixture.\n`, "utf8");
+    }
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerBlockerStore = createInMemoryManagerBlockerStore();
+    const managerDecisionStore = createInMemoryManagerDecisionStore();
+    const managerArtifactStore = createInMemoryManagerArtifactStore();
+    const managerProtocolStore = createInMemoryManagerProtocolStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerProjectStore,
+      managerOrchestrationStore,
+      managerTaskStore,
+      managerBlockerStore,
+      managerDecisionStore,
+      managerArtifactStore,
+      managerProtocolStore,
+      managerWorkers: [
+        {
+          id: "claude-code",
+          label: "Claude Code",
+          description: "Test worker",
+          command: process.execPath,
+          args: ["-e", "console.log('dry-run worker')"],
+          defaultTimeoutMs: 30_000,
+        },
+      ],
+    });
+
+    try {
+      const create = await app.fetch(
+        authedRequest("POST", "/api/manager/projects", {
+          name: "Command Flow Project",
+          cwd,
+          goal: "Ship managed orchestration UX",
+        }),
+      );
+      expect(create.status).toBe(201);
+      const created = (await create.json()) as { project?: { id?: string } };
+      const projectId = created.project?.id;
+      expect(projectId).toBeTruthy();
+
+      const charter = await app.fetch(
+        authedRequest("PUT", `/api/manager/projects/${projectId}/charter`, {
+          scope: "Design the project loop from charter to final review.",
+          constraints: "Keep user approval explicit.",
+          successCriteria: "The manager can start, review, redirect, and complete work.",
+          userCheckpoints: "Ask before final acceptance.",
+        }),
+      );
+      expect(charter.status).toBe(200);
+      const charterBody = (await charter.json()) as {
+        project?: { charter?: { scope?: string; successCriteria?: string } };
+      };
+      expect(charterBody.project?.charter?.scope).toContain("project loop");
+
+      const flow = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/command-flow`),
+      );
+      expect(flow.status).toBe(200);
+      const flowBody = (await flow.json()) as {
+        readiness?: { ready?: boolean; stage?: string; missingProtocolFiles?: string[] };
+        charter?: { successCriteria?: string };
+        wizardEvents?: Array<{
+          kind?: string;
+          impact?: string;
+          managerAction?: string;
+          fields?: Array<{ field?: string; after?: string }>;
+        }>;
+      };
+      expect(flowBody.readiness?.ready).toBe(true);
+      expect(flowBody.readiness?.stage).toBe("ready_to_start");
+      expect(flowBody.readiness?.missingProtocolFiles).toEqual([]);
+      expect(flowBody.charter?.successCriteria).toContain("complete work");
+      expect(flowBody.wizardEvents?.[0]?.kind).toBe("charter-applied");
+      expect(flowBody.wizardEvents?.[0]?.impact).toBe("high");
+      expect(flowBody.wizardEvents?.[0]?.managerAction).toBe("refresh-readiness");
+      expect(flowBody.wizardEvents?.[0]?.fields?.map((field) => field.field)).toContain(
+        "constraints",
+      );
+
+      const prepare = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/prepare`),
+      );
+      expect(prepare.status).toBe(200);
+      const prepareBody = (await prepare.json()) as {
+        project?: { flowStage?: string };
+        readiness?: { ready?: boolean };
+      };
+      expect(prepareBody.project?.flowStage).toBe("ready_to_start");
+      expect(prepareBody.readiness?.ready).toBe(true);
+
+      const start = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/start`, {
+          phase: "design",
+          objective: "Design the next orchestration increment.",
+          dryRun: true,
+        }),
+      );
+      expect(start.status).toBe(202);
+      const startBody = (await start.json()) as {
+        project?: { flowStage?: string; status?: string };
+        round?: { id?: string; phase?: string; status?: string };
+        dispatch?: { tasks?: Array<{ dryRun?: boolean; state?: string }> };
+      };
+      expect(startBody.project?.status).toBe("reviewing");
+      expect(startBody.project?.flowStage).toBe("review");
+      expect(startBody.round?.phase).toBe("design");
+      expect(startBody.round?.status).toBe("completed");
+      expect(startBody.dispatch?.tasks?.length).toBeGreaterThan(0);
+      expect(startBody.dispatch?.tasks?.every((task) => task.dryRun === true)).toBe(true);
+      const roundId = startBody.round?.id;
+      expect(roundId).toBeTruthy();
+
+      const review = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/rounds/${roundId}/review`, {
+          action: "user_check_required",
+          summary: "User should inspect the design output before continuing.",
+        }),
+      );
+      expect(review.status).toBe(200);
+      const reviewBody = (await review.json()) as {
+        project?: { flowStage?: string; status?: string };
+        blocker?: { requiredAction?: string; status?: string };
+      };
+      expect(reviewBody.project?.status).toBe("blocked");
+      expect(reviewBody.project?.flowStage).toBe("replanning");
+      expect(reviewBody.blocker?.requiredAction).toBe("user");
+      expect(reviewBody.blocker?.status).toBe("open");
+
+      const direction = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/direction-change`, {
+          requestedChange: "Limit the first pass to the happy path.",
+          impact: "Narrows scope for faster verification.",
+          currentRoundAction: "supersede",
+          nextObjective: "Replan around the happy path.",
+        }),
+      );
+      expect(direction.status).toBe(200);
+      const directionBody = (await direction.json()) as {
+        project?: { flowStage?: string; lastDirectionChange?: { requestedChange?: string } };
+        nextRound?: { phase?: string; objective?: string };
+      };
+      expect(directionBody.project?.flowStage).toBe("replanning");
+      expect(directionBody.project?.lastDirectionChange?.requestedChange).toContain("happy path");
+      expect(directionBody.nextRound?.phase).toBe("replan");
+      expect(directionBody.nextRound?.objective).toContain("happy path");
+
+      const complete = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/complete`, {
+          summary: "Happy-path orchestration UX accepted.",
+          acceptedByUser: true,
+          verificationEvidence: "Dry-run command flow completed.",
+          artifacts: ["PROTOCOL.md"],
+        }),
+      );
+      expect(complete.status).toBe(200);
+      const completeBody = (await complete.json()) as {
+        project?: {
+          status?: string;
+          flowStage?: string;
+          finalReview?: { acceptedByUser?: boolean };
+        };
+        commandFlow?: { readiness?: { stage?: string } };
+      };
+      expect(completeBody.project?.status).toBe("completed");
+      expect(completeBody.project?.flowStage).toBe("completed");
+      expect(completeBody.project?.finalReview?.acceptedByUser).toBe(true);
+      expect(completeBody.commandFlow?.readiness?.stage).toBe("completed");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager project command flow blocks starts outside the manager repository boundary", async () => {
+    const managerCwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-root-"));
+    const projectCwd = mkdtempSync(join(tmpdir(), "deskrelay-project-outside-"));
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd: managerCwd },
+      managerProjectStore,
+      managerOrchestrationStore,
+      managerTaskStore,
+      managerBlockerStore: createInMemoryManagerBlockerStore(),
+      managerDecisionStore: createInMemoryManagerDecisionStore(),
+      managerArtifactStore: createInMemoryManagerArtifactStore(),
+      managerProtocolStore: createInMemoryManagerProtocolStore(),
+    });
+
+    try {
+      const create = await app.fetch(
+        authedRequest("POST", "/api/manager/projects", {
+          name: "Outside Boundary Project",
+          cwd: projectCwd,
+          goal: "Verify project cwd preflight.",
+        }),
+      );
+      expect(create.status).toBe(201);
+      const created = (await create.json()) as { project?: { id?: string } };
+      const projectId = created.project?.id;
+      expect(projectId).toBeTruthy();
+
+      const flow = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/command-flow`),
+      );
+      expect(flow.status).toBe(200);
+      const flowBody = (await flow.json()) as {
+        readiness?: { ready?: boolean; warnings?: string[] };
+      };
+      expect(flowBody.readiness?.ready).toBe(false);
+      expect(flowBody.readiness?.warnings?.join("\n")).toContain("worker cwd must stay inside");
+      expect(flowBody.readiness?.warnings?.join("\n")).toContain(managerCwd);
+
+      const start = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/start`, {
+          dryRun: true,
+          objective: "This should be blocked before creating a round.",
+        }),
+      );
+      expect(start.status).toBe(409);
+      const startBody = (await start.json()) as {
+        error?: string;
+        readiness?: { ready?: boolean };
+      };
+      expect(startBody.error).toBe("project is not ready to start");
+      expect(startBody.readiness?.ready).toBe(false);
+      expect(await managerOrchestrationStore.listRounds()).toHaveLength(0);
+      expect(await managerTaskStore.list()).toHaveLength(0);
+    } finally {
+      rmSync(managerCwd, { recursive: true, force: true });
+      rmSync(projectCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager project direction change without a blocker returns to replanning", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-direction-flow-"));
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerProjectStore,
+      managerOrchestrationStore,
+      managerTaskStore: createInMemoryManagerTaskStore(),
+      managerBlockerStore: createInMemoryManagerBlockerStore(),
+      managerDecisionStore: createInMemoryManagerDecisionStore(),
+      managerArtifactStore: createInMemoryManagerArtifactStore(),
+      managerProtocolStore: createInMemoryManagerProtocolStore(),
+    });
+
+    try {
+      const project = await managerProjectStore.create({
+        name: "Direction Replan Project",
+        cwd,
+        goal: "Review dry-run output",
+      });
+      const round = await managerOrchestrationStore.createRound({
+        projectId: project.id,
+        title: "Design Round",
+        objective: "Original direction",
+        phase: "design",
+      });
+      await managerOrchestrationStore.updateRound(round.id, {
+        status: "completed",
+        completedAt: "2026-05-17T00:00:00.000Z",
+        summary: "Ready for review.",
+      });
+      await managerProjectStore.update(project.id, {
+        status: "reviewing",
+        flowStage: "review",
+        activeRoundId: round.id,
+      });
+
+      const direction = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${project.id}/direction-change`, {
+          requestedChange: "Narrow the next round to UX evidence review only.",
+          impact: "No blocker exists; this is a manager replan instruction.",
+          currentRoundAction: "keep",
+        }),
+      );
+
+      expect(direction.status).toBe(200);
+      const directionBody = (await direction.json()) as {
+        project?: {
+          status?: string;
+          flowStage?: string;
+          activeRoundId?: string;
+          lastDirectionChange?: { requestedChange?: string };
+        };
+        commandFlow?: { blockers?: unknown[]; readiness?: { stage?: string } };
+      };
+      expect(directionBody.project?.status).toBe("planning");
+      expect(directionBody.project?.flowStage).toBe("replanning");
+      expect(directionBody.project?.activeRoundId).toBe(round.id);
+      expect(directionBody.project?.lastDirectionChange?.requestedChange).toContain("UX evidence");
+      expect(directionBody.commandFlow?.blockers).toEqual([]);
+      expect(directionBody.commandFlow?.readiness?.stage).toBe("replanning");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("manager orchestration rounds dispatch multiple role agents", async () => {
@@ -4114,6 +4563,7 @@ process.stdin.on("end", () => {
         activeRoundId: "round_1",
         activeRoundTitle: "R1 protocol hardening",
         activeRoundStatus: "running",
+        projectCommandFlow: ["stage=running; ready=yes", "next=wait: Wait for worker results"],
         projectDecisions: ["Use worker agents for implementation rounds"],
         projectBlockers: ["Firewall verification blocked (warning, action=manager, owner=manager)"],
         projectArtifacts: ["PROTOCOL.md (protocol, active, owner=protocol-agent)"],
@@ -4127,6 +4577,8 @@ process.stdin.on("end", () => {
     expect(prompt).toContain("- current project id: proj_1");
     expect(prompt).toContain("- current project name: Orchestration Lab");
     expect(prompt).toContain("- active round title: R1 protocol hardening");
+    expect(prompt).toContain("- project command flow:");
+    expect(prompt).toContain("stage=running; ready=yes");
     expect(prompt).toContain("- active project decisions:");
     expect(prompt).toContain("Use worker agents for implementation rounds");
     expect(prompt).toContain("- open project blockers:");
@@ -5579,6 +6031,12 @@ describe("daemon proxy", () => {
       expect(context.projectCwd).toBe("C:\\work\\orchestration-lab");
       expect(context.activeRoundId).toBe(round.id);
       expect(context.activeRoundTitle).toBe("R1 protocol hardening");
+      expect(context.projectCommandFlow).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("stage="),
+          expect.stringContaining("next="),
+        ]),
+      );
       expect(context.projectDecisions).toEqual([
         "Use worker agents (active) - Substantive implementation work must be delegated.",
       ]);
