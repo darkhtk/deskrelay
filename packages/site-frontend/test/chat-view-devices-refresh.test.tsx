@@ -170,6 +170,88 @@ describe("ChatView device refresh bridge", () => {
     });
   });
 
+  test("hides manager assistant sessions from the normal session list", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/devices") && method === "GET") {
+        return new Response(JSON.stringify([DEV]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/api/devices/${DEV.id}/behaviors`) && method === "GET") {
+        return new Response(
+          JSON.stringify([
+            {
+              instanceId: "remote-claude",
+              name: "remote-claude",
+              version: "0.0.0-test",
+              loadedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (
+        url.endsWith(`/api/devices/${DEV.id}/behaviors/remote-claude/request`) &&
+        method === "POST"
+      ) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        if (body.method === "sessions.list") {
+          return new Response(
+            JSON.stringify({
+              result: [
+                {
+                  sessionId: "sess_visible",
+                  cwd: "C:\\Users\\darkh\\Projects\\deskrelay",
+                  title: "Visible ordinary chat",
+                  modifiedAt: "2026-04-30T00:00:00.000Z",
+                  fileSize: 512,
+                },
+                {
+                  sessionId: "sess_manager",
+                  cwd: "C:\\Users\\darkh\\Projects\\deskrelay\\.deskrelay\\manager-assistant",
+                  title: "Hidden manager chat",
+                  modifiedAt: "2026-04-30T01:00:00.000Z",
+                  fileSize: 512,
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (body.method === "context.usage") {
+          return new Response(JSON.stringify({ result: { usage: null } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (body.method === "usage.limits") {
+          return new Response(JSON.stringify({ result: { session: null, week: null } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const { container } = render(() => (
+      <ChatView
+        me={{ id: "u1", email: "u@test.local", displayName: "U", authProvider: "token" }}
+        onSignOut={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Visible ordinary chat");
+    });
+    expect(container.textContent).not.toContain("Hidden manager chat");
+    expect(container.textContent).not.toContain("manager-assistant");
+  });
+
   test("restores the selected chat device by daemon URL when its id changes", async () => {
     localStorage.setItem(
       "cr.chat-selected-device-id",

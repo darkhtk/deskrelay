@@ -1,4 +1,3 @@
-import type { ManagerAssistantChatContext } from "@deskrelay/shared";
 import {
   type Component,
   For,
@@ -18,8 +17,6 @@ import {
   type DeviceCleanupEntry,
   type DeviceUpdateQueueEntry,
   type DeviceUpdateResponse,
-  type ManagerWorkerCheckResult,
-  type ManagerWorkerProfile,
   type SelfBuildVersion,
   type SelfServerUpdateStatus,
   api,
@@ -46,7 +43,6 @@ import { ConnectionDiagnostics } from "./components/ConnectionDiagnostics.tsx";
 import { DeviceShell } from "./components/DeviceShell.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { LegalPage, type LegalPageKind } from "./components/LegalPage.tsx";
-import { ManagerAssistant } from "./components/ManagerAssistant.tsx";
 import {
   type SettingsScope,
   SettingsScopeLabel,
@@ -90,29 +86,20 @@ import {
   showWeekUsageMeter,
 } from "./ui-prefs.ts";
 
-type SettingsTab =
-  | "general"
-  | "updates"
-  | "devices"
-  | "assistant"
-  | "workers"
-  | "diagnostics"
-  | "instructions"
-  | "help";
+type SettingsTab = "general" | "updates" | "devices" | "diagnostics" | "instructions" | "help";
+type LegacySettingsTab = "assistant" | "workers";
 
 const SETTINGS_TABS: SettingsTab[] = [
   "general",
   "updates",
   "devices",
-  "assistant",
-  "workers",
   "diagnostics",
   "instructions",
   "help",
 ];
 
 type OpenSettingsOptions = {
-  tab?: SettingsTab;
+  tab?: SettingsTab | LegacySettingsTab;
   deviceId?: string | null;
 };
 
@@ -295,6 +282,11 @@ const HELP_SECTIONS: Array<{
 
 function settingsTabLabel(value: SettingsTab): string {
   return t(`app.settings.tab.${value}`);
+}
+
+function normalizeSettingsTab(value: SettingsTab | LegacySettingsTab | undefined): SettingsTab {
+  if (!value || value === "assistant" || value === "workers") return "general";
+  return value;
 }
 
 function consumeSiteTokenFromUrl(): string | null {
@@ -535,14 +527,6 @@ export const App: Component = () => {
   });
   const [conversationExport, setConversationExport] =
     createSignal<ConversationExportSnapshot | null>(null);
-  const settingsAssistantContext = createMemo<ManagerAssistantChatContext | null>(() => {
-    const workspace = activeWorkspace();
-    const deviceId = settingsDeviceId() ?? workspace.deviceId;
-    const context: ManagerAssistantChatContext = {};
-    if (deviceId) context.deviceId = deviceId;
-    if (workspace.cwd) context.cwd = workspace.cwd;
-    return Object.keys(context).length > 0 ? context : null;
-  });
 
   createEffect(() => {
     const theme = appTheme();
@@ -591,7 +575,7 @@ export const App: Component = () => {
   };
 
   const openSettings = (options: OpenSettingsOptions = {}) => {
-    setSettingsTab(options.tab ?? "general");
+    setSettingsTab(normalizeSettingsTab(options.tab));
     setSettingsDeviceId(options.deviceId ?? null);
     setSettingsOpen(true);
   };
@@ -797,12 +781,6 @@ export const App: Component = () => {
                     onManualCleanupRequired={handleManualCleanupRequired}
                   />
                 </Show>
-                <Show when={settingsTab() === "assistant"}>
-                  <ManagerAssistant context={settingsAssistantContext()} />
-                </Show>
-                <Show when={settingsTab() === "workers"}>
-                  <ManagerWorkersSettings />
-                </Show>
                 <Show when={settingsTab() === "diagnostics"}>
                   <ConnectionDiagnostics
                     initialSelectedDeviceId={settingsDeviceId()}
@@ -861,159 +839,6 @@ const HelpSettings: Component = () => (
   </section>
 );
 
-interface WorkerCheckUiState {
-  phase: UpdatePhase;
-  message: string;
-  result?: ManagerWorkerCheckResult;
-}
-
-const ManagerWorkersSettings: Component = () => {
-  const [workers, { refetch }] = createResource(() => api.managerWorkers());
-  const [checks, setChecks] = createSignal<Record<string, WorkerCheckUiState>>({});
-  const [running, setRunning] = createSignal<string | null>(null);
-
-  const setWorkerState = (id: string, state: WorkerCheckUiState) => {
-    setChecks((current) => ({ ...current, [id]: state }));
-  };
-
-  async function checkWorker(profile: ManagerWorkerProfile) {
-    setWorkerState(profile.id, {
-      phase: "running",
-      message: t("manager.worker-settings.check.running"),
-    });
-    try {
-      const result = await api.checkManagerWorker(profile.id);
-      setWorkerState(profile.id, {
-        phase: result.available ? "succeeded" : "failed",
-        message: workerCheckMessage(result),
-        result,
-      });
-    } catch (err) {
-      setWorkerState(profile.id, {
-        phase: "failed",
-        message: t("manager.worker-settings.check.failed", { error: (err as Error).message }),
-      });
-    }
-  }
-
-  async function dryRunWorker(profile: ManagerWorkerProfile) {
-    setRunning(profile.id);
-    setWorkerState(profile.id, {
-      phase: "running",
-      message: t("manager.worker-settings.dry-run.running"),
-    });
-    try {
-      const task = await api.runManagerWorker({
-        profile: profile.id,
-        prompt:
-          "Dry-run only. Verify that this worker profile can be planned. Do not edit files or run destructive commands.",
-        dryRun: true,
-        requestedBy: "browser",
-      });
-      setWorkerState(profile.id, {
-        phase: task.state === "succeeded" ? "succeeded" : "failed",
-        message:
-          task.state === "succeeded"
-            ? t("manager.worker-settings.dry-run.succeeded")
-            : task.error
-              ? t("manager.worker-settings.dry-run.failed", { error: task.error })
-              : t("manager.worker-settings.dry-run.state", { state: task.state }),
-      });
-    } catch (err) {
-      setWorkerState(profile.id, {
-        phase: "failed",
-        message: t("manager.worker-settings.dry-run.failed", { error: (err as Error).message }),
-      });
-    } finally {
-      setRunning(null);
-    }
-  }
-
-  return (
-    <section class="settings-card settings-worker-section">
-      <div class="settings-card-heading">
-        <h3 class="settings-card-title">{t("manager.worker-settings.title")}</h3>
-        <SettingsScopeLabel scope="server" />
-      </div>
-      <p class="settings-card-help">{t("manager.worker-settings.help")}</p>
-
-      <div class="settings-worker-actions">
-        <button type="button" class="secondary-button" onClick={() => void refetch()}>
-          {t("manager.worker-settings.refresh")}
-        </button>
-      </div>
-
-      <div class="settings-worker-list">
-        <Show
-          when={!workers.loading}
-          fallback={<p class="settings-card-help">{t("manager.worker-settings.loading")}</p>}
-        >
-          <For each={workers()?.profiles ?? []}>
-            {(profile) => {
-              const check = () => checks()[profile.id];
-              const phase = () =>
-                check()?.phase ?? (profile.available ? "idle" : ("failed" as UpdatePhase));
-              return (
-                <div class="settings-worker-row">
-                  <div class="settings-worker-main">
-                    <span class={`settings-update-dot update-phase-${phase()}`} />
-                    <div class="settings-worker-copy">
-                      <div class="settings-worker-title-row">
-                        <span class="settings-update-label">{workerProfileLabel(profile)}</span>
-                        <span class={`settings-worker-risk worker-risk-${profile.risk}`}>
-                          {workerRiskText(profile)}
-                        </span>
-                      </div>
-                      <span class="settings-update-detail">
-                        {workerProfileDescription(profile)}
-                      </span>
-                      <span class="settings-worker-command">
-                        {profile.command} {profile.args.join(" ")}
-                      </span>
-                      <Show when={profile.roles.length > 0}>
-                        <span class="settings-worker-roles">
-                          {profile.roles.map(workerRoleText).join(" - ")}
-                        </span>
-                      </Show>
-                      <Show when={check()?.message}>
-                        {(message) => <span class="settings-update-detail">{message()}</span>}
-                      </Show>
-                    </div>
-                  </div>
-                  <div class="settings-worker-buttons">
-                    <button
-                      type="button"
-                      class="secondary-button"
-                      disabled={!profile.available || check()?.phase === "running"}
-                      onClick={() => void checkWorker(profile)}
-                    >
-                      {check()?.phase === "running"
-                        ? t("manager.worker-settings.working")
-                        : t("manager.worker-settings.status-check")}
-                    </button>
-                    <button
-                      type="button"
-                      class="secondary-button"
-                      disabled={!profile.available || running() !== null}
-                      onClick={() => void dryRunWorker(profile)}
-                    >
-                      {running() === profile.id
-                        ? t("manager.worker-settings.working")
-                        : t("manager.worker-settings.plan-check")}
-                    </button>
-                  </div>
-                </div>
-              );
-            }}
-          </For>
-          <Show when={(workers()?.profiles ?? []).length === 0}>
-            <p class="settings-card-help">{t("manager.worker-settings.empty")}</p>
-          </Show>
-        </Show>
-      </div>
-    </section>
-  );
-};
 type UpdatePhase =
   | "idle"
   | "queued"
@@ -2234,50 +2059,6 @@ function connectorUpdateMessage(result: DeviceUpdateResponse): string {
       : `connector가 이미 최신 상태, 재시작 요청됨${range}`;
   }
   return result.warning ?? `connector 업데이트 완료${range}`;
-}
-
-function workerCheckMessage(result: ManagerWorkerCheckResult): string {
-  if (result.available) {
-    const version = result.stdout.trim().split(/\r?\n/).find(Boolean);
-    return version
-      ? t("manager.worker-settings.check.available-version", { version })
-      : t("manager.worker-settings.check.available");
-  }
-  if (result.timedOut) return t("manager.worker-settings.check.unavailable-timeout");
-  if (result.error) {
-    return t("manager.worker-settings.check.unavailable-detail", { detail: result.error });
-  }
-  const stderr = result.stderr.trim().split(/\r?\n/).find(Boolean);
-  return stderr
-    ? t("manager.worker-settings.check.unavailable-detail", { detail: stderr })
-    : t("manager.worker-settings.check.unavailable-exit", {
-        code: result.exitCode ?? t("manager.worker-settings.check.unknown"),
-      });
-}
-
-function workerRiskText(profile: ManagerWorkerProfile): string {
-  if (profile.risk === "system") return t("manager.worker-settings.risk.system");
-  if (profile.risk === "destructive") return t("manager.worker-settings.risk.destructive");
-  if (profile.risk === "write") return t("manager.worker-settings.risk.write");
-  return t("manager.worker-settings.risk.read");
-}
-
-function workerProfileLabel(profile: ManagerWorkerProfile): string {
-  const key = `manager.worker-settings.profile.${profile.id}.label`;
-  const localized = t(key);
-  return localized === key ? profile.label : localized;
-}
-
-function workerProfileDescription(profile: ManagerWorkerProfile): string {
-  const key = `manager.worker-settings.profile.${profile.id}.description`;
-  const localized = t(key);
-  return localized === key ? profile.description : localized;
-}
-
-function workerRoleText(role: string): string {
-  const key = `manager.worker-settings.role.${role}`;
-  const localized = t(key);
-  return localized === key ? role : localized;
 }
 
 function connectorUpdatePhase(result: DeviceUpdateResponse): UpdatePhase {

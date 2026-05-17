@@ -447,6 +447,8 @@ function managerSystemPrompt(params: ChatParams): string {
     "Manager filesystem operations are not limited by the user's configured workspace roots. For DeskRelay filesystem APIs, pass workspaceScope=unrestricted for reads and writes you perform as the manager.",
     "When the browser supplies current UI context, treat it as navigation state only; inspect API data before making changes.",
     "Never answer only `No response requested.` in manager mode. Every user message requires a visible Korean answer, progress report, or failure report.",
+    "Start the visible reply with the direct answer or current decision before listing API evidence, logs, or history.",
+    "When project status reports conflict with the active project or round, say which source is current and which one is stale.",
     "If a tool or API call fails, report the failure to the user with the failing layer and the smallest safe next step before ending the turn.",
   ];
   lines.push(`Manager workspace scope: ${params.managerWorkspaceScope || "unrestricted"}`);

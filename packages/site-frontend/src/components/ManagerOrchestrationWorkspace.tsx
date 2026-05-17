@@ -900,8 +900,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       await runApprovedProposedAction(action, projectId);
       await refreshAfterApprovalAction();
       setApprovalActionStatus(t("manager.orchestration.approval.done"));
-      window.setTimeout(() => setApprovalActionStatus(null), 2400);
     } catch (error) {
+      setApprovalActionStatus(null);
       setApprovalActionError(
         t("manager.orchestration.approval.error.failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -1065,7 +1065,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           projectHygieneLoading={projectHygiene.loading}
           projectHygieneCleanupBusy={projectHygieneCleanupBusy()}
           acknowledgeBusy={acknowledgeBusy()}
-          actionBusy={managerActionBusy()}
+          actionBusy={managerActionBusy() || approvalActionBusy()}
+          approvalActionBusy={approvalActionBusy()}
+          approvalActionStatus={approvalActionStatus()}
+          approvalActionError={approvalActionError()}
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
           onRefreshProjectHygiene={() => void refetchProjectHygiene()}

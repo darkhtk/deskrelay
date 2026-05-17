@@ -137,6 +137,11 @@ interface StoredChatSessionSelection {
 
 type StoredChatSessionSelections = Record<string, StoredChatSessionSelection>;
 
+function isManagerAssistantSession(summary: Pick<ClaudeSessionSummary, "cwd">): boolean {
+  const cwd = summary.cwd.replace(/\\/g, "/").toLowerCase();
+  return cwd.includes("/.deskrelay/manager-assistant");
+}
+
 function latestTranscriptEvents(events: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
   const limit = chatTranscriptEventLimit();
   return events.length > limit ? events.slice(-limit) : events;
@@ -1309,7 +1314,7 @@ export const ChatView: Component<ChatViewProps> = (props) => {
           dedupeSessionIds: true,
         });
         if (res.error) throw new Error(res.error.message);
-        return res.result ?? [];
+        return (res.result ?? []).filter((summary) => !isManagerAssistantSession(summary));
       } catch {
         return [];
       }

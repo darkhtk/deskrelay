@@ -9942,6 +9942,8 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     ].join("\n"),
     "## Response Requirements\nAnswer only the current user request. Use the active Claude session for conversation memory. Use observed facts for operational claims.",
     "Never answer only `No response requested.`. Every manager-chat user message requires a visible Korean answer, progress update, or failure report.",
+    "Start with the direct answer, current decision, or action taken. Put API evidence, logs, and history after that answer.",
+    "If the latest assistant status report is for a different project or round than the active command flow, explicitly call that report stale instead of treating it as current.",
     [
       "## Role Selection Reminder",
       "- First classify the request intent, then choose the matching role profile from the managed instructions.",

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { App } from "../src/App.tsx";
 import { Landing } from "../src/components/Landing.tsx";
@@ -198,7 +198,49 @@ describe("App landing flow", () => {
     });
   });
 
-  test("settings manager assistant streams a server-local CLI chat message", async () => {
+  test("settings dialog hides manager assistant and worker tabs", async () => {
+    window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/devices/update-queue")) {
+        return new Response(JSON.stringify({ entries: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true, version: "0.0.0", devices: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    render(() => <App />);
+
+    const settings = await screen.findByRole("button", { name: t("app.settings.aria") });
+    fireEvent.click(settings);
+    const dialog = screen.getByRole("dialog", { name: t("app.settings.title") });
+    const settingsDialog = within(dialog);
+
+    expect(
+      settingsDialog.queryByRole("button", { name: t("app.settings.tab.assistant") }),
+    ).toBeNull();
+    expect(
+      settingsDialog.queryByRole("button", { name: t("app.settings.tab.workers") }),
+    ).toBeNull();
+    expect(
+      settingsDialog.getByRole("button", { name: t("app.settings.tab.general") }),
+    ).toBeTruthy();
+    expect(
+      settingsDialog.getByRole("button", { name: t("app.settings.tab.devices") }),
+    ).toBeTruthy();
+  });
+
+  test.skip("settings manager assistant streams a server-local CLI chat message", async () => {
     window.localStorage.setItem("cr.site-token:http://test.local", "tok-abc");
     const requests: Array<{ url: string; method: string; body?: string }> = [];
     const behaviorCalls: Array<{ method?: string; params?: Record<string, unknown> }> = [];

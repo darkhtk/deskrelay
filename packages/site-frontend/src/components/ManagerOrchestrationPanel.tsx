@@ -104,6 +104,9 @@ interface ManagerOrchestrationPanelProps {
   observeBusy?: boolean | undefined;
   acknowledgeBusy?: boolean | undefined;
   actionBusy?: boolean | undefined;
+  approvalActionBusy?: boolean | undefined;
+  approvalActionStatus?: string | null | undefined;
+  approvalActionError?: string | null | undefined;
   standalone?: boolean | undefined;
   onAcknowledgeFailures?: (() => void) | undefined;
   onAcknowledgeRound?: ((roundId: string) => void) | undefined;
@@ -525,7 +528,9 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
             <ManagerApprovalInbox
               judgments={visibleJudgments()}
-              busy={props.flowBusy || props.actionBusy}
+              busy={props.flowBusy || props.actionBusy || props.approvalActionBusy}
+              status={props.approvalActionStatus}
+              error={props.approvalActionError}
               onApprove={props.onApproveProposedAction}
               onDismiss={(judgmentId) =>
                 setDismissedJudgmentIds((current) => ({ ...current, [judgmentId]: true }))
@@ -904,6 +909,8 @@ const OrchestrationSection: Component<{ title: string; class?: string; children:
 const ManagerApprovalInbox: Component<{
   judgments: ManagerJudgmentPacket[];
   busy?: boolean | undefined;
+  status?: string | null | undefined;
+  error?: string | null | undefined;
   onApprove?: ((action: ManagerProposedAction) => void) | undefined;
   onDismiss: (judgmentId: string) => void;
 }> = (props) => {
@@ -931,6 +938,13 @@ const ManagerApprovalInbox: Component<{
           </div>
           <span>{t("manager.orchestration.approval.worker")}</span>
         </header>
+        <Show when={props.error || props.status}>
+          {(message) => (
+            <p class="manager-approval-feedback" classList={{ "is-error": Boolean(props.error) }}>
+              {message()}
+            </p>
+          )}
+        </Show>
         <div class="manager-approval-list">
           <For each={visibleJudgments()}>
             {(judgment) => {
@@ -974,7 +988,6 @@ const ManagerApprovalInbox: Component<{
                           title={action.rationale}
                           onClick={() => props.onApprove?.(action)}
                         >
-                          {t("manager.orchestration.action.approve")}:{" "}
                           {managerProposedActionTypeLabel(action.type)}
                         </button>
                       )}
@@ -985,7 +998,7 @@ const ManagerApprovalInbox: Component<{
                       disabled={props.busy}
                       onClick={() => props.onDismiss(judgment.id)}
                     >
-                      {t("manager.orchestration.action.dismiss")}
+                      {t("manager.orchestration.action.dismiss-proposal")}
                     </button>
                   </div>
                 </article>
@@ -1089,14 +1102,14 @@ const ProjectHeader: Component<{
             </For>
           </select>
           <button type="button" disabled={props.busy} onClick={() => props.onOpenWizard("create")}>
-            {t("manager.orchestration.action.new")}
+            {t("manager.orchestration.action.new-project")}
           </button>
           <button
             type="button"
             disabled={props.busy || !project()}
             onClick={() => props.onOpenWizard("change")}
           >
-            {t("manager.orchestration.action.wizard")}
+            {t("manager.orchestration.action.intent-wizard")}
           </button>
           <Show when={Boolean(props.onOpenFolder)}>
             <button
@@ -1109,7 +1122,7 @@ const ProjectHeader: Component<{
             >
               {props.folderBusy
                 ? t("manager.orchestration.action.opening-folder")
-                : t("manager.orchestration.action.open-folder")}
+                : t("manager.orchestration.action.open-project-folder")}
             </button>
           </Show>
           <button
@@ -1131,10 +1144,17 @@ const ProjectHeader: Component<{
               disabled={props.busy}
               onClick={() => {
                 const current = project();
-                if (current) props.onArchive?.(current.id);
+                if (
+                  current &&
+                  confirmManagerAction("manager.orchestration.confirm.archive-project", {
+                    name: current.name,
+                  })
+                ) {
+                  props.onArchive?.(current.id);
+                }
               }}
             >
-              {t("manager.orchestration.action.archive")}
+              {t("manager.orchestration.action.archive-project")}
             </button>
           </Show>
         </div>
@@ -1473,6 +1493,13 @@ const ProjectWizardDialog: Component<{
 
   const completeProject = () => {
     if (!props.project || !props.onComplete || !finalSummary().trim()) return;
+    if (
+      !confirmManagerAction("manager.orchestration.confirm.complete-project", {
+        name: props.project.name,
+      })
+    ) {
+      return;
+    }
     props.onComplete({
       summary: finalSummary(),
       acceptedByUser: acceptedByUser(),
@@ -1514,7 +1541,7 @@ const ProjectWizardDialog: Component<{
               aria-label={t("manager.orchestration.action.cancel")}
               onClick={() => props.onClose()}
             >
-              x
+              ×
             </button>
           </header>
           <div
@@ -2176,7 +2203,7 @@ const CommandFlowView: Component<{
               disabled={disabled() || !startObjective().trim() || !props.onStart}
               onClick={start}
             >
-              {t("manager.orchestration.action.start-orchestration")}
+              {managerStartButtonLabel(dryRun())}
             </button>
           </div>
           <div class="manager-flow-form">
@@ -2212,7 +2239,7 @@ const CommandFlowView: Component<{
               disabled={disabled() || !activeRound() || !props.onReview}
               onClick={review}
             >
-              {t("manager.orchestration.action.record-review")}
+              {managerRoundReviewActionButtonLabel(reviewAction())}
             </button>
           </div>
           <div class="manager-flow-form">
@@ -2289,7 +2316,15 @@ const CommandFlowView: Component<{
             <button
               type="button"
               disabled={disabled() || !finalSummary().trim() || !props.onComplete}
-              onClick={complete}
+              onClick={() => {
+                if (
+                  confirmManagerAction("manager.orchestration.confirm.complete-project", {
+                    name: props.project?.name ?? "",
+                  })
+                ) {
+                  complete();
+                }
+              }}
             >
               {t("manager.orchestration.action.complete-project")}
             </button>
@@ -3517,6 +3552,24 @@ function managerProposedActionTypeLabel(type: ManagerProposedAction["type"]): st
   return t(`manager.orchestration.proposed-action.${type}`);
 }
 
+function managerStartButtonLabel(dryRun: boolean): string {
+  return dryRun
+    ? t("manager.orchestration.action.start-dry-run")
+    : t("manager.orchestration.action.start-real");
+}
+
+function managerRoundReviewActionButtonLabel(action: ManagerRoundReviewRequest["action"]): string {
+  return t(`manager.orchestration.review-action.${action}`);
+}
+
+function confirmManagerAction(
+  key: string,
+  params: Record<string, string | number> = {},
+): boolean {
+  if (typeof window === "undefined") return true;
+  return window.confirm(t(key, params));
+}
+
 function agentRoleNextRequest(
   agent: ManagerAgent | undefined,
   run: ManagerWorkerRun | undefined,
@@ -3700,16 +3753,24 @@ const DecisionRow: Component<{
           disabled={props.busy || !props.onUpdate}
           onClick={() => props.onUpdate?.(props.decision.id, { status: "superseded" })}
         >
-          {t("manager.orchestration.action.supersede")}
+          {t("manager.orchestration.action.supersede-decision")}
         </button>
       </Show>
       <Show when={props.decision.status !== "archived"}>
         <button
           type="button"
           disabled={props.busy || !props.onUpdate}
-          onClick={() => props.onUpdate?.(props.decision.id, { status: "archived" })}
+          onClick={() => {
+            if (
+              confirmManagerAction("manager.orchestration.confirm.archive-decision", {
+                title: props.decision.title,
+              })
+            ) {
+              props.onUpdate?.(props.decision.id, { status: "archived" });
+            }
+          }}
         >
-          {t("manager.orchestration.action.archive")}
+          {t("manager.orchestration.action.archive-decision")}
         </button>
       </Show>
     </div>
@@ -3920,7 +3981,7 @@ const BlockerRow: Component<{
             })
           }
         >
-          {t("manager.orchestration.action.resolve")}
+          {t("manager.orchestration.action.resolve-blocker")}
         </button>
         <button
           type="button"
@@ -3932,7 +3993,7 @@ const BlockerRow: Component<{
             })
           }
         >
-          {t("manager.orchestration.action.dismiss")}
+          {t("manager.orchestration.action.dismiss-blocker")}
         </button>
       </Show>
     </div>
@@ -4123,7 +4184,15 @@ const ArtifactsView: Component<{
                     type="button"
                     class="manager-artifact-action"
                     disabled={props.busy}
-                    onClick={() => props.onUpdate?.(id(), { status: "obsolete" })}
+                    onClick={() => {
+                      if (
+                        confirmManagerAction("manager.orchestration.confirm.obsolete-artifact", {
+                          path: artifact.path,
+                        })
+                      ) {
+                        props.onUpdate?.(id(), { status: "obsolete" });
+                      }
+                    }}
                   >
                     {t("manager.orchestration.action.obsolete")}
                   </button>
@@ -4357,7 +4426,11 @@ const ProtocolView: Component<{
             <button
               type="button"
               disabled={props.busy || !props.onUpdate}
-              onClick={() => props.onUpdate?.({ latestChange: null })}
+              onClick={() => {
+                if (confirmManagerAction("manager.orchestration.confirm.clear-protocol-change")) {
+                  props.onUpdate?.({ latestChange: null });
+                }
+              }}
             >
               {t("manager.orchestration.action.clear-change")}
             </button>
@@ -4468,7 +4541,15 @@ const HygieneView: Component<{
             </button>
             <button
               type="button"
-              onClick={() => props.onCleanupProject?.()}
+              onClick={() => {
+                if (
+                  confirmManagerAction("manager.orchestration.confirm.record-cleanup-blockers", {
+                    count: projectCleanupIssues().length,
+                  })
+                ) {
+                  props.onCleanupProject?.();
+                }
+              }}
               disabled={props.projectCleanupBusy || projectCleanupIssues().length === 0}
             >
               {props.projectCleanupBusy
@@ -4528,7 +4609,15 @@ const HygieneView: Component<{
           </button>
           <button
             type="button"
-            onClick={() => props.onCleanup?.()}
+            onClick={() => {
+              if (
+                confirmManagerAction("manager.orchestration.confirm.safe-cleanup", {
+                  count: cleanupItems().length,
+                })
+              ) {
+                props.onCleanup?.();
+              }
+            }}
             disabled={props.cleanupBusy || cleanupItems().length === 0}
           >
             {props.cleanupBusy
