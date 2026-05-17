@@ -70,8 +70,9 @@ describe("updateLocalSourceConnector", () => {
       "git branch --show-current",
       "git rev-parse HEAD",
       "git status --porcelain --untracked-files=no",
-      "git fetch origin api-ai-assistant",
+      "git fetch origin +refs/heads/api-ai-assistant:refs/remotes/origin/api-ai-assistant",
       "git rev-parse origin/api-ai-assistant",
+      "git branch --show-current",
       "git pull --ff-only origin api-ai-assistant",
       "bun install",
       "git rev-parse HEAD",
@@ -152,8 +153,11 @@ describe("updateLocalSourceConnector", () => {
     });
 
     expect(result.branch).toBe("api-ai-assistant");
-    expect(calls).not.toContain("git branch --show-current");
-    expect(calls).toContain("git fetch origin api-ai-assistant");
+    expect(calls[0]).toBe("git rev-parse HEAD");
+    expect(calls).toContain(
+      "git fetch origin +refs/heads/api-ai-assistant:refs/remotes/origin/api-ai-assistant",
+    );
+    expect(calls).toContain("git switch --track -c api-ai-assistant origin/api-ai-assistant");
     expect(calls).toContain("git pull --ff-only origin api-ai-assistant");
   });
 

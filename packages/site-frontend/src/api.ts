@@ -52,6 +52,7 @@ import type {
   ManagerProjectHygieneCleanupResponse,
   ManagerProjectHygieneReport,
   ManagerProjectListResponse,
+  ManagerProjectOpenFolderResponse,
   ManagerProjectOverviewResponse,
   ManagerProjectResponse,
   ManagerProjectStartRequest,
@@ -372,6 +373,7 @@ export interface SelfServerUpdateResponse {
   started: boolean;
   logPath?: string;
   pid?: number;
+  branch?: string;
   error?: string;
   status?: SelfServerUpdateStatus;
 }
@@ -383,10 +385,32 @@ export interface SelfServerUpdateStatus {
   logPath?: string;
   before?: string;
   after?: string;
+  branch?: string;
   changed?: boolean;
   updateAvailable?: boolean;
   localCommit?: string;
   remoteCommit?: string;
+  error?: string;
+}
+
+export interface SelfBuildVersion {
+  id: string;
+  branch: string;
+  label: string;
+  commit: string;
+  shortCommit: string;
+  version?: string;
+  source: "local" | "remote";
+  current: boolean;
+  updateAvailable: boolean;
+  updatedAt?: string;
+}
+
+export interface SelfBuildVersionListResponse {
+  generatedAt: string;
+  current: DeskRelayBuildInfo;
+  currentBranch?: string;
+  versions: SelfBuildVersion[];
   error?: string;
 }
 
@@ -704,6 +728,11 @@ export const api = {
     request<ManagerProjectResponse>(
       "POST",
       `/api/manager/projects/${encodeURIComponent(id)}/archive`,
+    ),
+  openManagerProjectFolder: (id: string) =>
+    request<ManagerProjectOpenFolderResponse>(
+      "POST",
+      `/api/manager/projects/${encodeURIComponent(id)}/open-folder`,
     ),
   managerProjectRounds: (id: string) =>
     request<ManagerRoundListResponse>(
@@ -1059,14 +1088,16 @@ export const api = {
   selfServerAutostart: () => request<SelfServerAutostartStatus>("GET", "/api/self/autostart"),
   setSelfServerAutostart: (enabled: boolean) =>
     request<SelfServerAutostartStatus>("PUT", "/api/self/autostart", { enabled }),
-  selfUpdate: () => request<SelfServerUpdateResponse>("POST", "/api/self/update"),
+  selfBuildVersions: () => request<SelfBuildVersionListResponse>("GET", "/api/self/builds"),
+  selfUpdate: (input?: { branch?: string }) =>
+    request<SelfServerUpdateResponse>("POST", "/api/self/update", input),
   selfUpdateStatus: () => request<SelfServerUpdateStatus>("GET", "/api/self/update/status"),
   installReports: () =>
     request<{ reports: InstallReportRecord[] }>("GET", "/api/self/install-reports?limit=5"),
   deviceUpdateQueue: () =>
     request<{ entries: DeviceUpdateQueueEntry[] }>("GET", "/api/devices/update-queue"),
-  updateDevice: (id: string) =>
-    request<DeviceUpdateResponse>("POST", `/api/devices/${id}/system/update`),
+  updateDevice: (id: string, input?: { branch?: string }) =>
+    request<DeviceUpdateResponse>("POST", `/api/devices/${id}/system/update`, input),
   registerDevice: (daemonUrl: string, label?: string, authToken?: string) =>
     request<Device>("POST", "/api/devices", {
       daemonUrl,

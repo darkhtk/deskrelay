@@ -61,6 +61,7 @@ function Write-UpdateStatus {
     [string]$StartedAt,
     [string]$CompletedAt = "",
     [string]$LogPath = "",
+    [string]$Branch = "",
     [string]$Before = "",
     [string]$After = "",
     [bool]$Changed = $false,
@@ -80,6 +81,7 @@ function Write-UpdateStatus {
   if ($CompletedAt) { $payload.completedAt = $CompletedAt }
   if ($LogPath) { $payload.logPath = $LogPath }
   if ($State -eq "running") { $payload.pid = $PID }
+  if ($Branch) { $payload.branch = $Branch }
   if ($Before) { $payload.before = $Before }
   if ($After) { $payload.after = $After }
   if ($State -ne "running") { $payload.changed = $Changed }
@@ -105,7 +107,7 @@ if ($LogPath) {
 }
 
 try {
-  Write-UpdateStatus -State "running" -StatusPath $StatusPath -StartedAt $startedAt -LogPath $LogPath
+  Write-UpdateStatus -State "running" -StatusPath $StatusPath -StartedAt $startedAt -LogPath $LogPath -Branch $Branch
 
   Set-Location -LiteralPath $repo
   Write-Host "DeskRelay self server update"
@@ -116,7 +118,7 @@ try {
   $before = (& git rev-parse --short HEAD 2>$null)
   if ($before) { $before = $before.Trim() }
 
-  & git fetch origin $Branch
+  & git fetch origin "+refs/heads/$($Branch):refs/remotes/origin/$($Branch)"
   if ($LASTEXITCODE -ne 0) {
     throw "git fetch failed with exit code $LASTEXITCODE"
   }
@@ -124,6 +126,19 @@ try {
   $dirty = (& git status --porcelain --untracked-files=no)
   if ($dirty) {
     throw "Cannot update while tracked files have local changes. Commit or stash them, then retry."
+  }
+
+  $localBranch = (& git rev-parse --verify "refs/heads/$Branch" 2>$null)
+  if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($localBranch)) {
+    & git switch $Branch
+    if ($LASTEXITCODE -ne 0) {
+      throw "git switch $Branch failed with exit code $LASTEXITCODE"
+    }
+  } else {
+    & git switch --track -c $Branch "origin/$Branch"
+    if ($LASTEXITCODE -ne 0) {
+      throw "git switch --track $Branch failed with exit code $LASTEXITCODE"
+    }
   }
 
   & git pull --ff-only origin $Branch
@@ -167,6 +182,7 @@ try {
     -StartedAt $startedAt `
     -CompletedAt (Get-Date).ToUniversalTime().ToString("o") `
     -LogPath $LogPath `
+    -Branch $Branch `
     -Before $before `
     -After $after `
     -Changed ($before -ne $after)
@@ -177,6 +193,7 @@ try {
     -StartedAt $startedAt `
     -CompletedAt (Get-Date).ToUniversalTime().ToString("o") `
     -LogPath $LogPath `
+    -Branch $Branch `
     -Before $before `
     -After $after `
     -Changed ($before -ne $after) `

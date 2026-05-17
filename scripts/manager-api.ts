@@ -46,8 +46,19 @@ function baseUrl(): string {
 }
 
 function endpoint(path: string): string {
-  if (/^https?:\/\//i.test(path)) return path;
-  return `${baseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  const normalizedPath = normalizeApiPath(path);
+  if (/^https?:\/\//i.test(normalizedPath)) return normalizedPath;
+  return `${baseUrl()}${normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`}`;
+}
+
+function normalizeApiPath(path: string): string {
+  const trimmed = path.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const slashPath = trimmed.replace(/\\/g, "/");
+  const apiIndex = slashPath.indexOf("/api/");
+  if (apiIndex > 0) return slashPath.slice(apiIndex);
+  if (slashPath.startsWith("api/")) return `/${slashPath}`;
+  return trimmed;
 }
 
 function parseOptions(raw: string[]): Record<string, string | true> {

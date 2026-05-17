@@ -729,6 +729,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     let streamSawRun = false;
     let chatAccepted = false;
     let capturedSessionId: string | null = null;
+    let visibleAssistantReplySeen = false;
     const resumeSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
 
     const streamPromise = (async () => {
@@ -752,9 +753,18 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           if (envelope.kind === "claude.event") {
             const transcriptEvent = claudeEventForTranscript(envelope.content);
             capturedSessionId = sessionIdFromClaudeEvent(transcriptEvent) ?? capturedSessionId;
-            if (transcriptEvent) appendEvent(transcriptEvent);
+            if (transcriptEvent) {
+              if (isVisibleManagerAssistantReply(transcriptEvent)) {
+                visibleAssistantReplySeen = true;
+              }
+              appendEvent(transcriptEvent);
+            }
           } else if (envelope.kind === "run.error") {
             const message = runErrorMessage(envelope.content);
+            if (!visibleAssistantReplySeen) {
+              appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 실행 실패: ${message}`));
+              visibleAssistantReplySeen = true;
+            }
             setError(message);
             setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
             abort.abort();
@@ -764,6 +774,14 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             abort.abort();
             return;
           } else if (envelope.kind === "run.finished") {
+            if (!visibleAssistantReplySeen) {
+              appendEvent(
+                managerAssistantSyntheticEvent(
+                  "관리자 Assistant가 최종 답변 없이 종료되었습니다. 작업 상태를 확정할 수 없으므로 같은 질문을 다시 보내 재시도하세요.",
+                ),
+              );
+              visibleAssistantReplySeen = true;
+            }
             abort.abort();
             return;
           }
@@ -771,6 +789,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
           const message = err instanceof Error ? err.message : String(err);
+          if (!visibleAssistantReplySeen) {
+            appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 스트림 오류: ${message}`));
+            visibleAssistantReplySeen = true;
+          }
           setError(message);
           setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
         }
@@ -804,6 +826,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     } catch (err) {
       if (!streamSawRun) {
         const message = err instanceof Error ? err.message : String(err);
+        if (!visibleAssistantReplySeen) {
+          appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 요청 실패: ${message}`));
+          visibleAssistantReplySeen = true;
+        }
         setError(message);
         setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
       } else {
@@ -1475,7 +1501,43 @@ async function waitForManagerStreamClose(
   ]);
   if (settled) return;
   abort.abort();
-  await streamPromise.catch(() => undefined);
+  await Promise.race([
+    streamPromise.catch(() => undefined),
+    new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
+  ]);
+}
+
+function managerAssistantSyntheticEvent(text: string): ClaudeStreamEvent {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
+function isVisibleManagerAssistantReply(event: ClaudeStreamEvent): boolean {
+  if (event.type !== "assistant") return false;
+  const text = managerAssistantEventText(event).trim();
+  return text.length > 0 && text.toLowerCase() !== "no response requested.";
+}
+
+function managerAssistantEventText(event: ClaudeStreamEvent): string {
+  const message = event.message;
+  if (!message || typeof message !== "object") return "";
+  return managerAssistantContentText((message as { content?: unknown }).content);
+}
+
+function managerAssistantContentText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value))
+    return value.map(managerAssistantContentText).filter(Boolean).join("\n");
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  if (typeof record.text === "string") return record.text;
+  if (record.content !== undefined) return managerAssistantContentText(record.content);
+  return "";
 }
 
 function payloadString(payload: Record<string, unknown>, key: string): string | undefined {

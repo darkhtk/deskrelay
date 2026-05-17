@@ -20,6 +20,7 @@ import {
   type DeviceUpdateResponse,
   type ManagerWorkerCheckResult,
   type ManagerWorkerProfile,
+  type SelfBuildVersion,
   type SelfServerUpdateStatus,
   api,
   clearBaseUrl,
@@ -1194,6 +1195,10 @@ const GeneralSettings: Component<{
     () => props.devicesRevision ?? 0,
     () => api.selfUpdateStatus().catch(() => null),
   );
+  const [buildVersions, { refetch: refetchBuildVersions }] = createResource(
+    () => props.devicesRevision ?? 0,
+    () => api.selfBuildVersions().catch(() => null),
+  );
   const [deviceUpdateQueue, { refetch: refetchDeviceUpdateQueue }] = createResource(
     () => props.devicesRevision ?? 0,
     () => api.deviceUpdateQueue().catch(() => ({ entries: [] as DeviceUpdateQueueEntry[] })),
@@ -1236,23 +1241,29 @@ const GeneralSettings: Component<{
     void refetchDevices();
     void refetchHealth();
     void refetchServerUpdateStatus();
+    void refetchBuildVersions();
     void refetchDeviceUpdateQueue();
     void refetchDeviceBuildSnapshots();
   }
 
-  async function updateServer(): Promise<void> {
+  async function updateServer(branch?: string): Promise<void> {
     setUpdating("server");
     setLastUpdateDeviceFailures(0);
     setLastUpdateDeviceRestarts(0);
     setLastUpdateDevicePending(0);
     setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
-    setOverallUpdate({ phase: "running", message: "서버 업데이트 시작 요청 중" });
+    setOverallUpdate({
+      phase: "running",
+      message: branch ? `${branch} 빌드 실행 요청 중` : "서버 업데이트 시작 요청 중",
+    });
     try {
-      const result = await api.selfUpdate();
+      const result = await api.selfUpdate(branch ? { branch } : undefined);
       setOverallUpdate({
         phase: result.started ? "running" : "failed",
         message: result.started
-          ? `서버 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
+          ? `${branch ? `${branch} 빌드` : "서버 업데이트"} 진행 중${
+              result.logPath ? ` · 로그: ${result.logPath}` : ""
+            }`
           : `서버 업데이트 시작 실패: ${result.error ?? "알 수 없는 오류"}`,
       });
       void refetchServerUpdateStatus();
@@ -1267,14 +1278,16 @@ const GeneralSettings: Component<{
     }
   }
 
-  async function updateConnector(device: Device): Promise<UpdateRunState> {
+  async function updateConnector(device: Device, branch?: string): Promise<UpdateRunState> {
     setUpdating(device.id);
     setDeviceUpdateState(device.id, {
       phase: "running",
-      message: `${deviceDisplayName(device)} connector 업데이트 중`,
+      message: branch
+        ? `${deviceDisplayName(device)} connector ${branch} 빌드 실행 중`
+        : `${deviceDisplayName(device)} connector 업데이트 중`,
     });
     try {
-      const result = await api.updateDevice(device.id);
+      const result = await api.updateDevice(device.id, branch ? { branch } : undefined);
       const state = {
         phase: connectorUpdatePhase(result),
         message: connectorUpdateMessage(result),
@@ -1315,16 +1328,18 @@ const GeneralSettings: Component<{
     setDeviceUpdateStates((current) => ({ ...current, [deviceId]: state }));
   }
 
-  async function updateAll(): Promise<void> {
+  async function updateAll(branch?: string): Promise<void> {
     const list = devices() ?? [];
     const connectorTargets = list.filter((device) =>
-      connectorNeedsUpdate(
-        device,
-        deviceBuildSnapshot(device.id),
-        deviceUpdateQueueEntry(device.id),
-      ),
+      branch
+        ? canRunConnectorBuild(device)
+        : connectorNeedsUpdate(
+            device,
+            deviceBuildSnapshot(device.id),
+            deviceUpdateQueueEntry(device.id),
+          ),
     );
-    const shouldUpdateServer = canUpdateServer();
+    const shouldUpdateServer = branch ? canRunServerBuild() : canUpdateServer();
     if (!shouldUpdateServer && connectorTargets.length === 0) {
       setOverallUpdate({ phase: "idle", message: "업데이트 대상 없음" });
       return;
@@ -1333,14 +1348,17 @@ const GeneralSettings: Component<{
     setLastUpdateDeviceFailures(0);
     setLastUpdateDeviceRestarts(0);
     setLastUpdateDevicePending(0);
-    setOverallUpdate({ phase: "running", message: "전체 업데이트 진행 중" });
+    setOverallUpdate({
+      phase: "running",
+      message: branch ? `${branch} 빌드 실행 중` : "전체 업데이트 진행 중",
+    });
     setDeviceUpdateStates(
       Object.fromEntries(
         connectorTargets.map((device) => [
           device.id,
           {
             phase: "queued",
-            message: "대기 중",
+            message: branch ? `${branch} 빌드 대기 중` : "대기 중",
           } satisfies UpdateRunState,
         ]),
       ),
@@ -1350,7 +1368,7 @@ const GeneralSettings: Component<{
     let restartRequired = 0;
     let pending = 0;
     for (const device of connectorTargets) {
-      const result = await updateConnector(device);
+      const result = await updateConnector(device, branch);
       if (result?.phase === "failed") failures += 1;
       if (result?.phase === "restart_required") restartRequired += 1;
       if (result?.phase === "pending") pending += 1;
@@ -1387,23 +1405,35 @@ const GeneralSettings: Component<{
       phase: "running",
       message:
         connectorTargets.length === 0
-          ? "서버 업데이트 요청 중"
+          ? branch
+            ? `${branch} 서버 빌드 실행 요청 중`
+            : "서버 업데이트 요청 중"
           : failures > 0
-            ? `connector 업데이트 실패 ${failures}건 · 서버 업데이트 요청 중`
+            ? `connector 업데이트 실패 ${failures}건 · ${
+                branch ? `${branch} 서버 빌드 실행 요청 중` : "서버 업데이트 요청 중"
+              }`
             : restartRequired > 0
-              ? `connector 재시작 필요 ${restartRequired}건 · 서버 업데이트 요청 중`
-              : "connector 업데이트 완료 · 서버 업데이트 요청 중",
+              ? `connector 재시작 필요 ${restartRequired}건 · ${
+                  branch ? `${branch} 서버 빌드 실행 요청 중` : "서버 업데이트 요청 중"
+                }`
+              : branch
+                ? `connector 업데이트 완료 · ${branch} 서버 빌드 실행 요청 중`
+                : "connector 업데이트 완료 · 서버 업데이트 요청 중",
     });
     setUpdating("all");
     setServerUpdateBaseline(serverUpdateStatus()?.startedAt ?? null);
     try {
-      const result = await api.selfUpdate();
+      const result = await api.selfUpdate(branch ? { branch } : undefined);
       setOverallUpdate({
         phase: result.started ? "running" : "failed",
         message: result.started
           ? failures > 0
-            ? `일부 디바이스 실패 · 서버 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
-            : `전체 업데이트 진행 중${result.logPath ? ` · 로그: ${result.logPath}` : ""}`
+            ? `일부 디바이스 실패 · ${branch ? `${branch} 서버 빌드` : "서버 업데이트"} 진행 중${
+                result.logPath ? ` · 로그: ${result.logPath}` : ""
+              }`
+            : `${branch ? `${branch} 빌드` : "전체 업데이트"} 진행 중${
+                result.logPath ? ` · 로그: ${result.logPath}` : ""
+              }`
           : `서버 업데이트 시작 실패: ${result.error ?? "알 수 없는 오류"}`,
       });
       void refetchServerUpdateStatus();
@@ -1499,6 +1529,9 @@ const GeneralSettings: Component<{
 
   const serverUpdateIsRunning = () => serverUpdateStatus()?.state === "running";
 
+  const canRunServerBuild = () =>
+    updating() === null && !serverUpdateStatus.loading && !serverUpdateIsRunning();
+
   const canUpdateServer = () =>
     updating() === null &&
     !serverUpdateStatus.loading &&
@@ -1514,6 +1547,13 @@ const GeneralSettings: Component<{
     if (connectorRequiresManualRegistration(queueEntry)) return false;
     if (device.connectionState === "offline" || snapshot?.error) return Boolean(health()?.build);
     return sameBuild(health()?.build, snapshot?.build) === false;
+  };
+
+  const canRunConnectorBuild = (device: Device): boolean => {
+    const queueEntry = deviceUpdateQueueEntry(device.id);
+    if (isActiveDeviceUpdateQueue(queueEntry)) return false;
+    if (connectorRequiresManualRegistration(queueEntry)) return false;
+    return true;
   };
 
   const canUpdateConnector = (device: Device, snapshot: DeviceBuildSnapshot | null): boolean =>
@@ -1539,6 +1579,24 @@ const GeneralSettings: Component<{
     !deviceUpdateQueue.loading &&
     !serverUpdateIsRunning() &&
     (canUpdateServer() || canUpdateAnyConnector());
+
+  const canRunBuildVersion = (version: SelfBuildVersion) =>
+    Boolean(version.branch) &&
+    updating() === null &&
+    !buildVersions.loading &&
+    !serverUpdateStatus.loading &&
+    !deviceUpdateQueue.loading &&
+    !serverUpdateIsRunning();
+
+  const buildVersionSourceText = (version: SelfBuildVersion) => {
+    if (version.current) return "현재 실행 중";
+    return version.source === "remote" ? "원격 브랜치" : "로컬 브랜치";
+  };
+
+  const buildVersionRunText = (version: SelfBuildVersion) => {
+    if (updating() !== null || serverUpdateIsRunning()) return "진행 중";
+    return canRunBuildVersion(version) ? "실행" : "대기";
+  };
 
   const overallPhase = () =>
     isTrackedServerUpdateStatus(serverUpdateStatus(), serverUpdateBaseline()) &&
@@ -1581,6 +1639,55 @@ const GeneralSettings: Component<{
               : "업데이트 없음"}
         </button>
       </div>
+
+      <section class="settings-build-version-panel" aria-label="빌드 버전 실행">
+        <div class="settings-update-target-head">
+          <span>빌드 버전</span>
+          <button
+            type="button"
+            class="secondary-button"
+            disabled={buildVersions.loading}
+            onClick={() => void refetchBuildVersions()}
+          >
+            새로고침
+          </button>
+        </div>
+
+        <div class="settings-build-version-list">
+          <For each={buildVersions()?.versions ?? []}>
+            {(version) => (
+              <button
+                type="button"
+                class="settings-build-version-row"
+                classList={{ "is-current": version.current }}
+                disabled={!canRunBuildVersion(version)}
+                onClick={() => void updateAll(version.branch)}
+                title={`${version.branch} ${version.shortCommit}`}
+              >
+                <span class="settings-build-version-main">
+                  <strong>{version.label}</strong>
+                  <span>{buildVersionSourceText(version)}</span>
+                </span>
+                <span class="settings-build-version-meta">
+                  <Show when={version.version}>{(value) => <span>v{value()}</span>}</Show>
+                  <span>{version.shortCommit}</span>
+                  <span>{version.updateAvailable ? "전환 가능" : "동일 커밋"}</span>
+                </span>
+                <span class="settings-build-version-action">{buildVersionRunText(version)}</span>
+              </button>
+            )}
+          </For>
+          <Show when={buildVersions.loading}>
+            <p class="settings-card-help">빌드 버전 확인 중</p>
+          </Show>
+          <Show when={!buildVersions.loading && (buildVersions()?.versions ?? []).length === 0}>
+            <p class="settings-card-help">실행 가능한 빌드 버전을 찾지 못했습니다.</p>
+          </Show>
+          <Show when={buildVersions()?.error}>
+            {(error) => <p class="settings-card-help">빌드 버전 확인 실패: {error()}</p>}
+          </Show>
+        </div>
+      </section>
 
       <div class="settings-update-target-grid">
         <section class="settings-update-target settings-update-server-target">

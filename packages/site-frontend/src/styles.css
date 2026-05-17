@@ -4914,6 +4914,79 @@ dialog.approval-modal-root,
   font-size: 12px;
   line-height: 1.35;
 }
+.settings-build-version-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.settings-build-version-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-build-version-row {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 12px;
+  grid-template-columns: minmax(140px, 1fr) minmax(150px, 1fr) auto;
+  min-width: 0;
+  padding: 10px 12px;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.settings-build-version-row:hover:not(:disabled),
+.settings-build-version-row:focus-visible {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.settings-build-version-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.settings-build-version-row.is-current {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
+}
+.settings-build-version-main,
+.settings-build-version-meta {
+  display: flex;
+  min-width: 0;
+}
+.settings-build-version-main {
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-build-version-main strong {
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-build-version-main span,
+.settings-build-version-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.settings-build-version-meta {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-build-version-action {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  justify-self: end;
+  white-space: nowrap;
+}
 .settings-update-device-list {
   display: flex;
   flex-direction: column;
@@ -4975,6 +5048,13 @@ dialog.approval-modal-root,
   .settings-update-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .settings-build-version-row {
+    align-items: flex-start;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-build-version-action {
+    justify-self: start;
   }
 }
 .settings-worker-section {
@@ -6018,6 +6098,12 @@ dialog.approval-modal-root,
 .manager-project-create button:disabled {
   color: var(--text-faint);
   cursor: default;
+}
+.manager-project-open-error {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 0;
 }
 .manager-project-summary {
   align-items: center;

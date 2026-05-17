@@ -71,6 +71,8 @@ interface ManagerOrchestrationPanelProps {
   projectOverview?: ManagerProjectOverviewResponse | null | undefined;
   projectLoading?: boolean | undefined;
   projectBusy?: boolean | undefined;
+  projectFolderBusy?: boolean | undefined;
+  projectFolderError?: string | null | undefined;
   flowBusy?: boolean | undefined;
   decisions?: ManagerDecision[] | undefined;
   archivedDecisions?: ManagerDecision[] | undefined;
@@ -120,6 +122,7 @@ interface ManagerOrchestrationPanelProps {
   onSelectProject?: ((projectId: string | null) => void) | undefined;
   onCreateProject?: ((input: ManagerProjectCreateRequest) => void) | undefined;
   onArchiveProject?: ((projectId: string) => void) | undefined;
+  onOpenProjectFolder?: ((projectId: string) => void) | undefined;
   onCreateDecision?: ((input: ManagerDecisionCreateRequest) => void) | undefined;
   onUpdateDecision?:
     | ((decisionId: string, input: ManagerDecisionUpdateRequest) => void)
@@ -476,10 +479,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               nextAction={effectiveNextAction()}
               loading={props.projectLoading}
               busy={props.projectBusy}
+              folderBusy={props.projectFolderBusy}
+              folderError={props.projectFolderError}
               onRefresh={props.onRefreshProjects}
               onSelect={props.onSelectProject}
               onOpenWizard={openProjectWizard}
               onArchive={props.onArchiveProject}
+              onOpenFolder={props.onOpenProjectFolder}
               advanced={adminDetailOpen()}
             />
             <div class="manager-workboard-mode">
@@ -1036,9 +1042,12 @@ const ProjectHeader: Component<{
   nextAction?: ManagerProjectOverviewAction | null | undefined;
   loading?: boolean | undefined;
   busy?: boolean | undefined;
+  folderBusy?: boolean | undefined;
+  folderError?: string | null | undefined;
   onRefresh?: (() => void) | undefined;
   onSelect?: ((projectId: string | null) => void) | undefined;
   onOpenWizard: (mode: ProjectWizardMode) => void;
+  onOpenFolder?: ((projectId: string) => void) | undefined;
   onArchive?: ((projectId: string) => void) | undefined;
   advanced?: boolean | undefined;
 }> = (props) => {
@@ -1089,6 +1098,20 @@ const ProjectHeader: Component<{
           >
             {t("manager.orchestration.action.wizard")}
           </button>
+          <Show when={Boolean(props.onOpenFolder)}>
+            <button
+              type="button"
+              disabled={props.busy || props.folderBusy || !project()}
+              onClick={() => {
+                const current = project();
+                if (current) props.onOpenFolder?.(current.id);
+              }}
+            >
+              {props.folderBusy
+                ? t("manager.orchestration.action.opening-folder")
+                : t("manager.orchestration.action.open-folder")}
+            </button>
+          </Show>
           <button
             type="button"
             disabled={props.busy || props.loading}
@@ -1115,6 +1138,13 @@ const ProjectHeader: Component<{
             </button>
           </Show>
         </div>
+        <Show when={props.folderError}>
+          {(error) => (
+            <p class="manager-project-open-error" role="alert">
+              {t("manager.orchestration.project.open-folder-error", { error: error() })}
+            </p>
+          )}
+        </Show>
         <Show
           when={project()}
           fallback={

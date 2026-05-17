@@ -376,6 +376,69 @@ function sessionIdFromClaudeEvent(event: ClaudeStreamEvent): string | null {
   return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
 }
 
+function managerAssistantFallbackEvent(lastToolResult: string): ClaudeStreamEvent {
+  const detail = lastToolResult ? `\n\n마지막 도구 결과 요약: ${lastToolResult}` : "";
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: `관리자 Assistant가 도구 실행 후 최종 답변을 남기지 않고 종료되었습니다. 이 실행은 실패로 처리해야 합니다. 상태 조회나 작업 지시는 같은 질문을 다시 보내 재시도하세요.${detail}`,
+        },
+      ],
+    },
+  };
+}
+
+function managerAssistantVisibleText(event: ClaudeStreamEvent): string {
+  if (event.type !== "assistant") return "";
+  return managerAssistantMessageText(event);
+}
+
+function managerAssistantToolResultSummary(event: ClaudeStreamEvent): string {
+  if (event.type !== "user") return "";
+  const content = managerAssistantMessageContent(event);
+  if (!Array.isArray(content)) return "";
+  const text = content
+    .filter(
+      (block): block is Record<string, unknown> => Boolean(block) && typeof block === "object",
+    )
+    .filter((block) => block.type === "tool_result")
+    .map((block) => managerAssistantContentText(block.content))
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 600 ? `${text.slice(0, 600)}...` : text;
+}
+
+function isManagerAssistantNoResponseText(text: string): boolean {
+  return text.trim().toLowerCase() === "no response requested.";
+}
+
+function managerAssistantMessageText(event: ClaudeStreamEvent): string {
+  const content = managerAssistantMessageContent(event);
+  return managerAssistantContentText(content).trim();
+}
+
+function managerAssistantMessageContent(event: ClaudeStreamEvent): unknown {
+  const message = event.message;
+  if (!message || typeof message !== "object") return undefined;
+  return (message as { content?: unknown }).content;
+}
+
+function managerAssistantContentText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value))
+    return value.map(managerAssistantContentText).filter(Boolean).join("\n");
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  if (typeof record.text === "string") return record.text;
+  if (record.content !== undefined) return managerAssistantContentText(record.content);
+  return "";
+}
+
 function managerSystemPrompt(params: ChatParams): string {
   const lines = [
     "DeskRelay manager mode is active for this turn.",
@@ -383,6 +446,8 @@ function managerSystemPrompt(params: ChatParams): string {
     "You may call DeskRelay manager APIs with DESKRELAY_MANAGER_API_BASE and DESKRELAY_SITE_TOKEN from the process environment.",
     "Manager filesystem operations are not limited by the user's configured workspace roots. For DeskRelay filesystem APIs, pass workspaceScope=unrestricted for reads and writes you perform as the manager.",
     "When the browser supplies current UI context, treat it as navigation state only; inspect API data before making changes.",
+    "Never answer only `No response requested.` in manager mode. Every user message requires a visible Korean answer, progress report, or failure report.",
+    "If a tool or API call fails, report the failure to the user with the failing layer and the smallest safe next step before ending the turn.",
   ];
   lines.push(`Manager workspace scope: ${params.managerWorkspaceScope || "unrestricted"}`);
   const context = managerBrowserContextLines(params.managerBrowserContext);
@@ -444,6 +509,8 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
   let capturedSessionId: string | null = null;
   let firstClaudeEventSeen = false;
   let firstEventWatchdogTriggered = false;
+  let managerAssistantVisibleReplySeen = false;
+  let managerAssistantLastToolResult = "";
   const firstEventTimeoutMs = chatFirstEventTimeoutMs(params);
   const firstEventWatchdog = setTimeout(() => {
     if (firstClaudeEventSeen || abort.signal.aborted) return;
@@ -502,6 +569,14 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
         firstClaudeEventSeen = true;
         clearTimeout(firstEventWatchdog);
         capturedSessionId = sessionIdFromClaudeEvent(event) ?? capturedSessionId;
+        if (managerMode) {
+          const assistantText = managerAssistantVisibleText(event);
+          if (assistantText && !isManagerAssistantNoResponseText(assistantText)) {
+            managerAssistantVisibleReplySeen = true;
+          }
+          managerAssistantLastToolResult =
+            managerAssistantToolResultSummary(event) || managerAssistantLastToolResult;
+        }
         ctx.publish({ spaceId, kind: "claude.event", content: event });
       },
       onStderrLine: (line) => {
@@ -518,6 +593,13 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
       );
     }
     if (capturedSessionId) sessionByConversation.set(item.conversationKey, capturedSessionId);
+    if (managerMode && !managerAssistantVisibleReplySeen && !abort.signal.aborted) {
+      ctx.publish({
+        spaceId,
+        kind: "claude.event",
+        content: managerAssistantFallbackEvent(managerAssistantLastToolResult),
+      });
+    }
     item.status = abort.signal.aborted ? "cancelled" : "done";
     publishChatQueueSnapshot(ctx, item);
     ctx.publish({

@@ -237,6 +237,42 @@ describe("remote-claude behavior chat request", () => {
     expect(observed.workspaceScope).toBe("unrestricted");
   });
 
+  test("manager mode emits a visible fallback when Claude ends after tool output", async () => {
+    const { ctx, handlers, events } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const chat = handlers.get("chat");
+    if (!chat) throw new Error("chat handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-manager-tool-only-"));
+    tempDirs.push(cwd);
+    const fixture = fileURLToPath(
+      new URL("./fixtures/fake-claude-manager-tool-only.ts", import.meta.url),
+    );
+
+    await chat({
+      cwd,
+      message: "status",
+      runId: "manager_tool_only",
+      managerMode: true,
+      command: ["bun", fixture],
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) => event.kind === "run.finished" && event.spaceId?.endsWith(":manager_tool_only"),
+      ),
+    );
+
+    const fallback = events.find(
+      (event) =>
+        event.kind === "claude.event" &&
+        event.spaceId?.endsWith(":manager_tool_only") &&
+        JSON.stringify(event.content).includes("최종 답변을 남기지 않고 종료"),
+    )?.content as { message?: { content?: Array<{ text?: string }> } } | undefined;
+    expect(fallback?.message?.content?.[0]?.text).toContain("HTTP 404");
+  });
+
   test("interrupting the active run cancels queued follow-ups", async () => {
     const { ctx, handlers, events } = makeCtx();
     await behaviorDef.start(ctx);

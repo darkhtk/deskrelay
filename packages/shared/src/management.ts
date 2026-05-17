@@ -622,6 +622,15 @@ export interface ManagerProjectResponse {
   project: ManagerProject;
 }
 
+export interface ManagerProjectOpenFolderResponse {
+  generatedAt: string;
+  projectId: string;
+  cwd: string;
+  command: string;
+  args: string[];
+  dryRun?: boolean;
+}
+
 export interface ManagerProjectCharterUpdateRequest {
   goal?: string;
   scope?: string;

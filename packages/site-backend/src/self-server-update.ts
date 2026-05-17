@@ -14,6 +14,7 @@ export interface SelfServerUpdateStatus {
   completedAt?: string;
   logPath?: string;
   pid?: number;
+  branch?: string;
   before?: string;
   after?: string;
   changed?: boolean;
@@ -28,12 +29,13 @@ export interface SelfServerUpdateStart {
   started: boolean;
   logPath?: string;
   pid?: number;
+  branch?: string;
   error?: string;
   status?: SelfServerUpdateStatus;
 }
 
 export interface SelfServerUpdater {
-  update(): Promise<SelfServerUpdateStart>;
+  update(input?: { branch?: string }): Promise<SelfServerUpdateStart>;
   status(): Promise<SelfServerUpdateStatus>;
 }
 
@@ -88,7 +90,7 @@ export function createPowerShellSelfServerUpdater(
       });
     },
 
-    async update() {
+    async update(input = {}) {
       if (process.platform !== "win32") {
         return {
           supported: false,
@@ -112,6 +114,7 @@ export function createPowerShellSelfServerUpdater(
         };
       }
 
+      const updateBranch = normalizeUpdateBranch(input.branch ?? branch);
       const scriptPath = join(options.repoRoot, "scripts", "self-pc-server-update.ps1");
       if (!existsSync(scriptPath)) {
         return {
@@ -133,6 +136,7 @@ export function createPowerShellSelfServerUpdater(
         state: "running",
         startedAt: now().toISOString(),
         logPath,
+        branch: updateBranch,
       };
       await writeStatus(statusPath, status);
       await writeFile(
@@ -141,7 +145,7 @@ export function createPowerShellSelfServerUpdater(
           scriptPath,
           root: options.root,
           repoRoot: options.repoRoot,
-          branch,
+          branch: updateBranch,
           logPath,
           statusPath,
           pidPath,
@@ -150,13 +154,15 @@ export function createPowerShellSelfServerUpdater(
       );
       try {
         const restartLogPath = join(logDir, "self-server-restart.log");
-        const entry = JSON.stringify({
+        const entry = `${JSON.stringify({
           ts: new Date().toISOString(),
           event: "update-requested",
           pid: process.pid,
-        }) + "\n";
+        })}\n`;
         await appendFile(restartLogPath, entry, "utf8");
-      } catch { /* never block update on audit failure */ }
+      } catch {
+        /* never block update on audit failure */
+      }
       let child: ChildProcess;
       try {
         child = spawn(
@@ -208,6 +214,7 @@ export function createPowerShellSelfServerUpdater(
         logPath,
         status: runningStatus,
         ...(updaterPid ? { pid: updaterPid } : {}),
+        branch: updateBranch,
       };
     },
   };
@@ -268,6 +275,25 @@ async function readRemoteCommit(
 function normalizeCommit(value: string): string | null {
   const commit = value.trim();
   return /^[0-9a-f]{40}$/i.test(commit) ? commit.toLowerCase() : null;
+}
+
+function normalizeUpdateBranch(value: string): string {
+  const updateBranch = value.trim();
+  if (
+    !updateBranch ||
+    updateBranch.length > 200 ||
+    updateBranch.startsWith("-") ||
+    updateBranch.startsWith("/") ||
+    updateBranch.endsWith("/") ||
+    updateBranch.endsWith(".") ||
+    updateBranch.includes("..") ||
+    updateBranch.includes("@{") ||
+    updateBranch.includes("//") ||
+    !/^[A-Za-z0-9._/-]+$/.test(updateBranch)
+  ) {
+    throw new Error(`Invalid update branch: ${value}`);
+  }
+  return updateBranch;
 }
 
 async function runGitCommand(
@@ -459,6 +485,7 @@ async function readStatus(path: string): Promise<SelfServerUpdateStatus> {
         ...(typeof parsed.completedAt === "string" ? { completedAt: parsed.completedAt } : {}),
         ...(typeof parsed.logPath === "string" ? { logPath: parsed.logPath } : {}),
         ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
+        ...(typeof parsed.branch === "string" ? { branch: parsed.branch } : {}),
         ...(typeof parsed.before === "string" ? { before: parsed.before } : {}),
         ...(typeof parsed.after === "string" ? { after: parsed.after } : {}),
         ...(typeof parsed.changed === "boolean" ? { changed: parsed.changed } : {}),

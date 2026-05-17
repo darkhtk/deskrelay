@@ -148,6 +148,35 @@ describe("manager-api helper", () => {
     ]);
   });
 
+  test("recovers API paths converted by Git Bash on Windows", async () => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return Response.json({ path: new URL(req.url).pathname });
+      },
+    });
+
+    const result = await runManagerApi(
+      [
+        "batch-get",
+        "summary=C:/Program Files/Git/api/manager/system/summary",
+        "workers=C:\\Program Files\\Git\\api\\manager\\workers",
+      ],
+      { DESKRELAY_MANAGER_API_BASE: server.url.origin },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      ok?: boolean;
+      results?: Array<{ id?: string; ok?: boolean; data?: { path?: string } }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.results?.map((entry) => entry.data?.path)).toEqual([
+      "/api/manager/system/summary",
+      "/api/manager/workers",
+    ]);
+  });
+
   test("batch accepts over-escaped inline JSON from PowerShell copy-paste", async () => {
     server = Bun.serve({
       port: 0,

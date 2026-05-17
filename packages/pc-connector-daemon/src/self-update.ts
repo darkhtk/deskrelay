@@ -81,11 +81,32 @@ export async function updateLocalSourceConnector(
   }
   addUpdateStep(steps, "working-tree", "working tree", "ok", "no tracked local changes");
 
-  await runner("git", ["fetch", "origin", branch], { cwd: repoRoot, timeoutMs: UPDATE_TIMEOUT_MS });
+  await runner("git", ["fetch", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`], {
+    cwd: repoRoot,
+    timeoutMs: UPDATE_TIMEOUT_MS,
+  });
   addUpdateStep(steps, "git-fetch", "git fetch", "ok", `fetched origin/${branch}`);
   const remoteCommit = await gitText(runner, repoRoot, ["rev-parse", `origin/${branch}`]);
   if (!remoteCommit) {
     throw new Error(`Could not resolve origin/${branch}.`);
+  }
+
+  const currentBranch = await readCurrentGitBranch(runner, repoRoot).catch(() => "");
+  if (currentBranch !== branch) {
+    const localBranch = await gitText(runner, repoRoot, [
+      "rev-parse",
+      "--verify",
+      `refs/heads/${branch}`,
+    ]).catch(() => "");
+    if (localBranch) {
+      await runner("git", ["switch", branch], { cwd: repoRoot, timeoutMs: UPDATE_TIMEOUT_MS });
+    } else {
+      await runner("git", ["switch", "--track", "-c", branch, `origin/${branch}`], {
+        cwd: repoRoot,
+        timeoutMs: UPDATE_TIMEOUT_MS,
+      });
+    }
+    addUpdateStep(steps, "git-switch", "git branch", "repaired", `switched to ${branch}`);
   }
 
   if (remoteCommit !== beforeCommit) {

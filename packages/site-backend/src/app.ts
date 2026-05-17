@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
@@ -89,6 +89,7 @@ import {
   type ManagerProjectHygieneIssueKind,
   type ManagerProjectHygieneReport,
   type ManagerProjectListResponse,
+  type ManagerProjectOpenFolderResponse,
   type ManagerProjectOverviewAction,
   type ManagerProjectOverviewResponse,
   type ManagerProjectOverviewSignal,
@@ -716,6 +717,42 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       return c.json(response, 201);
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 400);
+    }
+  });
+
+  app.post("/api/manager/projects/:id/open-folder", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    let dryRun = false;
+    if ((c.req.header("content-type") ?? "").toLowerCase().includes("application/json")) {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "invalid JSON body" }, 400);
+      }
+      if (!isRecord(body)) return c.json({ error: "body must be an object" }, 400);
+      if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+        return c.json({ error: "dryRun must be a boolean" }, 400);
+      }
+      dryRun = body.dryRun === true;
+    }
+    try {
+      const opened = await openPathInFileManager(project.cwd, { dryRun });
+      const response: ManagerProjectOpenFolderResponse = {
+        generatedAt: new Date().toISOString(),
+        projectId: project.id,
+        cwd: opened.cwd,
+        command: opened.command,
+        args: opened.args,
+        ...(opened.dryRun ? { dryRun: true } : {}),
+      };
+      return c.json(response);
+    } catch (error) {
+      if (error instanceof OpenPathError) {
+        return c.json({ error: error.message }, error.status as never);
+      }
+      return c.json({ error: errorMessage(error) }, 500);
     }
   });
 
@@ -2475,6 +2512,19 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
   });
 
+  app.get("/api/self/builds", (c) => {
+    try {
+      return c.json(buildSelfBuildVersionList(process.cwd(), build));
+    } catch (err) {
+      return c.json({
+        generatedAt: new Date().toISOString(),
+        current: build,
+        versions: [],
+        error: errorMessage(err),
+      });
+    }
+  });
+
   app.post("/api/self/update", async (c) => {
     if (!options.selfServerUpdater) {
       return c.json(
@@ -2486,8 +2536,11 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         501,
       );
     }
+    const parsed = await parseOptionalUpdateBranch(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const updateInput = parsed.branch ? { branch: parsed.branch } : undefined;
     try {
-      const result = await options.selfServerUpdater.update();
+      const result = await options.selfServerUpdater.update(updateInput);
       if (result.started) return c.json(result, 202);
       if (!result.supported) return c.json(result, 501);
       if (result.status?.state === "running") return c.json(result, 409);
@@ -2916,14 +2969,20 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     }
     const text = await upstream.text();
     if (upstream.ok && options.deviceUpdateQueue) {
-      const fallbackCommand = buildFallbackRegisterCommandForRequest(options, c.req.url);
+      const queued = await options.deviceUpdateQueue.get(device.id);
+      const retryBranch = queued?.expectedBranch ?? resolveServerUpdateBranch(options);
+      const fallbackCommand = buildFallbackRegisterCommandForRequest(
+        options,
+        c.req.url,
+        retryBranch,
+      );
       void retryQueuedDeviceSystemUpdate(
         fetchImpl,
         device,
         token,
         fallbackCommand,
         options.deviceUpdateQueue,
-        resolveServerUpdateBranch(options),
+        retryBranch,
       ).catch(() => undefined);
     }
     return new Response(text, {
@@ -2935,14 +2994,17 @@ export function createSiteApp(options: SiteAppOptions): Hono {
   app.post("/api/devices/:id/system/update", async (c) => {
     const device = resolveDevice(c.req.param("id"), registry);
     if (!device) return c.json({ error: "unknown device" }, 404);
-    const fallbackCommand = buildFallbackRegisterCommandForRequest(options, c.req.url);
+    const parsed = await parseOptionalUpdateBranch(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const branch = parsed.branch ?? resolveServerUpdateBranch(options);
+    const fallbackCommand = buildFallbackRegisterCommandForRequest(options, c.req.url, branch);
     return await requestDaemonSystemUpdate(
       fetchImpl,
       device,
       daemonToken(device, localToken),
       fallbackCommand,
       options.deviceUpdateQueue,
-      resolveServerUpdateBranch(options),
+      branch,
     );
   });
 
@@ -3141,12 +3203,243 @@ async function readSelfServerAutostartStatus(
 
 const SERVER_STARTED_AT = new Date().toISOString();
 
+interface SelfBuildVersionListResponse {
+  generatedAt: string;
+  current: DeskRelayBuildInfo;
+  currentBranch?: string;
+  versions: SelfBuildVersion[];
+  error?: string;
+}
+
+interface SelfBuildVersion {
+  id: string;
+  branch: string;
+  label: string;
+  commit: string;
+  shortCommit: string;
+  version?: string;
+  source: "local" | "remote";
+  current: boolean;
+  updateAvailable: boolean;
+  updatedAt?: string;
+}
+
+function buildSelfBuildVersionList(
+  repoRoot: string,
+  current: DeskRelayBuildInfo,
+): SelfBuildVersionListResponse {
+  const currentBranch = readGitText(repoRoot, ["branch", "--show-current"]);
+  const refs = readBuildVersionRefs(repoRoot);
+  const byBranch = new Map<string, SelfBuildVersion>();
+  for (const ref of refs) {
+    const existing = byBranch.get(ref.branch);
+    if (existing?.source === "local" && ref.source === "remote") continue;
+    const commit = normalizeBuildCommit(ref.commit) ?? ref.commit;
+    const version = readPackageVersionAtCommit(repoRoot, commit);
+    byBranch.set(ref.branch, {
+      id: ref.branch,
+      branch: ref.branch,
+      label: ref.branch,
+      commit,
+      shortCommit: commit.slice(0, 12) || "unknown",
+      ...(version ? { version } : {}),
+      source: ref.source,
+      current: Boolean(currentBranch && ref.branch === currentBranch),
+      updateAvailable: Boolean(
+        current.commit && current.commit !== "unknown" && commit !== current.commit,
+      ),
+      ...(ref.updatedAt ? { updatedAt: ref.updatedAt } : {}),
+    });
+  }
+  if (currentBranch && !byBranch.has(currentBranch)) {
+    byBranch.set(currentBranch, {
+      id: currentBranch,
+      branch: currentBranch,
+      label: currentBranch,
+      commit: current.commit,
+      shortCommit: current.shortCommit,
+      version: current.version,
+      source: "local",
+      current: true,
+      updateAvailable: false,
+    });
+  }
+  const versions = [...byBranch.values()]
+    .sort((left, right) => {
+      if (left.current !== right.current) return left.current ? -1 : 1;
+      if (left.branch === "main") return -1;
+      if (right.branch === "main") return 1;
+      return (
+        (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") ||
+        left.branch.localeCompare(right.branch)
+      );
+    })
+    .slice(0, 30);
+  return {
+    generatedAt: new Date().toISOString(),
+    current,
+    ...(currentBranch ? { currentBranch } : {}),
+    versions,
+  };
+}
+
+function readBuildVersionRefs(repoRoot: string): SelfBuildVersion[] {
+  const raw = readGitText(repoRoot, [
+    "for-each-ref",
+    "--format=%(refname)%09%(objectname)%09%(committerdate:iso8601-strict)",
+    "refs/heads",
+    "refs/remotes/origin",
+  ]);
+  if (!raw) return [];
+  const refs: SelfBuildVersion[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const [refName, commit = "", updatedAt = ""] = line.split("\t");
+    const parsed = parseBuildVersionRef(refName ?? "");
+    if (!parsed) continue;
+    refs.push({
+      id: parsed.branch,
+      branch: parsed.branch,
+      label: parsed.branch,
+      commit,
+      shortCommit: commit.slice(0, 12) || "unknown",
+      source: parsed.source,
+      current: false,
+      updateAvailable: false,
+      ...(updatedAt ? { updatedAt } : {}),
+    });
+  }
+  return refs;
+}
+
+function parseBuildVersionRef(
+  refName: string,
+): { branch: string; source: "local" | "remote" } | null {
+  if (refName.startsWith("refs/heads/")) {
+    const branch = refName.slice("refs/heads/".length);
+    return normalizeOptionalUpdateBranch(branch) ? { branch, source: "local" } : null;
+  }
+  if (refName.startsWith("refs/remotes/origin/")) {
+    const branch = refName.slice("refs/remotes/origin/".length);
+    if (branch === "HEAD") return null;
+    return normalizeOptionalUpdateBranch(branch) ? { branch, source: "remote" } : null;
+  }
+  return null;
+}
+
+function readGitText(repoRoot: string, args: string[]): string {
+  try {
+    return execFileSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+      maxBuffer: 2 * 1024 * 1024,
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function readPackageVersionAtCommit(repoRoot: string, commit: string): string | null {
+  if (!normalizeBuildCommit(commit)) return null;
+  try {
+    const raw = execFileSync("git", ["show", `${commit}:package.json`], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+      maxBuffer: 256 * 1024,
+    });
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version.trim()
+      ? parsed.version.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeBuildCommit(value: string): string | null {
+  const commit = value.trim();
+  return /^[0-9a-f]{40}$/i.test(commit) ? commit.toLowerCase() : null;
+}
+
+class OpenPathError extends Error {
+  constructor(
+    message: string,
+    readonly status: 400 | 404 | 500,
+  ) {
+    super(message);
+  }
+}
+
+interface OpenPathResult {
+  cwd: string;
+  command: string;
+  args: string[];
+  dryRun: boolean;
+}
+
+async function openPathInFileManager(
+  value: string,
+  options: { dryRun?: boolean } = {},
+): Promise<OpenPathResult> {
+  const cwd = resolve(value);
+  let info: Awaited<ReturnType<typeof stat>>;
+  try {
+    info = await stat(cwd);
+  } catch {
+    throw new OpenPathError(`project folder does not exist: ${cwd}`, 404);
+  }
+  if (!info.isDirectory()) {
+    throw new OpenPathError(`project path is not a folder: ${cwd}`, 400);
+  }
+  const command =
+    process.platform === "win32"
+      ? "explorer.exe"
+      : process.platform === "darwin"
+        ? "open"
+        : "xdg-open";
+  const args = [cwd];
+  if (options.dryRun) {
+    return { cwd, command, args, dryRun: true };
+  }
+  await spawnDetached(command, args);
+  return { cwd, command, args, dryRun: false };
+}
+
+async function spawnDetached(command: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolveLaunch, rejectLaunch) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    const settle = (error?: Error) => {
+      child.removeAllListeners("error");
+      child.removeAllListeners("spawn");
+      if (error) rejectLaunch(error);
+      else resolveLaunch();
+    };
+    child.once("error", (error) => settle(error));
+    child.once("spawn", () => settle());
+    child.unref();
+  }).catch((error) => {
+    throw new OpenPathError(`failed to open folder: ${errorMessage(error)}`, 500);
+  });
+}
+
 const SITE_ROUTE_CAPABILITIES = [
   { method: "GET", path: "/healthz", description: "Read server version and basic health." },
   { method: "GET", path: "/api/announcement", description: "Read the public update notice." },
   { method: "GET", path: "/api/capabilities", description: "List server API capabilities." },
   { method: "GET", path: "/api/manager/projects", description: "List manager projects." },
   { method: "POST", path: "/api/manager/projects", description: "Create a manager project." },
+  {
+    method: "POST",
+    path: "/api/manager/projects/:id/open-folder",
+    description: "Open the selected manager project's workspace folder on the server PC.",
+  },
   {
     method: "GET",
     path: "/api/manager/projects/:id/rounds",
@@ -3618,6 +3911,11 @@ const SITE_ROUTE_CAPABILITIES = [
     description: "Read server token and network boundary summary.",
   },
   { method: "GET", path: "/api/self/autostart", description: "Read server autostart state." },
+  {
+    method: "GET",
+    path: "/api/self/builds",
+    description: "List server build branches that can be run from the update UI.",
+  },
   {
     method: "PUT",
     path: "/api/self/autostart",
@@ -9468,9 +9766,10 @@ function chooseManagerAssistantFinalText(
 
   if (incompleteToolTranscript) {
     return {
-      ok: false,
-      error:
-        "Manager assistant started a tool call but did not complete a final response. Retry the request.",
+      ok: true,
+      text:
+        "관리자 Assistant가 도구 실행 후 최종 답변을 남기지 않고 종료되었습니다. " +
+        "이 실행은 실패로 처리해야 합니다. 상태 조회나 작업 지시는 같은 질문을 다시 보내 재시도하세요.",
     };
   }
 
@@ -9479,6 +9778,14 @@ function chooseManagerAssistantFinalText(
   if (!stdoutResult.sawToolUse && assistantText) return { ok: true, text: assistantText };
   if (rawText) return { ok: true, text: rawText };
   if (stderr) return { ok: true, text: stderr };
+  if (stdoutResult.sawToolUse) {
+    return {
+      ok: true,
+      text:
+        "관리자 Assistant가 도구 실행 후 사용자에게 보여줄 최종 답변을 만들지 못했습니다. " +
+        "도구 실행 결과를 확인한 뒤 같은 요청을 다시 보내 주세요.",
+    };
+  }
   return { ok: false, error: "Manager assistant CLI returned no output." };
 }
 
@@ -9634,6 +9941,7 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
       "If the raw request above appears as question marks, mojibake, or otherwise corrupted, decode this JSON string and use it as the source of truth for intent.",
     ].join("\n"),
     "## Response Requirements\nAnswer only the current user request. Use the active Claude session for conversation memory. Use observed facts for operational claims.",
+    "Never answer only `No response requested.`. Every manager-chat user message requires a visible Korean answer, progress update, or failure report.",
     [
       "## Role Selection Reminder",
       "- First classify the request intent, then choose the matching role profile from the managed instructions.",
@@ -9663,8 +9971,10 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
       "## Per-Turn Tool Constraints",
       "- This server is Windows.",
       "- Do not use Bash for DeskRelay manager API calls.",
-      "- For simple read-only GET observations, prefer `Set-Location $env:DESKRELAY_REPOSITORY_ROOT; bun run scripts/manager-api.ts batch-get name=/api/path`.",
+      "- For simple read-only GET observations, prefer `Set-Location $env:DESKRELAY_REPOSITORY_ROOT; bun run scripts/manager-api.ts batch --file <requests.json>`.",
+      "- If you use `batch-get`, keep it in PowerShell. On Git Bash/MSYS, slash-prefixed `/api/...` arguments may be rewritten into paths like `C:/Program Files/Git/api/...`.",
       "- For JSON mutation or dry-run bodies, prefer `--body-file` to avoid shell quoting failures.",
+      "- If any API/tool call fails, end with a visible Korean failure report that names the failing endpoint or layer and the smallest safe next step.",
     ].join("\n"),
     [
       "## Progress Reporting",
@@ -10569,8 +10879,10 @@ function buildManagedManagerAssistantInstructions(input: {
     "For authenticated `/api/*` calls, send `Authorization: Bearer $DESKRELAY_SITE_TOKEN` when the token exists.",
     "`GET /api/capabilities` is the live source of truth for route and behavior-method discovery.",
     "When behavior methods or route shapes are uncertain, discover capabilities before calling them.",
+    "Never finish a manager-chat turn with only `No response requested.`. If the user wrote a message, answer it or report why the required observation/action failed.",
     "- Prefer the repository helper for DeskRelay API calls: `bun run scripts/manager-api.ts GET /api/manager/system/summary` from the repository root.",
     "- For multiple simple read-only GET checks, do not launch parallel shell tool calls. Use `bun run scripts/manager-api.ts batch-get summary=/api/manager/system/summary workers=/api/manager/workers` so one failed request is returned as a structured result instead of cancelling the whole observation.",
+    "- On Windows, run the helper from PowerShell. Git Bash/MSYS may rewrite `/api/...` arguments into paths like `C:/Program Files/Git/api/...`; if that happens, classify it as shell path conversion and report it instead of ending silently.",
     "- For complex batches that need methods, bodies, or query strings, use `bun run scripts/manager-api.ts batch --file <requests.json>` or `bun run scripts/manager-api.ts batch --requests '<json-array>'`.",
     "- For POST, PUT, PATCH, or DELETE calls with JSON bodies, prefer `--body-file <request.json>` over inline shell JSON when quoting is not trivial.",
     "- The manager API helper reads `DESKRELAY_MANAGER_API_BASE` and `DESKRELAY_SITE_TOKEN` from the environment. Do not manually assemble Authorization headers in Bash or PowerShell unless the helper cannot satisfy the task.",
@@ -14540,6 +14852,27 @@ function normalizeOptionalUpdateBranch(value: string | undefined): string | unde
   return branch;
 }
 
+async function parseOptionalUpdateBranch(req: {
+  header(name: string): string | undefined;
+  text(): Promise<string>;
+}): Promise<{ ok: true; branch?: string } | { ok: false; error: string }> {
+  const contentType = (req.header("content-type") ?? "").toLowerCase();
+  if (!contentType.includes("application/json")) return { ok: true };
+  let body: unknown;
+  try {
+    const text = await req.text();
+    body = text.trim() ? JSON.parse(text) : {};
+  } catch {
+    return { ok: false, error: "invalid JSON body" };
+  }
+  if (!isRecord(body)) return { ok: false, error: "body must be an object" };
+  if (body.branch === undefined || body.branch === null || body.branch === "") return { ok: true };
+  if (typeof body.branch !== "string") return { ok: false, error: "branch must be a string" };
+  const branch = normalizeOptionalUpdateBranch(body.branch);
+  if (!branch) return { ok: false, error: "branch is invalid" };
+  return { ok: true, branch };
+}
+
 async function readLogResponse(input: {
   scope: "server";
   source: string;
@@ -14858,6 +15191,7 @@ async function retryQueuedDeviceSystemUpdate(
 function buildFallbackRegisterCommandForRequest(
   options: SiteAppOptions,
   requestUrl: string,
+  branchOverride?: string,
 ): string {
   if (!options.token) return "";
   const urls = getAccessUrls(options.selfHostUrl ?? requestUrl);
@@ -14865,7 +15199,7 @@ function buildFallbackRegisterCommandForRequest(
   return buildRegisterOtherPcCommand({
     siteUrl: preferredUrl,
     siteToken: options.token,
-    branch: resolveServerUpdateBranch(options),
+    branch: branchOverride ?? resolveServerUpdateBranch(options),
   });
 }
 

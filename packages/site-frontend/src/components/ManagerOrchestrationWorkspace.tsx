@@ -92,11 +92,16 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [selectedProjectId, setSelectedProjectId] = createSignal(readSelectedManagerProjectId());
   const [projectActionBusy, setProjectActionBusy] = createSignal(false);
+  const [projectFolderOpenBusy, setProjectFolderOpenBusy] = createSignal(false);
+  const [projectFolderOpenError, setProjectFolderOpenError] = createSignal<string | null>(null);
   const [decisionActionBusy, setDecisionActionBusy] = createSignal(false);
   const [blockerActionBusy, setBlockerActionBusy] = createSignal(false);
   const [artifactActionBusy, setArtifactActionBusy] = createSignal(false);
   const [protocolActionBusy, setProtocolActionBusy] = createSignal(false);
   const [flowActionBusy, setFlowActionBusy] = createSignal(false);
+  const [approvalActionBusy, setApprovalActionBusy] = createSignal(false);
+  const [approvalActionStatus, setApprovalActionStatus] = createSignal<string | null>(null);
+  const [approvalActionError, setApprovalActionError] = createSignal<string | null>(null);
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
@@ -592,8 +597,22 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   function selectManagerProject(projectId: string | null) {
+    setProjectFolderOpenError(null);
     setSelectedProjectId(projectId);
     writeSelectedManagerProjectId(projectId);
+  }
+
+  async function openManagerProjectFolder(projectId: string) {
+    if (projectFolderOpenBusy()) return;
+    setProjectFolderOpenBusy(true);
+    setProjectFolderOpenError(null);
+    try {
+      await api.openManagerProjectFolder(projectId);
+    } catch (error) {
+      setProjectFolderOpenError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProjectFolderOpenBusy(false);
+    }
   }
 
   async function archiveManagerProject(projectId: string) {
@@ -790,6 +809,12 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
   }
 
+  async function refreshAfterApprovalAction(): Promise<void> {
+    const [state] = await Promise.allSettled([api.managerState(), refetchManagerProjects()]);
+    if (state.status === "fulfilled") mutateManagerState(state.value);
+    setRefreshSeq((seq) => seq + 1);
+  }
+
   async function repairRegistration() {
     if (managerActionBusy()) return;
     setManagerActionBusy(true);
@@ -854,37 +879,77 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function approveProposedAction(action: ManagerProposedAction) {
+    if (approvalActionBusy()) return;
+    const projectId = action.projectId || currentProjectId();
+    if (!projectId) {
+      setApprovalActionError(t("manager.orchestration.approval.error.no-project"));
+      return;
+    }
+    if (projectId !== currentProjectId()) {
+      setSelectedProjectId(projectId);
+      writeSelectedManagerProjectId(projectId);
+    }
+    setApprovalActionBusy(true);
+    setApprovalActionError(null);
+    setApprovalActionStatus(
+      t("manager.orchestration.approval.running", {
+        action: t(`manager.orchestration.proposed-action.${action.type}`),
+      }),
+    );
+    try {
+      await runApprovedProposedAction(action, projectId);
+      await refreshAfterApprovalAction();
+      setApprovalActionStatus(t("manager.orchestration.approval.done"));
+      window.setTimeout(() => setApprovalActionStatus(null), 2400);
+    } catch (error) {
+      setApprovalActionError(
+        t("manager.orchestration.approval.error.failed", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    } finally {
+      setApprovalActionBusy(false);
+    }
+  }
+
+  async function runApprovedProposedAction(
+    action: ManagerProposedAction,
+    projectId: string,
+  ): Promise<void> {
     switch (action.type) {
       case "wait":
         await refreshManagerStateNow();
         return;
       case "prepare_project":
-        await prepareProjectFlow();
+        await api.prepareManagerProject(projectId);
         return;
       case "scan_protocol":
-        await scanProjectProtocol();
+        await api.scanManagerProjectProtocol(projectId);
         return;
       case "inspect_task": {
         const taskId = payloadString(action.payload, "taskId") ?? action.taskId;
-        if (taskId) await inspectManagerTask(taskId);
+        if (!taskId) throw new Error(t("manager.orchestration.approval.error.no-task"));
+        await inspectManagerTask(taskId);
         return;
       }
       case "retry_task": {
         const taskId = payloadString(action.payload, "taskId") ?? action.taskId;
-        if (taskId) await retryManagerTask(taskId);
+        if (!taskId) throw new Error(t("manager.orchestration.approval.error.no-task"));
+        await retryManagerTask(taskId);
         return;
       }
       case "repair_round": {
         const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
-        if (roundId) await repairManagerRound(roundId);
+        if (!roundId) throw new Error(t("manager.orchestration.approval.error.no-round"));
+        await repairManagerRound(roundId);
         return;
       }
       case "review_round": {
         const roundId = payloadString(action.payload, "roundId") ?? action.roundId;
-        if (!roundId) return;
+        if (!roundId) throw new Error(t("manager.orchestration.approval.error.no-round"));
         const summary = payloadString(action.payload, "summary");
         const nextObjective = payloadString(action.payload, "nextObjective");
-        await reviewProjectRound(roundId, {
+        await api.reviewManagerProjectRound(projectId, roundId, {
           action: managerReviewAction(payloadString(action.payload, "action")) ?? "accept",
           ...(summary ? { summary } : {}),
           ...(nextObjective ? { nextObjective } : {}),
@@ -893,7 +958,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       }
       case "start_next_round": {
         const phase = managerStartPhase(payloadString(action.payload, "phase"));
-        await startProjectFlow({
+        await api.startManagerProject(projectId, {
           objective:
             payloadString(action.payload, "objective") ??
             selectedProject()?.goal ??
@@ -909,7 +974,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           payloadString(action.payload, "currentRoundAction"),
         );
         const nextObjective = payloadString(action.payload, "nextObjective");
-        await changeProjectDirection({
+        await api.changeManagerProjectDirection(projectId, {
           requestedChange:
             payloadString(action.payload, "requestedChange") ??
             t("manager.orchestration.approval.default-direction-change"),
@@ -925,10 +990,13 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           payloadString(action.payload, "summary") ??
           t("manager.orchestration.approval.default-user-check");
         if (roundId) {
-          await reviewProjectRound(roundId, { action: "user_check_required", summary });
+          await api.reviewManagerProjectRound(projectId, roundId, {
+            action: "user_check_required",
+            summary,
+          });
           return;
         }
-        await createProjectBlocker({
+        await api.createManagerProjectBlocker(projectId, {
           title: t("manager.orchestration.approval.default-user-check-title"),
           detail: summary,
           severity: "warning",
@@ -938,7 +1006,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
         return;
       }
       case "complete_project":
-        await completeProjectFlow({
+        await api.completeManagerProject(projectId, {
           summary:
             payloadString(action.payload, "summary") ??
             t("manager.orchestration.approval.default-complete-summary"),
@@ -965,6 +1033,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           projectOverview={projectOverview()}
           projectLoading={managerProjects.loading}
           projectBusy={projectActionBusy()}
+          projectFolderBusy={projectFolderOpenBusy()}
+          projectFolderError={projectFolderOpenError()}
           flowBusy={flowActionBusy() || projectCommandFlow.loading}
           decisions={projectDecisions()?.decisions ?? []}
           archivedDecisions={projectDecisions()?.archived ?? []}
@@ -1013,6 +1083,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           onSelectProject={(projectId) => selectManagerProject(projectId)}
           onCreateProject={(input) => void createManagerProject(input)}
           onArchiveProject={(projectId) => void archiveManagerProject(projectId)}
+          onOpenProjectFolder={(projectId) => void openManagerProjectFolder(projectId)}
           onCreateDecision={(input) => void createProjectDecision(input)}
           onUpdateDecision={(decisionId, input) => void updateProjectDecision(decisionId, input)}
           onCreateBlocker={(input) => void createProjectBlocker(input)}

@@ -679,6 +679,13 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "POST /api/manager/projects/:id/open-folder",
+          authedRequest("POST", "/api/manager/projects/missing/open-folder", {
+            dryRun: true,
+          }),
+          [404],
+        ],
+        [
           "GET /api/manager/projects/:id/overview",
           authedRequest("GET", "/api/manager/projects/missing/overview"),
           [404],
@@ -962,6 +969,7 @@ describe("API route inventory", () => {
         ["GET /api/self/install/status", authedRequest("GET", "/api/self/install/status")],
         ["GET /api/self/security/boundary", authedRequest("GET", "/api/self/security/boundary")],
         ["GET /api/self/autostart", authedRequest("GET", "/api/self/autostart")],
+        ["GET /api/self/builds", authedRequest("GET", "/api/self/builds")],
         ["PUT /api/self/autostart", authedRequest("PUT", "/api/self/autostart", { enabled: true })],
         ["POST /api/self/update", authedRequest("POST", "/api/self/update"), [202]],
         ["GET /api/self/update/status", authedRequest("GET", "/api/self/update/status")],
@@ -2213,7 +2221,7 @@ process.stdin.on("end", () => {
     expect(body.message?.text).toContain("history=0");
   });
 
-  test("manager assistant stream rejects incomplete tool transcript artifacts", async () => {
+  test("manager assistant stream surfaces incomplete tool transcript artifacts", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-tool-artifact-"));
     const scriptPath = join(cwd, "fake-claude.js");
     writeFileSync(
@@ -2245,9 +2253,11 @@ console.log(JSON.stringify({ type: "result", result: "I will inspect the project
 
       expect(res.status).toBe(200);
       const events = parseSseEvents(await res.text());
-      expect(events.some((event) => event.type === "message")).toBe(false);
-      const error = events.find((event) => event.type === "error");
-      expect(error?.error).toContain("started a tool call");
+      expect(events.some((event) => event.type === "error")).toBe(false);
+      const message = events.find((event) => event.type === "message") as
+        | { message?: { text?: string } }
+        | undefined;
+      expect(message?.message?.text).toContain("도구 실행 후 최종 답변");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -2613,6 +2623,44 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     };
     expect(updatedProject.project?.activeRoundId).toBe(roundBody.round?.id);
     expect(updatedProject.project?.status).toBe("running");
+  });
+
+  test("manager project open-folder uses the selected project cwd", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-open-folder-"));
+    try {
+      const projectCreate = await setup.app.fetch(
+        authedRequest("POST", "/api/manager/projects", {
+          name: "Folder Project",
+          cwd,
+          goal: "open the workspace from the UI",
+        }),
+      );
+      expect(projectCreate.status).toBe(201);
+      const projectBody = (await projectCreate.json()) as { project?: { id?: string } };
+      const projectId = projectBody.project?.id;
+      expect(projectId).toBeTruthy();
+
+      const openFolder = await setup.app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/open-folder`, {
+          dryRun: true,
+        }),
+      );
+      expect(openFolder.status).toBe(200);
+      const body = (await openFolder.json()) as {
+        projectId?: string;
+        cwd?: string;
+        command?: string;
+        args?: string[];
+        dryRun?: boolean;
+      };
+      expect(body.projectId).toBe(projectId);
+      expect(body.cwd).toBe(cwd);
+      expect(body.command).toBeTruthy();
+      expect(body.args).toEqual([cwd]);
+      expect(body.dryRun).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("manager project decisions preserve revisions and exclude archived decisions by default", async () => {
@@ -5242,6 +5290,7 @@ describe("self-host command helper", () => {
 
   test("server update starts through an authenticated endpoint", async () => {
     let calls = 0;
+    let requestedBranch: string | undefined;
     const app = createSiteApp({
       registry: new InMemoryDeviceRegistry(),
       token: TOKEN,
@@ -5286,6 +5335,41 @@ describe("self-host command helper", () => {
     );
     expect(status.status).toBe(200);
     expect(await status.json()).toEqual({ state: "running", logPath: "update.log" });
+
+    const branchApp = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      selfServerUpdater: {
+        async status() {
+          return { state: "idle" } as const;
+        },
+        async update(input) {
+          requestedBranch = input?.branch;
+          const status = {
+            state: "running",
+            ...(requestedBranch ? { branch: requestedBranch } : {}),
+          } as const;
+          return {
+            supported: true,
+            started: true,
+            ...(requestedBranch ? { branch: requestedBranch } : {}),
+            status,
+          };
+        },
+      },
+    });
+    const branchRes = await branchApp.fetch(
+      new Request("http://site.local/api/self/update", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ branch: "api-ai-assistant" }),
+      }),
+    );
+    expect(branchRes.status).toBe(202);
+    expect(requestedBranch).toBe("api-ai-assistant");
   });
 
   test("install reports are accepted and listed through authenticated endpoints", async () => {
@@ -5909,7 +5993,9 @@ describe("device update proxy", () => {
     );
 
     const res = await branchSetup.app.fetch(
-      authedRequest("POST", `/api/devices/${device.id}/system/update`),
+      authedRequest("POST", `/api/devices/${device.id}/system/update`, {
+        branch: "open-source-self-host",
+      }),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, restartScheduled: true, changed: true });
@@ -5917,7 +6003,7 @@ describe("device update proxy", () => {
     expect(branchSetup.calls.at(-1)?.url).toBe(`${DAEMON_URL}/system/update`);
     expect(branchSetup.calls.at(-1)?.headers.authorization).toBe("Bearer daemon-token");
     expect(JSON.parse(branchSetup.calls.at(-1)?.body ?? "{}")).toEqual({
-      branch: "api-ai-assistant",
+      branch: "open-source-self-host",
     });
   });
 
