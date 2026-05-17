@@ -1,13 +1,18 @@
 import type {
   ManagerAgent,
   ManagerAssistantChatContext,
+  ManagerCommandFlowResponse,
+  ManagerProject,
+  ManagerProjectOverviewResponse,
   ManagerRound,
   ManagerRoundHealthGateResponse,
   ManagerSessionHygieneReport,
+  ManagerWorkerRun,
   ManagerWorkerRunLedgerResponse,
 } from "@deskrelay/shared";
 import {
   type Component,
+  For,
   Show,
   createEffect,
   createMemo,
@@ -36,6 +41,10 @@ import {
   readManagerOrchestrationCache,
   writeManagerOrchestrationCache,
 } from "../manager-orchestration-cache.ts";
+import {
+  readSelectedManagerProjectId,
+  writeSelectedManagerProjectId,
+} from "../manager-project-selection.ts";
 import { Composer } from "./Composer.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 import { Transcript } from "./Transcript.tsx";
@@ -45,6 +54,8 @@ const MANAGER_SESSION_LIMIT = 10;
 const MANAGER_SESSION_EVENT_LIMIT = 400;
 const MANAGER_SESSION_MAX_BYTES = 8 * 1024 * 1024;
 const STREAM_OPEN_GRACE_MS = 350;
+const MANAGER_ASSISTANT_HISTORY_LIMIT = 240;
+const MANAGER_ASSISTANT_HISTORY_CACHE_BYTES = 2 * 1024 * 1024;
 const ORCHESTRATION_PRESET_PROMPT = [
   "Start or continue a DeskRelay orchestration framework loop.",
   "",
@@ -88,6 +99,13 @@ type ManagerVisibleStatus = {
   detail?: string;
 };
 
+interface ManagerAssistantHistory {
+  events: ClaudeStreamEvent[];
+  reports: ManagerAssistantStatusReport[];
+  focusedProjectId: string | null;
+  updatedAt: number;
+}
+
 export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [reloadSeq, setReloadSeq] = createSignal(0);
   const [events, setEvents] = createSignal<ClaudeStreamEvent[]>([]);
@@ -104,6 +122,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [cachedOrchestrationSnapshot, setCachedOrchestrationSnapshot] = createSignal(
     readManagerOrchestrationCache(),
+  );
+  const [assistantHistory, setAssistantHistory] = createSignal(readManagerAssistantHistory());
+  const [focusedProjectId, setFocusedProjectId] = createSignal(
+    readSelectedManagerProjectId() ?? assistantHistory()?.focusedProjectId ?? null,
   );
   let transcriptScroller: HTMLDivElement | undefined;
   let eventRefreshTimer: number | undefined;
@@ -170,12 +192,70 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       }
     },
   );
-  const [orchestration] = createResource(
-    () => (orchestrationPanelEnabled() ? statusReportSeq() : null),
-    async (seq): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
-      if (seq === null) return null;
+  const [managerProjects] = createResource(
+    () => statusReportSeq(),
+    async () => {
       try {
-        const [agents, rounds] = await Promise.all([api.managerAgents(), api.managerRounds()]);
+        return await api.managerProjects();
+      } catch {
+        return null;
+      }
+    },
+  );
+  const focusedProject = createMemo<ManagerProject | null>(() => {
+    const projectId = focusedProjectId();
+    const response = managerProjects();
+    if (!projectId || !response) return null;
+    return (
+      response.projects.find((project) => project.id === projectId) ??
+      response.archived.find((project) => project.id === projectId) ??
+      null
+    );
+  });
+  const [focusedProjectOverview] = createResource(
+    () => {
+      const projectId = focusedProjectId();
+      const seq = statusReportSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerProjectOverviewResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectOverview(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+  const [focusedProjectCommandFlow] = createResource(
+    () => {
+      const projectId = focusedProjectId();
+      const seq = statusReportSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerCommandFlowResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectCommandFlow(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+  const [orchestration] = createResource(
+    () =>
+      orchestrationPanelEnabled()
+        ? { seq: statusReportSeq(), projectId: focusedProjectId() }
+        : null,
+    async (input): Promise<{ agents: ManagerAgent[]; rounds: ManagerRound[] } | null> => {
+      if (input === null) return null;
+      try {
+        const [agents, rounds] = input.projectId
+          ? await Promise.all([
+              api.managerProjectAgents(input.projectId),
+              api.managerProjectRounds(input.projectId),
+            ])
+          : await Promise.all([api.managerAgents(), api.managerRounds()]);
         const next = { agents: agents.agents, rounds: rounds.rounds };
         setCachedOrchestrationSnapshot(
           writeManagerOrchestrationCache(next) ?? {
@@ -297,13 +377,26 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     },
   );
 
-  const visibleEvents = createMemo(() => (events().length > 0 ? events() : [INITIAL_EVENT]));
+  const visibleEvents = createMemo(() => {
+    if (events().length > 0) return events();
+    const cached = assistantHistory()?.events ?? [];
+    return cached.length > 0 ? cached : [INITIAL_EVENT];
+  });
   const busy = createMemo(() => runIds().length > 0);
   const liveStateStatus = createMemo(() => managerStatusFromState(managerState()));
+  const focusedProjectStatus = createMemo(() =>
+    managerStatusFromProject(
+      focusedProject(),
+      focusedProjectOverview(),
+      focusedProjectCommandFlow(),
+    ),
+  );
   const latestReportStatus = createMemo(() => managerStatusFromReport(statusReports()?.latest));
   const visibleStatus = createMemo<ManagerVisibleStatus>(() => {
     const currentStatus = status();
     if (currentStatus) return currentStatus;
+    const projectStatus = focusedProjectStatus();
+    if (projectStatus) return projectStatus;
     const stateStatus = liveStateStatus();
     if (stateStatus) return stateStatus;
     const reportStatus = latestReportStatus();
@@ -447,8 +540,28 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   createEffect(() => {
     const transcript = loadedTranscript();
     if (runIds().length > 0) return;
-    setEvents(visibleClaudeEvents(transcript?.events ?? []));
+    const nextEvents = visibleClaudeEvents(transcript?.events ?? []);
+    if (nextEvents.length > 0) {
+      setEvents(nextEvents);
+      rememberAssistantHistory({ events: nextEvents });
+    } else if (events().length === 0 && (assistantHistory()?.events.length ?? 0) > 0) {
+      setEvents(assistantHistory()?.events ?? []);
+    }
     queueMicrotask(scrollToBottomIfPinned);
+  });
+
+  createEffect(() => {
+    const reports = statusReports()?.reports ?? [];
+    if (reports.length === 0) return;
+    const nextHistory = rememberAssistantHistory({
+      reports,
+      focusedProjectId: focusedProjectId(),
+    });
+    setAssistantHistory(nextHistory);
+    const latestProjectId = projectIdFromStatusReport(statusReports()?.latest);
+    if (latestProjectId && shouldAdoptStatusProject(statusReports()?.latest)) {
+      focusManagerProject(latestProjectId);
+    }
   });
 
   createEffect(() => {
@@ -484,6 +597,11 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       if (event.type === "assistant.status") {
         scheduleManagerEventRefresh();
       } else if (orchestrationPanelEnabled() && isManagerOrchestrationEvent(event)) {
+        if (event.type === "project.created") {
+          focusManagerProject(event.project.id);
+        } else if (event.type === "project.updated" && event.project.id === focusedProjectId()) {
+          rememberAssistantHistory({ focusedProjectId: event.project.id });
+        }
         scheduleManagerEventRefresh();
       } else if (orchestrationPanelEnabled() && event.type === "hygiene.updated") {
         scheduleManagerEventRefresh(true);
@@ -530,8 +648,19 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   }
 
   const appendEvent = (event: ClaudeStreamEvent) => {
-    setEvents((current) => [...current, event]);
+    setEvents((current) => {
+      const next = [...current, event].slice(-MANAGER_ASSISTANT_HISTORY_LIMIT);
+      setAssistantHistory(rememberAssistantHistory({ events: next }));
+      return next;
+    });
   };
+
+  function focusManagerProject(projectId: string | null) {
+    const normalized = projectId?.trim() || null;
+    setFocusedProjectId(normalized);
+    writeSelectedManagerProjectId(normalized);
+    setAssistantHistory(rememberAssistantHistory({ focusedProjectId: normalized }));
+  }
 
   async function persistManagerSession(nextSessionId: string, nextCwd: string) {
     const trimmed = nextSessionId.trim();
@@ -847,6 +976,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     <div class="manager-assistant manager-assistant-chat">
       <Show when={orchestrationStatus()}>
         <ManagerOrchestrationPanel
+          selectedProject={focusedProject()}
+          commandFlow={focusedProjectCommandFlow()}
+          projectOverview={focusedProjectOverview()}
+          projectLoading={managerProjects.loading}
           rounds={visibleOrchestration()?.rounds ?? []}
           agents={visibleOrchestration()?.agents ?? []}
           report={visibleActiveRoundReport()}
@@ -873,6 +1006,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           onRunUpdateAll={() => void runUpdateAll()}
         />
       </Show>
+      <ManagerAssistantLedger
+        project={focusedProject()}
+        overview={focusedProjectOverview()}
+        commandFlow={focusedProjectCommandFlow()}
+        reports={statusReports()?.reports ?? assistantHistory()?.reports ?? []}
+        workerRuns={visibleWorkerRuns()?.runs ?? focusedProjectCommandFlow()?.workerRuns ?? []}
+      />
       <div
         ref={transcriptScroller}
         class="transcript manager-assistant-transcript"
@@ -948,6 +1088,105 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         />
       </div>
     </div>
+  );
+};
+
+const ManagerAssistantLedger: Component<{
+  project: ManagerProject | null;
+  overview: ManagerProjectOverviewResponse | null | undefined;
+  commandFlow: ManagerCommandFlowResponse | null | undefined;
+  reports: ManagerAssistantStatusReport[];
+  workerRuns: ManagerWorkerRun[];
+}> = (props) => {
+  const latestReport = createMemo(() => props.reports[0]);
+  const recentReports = createMemo(() => props.reports.slice(0, 3));
+  const projectId = createMemo(
+    () => props.project?.id ?? projectIdFromStatusReport(latestReport()) ?? null,
+  );
+  const roundId = createMemo(
+    () =>
+      props.overview?.activeRound?.id ??
+      props.project?.activeRoundId ??
+      roundIdFromStatusReport(latestReport()) ??
+      null,
+  );
+  const completedRuns = createMemo(
+    () =>
+      props.workerRuns.filter((run) => ["succeeded", "completed"].includes(String(run.status)))
+        .length,
+  );
+  const failedRuns = createMemo(
+    () =>
+      props.workerRuns.filter((run) =>
+        ["failed", "blocked", "cancelled", "missing"].includes(String(run.status)),
+      ).length,
+  );
+  const shouldRender = createMemo(() =>
+    Boolean(props.project || latestReport() || props.overview || props.commandFlow),
+  );
+
+  return (
+    <Show when={shouldRender()}>
+      <section class="manager-assistant-ledger" aria-label="관리 Assistant 실행 기록">
+        <div class="manager-assistant-ledger-head">
+          <strong>실행 기록</strong>
+          <Show when={latestReport()}>
+            {(report) => <span>{formatAssistantLedgerTime(report().createdAt)}</span>}
+          </Show>
+        </div>
+        <Show when={props.project || props.overview || props.commandFlow || latestReport()}>
+          <div class="manager-assistant-result-card">
+            <div class="manager-assistant-result-title">
+              <strong>{props.project?.name ?? latestReport()?.message ?? "최근 실행 결과"}</strong>
+              <span>{props.commandFlow?.nextAction.label ?? props.overview?.nextAction.label}</span>
+            </div>
+            <dl class="manager-assistant-result-grid">
+              <Show when={projectId()}>
+                {(id) => (
+                  <>
+                    <dt>프로젝트</dt>
+                    <dd>{id()}</dd>
+                  </>
+                )}
+              </Show>
+              <Show when={roundId()}>
+                {(id) => (
+                  <>
+                    <dt>라운드</dt>
+                    <dd>{id()}</dd>
+                  </>
+                )}
+              </Show>
+              <dt>단계</dt>
+              <dd>{props.project?.flowStage ?? props.commandFlow?.readiness.stage ?? "-"}</dd>
+              <dt>준비</dt>
+              <dd>{props.commandFlow?.readiness.ready ? "ready" : "check"}</dd>
+              <dt>작업자</dt>
+              <dd>
+                {props.workerRuns.length > 0
+                  ? `${completedRuns()}/${props.workerRuns.length} 완료${
+                      failedRuns() ? `, 실패 ${failedRuns()}` : ""
+                    }`
+                  : "-"}
+              </dd>
+            </dl>
+            <Show when={latestReport()?.detail}>{(detail) => <p>{detail()}</p>}</Show>
+          </div>
+        </Show>
+        <Show when={recentReports().length > 0}>
+          <ol class="manager-assistant-report-list">
+            <For each={recentReports()}>
+              {(report) => (
+                <li class={`manager-assistant-report manager-assistant-report-${report.level}`}>
+                  <span>{report.phase}</span>
+                  <strong>{report.message}</strong>
+                </li>
+              )}
+            </For>
+          </ol>
+        </Show>
+      </section>
+    </Show>
   );
 };
 
@@ -1097,6 +1336,33 @@ function managerStatusFromReport(
   };
 }
 
+function managerStatusFromProject(
+  project: ManagerProject | null,
+  overview: ManagerProjectOverviewResponse | null | undefined,
+  commandFlow: ManagerCommandFlowResponse | null | undefined,
+): ManagerVisibleStatus | null {
+  if (!project) return null;
+  const signalTone = overview?.currentSignal.tone;
+  const tone: ManagerVisibleStatus["tone"] =
+    signalTone === "running"
+      ? "thinking"
+      : signalTone === "warning" || signalTone === "error"
+        ? "warning"
+        : "ready";
+  const detail = [
+    project.flowStage,
+    commandFlow?.readiness.ready ? "ready" : commandFlow?.readiness.stage,
+    commandFlow?.nextAction.label ?? overview?.nextAction.label,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return {
+    tone,
+    main: project.name,
+    ...(detail ? { detail } : {}),
+  };
+}
+
 function managerStatusFromState(
   state: ManagerStateViewResponse | null | undefined,
 ): ManagerVisibleStatus | null {
@@ -1124,4 +1390,108 @@ function runErrorMessage(content: unknown): string {
     if (typeof stderr === "string" && stderr.trim()) return stderr.trim();
   }
   return "Assistant run failed.";
+}
+
+function managerAssistantHistoryCacheKey(): string {
+  const origin =
+    typeof window !== "undefined" && window.location?.origin ? window.location.origin : "local";
+  return `cr.manager-assistant-history:${encodeURIComponent(origin)}`;
+}
+
+function readManagerAssistantHistory(): ManagerAssistantHistory | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(managerAssistantHistoryCacheKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ManagerAssistantHistory>;
+    return {
+      events: Array.isArray(parsed.events)
+        ? (parsed.events as ClaudeStreamEvent[]).slice(-MANAGER_ASSISTANT_HISTORY_LIMIT)
+        : [],
+      reports: Array.isArray(parsed.reports)
+        ? (parsed.reports as ManagerAssistantStatusReport[]).slice(0, 8)
+        : [],
+      focusedProjectId:
+        typeof parsed.focusedProjectId === "string" && parsed.focusedProjectId.trim()
+          ? parsed.focusedProjectId.trim()
+          : null,
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rememberAssistantHistory(
+  patch: Partial<ManagerAssistantHistory>,
+): ManagerAssistantHistory {
+  const previous = readManagerAssistantHistory();
+  const next: ManagerAssistantHistory = {
+    events: (patch.events ?? previous?.events ?? []).slice(-MANAGER_ASSISTANT_HISTORY_LIMIT),
+    reports: dedupeManagerAssistantReports(patch.reports ?? previous?.reports ?? []).slice(0, 8),
+    focusedProjectId:
+      "focusedProjectId" in patch
+        ? (patch.focusedProjectId ?? null)
+        : (previous?.focusedProjectId ?? null),
+    updatedAt: Date.now(),
+  };
+  try {
+    const serialized = JSON.stringify(next);
+    if (serialized.length <= MANAGER_ASSISTANT_HISTORY_CACHE_BYTES) {
+      globalThis.localStorage?.setItem(managerAssistantHistoryCacheKey(), serialized);
+    }
+  } catch {
+    // The visible in-memory transcript still remains available for this tab.
+  }
+  return next;
+}
+
+function dedupeManagerAssistantReports(
+  reports: ManagerAssistantStatusReport[],
+): ManagerAssistantStatusReport[] {
+  const seen = new Set<string>();
+  const next: ManagerAssistantStatusReport[] = [];
+  for (const report of reports) {
+    if (!report?.id || seen.has(report.id)) continue;
+    seen.add(report.id);
+    next.push(report);
+  }
+  return next;
+}
+
+function projectIdFromStatusReport(
+  report: ManagerAssistantStatusReport | null | undefined,
+): string | null {
+  return firstMatch([report?.detail, report?.message], /\bproject_[A-Za-z0-9_-]+\b/);
+}
+
+function roundIdFromStatusReport(
+  report: ManagerAssistantStatusReport | null | undefined,
+): string | null {
+  return firstMatch([report?.detail, report?.message, report?.round], /\bround_[A-Za-z0-9_-]+\b/);
+}
+
+function firstMatch(values: Array<string | undefined>, pattern: RegExp): string | null {
+  for (const value of values) {
+    const match = value?.match(pattern);
+    if (match?.[0]) return match[0];
+  }
+  return null;
+}
+
+function shouldAdoptStatusProject(report: ManagerAssistantStatusReport | undefined): boolean {
+  if (!report || !projectIdFromStatusReport(report)) return false;
+  const createdAt = Date.parse(report.createdAt);
+  if (!Number.isFinite(createdAt)) return false;
+  return Date.now() - createdAt < 15 * 60 * 1000;
+}
+
+function formatAssistantLedgerTime(value: string | undefined): string {
+  if (!value) return "";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(timestamp));
 }

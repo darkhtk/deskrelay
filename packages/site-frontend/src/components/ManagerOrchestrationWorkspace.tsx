@@ -48,10 +48,12 @@ import {
   readManagerOrchestrationCache,
   writeManagerOrchestrationCache,
 } from "../manager-orchestration-cache.ts";
+import {
+  readSelectedManagerProjectId,
+  writeSelectedManagerProjectId,
+} from "../manager-project-selection.ts";
 import { ManagerAssistant } from "./ManagerAssistant.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
-
-const SELECTED_MANAGER_PROJECT_KEY = "cr.manager.selectedProjectId";
 
 export function resolveSelectedManagerProject(
   response: ManagerProjectListResponse | null | undefined,
@@ -464,6 +466,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   createManagerEventSubscription({
     onEvent(event) {
       if (isManagerOrchestrationEvent(event)) {
+        if (event.type === "project.created") {
+          setSelectedProjectId(event.project.id);
+          writeSelectedManagerProjectId(event.project.id);
+        }
         scheduleEventRefresh();
       } else if (event.type === "hygiene.updated") {
         scheduleEventRefresh(true);
@@ -944,22 +950,4 @@ function pickActiveRound(rounds: ManagerRound[]): ManagerRound | undefined {
       ),
     ) ?? unacknowledged[0]
   );
-}
-
-function readSelectedManagerProjectId(): string | null {
-  try {
-    const value = localStorage.getItem(SELECTED_MANAGER_PROJECT_KEY);
-    return value?.trim() ? value.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeSelectedManagerProjectId(value: string | null): void {
-  try {
-    if (value) localStorage.setItem(SELECTED_MANAGER_PROJECT_KEY, value);
-    else localStorage.removeItem(SELECTED_MANAGER_PROJECT_KEY);
-  } catch {
-    // ignore unavailable browser storage
-  }
 }

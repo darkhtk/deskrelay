@@ -7969,6 +7969,112 @@ body.manager-orchestration-resizing {
 .manager-assistant-error {
   flex: 0 0 auto;
 }
+.manager-assistant-ledger {
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.manager-assistant-ledger-head,
+.manager-assistant-result-title,
+.manager-assistant-report {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.manager-assistant-ledger-head {
+  justify-content: space-between;
+}
+.manager-assistant-ledger-head strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.manager-assistant-ledger-head span,
+.manager-assistant-result-title span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-assistant-result-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+.manager-assistant-result-title {
+  justify-content: space-between;
+}
+.manager-assistant-result-title strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-assistant-result-grid {
+  display: grid;
+  gap: 5px 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0;
+}
+.manager-assistant-result-grid dt {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-assistant-result-grid dd {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-assistant-result-card p {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+.manager-assistant-report-list {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.manager-assistant-report {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.manager-assistant-report span {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+  padding: 1px 6px;
+}
+.manager-assistant-report strong {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-assistant-report-success span {
+  border-color: color-mix(in srgb, var(--success, #2f8f5b) 38%, var(--border-subtle));
+  color: var(--success, #2f8f5b);
+}
+.manager-assistant-report-warning span,
+.manager-assistant-report-error span {
+  border-color: color-mix(in srgb, var(--warning, #c7902e) 42%, var(--border-subtle));
+  color: var(--warning, #c7902e);
+}
 .manager-assistant-transcript {
   flex: 1 1 auto;
   max-width: 100%;
