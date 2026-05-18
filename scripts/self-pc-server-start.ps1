@@ -75,6 +75,31 @@ function Get-AccessUrls {
   return $rows
 }
 
+function Test-IsAdministrator {
+  $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+  return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Ensure-SiteFirewallRule {
+  param([int]$Port)
+  $ruleName = "DeskRelay self PC site $Port"
+  try {
+    $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+    if ($existing) {
+      return
+    }
+    if (-not (Test-IsAdministrator)) {
+      Write-Warning "Windows Firewall rule is missing for DeskRelay site port $Port. Run this from an elevated PowerShell to allow external access: New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Any"
+      return
+    }
+    New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Any | Out-Null
+    Write-Host "Allowed inbound Windows Firewall access for DeskRelay site port $Port."
+  } catch {
+    Write-Warning "Could not check or create Windows Firewall rule for DeskRelay site port ${Port}: $($_.Exception.Message)"
+  }
+}
+
 $repo = Get-RepoRoot -Explicit $RepoRoot
 $root = Get-FullPathNoResolve -Path $Root -Repo $repo
 $envFile = Join-Path $root "dev.env.ps1"
@@ -130,6 +155,8 @@ if (-not $NoAutostart) {
     }
   }
 }
+
+Ensure-SiteFirewallRule -Port $FrontendPort
 
 Write-Host ""
 Write-Host "DeskRelay self PC server URLs:"

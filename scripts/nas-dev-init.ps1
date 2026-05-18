@@ -205,8 +205,13 @@ location.reload();
 "@ | Set-Content -Encoding utf8 -Path $browserLogin
 
 @"
-param([switch]`$NoFrontend, [switch]`$NoDaemon, [switch]`$NoRegisterDevice)
-& $(Quote-PsString (Join-Path $repo "scripts\dev-local-start.ps1")) -NasRoot $(Quote-PsString $root) -NoFrontend:`$NoFrontend -NoDaemon:`$NoDaemon -NoRegisterDevice:`$NoRegisterDevice
+param(
+  [switch]`$NoFrontend,
+  [switch]`$NoDaemon,
+  [switch]`$NoRegisterDevice,
+  [string]`$FrontendHost = '127.0.0.1'
+)
+& $(Quote-PsString (Join-Path $repo "scripts\dev-local-start.ps1")) -NasRoot $(Quote-PsString $root) -FrontendHost `$FrontendHost -NoFrontend:`$NoFrontend -NoDaemon:`$NoDaemon -NoRegisterDevice:`$NoRegisterDevice
 "@ | Set-Content -Encoding utf8 -Path $startWrapper
 
 @"
