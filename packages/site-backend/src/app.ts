@@ -6315,14 +6315,28 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
   const scopedEvidence = input.evidence.filter((item) =>
     managerEvidenceMatchesJudgmentScope(item, roundId, currentRoundAgentIds, currentRoundTaskIds),
   );
-  const roundExecutionHealthy = input.roundHealthGate?.status === "healthy";
-  const failedEvidence = scopedEvidence.filter(
+  const roundHasActionableHealthIssue =
+    input.roundHealthGate?.issues.some(
+      (issue) =>
+        issue.severity === "blocked" ||
+        issue.action === "retry-worker" ||
+        issue.action === "repair-round" ||
+        issue.action === "inspect-worker",
+    ) ?? false;
+  const roundExecutionHealthy =
+    input.roundHealthGate?.status === "healthy" ||
+    (input.roundHealthGate?.status === "warning" &&
+      !roundHasActionableHealthIssue &&
+      input.roundHealthGate.runningRuns === 0 &&
+      input.roundHealthGate.blockedRuns === 0 &&
+      input.roundHealthGate.missingRuns === 0);
+  const rawFailedEvidence = scopedEvidence.filter(
     (item) =>
       (item.status === "failed" || item.status === "missing") &&
       (!roundExecutionHealthy || item.type === "blocker" || item.type === "user-check"),
   );
   const staleEvidence = scopedEvidence.filter((item) => item.status === "stale");
-  const failedResults = roundExecutionHealthy
+  const rawFailedResults = roundExecutionHealthy
     ? []
     : input.agentResults.filter(
         (result) => result.verdict === "fail" || result.verdict === "needs_user_check",
@@ -6347,6 +6361,14 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
       .map((run) => run.taskId)
       .filter(isPresent),
   );
+  const failedEvidence = rawFailedEvidence.filter((item) => {
+    if (item.type === "blocker" || item.type === "user-check") return true;
+    return item.taskId ? retryableTaskIds.has(item.taskId) : !roundExecutionHealthy;
+  });
+  const failedResults = rawFailedResults.filter((result) => {
+    if (result.verdict === "needs_user_check") return true;
+    return result.taskId ? retryableTaskIds.has(result.taskId) : !roundExecutionHealthy;
+  });
   const firstFailedTaskId = [
     failedResults.find((result) => result.taskId)?.taskId,
     failedEvidence.find((item) => item.taskId)?.taskId,
@@ -6462,42 +6484,47 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
         evidenceIds,
         agentResultIds: failedResults.map((result) => result.id).slice(0, 10),
       });
-    packets.push(
-      managerJudgmentPacket({
+    const repairAction =
+      roundId &&
+      (failedEvidence.some(
+        (item) => item.type === "blocker" || item.type === "user-check" || !item.taskId,
+      ) ||
+        failedResults.some((result) => result.verdict === "needs_user_check" || !result.taskId)) &&
+      managerProposedAction({
         projectId: input.project.id,
         roundId,
-        verdict: "retry",
-        priority: "approval",
-        confidence: failedResults.length > 0 ? "high" : "medium",
-        summary: "A worker result needs repair before this round can be trusted.",
-        reason:
-          failedResults[0]?.blockers[0] ||
-          failedEvidence[0]?.detail ||
-          "Failed or missing evidence is linked to the active round.",
+        type: "repair_round",
+        risk: "low",
+        requiresApproval: true,
+        title: "Reconcile round evidence",
+        rationale: "Refresh the round health gate from the latest worker ledger.",
+        payload: { roundId },
         evidenceIds,
-        agentResultIds: failedResults.map((result) => result.id).slice(0, 10),
-        proposedActions: [
-          ...(action ? [action] : []),
-          ...(roundId
-            ? [
-                managerProposedAction({
-                  projectId: input.project.id,
-                  roundId,
-                  type: "repair_round",
-                  risk: "low",
-                  requiresApproval: true,
-                  title: "Reconcile round evidence",
-                  rationale: "Refresh the round health gate from the latest worker ledger.",
-                  payload: { roundId },
-                  evidenceIds,
-                }),
-              ]
-            : []),
-        ],
-        createdAt,
-        expiresAt,
-      }),
-    );
+      });
+    const proposedActions: ManagerProposedAction[] = [];
+    if (action) proposedActions.push(action);
+    if (repairAction) proposedActions.push(repairAction);
+    if (proposedActions.length > 0) {
+      packets.push(
+        managerJudgmentPacket({
+          projectId: input.project.id,
+          roundId,
+          verdict: "retry",
+          priority: "approval",
+          confidence: failedResults.length > 0 ? "high" : "medium",
+          summary: "A worker result needs repair before this round can be trusted.",
+          reason:
+            failedResults[0]?.blockers[0] ||
+            failedEvidence[0]?.detail ||
+            "Failed or missing evidence is linked to the active round.",
+          evidenceIds,
+          agentResultIds: failedResults.map((result) => result.id).slice(0, 10),
+          proposedActions,
+          createdAt,
+          expiresAt,
+        }),
+      );
+    }
   }
 
   if (protocolProblems.length > 0 && input.readiness.ready) {

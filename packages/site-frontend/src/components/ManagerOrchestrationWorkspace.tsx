@@ -915,6 +915,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
         }),
       );
       await runApprovedProposedAction(preflight.action, projectId);
+      suppressApprovalActions(approvalActionSuppressionKeys(action, preflight.action));
       await refreshAfterApprovalAction();
       setApprovalActionStatus(t("manager.orchestration.approval.done"));
     } catch (error) {
