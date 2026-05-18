@@ -6683,6 +6683,30 @@ function managerToolchainSetupAssignments(
   ];
 }
 
+function shouldDowngradeToNotice(input: {
+  branch: 6 | 7;
+  verdict: ManagerJudgmentPacket["verdict"];
+  readiness: ManagerCommandFlowResponse["readiness"];
+  userBlockerCount: number;
+  failedEvidenceCount: number;
+  failedResultCount: number;
+  roundHasActionableHealthIssue: boolean;
+  protocolProblemCount: number;
+}): boolean {
+  if (input.branch === 6) {
+    if (input.verdict !== "continue" && input.verdict !== "wait") return false;
+  } else if (input.verdict !== "continue") {
+    return false;
+  }
+  if (input.readiness.userCheckRequired) return false;
+  if (input.userBlockerCount > 0) return false;
+  if (input.failedEvidenceCount > 0) return false;
+  if (input.failedResultCount > 0) return false;
+  if (input.roundHasActionableHealthIssue) return false;
+  if (input.protocolProblemCount > 0) return false;
+  return true;
+}
+
 function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJudgmentPacket[] {
   if (input.project.status === "completed" || input.project.flowStage === "completed") return [];
   const packets: ManagerJudgmentPacket[] = [];
@@ -7131,12 +7155,24 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
             agentResultIds: resultIds,
           }),
         ];
+    const branch6Priority: ManagerJudgmentPacket["priority"] = shouldDowngradeToNotice({
+      branch: 6,
+      verdict: "continue",
+      readiness: input.readiness,
+      userBlockerCount: userBlockers.length,
+      failedEvidenceCount: failedEvidence.length,
+      failedResultCount: failedResults.length,
+      roundHasActionableHealthIssue,
+      protocolProblemCount: protocolProblems.length,
+    })
+      ? "notice"
+      : "approval";
     packets.push(
       managerJudgmentPacket({
         projectId: input.project.id,
         roundId,
         verdict: "continue",
-        priority: "approval",
+        priority: branch6Priority,
         confidence: staleEvidence.length > 0 ? "medium" : "high",
         summary: acceptedRoundReview
           ? "Round is accepted; choose next loop action."
@@ -7155,11 +7191,23 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
   }
 
   if (packets.length === 0 && input.readiness.ready && !input.activeRound) {
+    const branch7Priority: ManagerJudgmentPacket["priority"] = shouldDowngradeToNotice({
+      branch: 7,
+      verdict: "continue",
+      readiness: input.readiness,
+      userBlockerCount: userBlockers.length,
+      failedEvidenceCount: failedEvidence.length,
+      failedResultCount: failedResults.length,
+      roundHasActionableHealthIssue,
+      protocolProblemCount: protocolProblems.length,
+    })
+      ? "notice"
+      : "approval";
     packets.push(
       managerJudgmentPacket({
         projectId: input.project.id,
         verdict: "continue",
-        priority: "approval",
+        priority: branch7Priority,
         confidence: "medium",
         summary: "Project is ready for its first orchestration round.",
         reason: "Readiness passed and no active round exists.",
