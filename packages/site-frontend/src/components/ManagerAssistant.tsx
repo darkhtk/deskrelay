@@ -70,10 +70,8 @@ const MANAGER_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_SESSION_LIMIT = 10;
 const MANAGER_SESSION_EVENT_LIMIT = 400;
 const MANAGER_SESSION_MAX_BYTES = 8 * 1024 * 1024;
-const STREAM_OPEN_GRACE_MS = 350;
 const MANAGER_ASSISTANT_HISTORY_LIMIT = 240;
 const MANAGER_ASSISTANT_HISTORY_CACHE_BYTES = 2 * 1024 * 1024;
-const STREAM_CLOSE_GRACE_MS = 5_000;
 const MANAGER_ASSISTANT_COLLAPSE_CHARS = 1_400;
 const MANAGER_ASSISTANT_COLLAPSE_LINES = 14;
 const MANAGER_ASSISTANT_PREVIEW_CHARS = 560;
@@ -793,9 +791,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     try {
       await api.managerAssistantChatStream(
         {
-        message: text,
+          message: text,
           history,
-          context: props.context ?? undefined,
+          ...(props.context ? { context: props.context } : {}),
           ...(assistantState ? { assistantState } : {}),
         },
         (event) => {
@@ -1536,26 +1534,6 @@ export const ManagerAssistantLedger: Component<{
   );
 };
 
-async function waitForManagerStreamClose(
-  streamPromise: Promise<void>,
-  abort: AbortController,
-): Promise<void> {
-  const settled = await Promise.race([
-    streamPromise.then(() => true),
-    new Promise<boolean>((resolve) =>
-      window.setTimeout(() => {
-        resolve(false);
-      }, STREAM_CLOSE_GRACE_MS),
-    ),
-  ]);
-  if (settled) return;
-  abort.abort();
-  await Promise.race([
-    streamPromise.catch(() => undefined),
-    new Promise<void>((resolve) => window.setTimeout(resolve, 1_000)),
-  ]);
-}
-
 function managerAssistantSyntheticEvent(text: string): ClaudeStreamEvent {
   return {
     type: "assistant",
@@ -1942,8 +1920,7 @@ function managerStatusFromAssistantStreamEvent(
     };
   }
   if (event.type === "claude_event") {
-    const action = describeCliActionFromClaudeEvent(event.event);
-    return action ? { tone: "thinking", main: action } : null;
+    return managerStatusFromEnvelope("claude.event", event.event);
   }
   if (event.type === "message") {
     return { tone: "thinking", main: "응답 반영 중" };
@@ -2025,16 +2002,6 @@ function managerStatusFromState(
     main: state.current.title,
     ...(detail ? { detail } : {}),
   };
-}
-
-function runErrorMessage(content: unknown): string {
-  if (content && typeof content === "object") {
-    const message = (content as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim()) return message.trim();
-    const stderr = (content as { stderr?: unknown }).stderr;
-    if (typeof stderr === "string" && stderr.trim()) return stderr.trim();
-  }
-  return "Assistant run failed.";
 }
 
 function managerAssistantHistoryCacheKey(): string {
