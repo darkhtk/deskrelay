@@ -1603,8 +1603,8 @@ function buildManagerAssistantTranscriptEntries(
     const rawText = managerAssistantDisplayText(event);
     if (!rawText) return [];
     const noise = isManagerAssistantNoiseText(rawText);
-    if (noise && role !== "assistant") return [];
-    const text = noise ? managerAssistantNoReplyText() : rawText;
+    if (noise) return [];
+    const text = rawText;
     const collapsed = shouldCollapseManagerAssistantEntry(role, text);
     return [
       {
@@ -1654,10 +1654,6 @@ function isManagerAssistantNoiseText(text: string): boolean {
     normalized === "continue from where you left off." ||
     normalized === "continue from where you left off"
   );
-}
-
-function managerAssistantNoReplyText(): string {
-  return t("manager.assistant.transcript.no-reply");
 }
 
 function shouldCollapseManagerAssistantEntry(
