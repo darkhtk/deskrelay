@@ -6172,23 +6172,35 @@ function buildManagerAgentResult(
   const roundId = run?.roundId ?? agent?.roundId;
   const agentId = agent?.id ?? run?.agentId;
   const taskId = run?.taskId ?? agent?.taskId;
-  const relatedEvidence = evidence.filter(
-    (item) =>
-      (agent?.id && item.agentId === agent.id) ||
-      (run?.agentId && item.agentId === run.agentId) ||
-      (agent?.taskId && item.taskId === agent.taskId) ||
-      (run?.taskId && item.taskId === run.taskId),
-  );
-  const summary = managerAgentResultSummary(agent, run, status);
+  const agentMatchesRun = !run?.taskId || !agent?.taskId || run.taskId === agent.taskId;
+  const evidenceAgent = agentMatchesRun ? agent : undefined;
+  const relatedEvidence = evidence.filter((item) => {
+    if (run?.roundId && item.roundId && item.roundId !== run.roundId) return false;
+    if (run?.taskId && item.taskId && item.taskId !== run.taskId) return false;
+    if (run?.taskId && item.taskId === run.taskId) return true;
+    if (run?.agentId && item.agentId === run.agentId && item.roundId === run.roundId) return true;
+    if (!run && agent?.roundId && item.roundId && item.roundId !== agent.roundId) return false;
+    if (!run && agent?.id && item.agentId === agent.id) return true;
+    if (!run && agent?.taskId && item.taskId === agent.taskId) return true;
+    return false;
+  });
+  const summary = managerAgentResultSummary(evidenceAgent, run, status);
   const changedFiles = collectManagerArtifactPaths(
-    [agent?.lastInstruction, agent?.lastOutput, agent?.lastError, run?.outputPreview, run?.error]
+    [
+      evidenceAgent?.lastInstruction,
+      evidenceAgent?.lastOutput,
+      evidenceAgent?.lastError,
+      run?.outputPreview,
+      run?.error,
+    ]
       .filter(Boolean)
       .join("\n"),
   ).slice(0, 12);
-  const risks = managerAgentResultRisks(agent, run, relatedEvidence);
-  const blockers = managerAgentResultBlockers(agent, run, relatedEvidence);
+  const risks = managerAgentResultRisks(evidenceAgent, run, relatedEvidence);
+  const blockers = managerAgentResultBlockers(evidenceAgent, run, relatedEvidence);
   const verdict = managerAgentResultVerdict(status, run, relatedEvidence);
-  const updatedAt = agent?.lastOutputAt ?? agent?.updatedAt ?? run?.updatedAt ?? now.toISOString();
+  const updatedAt =
+    run?.updatedAt ?? evidenceAgent?.lastOutputAt ?? evidenceAgent?.updatedAt ?? now.toISOString();
   return {
     id: managerEvidenceId("agent-result", agent?.id ?? run?.id ?? role),
     projectId: project.id,
@@ -6197,11 +6209,11 @@ function buildManagerAgentResult(
     ...(taskId ? { taskId } : {}),
     role,
     assignment:
-      extractManagerAgentAssignment(agent?.lastInstruction) ||
+      extractManagerAgentAssignment(evidenceAgent?.lastInstruction) ||
       run?.command ||
       "No specific assignment was captured.",
     summary,
-    findings: managerAgentResultFindings(agent, run, summary),
+    findings: managerAgentResultFindings(evidenceAgent, run, summary),
     changedFiles,
     risks,
     blockers,
@@ -6209,7 +6221,7 @@ function buildManagerAgentResult(
     nextRequest: managerAgentResultNextRequest(status, run, relatedEvidence),
     confidence: managerAgentResultConfidence(run, relatedEvidence),
     verdict,
-    createdAt: agent?.createdAt ?? run?.createdAt ?? now.toISOString(),
+    createdAt: run?.createdAt ?? evidenceAgent?.createdAt ?? now.toISOString(),
     updatedAt,
   };
 }
@@ -6312,6 +6324,7 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
   const currentRoundTaskIds = new Set(
     input.agentResults.map((result) => result.taskId).filter(isPresent),
   );
+  for (const taskId of input.activeRound?.taskIds ?? []) currentRoundTaskIds.add(taskId);
   const scopedEvidence = input.evidence.filter((item) =>
     managerEvidenceMatchesJudgmentScope(item, roundId, currentRoundAgentIds, currentRoundTaskIds),
   );
@@ -6358,10 +6371,16 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
   const retryableTaskIds = new Set(
     [...latestRunByTaskId.values()]
       .filter((run) => managerWorkerRunHasRetryableTask(run))
+      .filter(
+        (run) =>
+          (!roundId || run.roundId === roundId) &&
+          (!run.taskId || currentRoundTaskIds.has(run.taskId)),
+      )
       .map((run) => run.taskId)
       .filter(isPresent),
   );
   const failedEvidence = rawFailedEvidence.filter((item) => {
+    if (item.taskId && !currentRoundTaskIds.has(item.taskId)) return false;
     if (item.type === "blocker" || item.type === "user-check") return true;
     return item.taskId ? retryableTaskIds.has(item.taskId) : !roundExecutionHealthy;
   });
