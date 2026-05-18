@@ -915,6 +915,33 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           action: t(`manager.orchestration.proposed-action.${preflight.action.type}`),
         }),
       );
+      if (approvalActionRunsInBackground(preflight.action)) {
+        const actionLabel = t(`manager.orchestration.proposed-action.${preflight.action.type}`);
+        const suppressionKeys = approvalActionSuppressionKeys(action, preflight.action);
+        const actionPromise = runApprovedProposedAction(preflight.action, projectId);
+        suppressApprovalActions(suppressionKeys);
+        setApprovalActionStatus(
+          t("manager.orchestration.approval.started", {
+            action: actionLabel,
+          }),
+        );
+        setRefreshSeq((seq) => seq + 1);
+        void actionPromise
+          .then(async () => {
+            await refreshAfterApprovalAction();
+            setApprovalActionStatus(t("manager.orchestration.approval.done"));
+          })
+          .catch((error) => {
+            unsuppressApprovalActions(suppressionKeys);
+            setApprovalActionStatus(null);
+            setApprovalActionError(
+              t("manager.orchestration.approval.error.failed", {
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+          });
+        return;
+      }
       await runApprovedProposedAction(preflight.action, projectId);
       suppressApprovalActions(approvalActionSuppressionKeys(action, preflight.action));
       await refreshAfterApprovalAction();
@@ -1009,6 +1036,14 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     setSuppressedApprovalActionKeys((current) => {
       const next = { ...current };
       for (const key of keys) next[key] = true;
+      return next;
+    });
+  }
+
+  function unsuppressApprovalActions(keys: string[]) {
+    setSuppressedApprovalActionKeys((current) => {
+      const next = { ...current };
+      for (const key of keys) delete next[key];
       return next;
     });
   }
@@ -1301,6 +1336,10 @@ function payloadRoundAssignments(
 
 function isPayloadRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function approvalActionRunsInBackground(action: ManagerProposedAction): boolean {
+  return action.type === "start_next_round" || action.type === "start_toolchain_setup";
 }
 
 function findFreshApprovalAction(

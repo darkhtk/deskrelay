@@ -6427,7 +6427,7 @@ dialog.approval-modal-root,
 }
 .manager-approval-actions button:disabled {
   color: var(--text-faint);
-  cursor: default;
+  cursor: not-allowed;
 }
 .manager-project-create {
   display: grid;

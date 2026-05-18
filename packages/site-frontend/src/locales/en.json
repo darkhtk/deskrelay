@@ -403,6 +403,7 @@
   "manager.orchestration.approval.preflight": "Checking the latest state before running the approval.",
   "manager.orchestration.approval.reason-label": "Reason",
   "manager.orchestration.approval.running": "Running approval action: {action}",
+  "manager.orchestration.approval.started": "Started {action}. The worker round will continue in the background.",
   "manager.orchestration.approval.stale-action-cleaned": "This approval proposal is no longer current. The approval gate has been refreshed.",
   "manager.orchestration.approval.stale-task-active": "The target task is still {state}, so it was not retried. State has been refreshed.",
   "manager.orchestration.approval.stale-task-missing": "The target task could not be found, so the approval proposal was cleaned up.",

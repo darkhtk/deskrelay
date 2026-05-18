@@ -1128,6 +1128,7 @@
   "manager.orchestration.approval.preflight": "승인 전 최신 상태를 확인하고 있습니다.",
   "manager.orchestration.approval.reason-label": "판단 근거",
   "manager.orchestration.approval.running": "승인 액션 실행 중: {action}",
+  "manager.orchestration.approval.started": "{action}을 시작했습니다. worker 라운드는 백그라운드에서 계속 진행됩니다.",
   "manager.orchestration.approval.stale-action-cleaned": "이 승인 제안은 최신 상태에 없습니다. 승인 게이트를 새로고침했습니다.",
   "manager.orchestration.approval.stale-task-active": "대상 작업이 아직 {state} 상태라 재시도하지 않았습니다. 상태를 새로고침했습니다.",
   "manager.orchestration.approval.stale-task-missing": "대상 작업을 찾을 수 없어 승인 제안을 정리했습니다.",
