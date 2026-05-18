@@ -24,6 +24,7 @@ import type {
   ManagerProtocolResponse,
   ManagerProtocolUpdateRequest,
   ManagerRound,
+  ManagerRoundAgentAssignment,
   ManagerRoundHealthGateResponse,
   ManagerRoundReviewRequest,
   ManagerSessionHygieneReport,
@@ -1072,6 +1073,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       }
       case "start_next_round": {
         const phase = managerStartPhase(payloadString(action.payload, "phase"));
+        const assignments = payloadRoundAssignments(action.payload);
         await api.startManagerProject(projectId, {
           objective:
             payloadString(action.payload, "objective") ??
@@ -1079,6 +1081,20 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
             t("manager.orchestration.flow.default-round-objective"),
           ...(phase ? { phase } : {}),
           dryRun: payloadBoolean(action.payload, "dryRun") ?? false,
+          ...(assignments ? { assignments } : {}),
+        });
+        return;
+      }
+      case "start_toolchain_setup": {
+        const phase = managerStartPhase(payloadString(action.payload, "phase")) ?? "verification";
+        const assignments = payloadRoundAssignments(action.payload);
+        await api.startManagerProject(projectId, {
+          objective:
+            payloadString(action.payload, "objective") ??
+            t("manager.orchestration.approval.default-toolchain-setup"),
+          phase,
+          dryRun: payloadBoolean(action.payload, "dryRun") ?? false,
+          ...(assignments ? { assignments } : {}),
         });
         return;
       }
@@ -1251,6 +1267,40 @@ function payloadString(payload: Record<string, unknown>, key: string): string | 
 function payloadBoolean(payload: Record<string, unknown>, key: string): boolean | undefined {
   const value = payload[key];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function payloadRoundAssignments(
+  payload: Record<string, unknown>,
+): ManagerRoundAgentAssignment[] | undefined {
+  const value = payload.assignments;
+  if (!Array.isArray(value)) return undefined;
+  const assignments = value.flatMap((item): ManagerRoundAgentAssignment[] => {
+    if (!isPayloadRecord(item)) return [];
+    const role = payloadString(item, "role");
+    const prompt = payloadString(item, "prompt");
+    if (!role || !prompt) return [];
+    const agentId = payloadString(item, "agentId");
+    const label = payloadString(item, "label");
+    const profile = payloadString(item, "profile");
+    const cwd = payloadString(item, "cwd");
+    const timeoutMs = Number(item.timeoutMs);
+    return [
+      {
+        role: role as ManagerRoundAgentAssignment["role"],
+        prompt,
+        ...(agentId ? { agentId } : {}),
+        ...(label ? { label } : {}),
+        ...(profile ? { profile } : {}),
+        ...(cwd ? { cwd } : {}),
+        ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
+      },
+    ];
+  });
+  return assignments.length ? assignments : undefined;
+}
+
+function isPayloadRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function findFreshApprovalAction(

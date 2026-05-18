@@ -7019,6 +7019,169 @@ body.manager-orchestration-resizing {
   grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   min-width: 0;
 }
+.manager-state-machine {
+  background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-strong) 72%, transparent),
+      transparent
+    ), var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+.manager-state-machine-head,
+.manager-state-machine-foot {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.manager-state-machine-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.manager-state-machine-head strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.manager-state-machine-head span,
+.manager-state-machine-foot span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-state-machine-head p,
+.manager-state-machine-foot {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  margin: 0;
+  min-width: 0;
+  padding: 7px 9px;
+}
+.manager-state-machine-head p {
+  align-items: center;
+  display: flex;
+  flex: 0 1 auto;
+  gap: 7px;
+  white-space: nowrap;
+}
+.manager-state-machine-head p strong,
+.manager-state-machine-foot strong {
+  color: var(--text);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-state-machine-track {
+  display: flex;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  padding-left: 0;
+}
+.manager-state-machine-step {
+  align-items: center;
+  display: flex;
+  flex: 1 0 136px;
+  min-width: 136px;
+}
+.manager-state-machine-connector {
+  background: var(--border-subtle);
+  flex: 0 0 24px;
+  height: 2px;
+}
+.manager-state-machine-branches {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+}
+.manager-state-machine-route {
+  align-items: center;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+}
+.manager-state-machine-route-label,
+.manager-state-machine-route-target {
+  color: var(--text-faint);
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.manager-state-machine-route-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-state-machine-node {
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-height: 82px;
+  min-width: 0;
+  padding: 9px;
+  position: relative;
+}
+.manager-state-machine-node-compact {
+  flex: 1 1 126px;
+  min-height: 68px;
+}
+.manager-state-machine-node-label {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-state-machine-node small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.manager-state-machine-node em {
+  align-self: end;
+  background: color-mix(in srgb, var(--accent-coral) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-coral) 42%, var(--border-subtle));
+  border-radius: 999px;
+  color: var(--accent-coral);
+  font-size: 10px;
+  font-style: normal;
+  justify-self: start;
+  padding: 2px 7px;
+}
+.manager-state-machine-node-done {
+  border-color: color-mix(in srgb, var(--success) 36%, var(--border-subtle));
+}
+.manager-state-machine-node-done .manager-state-machine-node-label {
+  color: var(--success);
+}
+.manager-state-machine-node-current {
+  background: color-mix(in srgb, var(--accent-coral) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-coral) 72%, var(--border-subtle));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-coral) 18%, transparent);
+}
+.manager-state-machine-node-current .manager-state-machine-node-label {
+  color: var(--text);
+}
 .manager-wizard-events {
   align-items: center;
   border: 1px solid var(--border-subtle);
@@ -9239,6 +9402,37 @@ body.manager-orchestration-resizing {
   }
   .manager-wizard-events > div {
     justify-content: flex-start;
+  }
+  .manager-state-machine-head,
+  .manager-state-machine-foot {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .manager-state-machine-head p {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .manager-state-machine-track,
+  .manager-state-machine-route {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .manager-state-machine-step {
+    align-items: stretch;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .manager-state-machine-connector {
+    flex: 0 0 14px;
+    height: 14px;
+    margin-left: 12px;
+    width: 2px;
+  }
+  .manager-state-machine-branches {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .manager-state-machine-node-compact {
+    flex-basis: auto;
   }
   .manager-decision-toolbar,
   .manager-blocker-toolbar {

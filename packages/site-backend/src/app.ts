@@ -6308,11 +6308,109 @@ function latestManagerWorkerRunsByTaskId(runs: ManagerWorkerRun[]): Map<string, 
   return latest;
 }
 
+const MANAGER_TOOLCHAIN_SETUP_WARNING = "A missing toolchain can be handled by workers.";
+
+function managerBlockerIsToolchainSetupCandidate(blocker: ManagerBlocker): boolean {
+  const text = [blocker.title, blocker.detail, blocker.dedupeKey, blocker.owner, blocker.source]
+    .filter(isPresent)
+    .join("\n")
+    .toLowerCase();
+  if (!text) return false;
+  if (text.includes("godot") && /(missing|not found|executable|runtime|toolchain)/.test(text)) {
+    return true;
+  }
+  return [
+    "godot-missing",
+    "godot4_exe",
+    "godot_exe",
+    "toolchain missing",
+    "missing toolchain",
+    "runtime verification blocked",
+    "runtime missing",
+    "sdk missing",
+    "missing sdk",
+    "cli missing",
+    "missing cli",
+    "executable not found",
+  ].some((needle) => text.includes(needle));
+}
+
+function managerToolchainSetupBlockerSummary(blockers: ManagerBlocker[]): string {
+  return blockers
+    .slice(0, 6)
+    .map((blocker, index) => {
+      const detail = blocker.detail?.trim();
+      return `${index + 1}. ${blocker.title}${detail ? ` - ${detail}` : ""}`;
+    })
+    .join("\n");
+}
+
+function managerToolchainSetupObjective(
+  project: ManagerProject,
+  blockers: ManagerBlocker[],
+): string {
+  const blockerSummary =
+    managerToolchainSetupBlockerSummary(blockers) || "No blocker detail was recorded.";
+  return [
+    `Resolve installable toolchain blockers for project "${project.name}".`,
+    "",
+    "Detected blockers:",
+    blockerSummary,
+    "",
+    "Expected workflow:",
+    "1. Inspect existing configuration first: GODOT4_EXE, GODOT_EXE, PATH, project config, and common portable cache locations.",
+    "2. If the tool is absent, install or connect a portable/project-local toolchain instead of asking the user to install it manually.",
+    "3. Prefer official release sources for runtime tools. For Godot, use a Godot 4.x executable compatible with the project.",
+    "4. Record version, source URL, executable path, and any checksum/signature evidence that is practical to collect.",
+    "5. Store the path in a project-local config or documented environment hook so later workers can reuse it.",
+    "6. Rerun the project smoke/runtime verification and update BLOCKERS.md or an equivalent project ledger with the result.",
+    "7. If installation cannot be completed safely, keep the blocker open and write the exact smallest approval request needed.",
+    "",
+    "Safety constraints: do not mutate Program Files, the system PATH, registry, or global package state without explicit approval. Respect asset licenses and project IP constraints.",
+  ].join("\n");
+}
+
+function managerToolchainSetupAssignments(
+  project: ManagerProject,
+  blockers: ManagerBlocker[],
+): ManagerRoundAgentAssignment[] {
+  const objective = managerToolchainSetupObjective(project, blockers);
+  const cwd = project.cwd;
+  return [
+    {
+      role: "operator",
+      label: "Toolchain installer",
+      profile: "claude-code",
+      cwd,
+      prompt: `${objective}\n\nYou own toolchain discovery and installation/connection. Make the smallest safe local change that lets workers run the missing executable. Report changed files, installed paths, source/version, and any remaining approval need.`,
+    },
+    {
+      role: "verifier",
+      label: "Runtime verifier",
+      profile: "claude-code",
+      cwd,
+      prompt: `${objective}\n\nYou own runtime verification after the installer acts. Re-run the relevant smoke command, prove whether the executable is callable, and record concrete pass/fail evidence. Do not mark the blocker resolved without observed evidence.`,
+    },
+    {
+      role: "critic",
+      label: "Setup risk critic",
+      profile: "claude-code",
+      cwd,
+      prompt: `${objective}\n\nReview the setup for unsafe global mutations, licensing problems, brittle paths, and missing documentation. Recommend either accept, retry with a narrower fix, or request explicit manager/user approval.`,
+    },
+  ];
+}
+
 function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJudgmentPacket[] {
   if (input.project.status === "completed" || input.project.flowStage === "completed") return [];
   const packets: ManagerJudgmentPacket[] = [];
   const openBlockers = input.blockers.filter((blocker) => blocker.status === "open");
-  const userBlockers = openBlockers.filter((blocker) => blocker.requiredAction === "user");
+  const toolchainBlockers = openBlockers.filter(managerBlockerIsToolchainSetupCandidate);
+  const toolchainBlockerIds = new Set(toolchainBlockers.map((blocker) => blocker.id));
+  const userBlockers = openBlockers.filter(
+    (blocker) =>
+      blocker.requiredAction === "user" && !managerBlockerIsToolchainSetupCandidate(blocker),
+  );
   const activeRuns = input.runs.filter((run) => isManagerWorkerRunActive(run.status));
   const protocolProblems = input.protocolTrace.filter(
     (trace) => trace.result === "violated" || trace.result === "unclear",
@@ -6380,6 +6478,13 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
       .filter(isPresent),
   );
   const failedEvidence = rawFailedEvidence.filter((item) => {
+    if (
+      (item.type === "blocker" || item.type === "user-check") &&
+      item.ref &&
+      toolchainBlockerIds.has(item.ref)
+    ) {
+      return false;
+    }
     if (item.taskId && !currentRoundTaskIds.has(item.taskId)) return false;
     if (item.type === "blocker" || item.type === "user-check") return true;
     return item.taskId ? retryableTaskIds.has(item.taskId) : !roundExecutionHealthy;
@@ -6430,6 +6535,50 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
             payload: {},
             evidenceIds,
             protocolTraceIds: protocolProblems.map((trace) => trace.id).slice(0, 10),
+          }),
+        ],
+        createdAt,
+        expiresAt,
+      }),
+    );
+  }
+
+  if (toolchainBlockers.length > 0 && activeRuns.length === 0) {
+    const blockerEvidenceIds = input.evidence
+      .filter((item) => item.type === "blocker" || item.type === "user-check")
+      .map((item) => item.id)
+      .slice(0, 10);
+    packets.push(
+      managerJudgmentPacket({
+        projectId: input.project.id,
+        roundId,
+        verdict: "blocked",
+        priority: "approval",
+        confidence: "high",
+        summary: "Toolchain setup is required before runtime verification can continue.",
+        reason:
+          toolchainBlockers[0]?.detail ||
+          toolchainBlockers[0]?.title ||
+          "A worker-resolvable runtime tool is missing.",
+        evidenceIds: blockerEvidenceIds,
+        proposedActions: [
+          managerProposedAction({
+            projectId: input.project.id,
+            roundId,
+            type: "start_toolchain_setup",
+            risk: "high",
+            requiresApproval: true,
+            title: "Install or connect missing toolchain",
+            rationale:
+              "Workers can resolve installable prerequisites instead of asking the user to install them manually.",
+            payload: {
+              blockerIds: toolchainBlockers.map((blocker) => blocker.id).slice(0, 10),
+              objective: managerToolchainSetupObjective(input.project, toolchainBlockers),
+              phase: "verification",
+              dryRun: false,
+              assignments: managerToolchainSetupAssignments(input.project, toolchainBlockers),
+            },
+            evidenceIds: blockerEvidenceIds,
           }),
         ],
         createdAt,
@@ -7262,8 +7411,14 @@ function managerCommandFlowReadiness(
     .map((file) => file.path);
   const charter = effectiveProjectCharter(project);
   const hasGoal = Boolean((charter.goal || project.goal).trim());
+  const toolchainSetupRequired = blockers.some(
+    (blocker) => blocker.status === "open" && managerBlockerIsToolchainSetupCandidate(blocker),
+  );
   const userCheckRequired = blockers.some(
-    (blocker) => blocker.status === "open" && blocker.requiredAction === "user",
+    (blocker) =>
+      blocker.status === "open" &&
+      blocker.requiredAction === "user" &&
+      !managerBlockerIsToolchainSetupCandidate(blocker),
   );
   const cwdBoundary = repoRoot ? resolveManagerWorkerCwd(repoRoot, project.cwd) : undefined;
   const cwdBoundaryWarning = cwdBoundary && !cwdBoundary.ok ? cwdBoundary.error : undefined;
@@ -7280,6 +7435,7 @@ function managerCommandFlowReadiness(
       ...protocol.warnings,
       ...(!hasGoal ? ["Project charter goal is not recorded."] : []),
       ...(cwdBoundaryWarning ? [cwdBoundaryWarning] : []),
+      ...(toolchainSetupRequired ? [MANAGER_TOOLCHAIN_SETUP_WARNING] : []),
       ...(userCheckRequired ? ["A user verification blocker is open."] : []),
     ],
     userCheckRequired,

@@ -3754,6 +3754,106 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     }
   });
 
+  test("manager project command flow routes installable toolchain blockers to worker setup", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-toolchain-flow-"));
+    const protocolFiles = [
+      "ORCHESTRATION.md",
+      "AGENTS.md",
+      "PROTOCOL.md",
+      "REVIEW.md",
+      "TASKS.md",
+      "STATE.md",
+      "FAILURES.md",
+      "PROJECT.md",
+      "WORKER-CONTRACT.md",
+      "PROMPT-TEMPLATES.md",
+      "SPEC-SCHEMA.md",
+      "VERIFICATION.md",
+    ];
+    for (const file of protocolFiles) {
+      writeFileSync(join(cwd, file), `# ${file}\n\nToolchain flow fixture.\n`, "utf8");
+    }
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerProjectStore: createInMemoryManagerProjectStore(),
+      managerOrchestrationStore: createInMemoryManagerOrchestrationStore(),
+      managerTaskStore: createInMemoryManagerTaskStore(),
+      managerBlockerStore: createInMemoryManagerBlockerStore(),
+      managerDecisionStore: createInMemoryManagerDecisionStore(),
+      managerArtifactStore: createInMemoryManagerArtifactStore(),
+      managerProtocolStore: createInMemoryManagerProtocolStore(),
+    });
+
+    try {
+      const create = await app.fetch(
+        authedRequest("POST", "/api/manager/projects", {
+          name: "Godot Runtime Project",
+          cwd,
+          goal: "Verify a Korean 2D ARPG project with Godot.",
+        }),
+      );
+      expect(create.status).toBe(201);
+      const created = (await create.json()) as { project?: { id?: string } };
+      const projectId = created.project?.id;
+      expect(projectId).toBeTruthy();
+      if (!projectId) throw new Error("project id missing");
+
+      const blocker = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/blockers`, {
+          title: "godot-missing runtime verification blocked",
+          detail: "Godot 4 executable not found; set GODOT4_EXE or install portable Godot.",
+          severity: "warning",
+          owner: "runtime-smoke",
+          requiredAction: "user",
+          source: "worker",
+          dedupeKey: "godot-missing-runtime-smoke",
+        }),
+      );
+      expect(blocker.status).toBe(201);
+
+      const flow = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/command-flow`),
+      );
+      expect(flow.status).toBe(200);
+      const flowBody = (await flow.json()) as {
+        readiness?: {
+          ready?: boolean;
+          userCheckRequired?: boolean;
+          warnings?: string[];
+        };
+        judgments?: Array<{
+          proposedActions?: Array<{
+            type?: string;
+            requiresApproval?: boolean;
+            payload?: {
+              objective?: string;
+              assignments?: unknown[];
+            };
+          }>;
+        }>;
+      };
+      expect(flowBody.readiness?.ready).toBe(true);
+      expect(flowBody.readiness?.userCheckRequired).toBe(false);
+      expect(flowBody.readiness?.warnings).toContain(
+        "A missing toolchain can be handled by workers.",
+      );
+      expect(flowBody.readiness?.warnings).not.toContain("A user verification blocker is open.");
+
+      const actions =
+        flowBody.judgments?.flatMap((judgment) => judgment.proposedActions ?? []) ?? [];
+      const toolchainAction = actions.find((action) => action.type === "start_toolchain_setup");
+      expect(toolchainAction?.requiresApproval).toBe(true);
+      expect(actions.some((action) => action.type === "request_user_check")).toBe(false);
+      expect(actions.some((action) => action.type === "repair_round")).toBe(false);
+      expect(toolchainAction?.payload?.objective).toContain("Godot");
+      expect(toolchainAction?.payload?.assignments?.length).toBeGreaterThan(1);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager project direction change without a blocker returns to replanning", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-direction-flow-"));
     const managerProjectStore = createInMemoryManagerProjectStore();

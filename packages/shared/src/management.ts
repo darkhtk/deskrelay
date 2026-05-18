@@ -1247,6 +1247,7 @@ export type ManagerProposedActionType =
   | "repair_round"
   | "review_round"
   | "start_next_round"
+  | "start_toolchain_setup"
   | "direction_change"
   | "request_user_check"
   | "complete_project";

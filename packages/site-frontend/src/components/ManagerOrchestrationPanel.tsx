@@ -8,6 +8,7 @@ import type {
   ManagerBlockerCreateRequest,
   ManagerBlockerResolveRequest,
   ManagerCommandFlowResponse,
+  ManagerCommandFlowStage,
   ManagerDecision,
   ManagerDecisionCreateRequest,
   ManagerDecisionUpdateRequest,
@@ -189,7 +190,22 @@ const COMMAND_FLOW_STAGES = [
   "review",
   "replanning",
   "completed",
-] as const;
+  "archived",
+] as const satisfies readonly ManagerCommandFlowStage[];
+
+const COMMAND_FLOW_MAIN_STAGES = [
+  "draft",
+  "protocol_ready",
+  "ready_to_start",
+  "running",
+  "review",
+] as const satisfies readonly ManagerCommandFlowStage[];
+
+const COMMAND_FLOW_BRANCH_STAGES = [
+  "replanning",
+  "completed",
+  "archived",
+] as const satisfies readonly ManagerCommandFlowStage[];
 
 type OrchestrationInfoTab =
   | "flow"
@@ -665,6 +681,16 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
                     blockers={props.blockers ?? []}
                     hiddenAgentCount={hiddenAgentCount()}
                   />
+                  <Show when={displayProject()}>
+                    {(project) => (
+                      <CommandFlowStateMachine
+                        project={project()}
+                        commandFlow={props.commandFlow ?? null}
+                        overview={effectiveOverview()}
+                        activeRound={activeRound()}
+                      />
+                    )}
+                  </Show>
                 </OrchestrationSection>
                 <Show
                   when={
@@ -2050,6 +2076,129 @@ const ProjectWizardDialog: Component<{
   );
 };
 
+const CommandFlowStateMachine: Component<{
+  project: ManagerProject | null;
+  commandFlow: ManagerCommandFlowResponse | null;
+  overview?: ManagerProjectOverviewResponse | null | undefined;
+  activeRound: ManagerRound | undefined;
+}> = (props) => {
+  const currentStage = createMemo(() =>
+    resolveCurrentCommandFlowStage(props.project, props.commandFlow, props.activeRound),
+  );
+  const nextAction = createMemo(
+    () =>
+      props.commandFlow?.nextAction ??
+      props.commandFlow?.overview.nextAction ??
+      props.overview?.nextAction ??
+      null,
+  );
+  const readiness = createMemo(() => props.commandFlow?.readiness ?? null);
+  const openBlockers = createMemo(
+    () => props.commandFlow?.blockers.filter((blocker) => blocker.status === "open") ?? [],
+  );
+  const stateMeta = createMemo(() => {
+    if (
+      openBlockers().some(
+        (blocker) =>
+          blocker.requiredAction === "user" && !managerBlockerIsToolchainSetupCandidate(blocker),
+      )
+    ) {
+      return t("manager.orchestration.flow.state-machine.user-check");
+    }
+    if (readiness()?.warnings.length) {
+      return managerCommandFlowWarningLabel(readiness()?.warnings[0] ?? "");
+    }
+    const action = nextAction();
+    if (action) return managerProjectOverviewActionLabel(action);
+    return managerCommandFlowStageNextLabel(currentStage());
+  });
+
+  return (
+    <section
+      class="manager-state-machine"
+      aria-label={t("manager.orchestration.flow.state-machine.title")}
+    >
+      <header class="manager-state-machine-head">
+        <div>
+          <strong>{t("manager.orchestration.flow.state-machine.title")}</strong>
+          <span>{t("manager.orchestration.flow.state-machine.subtitle")}</span>
+        </div>
+        <p>
+          <span>{t("manager.orchestration.flow.state-machine.current")}</span>
+          <strong>{managerProjectFlowStageLabel(currentStage())}</strong>
+        </p>
+      </header>
+      <ul class="manager-state-machine-track">
+        <For each={COMMAND_FLOW_MAIN_STAGES}>
+          {(stage, index) => (
+            <li class="manager-state-machine-step">
+              <CommandFlowStateNode stage={stage} currentStage={currentStage()} />
+              <Show when={index() < COMMAND_FLOW_MAIN_STAGES.length - 1}>
+                <span class="manager-state-machine-connector" aria-hidden="true" />
+              </Show>
+            </li>
+          )}
+        </For>
+      </ul>
+      <div class="manager-state-machine-branches">
+        <div class="manager-state-machine-route">
+          <span class="manager-state-machine-route-label">
+            {t("manager.orchestration.flow.state-machine.route.iterate")}
+          </span>
+          <CommandFlowStateNode stage="replanning" currentStage={currentStage()} compact />
+          <span class="manager-state-machine-route-target">
+            {t("manager.orchestration.flow.state-machine.route.back-to-running")}
+          </span>
+        </div>
+        <div class="manager-state-machine-route">
+          <span class="manager-state-machine-route-label">
+            {t("manager.orchestration.flow.state-machine.route.finish")}
+          </span>
+          <For each={COMMAND_FLOW_BRANCH_STAGES.filter((stage) => stage !== "replanning")}>
+            {(stage) => (
+              <CommandFlowStateNode stage={stage} currentStage={currentStage()} compact />
+            )}
+          </For>
+        </div>
+      </div>
+      <footer class="manager-state-machine-foot">
+        <span>{t("manager.orchestration.flow.state-machine.next")}</span>
+        <strong>{stateMeta()}</strong>
+      </footer>
+    </section>
+  );
+};
+
+const CommandFlowStateNode: Component<{
+  stage: ManagerCommandFlowStage;
+  currentStage: ManagerCommandFlowStage;
+  compact?: boolean | undefined;
+}> = (props) => {
+  const isCurrent = createMemo(() => props.currentStage === props.stage);
+  const isDone = createMemo(() => commandFlowStageDone(props.stage, props.currentStage));
+
+  return (
+    <div
+      class="manager-state-machine-node"
+      classList={{
+        "manager-state-machine-node-current": isCurrent(),
+        "manager-state-machine-node-done": isDone(),
+        "manager-state-machine-node-compact": Boolean(props.compact),
+      }}
+      data-flow-stage={props.stage}
+      aria-current={isCurrent() ? "step" : undefined}
+    >
+      <span class="manager-state-machine-node-label">
+        {t(`manager.orchestration.flow.stage.${props.stage}`)}
+      </span>
+      <small>{t(`manager.orchestration.flow.stage-detail.${props.stage}`)}</small>
+      <Show when={isCurrent()}>
+        <em>{t("manager.orchestration.flow.state-machine.current-marker")}</em>
+      </Show>
+    </div>
+  );
+};
+
 const CommandFlowView: Component<{
   project: ManagerProject | null;
   commandFlow: ManagerCommandFlowResponse | null;
@@ -2183,21 +2332,11 @@ const CommandFlowView: Component<{
       fallback={<p class="manager-orchestration-empty">{t("manager.orchestration.empty.flow")}</p>}
     >
       <div class="manager-command-flow">
-        <div class="manager-command-flow-stage">
-          <For each={COMMAND_FLOW_STAGES}>
-            {(stage) => (
-              <span
-                class="manager-flow-node"
-                classList={{
-                  "manager-flow-node-running": readiness()?.stage === stage,
-                  "manager-flow-node-done": commandFlowStageDone(stage, readiness()?.stage),
-                }}
-              >
-                <strong>{t(`manager.orchestration.flow.stage.${stage}`)}</strong>
-              </span>
-            )}
-          </For>
-        </div>
+        <CommandFlowStateMachine
+          project={props.project}
+          commandFlow={props.commandFlow}
+          activeRound={activeRound()}
+        />
         <Show when={wizardEvents().length > 0}>
           <div
             class="manager-wizard-events"
@@ -2492,6 +2631,11 @@ const OverviewView: Component<{
     }
     const projectBlocker = activeBlocker();
     if (projectBlocker) {
+      if (managerBlockerIsToolchainSetupCandidate(projectBlocker)) {
+        return t("manager.orchestration.next-action.toolchain", {
+          title: projectBlocker.title,
+        });
+      }
       if (projectBlocker.requiredAction === "user")
         return t("manager.orchestration.next-action.user", { title: projectBlocker.title });
       if (projectBlocker.requiredAction === "worker")
@@ -5480,6 +5624,7 @@ function pickPrimaryBlocker(blockers: ManagerBlocker[]): ManagerBlocker | null {
       (left, right) =>
         blockerSeverityWeight(right.severity) - blockerSeverityWeight(left.severity) ||
         blockerActionWeight(right.requiredAction) - blockerActionWeight(left.requiredAction) ||
+        blockerSpecificityWeight(right) - blockerSpecificityWeight(left) ||
         Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
     )[0] ?? null
   );
@@ -5496,6 +5641,39 @@ function blockerActionWeight(value: ManagerBlocker["requiredAction"]): number {
   if (value === "manager") return 3;
   if (value === "worker") return 2;
   return 1;
+}
+
+function blockerSpecificityWeight(blocker: ManagerBlocker): number {
+  return (
+    (managerBlockerIsToolchainSetupCandidate(blocker) ? 2 : 0) +
+    (blocker.dedupeKey ? 1 : 0) -
+    (/^user verification required$/i.test(blocker.title.trim()) ? 1 : 0)
+  );
+}
+
+function managerBlockerIsToolchainSetupCandidate(blocker: ManagerBlocker): boolean {
+  const text = [blocker.title, blocker.detail, blocker.dedupeKey, blocker.owner, blocker.source]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  if (!text) return false;
+  if (text.includes("godot") && /(missing|not found|executable|runtime|toolchain)/.test(text)) {
+    return true;
+  }
+  return [
+    "godot-missing",
+    "godot4_exe",
+    "godot_exe",
+    "toolchain missing",
+    "missing toolchain",
+    "runtime verification blocked",
+    "runtime missing",
+    "sdk missing",
+    "missing sdk",
+    "cli missing",
+    "missing cli",
+    "executable not found",
+  ].some((needle) => text.includes(needle));
 }
 
 function summarizeWorkerRunTotals(runs: ManagerWorkerRun[]) {
@@ -5563,13 +5741,58 @@ function commandFlowCharter(
   };
 }
 
+function resolveCurrentCommandFlowStage(
+  project: ManagerProject | null,
+  commandFlow: ManagerCommandFlowResponse | null,
+  activeRound: ManagerRound | undefined,
+): ManagerCommandFlowStage {
+  if (commandFlow?.readiness.stage) return commandFlow.readiness.stage;
+  if (project?.flowStage) return project.flowStage;
+  return projectStatusCommandFlowStage(project?.status, activeRound?.status);
+}
+
+function projectStatusCommandFlowStage(
+  status: ManagerProject["status"] | undefined,
+  roundStatus: ManagerRound["status"] | undefined,
+): ManagerCommandFlowStage {
+  if (status === "archived") return "archived";
+  if (status === "completed") return "completed";
+  if (status === "reviewing") return "review";
+  if (status === "blocked") return "replanning";
+  if (status === "running") return roundStatusCommandFlowStage(roundStatus) ?? "running";
+  return "draft";
+}
+
+function roundStatusCommandFlowStage(
+  status: ManagerRound["status"] | undefined,
+): ManagerCommandFlowStage | undefined {
+  switch (status) {
+    case "planned":
+      return "ready_to_start";
+    case "dispatching":
+    case "running":
+    case "collecting":
+      return "running";
+    case "reviewing":
+    case "completed":
+      return "review";
+    case "blocked":
+    case "failed":
+    case "cancelled":
+      return "replanning";
+    default:
+      return undefined;
+  }
+}
+
 function commandFlowStageDone(
-  stage: (typeof COMMAND_FLOW_STAGES)[number],
-  current: string | undefined,
+  stage: ManagerCommandFlowStage,
+  current: ManagerCommandFlowStage | undefined,
 ): boolean {
   if (!current) return false;
-  const currentIndex = COMMAND_FLOW_STAGES.indexOf(current as (typeof COMMAND_FLOW_STAGES)[number]);
+  const currentIndex = COMMAND_FLOW_STAGES.indexOf(current);
   const stageIndex = COMMAND_FLOW_STAGES.indexOf(stage);
+  if (currentIndex < 0 || stageIndex < 0) return false;
   return currentIndex > stageIndex;
 }
 
@@ -5600,12 +5823,36 @@ function managerProjectOverviewActionLabel(action: ManagerProjectOverviewAction)
   }
 }
 
+function managerCommandFlowStageNextLabel(stage: ManagerCommandFlowStage): string {
+  switch (stage) {
+    case "draft":
+    case "protocol_ready":
+      return t("manager.orchestration.action.prepare");
+    case "ready_to_start":
+      return t("manager.orchestration.next-action.create-round");
+    case "running":
+      return t("manager.orchestration.next-action.wait");
+    case "review":
+      return t("manager.orchestration.next-action.review");
+    case "replanning":
+      return t("manager.orchestration.next-action.repair");
+    case "completed":
+      return t("manager.orchestration.current-judgment.completed");
+    case "archived":
+      return t("manager.orchestration.status.archived");
+    default:
+      return t("manager.orchestration.flow.state-machine.no-action");
+  }
+}
+
 function managerCommandFlowWarningLabel(warning: string): string {
   switch (warning) {
     case "Project charter goal is not recorded.":
       return t("manager.orchestration.flow.warning.missing-goal");
     case "A user verification blocker is open.":
       return t("manager.orchestration.flow.warning.user-check");
+    case "A missing toolchain can be handled by workers.":
+      return t("manager.orchestration.flow.warning.toolchain-setup");
     default:
       return warning;
   }

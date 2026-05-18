@@ -1,6 +1,7 @@
 import type {
   ManagerAgent,
   ManagerBlocker,
+  ManagerCommandFlowResponse,
   ManagerProject,
   ManagerProjectCharterUpdateRequest,
   ManagerProjectCreateRequest,
@@ -360,6 +361,11 @@ describe("ManagerOrchestrationPanel project wizard", () => {
       />
     ));
 
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("manager.orchestration.action.show-admin-detail"),
+      }),
+    );
     fireEvent.click(screen.getByRole("tab", { name: t("manager.orchestration.tab.state") }));
 
     const panel = within(screen.getByRole("tabpanel"));
@@ -438,6 +444,110 @@ describe("ManagerOrchestrationPanel project wizard", () => {
 
     expect(
       within(screen.getByRole("tabpanel")).getByText("Manager should resolve: Fix stale selection"),
+    ).toBeTruthy();
+  });
+
+  test("renders the orchestration state machine with the current stage highlighted", () => {
+    const timestamp = "2026-05-17T00:00:00.000Z";
+    const selectedProject: ManagerProject = {
+      id: "project_1",
+      name: "Planner",
+      cwd: "C:\\work\\planner",
+      goal: "Build a planning dashboard",
+      status: "reviewing",
+      flowStage: "review",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      charter: {
+        goal: "Build a planning dashboard",
+        scope: "Show round planning",
+        nonGoals: "Do not change production data",
+        constraints: "Ask before writes",
+        successCriteria: "Admins approve final state",
+        preferredApproach: "Design, implement, review",
+        verificationPlan: "Run tests",
+        userCheckpoints: "Review before final",
+        finalDeliverables: "Working dashboard",
+      },
+    };
+    const overview: ManagerProjectOverviewResponse = {
+      generatedAt: timestamp,
+      project: selectedProject,
+      counts: {
+        rounds: 1,
+        agents: 0,
+        runningAgents: 0,
+        completedAgents: 0,
+        blockedAgents: 0,
+        tasks: 0,
+        runningTasks: 0,
+        failedTasks: 0,
+        workerRuns: 0,
+        artifacts: 0,
+      },
+      currentSignal: {
+        tone: "success",
+        title: "Project round ready for review",
+        detail: "Selected project signal.",
+      },
+      nextAction: {
+        kind: "summarize",
+        label: "Summarize round result",
+      },
+      recentSignals: [],
+    };
+    const commandFlow = {
+      generatedAt: timestamp,
+      project: selectedProject,
+      charter: selectedProject.charter,
+      wizardEvents: [],
+      protocol: {},
+      overview,
+      decisions: [],
+      blockers: [],
+      artifacts: [],
+      rounds: [],
+      workerRuns: [],
+      evidence: [],
+      agentResults: [],
+      protocolTrace: [],
+      judgments: [],
+      readiness: {
+        ready: false,
+        stage: "review",
+        missingProtocolFiles: [],
+        warnings: ["A user verification blocker is open."],
+        userCheckRequired: true,
+      },
+      nextAction: overview.nextAction,
+    } as unknown as ManagerCommandFlowResponse;
+
+    const { container } = render(() => (
+      <ManagerOrchestrationPanel
+        projects={[selectedProject]}
+        selectedProject={selectedProject}
+        commandFlow={commandFlow}
+        rounds={[]}
+        agents={[]}
+        standalone
+      />
+    ));
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("manager.orchestration.action.show-admin-detail"),
+      }),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: t("manager.orchestration.tab.flow") }));
+
+    expect(screen.getByText(t("manager.orchestration.flow.state-machine.title"))).toBeTruthy();
+    expect(container.querySelector('[data-flow-stage="archived"]')).toBeTruthy();
+    const currentNode = container.querySelector('[data-flow-stage="review"][aria-current="step"]');
+    expect(currentNode).toBeTruthy();
+    expect(
+      within(currentNode as HTMLElement).getByText(
+        t("manager.orchestration.flow.state-machine.current-marker"),
+      ),
     ).toBeTruthy();
   });
 
@@ -533,6 +643,11 @@ describe("ManagerOrchestrationPanel project wizard", () => {
       />
     ));
 
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: t("manager.orchestration.action.show-admin-detail"),
+      }),
+    );
     const projectRegion = screen.getByRole("region", {
       name: t("manager.orchestration.project.aria"),
     });
