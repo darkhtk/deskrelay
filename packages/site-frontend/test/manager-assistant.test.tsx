@@ -22,6 +22,94 @@ afterEach(() => {
 });
 
 describe("ManagerAssistant", () => {
+  test("renders manager transcript markdown without role labels", async () => {
+    setLocale("en");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-md",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          method?: string;
+        };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-md",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Session",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          return Response.json({
+            result: {
+              sessionId: "manager-session-md",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [
+                      {
+                        type: "text",
+                        text: "**Bold answer**\n\n- first item\n- second item",
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    await waitFor(() => {
+      expect(document.querySelector(".manager-assistant-dialogue-markdown strong")?.textContent).toBe(
+        "Bold answer",
+      );
+    });
+    expect(document.querySelectorAll(".manager-assistant-dialogue-markdown li")).toHaveLength(2);
+    expect(document.querySelector(".manager-assistant-dialogue-role")).toBeNull();
+  });
+
   test("shows a clear transcript entry when the manager returns no visible reply", async () => {
     setLocale("en");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

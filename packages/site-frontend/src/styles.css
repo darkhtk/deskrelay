@@ -8987,14 +8987,7 @@ body.manager-orchestration-resizing {
 }
 .manager-assistant-dialogue-item {
   display: grid;
-  gap: 4px;
   min-width: 0;
-}
-.manager-assistant-dialogue-role {
-  color: var(--text-faint);
-  font-size: 10px;
-  line-height: 1.2;
-  padding: 0 2px;
 }
 .manager-assistant-dialogue-body {
   border: 1px solid var(--border-subtle);
@@ -9017,10 +9010,51 @@ body.manager-orchestration-resizing {
   color: var(--text);
   max-width: min(92%, 520px);
 }
-.manager-assistant-dialogue-body p {
-  margin: 0;
+.manager-assistant-dialogue-markdown {
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  word-break: break-word;
+}
+.manager-assistant-dialogue-markdown p,
+.manager-assistant-dialogue-markdown ul,
+.manager-assistant-dialogue-markdown ol,
+.manager-assistant-dialogue-markdown blockquote,
+.manager-assistant-dialogue-markdown pre {
+  margin: 0 0 8px;
+}
+.manager-assistant-dialogue-markdown p:last-child,
+.manager-assistant-dialogue-markdown ul:last-child,
+.manager-assistant-dialogue-markdown ol:last-child,
+.manager-assistant-dialogue-markdown blockquote:last-child,
+.manager-assistant-dialogue-markdown pre:last-child {
+  margin-bottom: 0;
+}
+.manager-assistant-dialogue-markdown ul,
+.manager-assistant-dialogue-markdown ol {
+  padding-left: 18px;
+}
+.manager-assistant-dialogue-markdown h1,
+.manager-assistant-dialogue-markdown h2,
+.manager-assistant-dialogue-markdown h3 {
+  color: var(--text);
+  font-size: 1.05em;
+  font-weight: 650;
+  margin: 12px 0 6px;
+}
+.manager-assistant-dialogue-markdown code {
+  background: var(--code-chip);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.manager-assistant-dialogue-markdown pre code {
+  background: transparent;
+  border-radius: 0;
+  color: inherit;
+  display: block;
+  font-size: inherit;
+  padding: 0;
 }
 .manager-assistant-dialogue-details {
   border-top: 1px solid var(--border-subtle);
@@ -9032,7 +9066,7 @@ body.manager-orchestration-resizing {
   cursor: pointer;
   font-size: 11px;
 }
-.manager-assistant-dialogue-details pre {
+.manager-assistant-dialogue-full {
   background: color-mix(in srgb, var(--bg-soft) 78%, var(--surface-card));
   border: 1px solid var(--border-subtle);
   border-radius: 7px;
@@ -9044,7 +9078,6 @@ body.manager-orchestration-resizing {
   max-width: 100%;
   overflow: auto;
   padding: 8px;
-  white-space: pre-wrap;
 }
 .manager-assistant-transcript-empty {
   color: var(--text-faint);
