@@ -817,19 +817,20 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
               visibleAssistantReplySeen = true;
             }
           } else if (event.type === "error") {
+            const visibleError = managerAssistantVisibleError(event.error);
             if (!visibleAssistantReplySeen) {
-              appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 오류: ${event.error}`));
+              appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 오류: ${visibleError}`));
               visibleAssistantReplySeen = true;
             }
-            setError(event.error);
-            setStatus({ tone: "warning", main: "Assistant 오류", detail: event.error });
+            setError(visibleError);
+            setStatus({ tone: "warning", main: "Assistant 오류", detail: visibleError });
           }
         },
         { signal: abort.signal },
       );
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = managerAssistantVisibleError(err instanceof Error ? err.message : String(err));
         if (!visibleAssistantReplySeen) {
           appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 요청 실패: ${message}`));
           visibleAssistantReplySeen = true;
@@ -1909,6 +1910,7 @@ function managerStatusFromAssistantStreamEvent(
   event: ManagerAssistantStreamEvent,
 ): ManagerVisibleStatus | null {
   if (event.type === "status") {
+    if (event.status.tone !== "warning") return { tone: "thinking", main: "생각 중" };
     return {
       tone: event.status.tone === "warning" ? "warning" : "thinking",
       main: event.status.main,
@@ -1916,7 +1918,9 @@ function managerStatusFromAssistantStreamEvent(
     };
   }
   if (event.type === "claude_event") {
-    return managerStatusFromEnvelope("claude.event", event.event);
+    const status = managerStatusFromEnvelope("claude.event", event.event);
+    if (status?.tone === "warning") return status;
+    return { tone: "thinking", main: "생각 중" };
   }
   if (event.type === "message") {
     return { tone: "thinking", main: "응답 반영 중" };
@@ -1929,6 +1933,7 @@ function managerStatusFromAssistantStreamEvent(
 
 function managerComposerActionLabel(status: ManagerVisibleStatus): string {
   const text = status.main.trim();
+  if (status.tone === "thinking") return "생각 중";
   if (/오류|error|failed|실패/i.test(text)) return "오류";
   if (/응답|답변/i.test(text) && status.tone === "warning") return "응답 필요";
   if (/승인|approval|permission/i.test(text)) return "승인 대기";
@@ -1936,8 +1941,15 @@ function managerComposerActionLabel(status: ManagerVisibleStatus): string {
   if (/수신|응답|답변|response/i.test(text)) return "응답 확인 중";
   if (/실행|진행|running|thinking/i.test(text)) return "진행 중";
   if (status.tone === "warning") return "확인 필요";
-  if (status.tone === "thinking") return "진행 중";
   return "입력 가능";
+}
+
+function managerAssistantVisibleError(error: string): string {
+  const trimmed = error.trim();
+  if (/manager assistant cli timed out after \d+ms/i.test(trimmed)) {
+    return "관리자 응답이 오래 걸리고 있습니다. 답변이 올 때까지 생각 중 상태를 유지합니다.";
+  }
+  return trimmed || "관리자 Assistant 요청을 완료하지 못했습니다.";
 }
 
 function managerStatusFromReport(

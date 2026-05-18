@@ -9951,7 +9951,6 @@ async function runDefaultManagerAssistantCliStream(
     buildManagerAssistantCliArgs(command, baseArgs),
     input.managerSessionId,
   );
-  const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
   const invocation = await prepareManagerAssistantInvocation(command, args, prompt);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
@@ -9986,9 +9985,7 @@ async function runDefaultManagerAssistantCliStream(
     invocation.writeInput?.(proc);
     const stdout = readManagerAssistantStdout(proc.stdout, emit);
     const stderr = readManagerAssistantStderr(proc.stderr, emit);
-    const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
-      proc.kill();
-    });
+    const exitCode = await proc.exited;
     const [stdoutResult, stderrText] = await Promise.all([stdout, stderr]);
     if (exitCode !== 0) {
       throw new Error(
