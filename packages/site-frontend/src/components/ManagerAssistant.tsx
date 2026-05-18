@@ -142,6 +142,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
   const [managerActionBusy, setManagerActionBusy] = createSignal(false);
   const [observeBusy, setObserveBusy] = createSignal(false);
+  const [awaitingReplyRecoveryCount, setAwaitingReplyRecoveryCount] = createSignal(0);
   const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [cachedOrchestrationSnapshot, setCachedOrchestrationSnapshot] = createSignal(
     readManagerOrchestrationCache(),
@@ -174,10 +175,12 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   const serverDevice = createMemo(() => {
     const devices = props.devices ?? [];
+    const preferred = workspaceDevice();
     return (
+      (preferred ? devices.find((device) => device.id === preferred.id) : null) ??
       devices.find((device) => deviceDisplayRole(device) === "Server") ??
       devices.find((device) => device.connectionState === "online") ??
-      workspaceDevice() ??
+      preferred ??
       null
     );
   });
@@ -580,7 +583,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     const nextEvents = visibleClaudeEvents(transcript?.events ?? []);
     if (nextEvents.length > 0) {
       setEvents(nextEvents);
-      rememberAssistantHistory({ events: nextEvents });
+      setAssistantHistory(rememberAssistantHistory({ events: nextEvents }));
     } else if (events().length === 0 && (assistantHistory()?.events.length ?? 0) > 0) {
       setEvents(assistantHistory()?.events ?? []);
     }
@@ -612,6 +615,21 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     events();
     runIds();
     queueMicrotask(scrollToBottomIfPinned);
+  });
+
+  createEffect(() => {
+    if (!managerAssistantAwaitingReply()) {
+      setAwaitingReplyRecoveryCount(0);
+      return;
+    }
+    if (busy() || loadedTranscript.loading) return;
+    const count = awaitingReplyRecoveryCount();
+    if (count >= 12) return;
+    const timer = window.setTimeout(() => {
+      setAwaitingReplyRecoveryCount((current) => current + 1);
+      setReloadSeq((seq) => seq + 1);
+    }, 5_000);
+    onCleanup(() => window.clearTimeout(timer));
   });
 
   createEffect(() => {

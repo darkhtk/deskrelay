@@ -217,7 +217,7 @@ describe("ManagerAssistant", () => {
       expect(behaviorCalls.some((call) => call.method === "sessions.list")).toBe(true);
     });
     await waitFor(() => {
-      expect(document.body.textContent).toContain("관리자 대기 중");
+      expect(document.body.textContent).toContain("입력 가능");
     });
     const presetButton = screen.getByRole("button", { name: "Orchestration" }) as HTMLButtonElement;
     expect(presetButton.disabled).toBe(false);

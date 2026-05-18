@@ -53,6 +53,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
+import { renderMarkdown } from "../claude/message-renderer.ts";
 import { t } from "../i18n.ts";
 import type { ManagerEventConnectionState } from "../manager-events.ts";
 
@@ -3428,59 +3429,62 @@ const AgentsView: Component<{
         <div class="manager-agent-role-briefs" aria-label={t("manager.orchestration.agent.briefs")}>
           <For each={briefs()}>
             {(brief) => (
-              <article class={`manager-agent-brief manager-agent-brief-${brief.tone}`}>
-                <header>
+              <details class={`manager-agent-brief manager-agent-brief-${brief.tone}`}>
+                <summary class="manager-agent-brief-summary">
                   <span class="manager-agent-brief-role">
-                    <strong>{brief.role}</strong>
-                    <small>{brief.profile}</small>
+                    <strong>{brief.label}</strong>
                   </span>
                   <span class={`manager-agent-status manager-agent-status-${brief.tone}`}>
                     {statusLabel(brief.status)}
                   </span>
-                </header>
-                <div class="manager-agent-brief-verdict">
-                  <span>{agentResultVerdictLabel(brief.verdict)}</span>
-                  <span>
-                    {t("manager.orchestration.agent.evidence-count", {
-                      count: brief.evidenceCount,
-                    })}
-                  </span>
-                  <span>{agentResultConfidenceLabel(brief.confidence)}</span>
+                </summary>
+                <div class="manager-agent-brief-body">
+                  <div class="manager-agent-brief-verdict">
+                    <span>{agentResultVerdictLabel(brief.verdict)}</span>
+                    <span>
+                      {t("manager.orchestration.agent.evidence-count", {
+                        count: brief.evidenceCount,
+                      })}
+                    </span>
+                    <span>{agentResultConfidenceLabel(brief.confidence)}</span>
+                  </div>
+                  <dl>
+                    <AgentDetailField
+                      label={t("manager.orchestration.field.role")}
+                      value={[brief.role, brief.profile].filter(Boolean).join("\n")}
+                    />
+                    <AgentDetailField
+                      label={t("manager.orchestration.agent.assignment")}
+                      value={brief.assignment}
+                    />
+                    <AgentDetailField
+                      label={t("manager.orchestration.agent.output")}
+                      value={brief.output}
+                    />
+                    <Show when={brief.findings.length > 0}>
+                      <AgentDetailField
+                        label={t("manager.orchestration.agent.findings")}
+                        value={brief.findings.map((finding) => `- ${finding}`).join("\n")}
+                      />
+                    </Show>
+                    <Show when={brief.risks.length > 0}>
+                      <AgentDetailField
+                        label={t("manager.orchestration.agent.risks")}
+                        value={brief.risks.map((risk) => `- ${risk}`).join("\n")}
+                      />
+                    </Show>
+                    <AgentDetailField
+                      label={t("manager.orchestration.field.evidence")}
+                      value={brief.evidence}
+                    />
+                    <AgentDetailField
+                      label={t("manager.orchestration.field.next")}
+                      value={brief.next}
+                    />
+                  </dl>
                 </div>
-                <dl>
-                  <div>
-                    <dt>{t("manager.orchestration.agent.assignment")}</dt>
-                    <dd title={brief.assignment}>{clip(brief.assignment, 130)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("manager.orchestration.agent.output")}</dt>
-                    <dd title={brief.output}>{clip(brief.output, 130)}</dd>
-                  </div>
-                  <Show when={brief.findings.length > 0}>
-                    <div>
-                      <dt>{t("manager.orchestration.agent.findings")}</dt>
-                      <dd title={brief.findings.join("\n")}>
-                        {clip(brief.findings.join(" · "), 130)}
-                      </dd>
-                    </div>
-                  </Show>
-                  <Show when={brief.risks.length > 0}>
-                    <div>
-                      <dt>{t("manager.orchestration.agent.risks")}</dt>
-                      <dd title={brief.risks.join("\n")}>{clip(brief.risks.join(" · "), 130)}</dd>
-                    </div>
-                  </Show>
-                  <div>
-                    <dt>{t("manager.orchestration.field.evidence")}</dt>
-                    <dd title={brief.evidence}>{clip(brief.evidence, 130)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("manager.orchestration.field.next")}</dt>
-                    <dd title={brief.next}>{clip(brief.next, 130)}</dd>
-                  </div>
-                </dl>
                 <Show when={props.advanced}>
-                  <footer>
+                  <footer class="manager-agent-detail-footer">
                     <span>{brief.meta}</span>
                     <Show when={brief.taskId && props.onInspectTask ? brief.taskId : null}>
                       {(taskId) => (
@@ -3495,50 +3499,71 @@ const AgentsView: Component<{
                     </Show>
                   </footer>
                 </Show>
-              </article>
+              </details>
             )}
           </For>
         </div>
       </Show>
       <Show when={showRawAgents()}>
         <div class="manager-agent-row manager-agent-row-head">
-          <span>{t("manager.orchestration.field.role")}</span>
+          <span>{t("manager.orchestration.field.name")}</span>
           <span>{t("manager.orchestration.field.status")}</span>
-          <span>{t("manager.orchestration.field.task")}</span>
-          <span>{t("manager.orchestration.field.signal")}</span>
-          <span>{t("manager.orchestration.field.action")}</span>
         </div>
         <For each={props.agents}>
           {(agent) => (
-            <div class={`manager-agent-row manager-agent-row-${statusTone(agent.status)}`}>
-              <span class="manager-agent-role" title={`${agent.label} - ${agent.profile}`}>
-                {agent.role}
-                <small>{clip(agent.profile, 28)}</small>
-              </span>
-              <span class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}>
-                {statusLabel(agent.status)}
-              </span>
-              <span class="manager-agent-task" title={agent.taskId ?? agent.lastInstruction ?? ""}>
-                {agent.taskId
-                  ? t("manager.orchestration.word.task", { id: shortId(agent.taskId) })
-                  : clip(agent.lastInstruction, 68) || "-"}
-              </span>
-              <span
-                class="manager-agent-work"
-                title={agent.lastError || agent.lastOutput || agent.lastInstruction || ""}
-              >
-                {clip(
-                  agent.lastError ||
-                    agent.lastOutput ||
-                    agent.lastInstruction ||
-                    t("manager.orchestration.worker.no-reply"),
-                  92,
-                )}
-                <time>{formatTime(agent.lastOutputAt ?? agent.updatedAt)}</time>
-              </span>
-              <span class="manager-agent-action">
-                <Show when={agent.taskId} fallback={<span>-</span>}>
-                  {(taskId) => (
+            <details class={`manager-agent-row manager-agent-row-${statusTone(agent.status)}`}>
+              <summary class="manager-agent-row-summary">
+                <span class="manager-agent-role" title={`${agent.label} - ${agent.profile}`}>
+                  {agent.label || agent.role}
+                </span>
+                <span
+                  class={`manager-agent-status manager-agent-status-${statusTone(agent.status)}`}
+                >
+                  {statusLabel(agent.status)}
+                </span>
+              </summary>
+              <dl class="manager-agent-row-details">
+                <AgentDetailField
+                  label={t("manager.orchestration.field.role")}
+                  value={agent.role}
+                />
+                <AgentDetailField
+                  label={t("manager.orchestration.field.profile")}
+                  value={agent.profile}
+                />
+                <AgentDetailField
+                  label={t("manager.orchestration.field.task")}
+                  value={
+                    agent.taskId
+                      ? t("manager.orchestration.word.task", { id: shortId(agent.taskId) })
+                      : undefined
+                  }
+                />
+                <AgentDetailField
+                  label={t("manager.orchestration.field.instruction")}
+                  value={agent.lastInstruction}
+                />
+                <AgentDetailField
+                  label={t("manager.orchestration.agent.output")}
+                  value={agent.lastOutput}
+                />
+                <AgentDetailField
+                  label={t("manager.orchestration.field.error")}
+                  value={agent.lastError}
+                />
+                <AgentDetailField
+                  label={t("manager.orchestration.field.session")}
+                  value={agent.sessionId}
+                />
+                <AgentDetailField label="CWD" value={agent.cwd} />
+                <AgentDetailField
+                  label={t("manager.orchestration.field.updated")}
+                  value={formatTime(agent.lastOutputAt ?? agent.updatedAt)}
+                />
+              </dl>
+              <Show when={agent.taskId}>
+                {(taskId) => (
+                  <div class="manager-agent-action manager-agent-detail-action">
                     <button
                       type="button"
                       disabled={props.busy || !props.onInspectTask}
@@ -3546,10 +3571,10 @@ const AgentsView: Component<{
                     >
                       {t("manager.orchestration.action.inspect")}
                     </button>
-                  )}
-                </Show>
-              </span>
-            </div>
+                  </div>
+                )}
+              </Show>
+            </details>
           )}
         </For>
       </Show>
@@ -3560,7 +3585,116 @@ const AgentsView: Component<{
   );
 };
 
+const AgentDetailField: Component<{ label: string; value?: string | null | undefined }> = (
+  props,
+) => (
+  <Show when={props.value?.trim()}>
+    {(value) => (
+      <div>
+        <dt>{props.label}</dt>
+        <dd>
+          <AgentReadableContent value={value()} />
+        </dd>
+      </div>
+    )}
+  </Show>
+);
+
+const AgentReadableContent: Component<{ value: string }> = (props) => {
+  const parsedJson = createMemo(() => parseReadableJson(props.value));
+  return (
+    <Show
+      when={parsedJson()}
+      fallback={
+        <div
+          class="manager-agent-readable manager-agent-markdown"
+          innerHTML={renderMarkdown(props.value)}
+        />
+      }
+    >
+      {(json) => (
+        <div class="manager-agent-readable manager-agent-json-render">
+          <JsonReadableValue value={json().value} />
+        </div>
+      )}
+    </Show>
+  );
+};
+
+const JsonReadableValue: Component<{ value: unknown }> = (props) => {
+  const value = () => props.value;
+  return (
+    <Show
+      when={Array.isArray(value())}
+      fallback={
+        <Show
+          when={value() && typeof value() === "object"}
+          fallback={<span class="manager-agent-json-scalar">{formatJsonScalar(value())}</span>}
+        >
+          <dl class="manager-agent-json-object">
+            <For each={Object.entries(value() as Record<string, unknown>)}>
+              {([key, child]) => (
+                <div>
+                  <dt>{humanizeJsonKey(key)}</dt>
+                  <dd>
+                    <JsonReadableValue value={child} />
+                  </dd>
+                </div>
+              )}
+            </For>
+          </dl>
+        </Show>
+      }
+    >
+      <ol class="manager-agent-json-list">
+        <For each={value() as unknown[]}>
+          {(item) => (
+            <li>
+              <JsonReadableValue value={item} />
+            </li>
+          )}
+        </For>
+      </ol>
+    </Show>
+  );
+};
+
+function parseReadableJson(value: string): { value: unknown } | null {
+  const candidate = stripJsonFence(value.trim());
+  if (!candidate || !/^[{[]/.test(candidate)) return null;
+  try {
+    return { value: JSON.parse(candidate) };
+  } catch {
+    return null;
+  }
+}
+
+function stripJsonFence(value: string): string {
+  const fence = value.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  return (fence?.[1] ?? value).trim();
+}
+
+function formatJsonScalar(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "-";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function humanizeJsonKey(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim()
+    .split(/\s+/)
+    .map((word) => (/^[A-Z0-9]+$/.test(word) ? word : word.toLowerCase()))
+    .join(" ");
+}
+
 interface ManagerAgentRoleBrief {
+  label: string;
   role: string;
   profile: string;
   status: string;
@@ -3639,6 +3773,12 @@ function buildAgentRoleBrief(
   const status = run?.status ?? agent?.status ?? "unknown";
   const taskId = run?.taskId ?? agent?.taskId;
   const output = result?.summary ?? agentRoleOutput(agent, run, status);
+  const role =
+    result?.role ??
+    agent?.role ??
+    run?.agentRole ??
+    run?.agentLabel ??
+    t("manager.orchestration.word.worker");
   const linkedEvidence = result
     ? evidence.filter((item) => result.evidenceIds.includes(item.id))
     : evidence.filter(
@@ -3648,12 +3788,8 @@ function buildAgentRoleBrief(
           (taskId && item.taskId === taskId),
       );
   return {
-    role:
-      result?.role ??
-      agent?.role ??
-      run?.agentRole ??
-      run?.agentLabel ??
-      t("manager.orchestration.word.worker"),
+    label: agent?.label ?? run?.agentLabel ?? role,
+    role,
     profile: agent?.profile ?? run?.profile ?? "-",
     status,
     tone: statusTone(status),

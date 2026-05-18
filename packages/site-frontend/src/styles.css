@@ -7612,6 +7612,9 @@ body.manager-orchestration-resizing {
   min-width: 0;
   padding: 10px 12px;
 }
+.manager-agent-brief[open] {
+  gap: 12px;
+}
 .manager-agent-brief-running {
   border-left-color: var(--warning);
 }
@@ -7621,13 +7624,40 @@ body.manager-orchestration-resizing {
 .manager-agent-brief-blocked {
   border-left-color: var(--danger);
 }
-.manager-agent-brief header,
+.manager-agent-brief-summary,
 .manager-agent-brief footer {
   align-items: center;
   display: flex;
   gap: 8px;
   justify-content: space-between;
   min-width: 0;
+}
+.manager-agent-brief-summary {
+  cursor: pointer;
+  list-style: none;
+}
+.manager-agent-brief-summary::-webkit-details-marker {
+  display: none;
+}
+.manager-agent-brief-summary::after,
+.manager-agent-row-summary::after {
+  border-bottom: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  color: var(--text-faint);
+  content: "";
+  flex: 0 0 auto;
+  height: 6px;
+  transform: rotate(45deg);
+  transition: transform 0.16s ease;
+  width: 6px;
+}
+.manager-agent-brief[open] > .manager-agent-brief-summary::after,
+.manager-agent-row[open] > .manager-agent-row-summary::after {
+  transform: rotate(225deg);
+}
+.manager-agent-brief-body {
+  display: grid;
+  gap: 10px;
 }
 .manager-agent-brief-verdict {
   display: flex;
@@ -7670,18 +7700,24 @@ body.manager-orchestration-resizing {
   gap: 7px;
   margin: 0;
 }
-.manager-agent-brief dl div {
+.manager-agent-brief dl div,
+.manager-agent-row-details div,
+.manager-agent-json-object div {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
-.manager-agent-brief dt {
+.manager-agent-brief dt,
+.manager-agent-row-details dt,
+.manager-agent-json-object dt {
   color: var(--text-faint);
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
 }
-.manager-agent-brief dd {
+.manager-agent-brief dd,
+.manager-agent-row-details dd,
+.manager-agent-json-object dd {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.35;
@@ -7694,6 +7730,64 @@ body.manager-orchestration-resizing {
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
+}
+.manager-agent-readable {
+  color: var(--text-muted);
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.manager-agent-markdown p,
+.manager-agent-markdown ul,
+.manager-agent-markdown ol,
+.manager-agent-markdown blockquote,
+.manager-agent-markdown pre {
+  margin: 0 0 8px;
+}
+.manager-agent-markdown p:last-child,
+.manager-agent-markdown ul:last-child,
+.manager-agent-markdown ol:last-child,
+.manager-agent-markdown blockquote:last-child,
+.manager-agent-markdown pre:last-child {
+  margin-bottom: 0;
+}
+.manager-agent-markdown ul,
+.manager-agent-markdown ol {
+  padding-left: 18px;
+}
+.manager-agent-markdown pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-size: 11px;
+  max-width: 100%;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+.manager-agent-markdown code,
+.manager-agent-json-scalar {
+  background: var(--code-chip);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.manager-agent-json-render {
+  background: color-mix(in srgb, var(--surface-card) 76%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  padding: 8px;
+}
+.manager-agent-json-object,
+.manager-agent-json-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.manager-agent-json-list {
+  padding-left: 18px;
 }
 .manager-agent-brief button {
   background: transparent;
@@ -7848,24 +7942,40 @@ body.manager-orchestration-resizing {
   border-left: 2px solid transparent;
   border-top: 1px solid var(--border-subtle);
   font-size: 12px;
-  grid-template-columns:
-    minmax(120px, 0.9fr) minmax(84px, 0.55fr) minmax(160px, 1fr) minmax(220px, 1.7fr)
-    minmax(72px, 0.45fr);
+  display: block;
   min-height: 42px;
   padding-left: 8px;
 }
 .manager-section-agents .manager-agent-row {
-  grid-template-columns:
-    minmax(160px, 0.8fr) minmax(110px, 0.45fr) minmax(180px, 0.8fr) minmax(360px, 2fr)
-    minmax(92px, 0.35fr);
-  min-width: 920px;
+  min-width: 0;
 }
 .manager-agent-row-head {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) max-content;
   border-top: 0;
   color: var(--text-faint);
   font-size: 10px;
   min-height: auto;
   text-transform: uppercase;
+}
+.manager-agent-row-summary {
+  align-items: center;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(160px, 1fr) max-content 12px;
+  list-style: none;
+  min-height: 42px;
+  min-width: 0;
+}
+.manager-agent-row-summary::-webkit-details-marker {
+  display: none;
+}
+.manager-agent-row-details {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 10px 10px 0;
 }
 .manager-agent-row-running {
   border-left: 2px solid var(--warning);
@@ -8195,6 +8305,9 @@ body.manager-orchestration-resizing {
 }
 .manager-agent-action {
   min-width: 0;
+}
+.manager-agent-detail-action {
+  padding: 0 0 10px;
 }
 .manager-agent-action button {
   background: transparent;
@@ -9498,11 +9611,11 @@ body.manager-orchestration-resizing {
   .manager-flow-agent {
     grid-template-columns: 14px minmax(0, 1fr);
   }
-  .manager-agent-row {
-    grid-template-columns: minmax(78px, 0.8fr) minmax(64px, 0.6fr) minmax(112px, 1fr) 62px;
+  .manager-agent-row-summary {
+    grid-template-columns: minmax(78px, 1fr) max-content 12px;
   }
-  .manager-agent-row > span:nth-child(4) {
-    display: none;
+  .manager-agent-row-head {
+    grid-template-columns: minmax(78px, 1fr) max-content;
   }
   .manager-worker-run-row {
     grid-template-columns: minmax(90px, 1fr) minmax(70px, 0.6fr) minmax(0, 1fr);
