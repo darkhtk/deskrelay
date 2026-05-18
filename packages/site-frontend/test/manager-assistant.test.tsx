@@ -102,9 +102,9 @@ describe("ManagerAssistant", () => {
     render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
 
     await waitFor(() => {
-      expect(document.querySelector(".manager-assistant-dialogue-markdown strong")?.textContent).toBe(
-        "Bold answer",
-      );
+      expect(
+        document.querySelector(".manager-assistant-dialogue-markdown strong")?.textContent,
+      ).toBe("Bold answer");
     });
     expect(document.querySelectorAll(".manager-assistant-dialogue-markdown li")).toHaveLength(2);
     expect(document.querySelector(".manager-assistant-dialogue-role")).toBeNull();
