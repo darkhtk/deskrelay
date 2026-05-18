@@ -3438,16 +3438,20 @@ async function openPathInFileManager(
   if (options.dryRun) {
     return { cwd, command, args, dryRun: true };
   }
-  await spawnDetached(command, args);
+  await spawnDetached(command, args, { windowsHide: process.platform !== "win32" });
   return { cwd, command, args, dryRun: false };
 }
 
-async function spawnDetached(command: string, args: string[]): Promise<void> {
+async function spawnDetached(
+  command: string,
+  args: string[],
+  options: { windowsHide?: boolean } = {},
+): Promise<void> {
   await new Promise<void>((resolveLaunch, rejectLaunch) => {
     const child = spawn(command, args, {
       detached: true,
       stdio: "ignore",
-      windowsHide: true,
+      windowsHide: options.windowsHide ?? true,
     });
     const settle = (error?: Error) => {
       child.removeAllListeners("error");
@@ -5638,7 +5642,10 @@ function managerProjectCurrentSignal(input: {
   runs: ManagerWorkerRun[];
 }): ManagerProjectOverviewSignal {
   const failedTask = input.tasks.find(
-    (task) => !task.acknowledgedAt && (task.state === "failed" || task.state === "blocked"),
+    (task) =>
+      !isSupersededManagerProjectTask(task, input.agents) &&
+      !task.acknowledgedAt &&
+      (task.state === "failed" || task.state === "blocked"),
   );
   if (failedTask) {
     return {
@@ -5700,6 +5707,14 @@ function managerProjectCurrentSignal(input: {
     detail: input.project.goal || "Create a round before dispatching workers.",
     updatedAt: input.project.updatedAt,
   };
+}
+
+function isSupersededManagerProjectTask(task: ManagerTask, agents: ManagerAgent[]): boolean {
+  const taskAgentId = stringValue(task.params?.agentId);
+  const agent =
+    agents.find((item) => item.taskId === task.id) ??
+    (taskAgentId ? agents.find((item) => item.id === taskAgentId) : undefined);
+  return Boolean(agent?.taskId && agent.taskId !== task.id);
 }
 
 function managerProjectNextAction(input: {
@@ -8627,16 +8642,14 @@ async function buildManagerStateView(
   const unacknowledgedTaskSummaries = currentTaskSummaries.filter((task) => !task.acknowledgedAt);
   const staleTasks = unacknowledgedTaskSummaries.filter((task) => task.stale).slice(0, 20);
   const runningTasks = currentTaskSummaries
-    .filter((task) => !isManagerTaskTerminalState(task.state))
+    .filter((task) => !task.acknowledgedAt && !isManagerTaskTerminalState(task.state))
     .slice(0, 20);
   const roundSummaries = rounds.map((round) => summarizeManagerStateRound(round, agents, tasks));
   const unacknowledgedRoundSummaries = roundSummaries.filter((round) => !round.acknowledgedAt);
-  const activeRound =
-    unacknowledgedRoundSummaries.find((round) =>
-      ["dispatching", "running", "collecting", "reviewing", "blocked", "failed"].includes(
-        round.status,
-      ),
-    ) ?? unacknowledgedRoundSummaries[0];
+  const activeRound = selectManagerStateActiveRound(
+    unacknowledgedRoundSummaries,
+    input.latestStatus,
+  );
   const blockers = buildManagerStateBlockers({
     rounds: roundSummaries,
     agents,
@@ -8942,6 +8955,7 @@ function managerStateCurrent(input: {
     ["planned", "dispatching", "running", "collecting", "reviewing"].includes(
       input.activeRound.status,
     ) &&
+    managerStateRoundHasLiveWork(input.activeRound) &&
     !hasUnacknowledgedIssue;
   if (activeRoundIsRunning && input.activeRound) {
     const status: ManagerStateViewResponse["current"]["status"] =
@@ -9043,14 +9057,16 @@ function managerStateCurrent(input: {
         : ["details", "acknowledge"],
     };
   }
-  if (input.latestStatus && input.latestStatus.level !== "success") {
+  if (input.latestStatus) {
     const tone =
       input.latestStatus.level === "warning" || input.latestStatus.level === "error"
         ? "warning"
-        : "idle";
+        : input.latestStatus.phase === "acting" || input.latestStatus.phase === "observing"
+          ? "running"
+          : "idle";
     return {
       kind: "manager",
-      status: tone === "warning" ? "blocked" : "idle",
+      status: tone === "warning" ? "blocked" : tone === "running" ? "running" : "idle",
       tone,
       source: "status",
       title: input.latestStatus.message,
@@ -9084,6 +9100,41 @@ function managerStateCurrent(input: {
     actionable: false,
     actions: [],
   };
+}
+
+function selectManagerStateActiveRound(
+  rounds: ManagerStateRoundSummary[],
+  latestStatus: ManagerAssistantStatusReport | undefined,
+): ManagerStateRoundSummary | undefined {
+  const activeStatuses = new Set([
+    "planned",
+    "dispatching",
+    "running",
+    "collecting",
+    "reviewing",
+    "blocked",
+    "failed",
+  ]);
+  const candidates = rounds
+    .filter((round) => activeStatuses.has(round.status))
+    .filter((round) => !managerStateRoundCoveredByLatestSuccess(round, latestStatus))
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  return candidates[0];
+}
+
+function managerStateRoundHasLiveWork(round: ManagerStateRoundSummary): boolean {
+  if (round.status === "planned" || round.status === "dispatching") return true;
+  if (round.status === "collecting" || round.status === "reviewing") return true;
+  return round.counts.runningAgents > 0 || round.counts.runningTasks > 0;
+}
+
+function managerStateRoundCoveredByLatestSuccess(
+  round: ManagerStateRoundSummary,
+  latestStatus: ManagerAssistantStatusReport | undefined,
+): boolean {
+  if (!latestStatus || latestStatus.level !== "success") return false;
+  if (round.counts.runningAgents > 0 || round.counts.runningTasks > 0) return false;
+  return Date.parse(latestStatus.createdAt) >= Date.parse(round.updatedAt);
 }
 
 function managerStateStatusFromCurrent(

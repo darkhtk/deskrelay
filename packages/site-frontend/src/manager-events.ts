@@ -81,6 +81,7 @@ export function isManagerOrchestrationEvent(event: ManagerEvent): boolean {
     event.type === "agent.created" ||
     event.type === "agent.updated" ||
     event.type === "task.created" ||
-    event.type === "task.updated"
+    event.type === "task.updated" ||
+    event.type === "assistant.status"
   );
 }

@@ -1878,6 +1878,181 @@ describe("manager task API", () => {
     expect(body.current?.status).not.toBe("failed");
   });
 
+  test("manager project overview ignores failed worker attempts superseded by a retry", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-project-overview-retry-"));
+    try {
+      const managerProjectStore = createInMemoryManagerProjectStore();
+      const managerTaskStore = createInMemoryManagerTaskStore();
+      const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerProjectStore,
+        managerTaskStore,
+        managerOrchestrationStore,
+      });
+
+      const project = await managerProjectStore.create({
+        name: "Retry Overview",
+        cwd,
+        goal: "Keep the current command flow focused on the successful retry.",
+        status: "reviewing",
+        flowStage: "review",
+      });
+      const round = await managerOrchestrationStore.createRound({
+        projectId: project.id,
+        title: "Implementation round",
+        objective: "Complete the vertical slice.",
+      });
+      const agent = await managerOrchestrationStore.createAgent({
+        projectId: project.id,
+        role: "implementer",
+        label: "Implementer",
+        roundId: round.id,
+      });
+      const failed = await managerTaskStore.create({
+        projectId: project.id,
+        kind: "run-worker",
+        dryRun: true,
+        requestedBy: "manager-assistant",
+        params: { agentId: agent.id, roundId: round.id },
+        steps: [],
+      });
+      await managerTaskStore.update(failed.id, {
+        state: "failed",
+        error: "first attempt timed out",
+        completedAt: "2026-05-01T00:00:00.000Z",
+      });
+      const retry = await managerTaskStore.create({
+        projectId: project.id,
+        kind: "run-worker",
+        dryRun: true,
+        requestedBy: "manager-assistant",
+        params: { agentId: agent.id, roundId: round.id },
+        steps: [],
+      });
+      await managerTaskStore.update(retry.id, {
+        state: "succeeded",
+        result: { stdout: "retry succeeded" },
+        completedAt: "2026-05-01T00:02:00.000Z",
+      });
+      await managerOrchestrationStore.updateAgent(agent.id, {
+        status: "completed",
+        taskId: retry.id,
+        lastOutput: "retry succeeded",
+      });
+      await managerOrchestrationStore.updateRound(round.id, {
+        projectId: project.id,
+        status: "completed",
+        agentIds: [agent.id],
+        taskIds: [failed.id, retry.id],
+        summary: "Retry succeeded.",
+      });
+      await managerProjectStore.update(project.id, {
+        activeRoundId: round.id,
+        status: "reviewing",
+        flowStage: "review",
+      });
+
+      const overview = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${project.id}/overview`),
+      );
+      expect(overview.status).toBe(200);
+      const overviewBody = (await overview.json()) as {
+        currentSignal?: { tone?: string; taskId?: string };
+        nextAction?: { kind?: string; taskId?: string };
+      };
+      expect(overviewBody.currentSignal?.tone).toBe("success");
+      expect(overviewBody.currentSignal?.taskId).toBeUndefined();
+      expect(overviewBody.nextAction?.kind).toBe("summarize");
+      expect(overviewBody.nextAction?.taskId).toBeUndefined();
+
+      const commandFlow = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${project.id}/command-flow`),
+      );
+      expect(commandFlow.status).toBe(200);
+      const commandFlowBody = (await commandFlow.json()) as {
+        nextAction?: { kind?: string; taskId?: string };
+      };
+      expect(commandFlowBody.nextAction?.kind).toBe("summarize");
+      expect(commandFlowBody.nextAction?.taskId).toBeUndefined();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager state uses latest status instead of stale empty running rounds", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-state-status-"));
+    try {
+      const managerTaskStore = createInMemoryManagerTaskStore();
+      const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerTaskStore,
+        managerOrchestrationStore,
+        managerAssistant: { cwd },
+      });
+
+      const acknowledged = await managerTaskStore.create({
+        kind: "update-all",
+        dryRun: true,
+        requestedBy: "browser",
+        steps: [],
+      });
+      await managerTaskStore.update(acknowledged.id, {
+        state: "waiting_for_device",
+        acknowledgedAt: "2026-05-01T00:00:00.000Z",
+        acknowledgedBy: "browser",
+      });
+      const cancelled = await managerTaskStore.create({
+        kind: "run-worker",
+        dryRun: true,
+        requestedBy: "manager-assistant",
+        steps: [],
+      });
+      await managerTaskStore.update(cancelled.id, {
+        state: "cancelled",
+        error: "old server process ended",
+        completedAt: "2026-05-01T00:01:00.000Z",
+      });
+      const round = await managerOrchestrationStore.createRound({
+        title: "Old implementation round",
+        objective: "This round no longer has live work.",
+      });
+      await managerOrchestrationStore.updateRound(round.id, {
+        status: "running",
+        taskIds: [cancelled.id],
+        startedAt: "2026-05-01T00:00:00.000Z",
+      });
+
+      const status = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/status", {
+          phase: "done",
+          level: "success",
+          message: "Manager reconciled the current state.",
+        }),
+      );
+      expect(status.status).toBe(201);
+
+      const state = await app.fetch(authedRequest("GET", "/api/manager/state"));
+      expect(state.status).toBe(200);
+      const body = (await state.json()) as {
+        current?: { source?: string; status?: string; title?: string; roundId?: string };
+        counts?: { runningTasks?: number };
+        activeRound?: { id?: string };
+      };
+      expect(body.counts?.runningTasks).toBe(0);
+      expect(body.current?.source).toBe("status");
+      expect(body.current?.status).toBe("idle");
+      expect(body.current?.title).toBe("Manager reconciled the current state.");
+      expect(body.current?.roundId).toBeUndefined();
+      expect(body.activeRound?.id).toBeUndefined();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager acknowledgement rejects active work", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const app = createSiteApp({

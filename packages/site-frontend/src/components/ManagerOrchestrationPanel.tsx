@@ -75,6 +75,7 @@ interface ManagerOrchestrationPanelProps {
   projectBusy?: boolean | undefined;
   projectFolderBusy?: boolean | undefined;
   projectFolderError?: string | null | undefined;
+  projectFolderStatus?: string | null | undefined;
   flowBusy?: boolean | undefined;
   decisions?: ManagerDecision[] | undefined;
   archivedDecisions?: ManagerDecision[] | undefined;
@@ -552,6 +553,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               busy={props.projectBusy}
               folderBusy={props.projectFolderBusy}
               folderError={props.projectFolderError}
+              folderStatus={props.projectFolderStatus}
               onRefresh={props.onRefreshProjects}
               onSelect={props.onSelectProject}
               onOpenWizard={openProjectWizard}
@@ -1205,6 +1207,7 @@ const ProjectHeader: Component<{
   busy?: boolean | undefined;
   folderBusy?: boolean | undefined;
   folderError?: string | null | undefined;
+  folderStatus?: string | null | undefined;
   onRefresh?: (() => void) | undefined;
   onSelect?: ((projectId: string | null) => void) | undefined;
   onOpenWizard: (mode: ProjectWizardMode) => void;
@@ -1315,6 +1318,13 @@ const ProjectHeader: Component<{
           {(error) => (
             <p class="manager-project-open-error" role="alert">
               {t("manager.orchestration.project.open-folder-error", { error: error() })}
+            </p>
+          )}
+        </Show>
+        <Show when={!props.folderError && props.folderStatus}>
+          {(status) => (
+            <p class="manager-project-open-status" role="status">
+              {status()}
             </p>
           )}
         </Show>

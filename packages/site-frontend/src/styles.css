@@ -6029,6 +6029,12 @@ dialog.approval-modal-root,
   line-height: 1.35;
   margin: 0;
 }
+.manager-project-open-status {
+  color: var(--success);
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 0;
+}
 .manager-project-summary {
   align-items: center;
   border-top: 1px solid var(--border-subtle);

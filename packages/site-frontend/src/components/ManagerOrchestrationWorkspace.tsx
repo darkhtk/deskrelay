@@ -96,6 +96,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [projectActionBusy, setProjectActionBusy] = createSignal(false);
   const [projectFolderOpenBusy, setProjectFolderOpenBusy] = createSignal(false);
   const [projectFolderOpenError, setProjectFolderOpenError] = createSignal<string | null>(null);
+  const [projectFolderOpenStatus, setProjectFolderOpenStatus] = createSignal<string | null>(null);
   const [decisionActionBusy, setDecisionActionBusy] = createSignal(false);
   const [blockerActionBusy, setBlockerActionBusy] = createSignal(false);
   const [artifactActionBusy, setArtifactActionBusy] = createSignal(false);
@@ -603,6 +604,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   function selectManagerProject(projectId: string | null) {
     setProjectFolderOpenError(null);
+    setProjectFolderOpenStatus(null);
     setApprovalActionStatus(null);
     setApprovalActionError(null);
     setSuppressedApprovalActionKeys({});
@@ -614,8 +616,12 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     if (projectFolderOpenBusy()) return;
     setProjectFolderOpenBusy(true);
     setProjectFolderOpenError(null);
+    setProjectFolderOpenStatus(null);
     try {
-      await api.openManagerProjectFolder(projectId);
+      const response = await api.openManagerProjectFolder(projectId);
+      setProjectFolderOpenStatus(
+        t("manager.orchestration.project.open-folder-done", { cwd: response.cwd }),
+      );
     } catch (error) {
       setProjectFolderOpenError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1200,6 +1206,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           projectBusy={projectActionBusy()}
           projectFolderBusy={projectFolderOpenBusy()}
           projectFolderError={projectFolderOpenError()}
+          projectFolderStatus={projectFolderOpenStatus()}
           flowBusy={flowActionBusy() || projectCommandFlow.loading}
           decisions={projectDecisions()?.decisions ?? []}
           archivedDecisions={projectDecisions()?.archived ?? []}
