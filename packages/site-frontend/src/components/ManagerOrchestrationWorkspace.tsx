@@ -28,6 +28,7 @@ import type {
   ManagerRoundReviewRequest,
   ManagerSessionHygieneReport,
   ManagerStateViewResponse,
+  ManagerTask,
   ManagerTaskObservationResponse,
   ManagerWorkerRunLedgerResponse,
 } from "@deskrelay/shared";
@@ -887,44 +888,26 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       setApprovalActionError(t("manager.orchestration.approval.error.no-project"));
       return;
     }
-    const project = selectedProject();
-    if (
-      project?.id === projectId &&
-      (project.status === "completed" || project.flowStage === "completed")
-    ) {
-      setApprovalActionStatus(null);
-      setApprovalActionError(t("manager.orchestration.approval.error.completed-project"));
-      return;
-    }
-    const actionRoundId = payloadString(action.payload, "roundId") ?? action.roundId;
-    const currentRoundId =
-      projectCommandFlow()?.activeRound?.id ??
-      projectOverview()?.activeRound?.id ??
-      project?.activeRoundId ??
-      activeRound()?.id;
-    if (
-      projectId === currentProjectId() &&
-      actionRoundId &&
-      currentRoundId &&
-      currentRoundId !== actionRoundId
-    ) {
-      setApprovalActionStatus(null);
-      setApprovalActionError(t("manager.orchestration.approval.error.stale-round"));
-      return;
-    }
     if (projectId !== currentProjectId()) {
       setSelectedProjectId(projectId);
       writeSelectedManagerProjectId(projectId);
     }
     setApprovalActionBusy(true);
     setApprovalActionError(null);
-    setApprovalActionStatus(
-      t("manager.orchestration.approval.running", {
-        action: t(`manager.orchestration.proposed-action.${action.type}`),
-      }),
-    );
+    setApprovalActionStatus(t("manager.orchestration.approval.preflight"));
     try {
-      await runApprovedProposedAction(action, projectId);
+      const preflight = await preflightApprovalAction(action, projectId);
+      if (!preflight.ok) {
+        await refreshAfterApprovalAction();
+        setApprovalActionStatus(preflight.message);
+        return;
+      }
+      setApprovalActionStatus(
+        t("manager.orchestration.approval.running", {
+          action: t(`manager.orchestration.proposed-action.${preflight.action.type}`),
+        }),
+      );
+      await runApprovedProposedAction(preflight.action, projectId);
       await refreshAfterApprovalAction();
       setApprovalActionStatus(t("manager.orchestration.approval.done"));
     } catch (error) {
@@ -936,6 +919,84 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       );
     } finally {
       setApprovalActionBusy(false);
+    }
+  }
+
+  async function preflightApprovalAction(
+    action: ManagerProposedAction,
+    projectId: string,
+  ): Promise<
+    | { ok: true; action: ManagerProposedAction; commandFlow: ManagerCommandFlowResponse }
+    | { ok: false; message: string }
+  > {
+    const commandFlow = await api.managerProjectCommandFlow(projectId);
+    if (
+      commandFlow.project.status === "completed" ||
+      commandFlow.project.flowStage === "completed"
+    ) {
+      return { ok: false, message: t("manager.orchestration.approval.error.completed-project") };
+    }
+
+    const actionRoundId = payloadString(action.payload, "roundId") ?? action.roundId;
+    const currentRoundId = commandFlow.activeRound?.id ?? commandFlow.project.activeRoundId;
+    if (actionRoundId && currentRoundId && currentRoundId !== actionRoundId) {
+      return { ok: false, message: t("manager.orchestration.approval.error.stale-round") };
+    }
+
+    const freshAction = findFreshApprovalAction(commandFlow, action);
+    if (!freshAction) {
+      await cleanupStaleApprovalAction(action, commandFlow);
+      return { ok: false, message: t("manager.orchestration.approval.stale-action-cleaned") };
+    }
+
+    if (freshAction.type !== "retry_task") return { ok: true, action: freshAction, commandFlow };
+
+    const taskId = payloadString(freshAction.payload, "taskId") ?? freshAction.taskId;
+    if (!taskId) return { ok: false, message: t("manager.orchestration.approval.error.no-task") };
+
+    const task = await readManagerTaskForPreflight(taskId);
+    if (!task) {
+      await cleanupStaleApprovalAction(freshAction, commandFlow);
+      return { ok: false, message: t("manager.orchestration.approval.stale-task-missing") };
+    }
+    if (task.state === "succeeded") {
+      await cleanupStaleApprovalAction(freshAction, commandFlow);
+      return {
+        ok: false,
+        message: t("manager.orchestration.approval.stale-task-succeeded"),
+      };
+    }
+    if (task.state === "pending" || task.state === "running") {
+      return {
+        ok: false,
+        message: t("manager.orchestration.approval.stale-task-active", {
+          state: managerTaskStateLabel(task.state),
+        }),
+      };
+    }
+
+    return { ok: true, action: freshAction, commandFlow };
+  }
+
+  async function readManagerTaskForPreflight(taskId: string): Promise<ManagerTask | null> {
+    try {
+      return await api.managerTask(taskId);
+    } catch {
+      return null;
+    }
+  }
+
+  async function cleanupStaleApprovalAction(
+    action: ManagerProposedAction,
+    commandFlow: ManagerCommandFlowResponse,
+  ): Promise<void> {
+    const roundId =
+      payloadString(action.payload, "roundId") ?? action.roundId ?? commandFlow.activeRound?.id;
+    if (!roundId) return;
+    try {
+      await api.repairManagerRound(roundId);
+    } catch {
+      // A fresh command-flow refresh still clears client-side stale suggestions when the server agrees.
     }
   }
 
@@ -1163,6 +1224,43 @@ function payloadString(payload: Record<string, unknown>, key: string): string | 
 function payloadBoolean(payload: Record<string, unknown>, key: string): boolean | undefined {
   const value = payload[key];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function findFreshApprovalAction(
+  commandFlow: ManagerCommandFlowResponse,
+  staleAction: ManagerProposedAction,
+): ManagerProposedAction | undefined {
+  const approvalActions = commandFlow.judgments.flatMap((judgment) =>
+    judgment.proposedActions.filter((action) => action.requiresApproval),
+  );
+  return (
+    approvalActions.find((action) => action.id === staleAction.id) ??
+    approvalActions.find(
+      (action) =>
+        action.type === staleAction.type &&
+        action.projectId === staleAction.projectId &&
+        proposedActionTargetId(action) === proposedActionTargetId(staleAction) &&
+        proposedActionRoundId(action) === proposedActionRoundId(staleAction),
+    )
+  );
+}
+
+function proposedActionTargetId(action: ManagerProposedAction): string {
+  return (
+    payloadString(action.payload, "taskId") ??
+    action.taskId ??
+    payloadString(action.payload, "agentId") ??
+    action.agentId ??
+    ""
+  );
+}
+
+function proposedActionRoundId(action: ManagerProposedAction): string {
+  return payloadString(action.payload, "roundId") ?? action.roundId ?? "";
+}
+
+function managerTaskStateLabel(state: ManagerTask["state"]): string {
+  return t(`manager.orchestration.status.${state}`);
 }
 
 function managerReviewAction(

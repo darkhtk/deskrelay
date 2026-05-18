@@ -6275,6 +6275,15 @@ interface ManagerJudgmentBuildInput {
   now: Date;
 }
 
+function managerWorkerRunHasRetryableTask(run: ManagerWorkerRun): boolean {
+  return (
+    Boolean(run.taskId) &&
+    ["failed", "blocked", "cancelled", "waiting_for_device", "restart_required"].includes(
+      run.status,
+    )
+  );
+}
+
 function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJudgmentPacket[] {
   if (input.project.status === "completed" || input.project.flowStage === "completed") return [];
   const packets: ManagerJudgmentPacket[] = [];
@@ -6319,10 +6328,17 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
   );
   const createdAt = input.now.toISOString();
   const expiresAt = new Date(input.now.getTime() + 5 * 60_000).toISOString();
-  const firstFailedTaskId =
-    failedResults.find((result) => result.taskId)?.taskId ??
-    failedEvidence.find((item) => item.taskId)?.taskId ??
-    input.nextAction.taskId;
+  const retryableTaskIds = new Set(
+    input.runs
+      .filter((run) => managerWorkerRunHasRetryableTask(run))
+      .map((run) => run.taskId)
+      .filter(isPresent),
+  );
+  const firstFailedTaskId = [
+    failedResults.find((result) => result.taskId)?.taskId,
+    failedEvidence.find((item) => item.taskId)?.taskId,
+    input.nextAction.taskId,
+  ].find((taskId) => taskId && retryableTaskIds.has(taskId));
 
   if (!input.readiness.ready) {
     const evidenceIds = input.evidence
