@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ManagerAssistant } from "../src/components/ManagerAssistant.tsx";
+import { setLocale } from "../src/i18n.ts";
 
 const SERVER_DEVICE = {
   id: "dev_server",
@@ -17,9 +18,97 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   window.localStorage.clear();
+  setLocale("ko");
 });
 
 describe("ManagerAssistant", () => {
+  test("shows a clear transcript entry when the manager returns no visible reply", async () => {
+    setLocale("en");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-1",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          method?: string;
+        };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-1",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Manager",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          return Response.json({
+            result: {
+              sessionId: "manager-session-1",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [
+                {
+                  type: "user",
+                  message: {
+                    role: "user",
+                    content: [{ type: "text", text: "Continue from where you left off." }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "No response requested." }],
+                  },
+                },
+              ],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("The manager response was empty.");
+    });
+    expect(document.body.textContent).not.toContain("No response requested");
+  });
+
   test("uses the normal remote-claude behavior session path instead of browser chat storage", async () => {
     const behaviorCalls: Array<{ method?: string; params?: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

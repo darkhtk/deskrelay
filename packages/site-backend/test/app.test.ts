@@ -3854,6 +3854,127 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     }
   });
 
+  test("manager project command flow resolves stale Godot toolchain blockers and keeps smoke stderr actionable", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-runtime-signal-flow-"));
+    const protocolFiles = [
+      "ORCHESTRATION.md",
+      "AGENTS.md",
+      "PROTOCOL.md",
+      "REVIEW.md",
+      "TASKS.md",
+      "STATE.md",
+      "FAILURES.md",
+      "PROJECT.md",
+      "WORKER-CONTRACT.md",
+      "PROMPT-TEMPLATES.md",
+      "SPEC-SCHEMA.md",
+      "VERIFICATION.md",
+    ];
+    for (const file of protocolFiles) {
+      writeFileSync(join(cwd, file), `# ${file}\n\nRuntime signal fixture.\n`, "utf8");
+    }
+    writeFileSync(
+      join(cwd, "SMOKE-RESULT.md"),
+      [
+        "# Godot CLI Smoke Result",
+        "",
+        "## Discovered Godot executable",
+        "",
+        "C:\\Tools\\Godot\\godot.exe",
+        "",
+        "## stderr last 30 lines",
+        "",
+        "```",
+        'SCRIPT ERROR: Parse Error: Identifier "InventoryPanel" not declared in the current scope.',
+        'ERROR: Failed to load script "res://autoloads/save_system.gd" with error "Parse error".',
+        "```",
+        "",
+        "## Verdict",
+        "",
+        "healthy",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const managerBlockerStore = createInMemoryManagerBlockerStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerProjectStore: createInMemoryManagerProjectStore(),
+      managerOrchestrationStore: createInMemoryManagerOrchestrationStore(),
+      managerTaskStore: createInMemoryManagerTaskStore(),
+      managerBlockerStore,
+      managerDecisionStore: createInMemoryManagerDecisionStore(),
+      managerArtifactStore: createInMemoryManagerArtifactStore(),
+      managerProtocolStore: createInMemoryManagerProtocolStore(),
+    });
+
+    try {
+      const create = await app.fetch(
+        authedRequest("POST", "/api/manager/projects", {
+          name: "Godot Runtime Project",
+          cwd,
+          goal: "Verify a Korean 2D ARPG project with Godot.",
+        }),
+      );
+      expect(create.status).toBe(201);
+      const created = (await create.json()) as { project?: { id?: string } };
+      const projectId = created.project?.id;
+      expect(projectId).toBeTruthy();
+      if (!projectId) throw new Error("project id missing");
+
+      const blocker = await app.fetch(
+        authedRequest("POST", `/api/manager/projects/${projectId}/blockers`, {
+          title: "godot-missing runtime verification blocked",
+          detail: "Godot 4 executable not found; set GODOT4_EXE or install portable Godot.",
+          severity: "warning",
+          owner: "runtime-smoke",
+          requiredAction: "user",
+          source: "worker",
+          dedupeKey: "godot-missing-runtime-smoke",
+        }),
+      );
+      expect(blocker.status).toBe(201);
+
+      const flow = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/command-flow`),
+      );
+      expect(flow.status).toBe(200);
+      const flowBody = (await flow.json()) as {
+        blockers?: Array<{ title?: string; status?: string; detail?: string }>;
+        judgments?: Array<{ proposedActions?: Array<{ type?: string }> }>;
+      };
+      const actions =
+        flowBody.judgments?.flatMap((judgment) => judgment.proposedActions ?? []) ?? [];
+      expect(actions.some((action) => action.type === "start_toolchain_setup")).toBe(false);
+      expect(flowBody.blockers?.some((blocker) => blocker.title?.includes("runtime/parser"))).toBe(
+        true,
+      );
+      expect(flowBody.blockers?.some((blocker) => blocker.title?.includes("godot-missing"))).toBe(
+        false,
+      );
+
+      const stored = await managerBlockerStore.list(projectId);
+      expect(
+        stored.resolved.some(
+          (blocker) =>
+            blocker.title.includes("godot-missing") &&
+            blocker.resolution?.includes("SMOKE-RESULT.md reports verdict=healthy"),
+        ),
+      ).toBe(true);
+      expect(
+        stored.blockers.some(
+          (blocker) =>
+            blocker.title === "Godot smoke reported runtime/parser errors" &&
+            blocker.detail?.includes("InventoryPanel"),
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager project direction change without a blocker returns to replanning", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-direction-flow-"));
     const managerProjectStore = createInMemoryManagerProjectStore();

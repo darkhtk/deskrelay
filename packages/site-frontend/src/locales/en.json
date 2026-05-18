@@ -496,6 +496,7 @@
   "manager.assistant.transcript.assistant": "Manager",
   "manager.assistant.transcript.details": "Show detailed log",
   "manager.assistant.transcript.log-collapsed": "Detailed execution log is collapsed.",
+  "manager.assistant.transcript.no-reply": "The manager response was empty. Check the current work state before resending the same instruction.",
   "manager.assistant.transcript.user": "User",
   "manager.orchestration.worker.no-reply": "No reply yet",
   "manager.orchestration.worker.older-hidden": "{count} older worker runs hidden.",

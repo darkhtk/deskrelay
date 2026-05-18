@@ -48,6 +48,7 @@ import {
   claudeEventForTranscript,
   describeCliActionFromClaudeEvent,
 } from "../claude/cli-action.ts";
+import { renderMarkdown } from "../claude/message-renderer.ts";
 import { deviceDisplayName, deviceDisplayRole } from "../device-display.ts";
 import { t } from "../i18n.ts";
 import { createManagerEventSubscription, isManagerOrchestrationEvent } from "../manager-events.ts";
@@ -1444,17 +1445,18 @@ const ManagerAssistantTranscript: Component<{
           <article
             class={`manager-assistant-dialogue-item manager-assistant-dialogue-${entry.role}`}
           >
-            <span class="manager-assistant-dialogue-role">
-              {entry.role === "user"
-                ? t("manager.assistant.transcript.user")
-                : t("manager.assistant.transcript.assistant")}
-            </span>
             <div class="manager-assistant-dialogue-body">
-              <p>{entry.collapsed ? entry.preview : entry.text}</p>
+              <div
+                class="manager-assistant-dialogue-markdown"
+                innerHTML={renderMarkdown(entry.collapsed ? entry.preview : entry.text)}
+              />
               <Show when={entry.collapsed}>
                 <details class="manager-assistant-dialogue-details">
                   <summary>{t("manager.assistant.transcript.details")}</summary>
-                  <pre>{entry.text}</pre>
+                  <div
+                    class="manager-assistant-dialogue-markdown manager-assistant-dialogue-full"
+                    innerHTML={renderMarkdown(entry.text)}
+                  />
                 </details>
               </Show>
             </div>
@@ -1606,8 +1608,11 @@ function buildManagerAssistantTranscriptEntries(
   return events.flatMap((event, index) => {
     const role = managerAssistantTranscriptRole(event);
     if (!role) return [];
-    const text = managerAssistantDisplayText(event);
-    if (!text || isManagerAssistantNoiseText(text)) return [];
+    const rawText = managerAssistantDisplayText(event);
+    if (!rawText) return [];
+    const noise = isManagerAssistantNoiseText(rawText);
+    if (noise && role !== "assistant") return [];
+    const text = noise ? managerAssistantNoReplyText() : rawText;
     const collapsed = shouldCollapseManagerAssistantEntry(role, text);
     return [
       {
@@ -1657,6 +1662,10 @@ function isManagerAssistantNoiseText(text: string): boolean {
     normalized === "continue from where you left off." ||
     normalized === "continue from where you left off"
   );
+}
+
+function managerAssistantNoReplyText(): string {
+  return t("manager.assistant.transcript.no-reply");
 }
 
 function shouldCollapseManagerAssistantEntry(

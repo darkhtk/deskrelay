@@ -7595,12 +7595,12 @@ body.manager-orchestration-resizing {
 .manager-agent-role-briefs {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  grid-template-columns: minmax(0, 1fr);
   margin-bottom: 12px;
   min-width: 0;
 }
 .manager-section-agents .manager-agent-role-briefs {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 .manager-agent-brief {
   background: var(--surface-subtle);

@@ -191,6 +191,7 @@ import {
   createJsonManagerArtifactStore,
 } from "./manager-artifact-store.ts";
 import {
+  type ManagerBlockerListResult,
   type ManagerBlockerStore,
   createJsonManagerBlockerStore,
 } from "./manager-blocker-store.ts";
@@ -5765,7 +5766,7 @@ interface ManagerCommandFlowInput {
 async function buildManagerCommandFlow(
   input: ManagerCommandFlowInput,
 ): Promise<ManagerCommandFlowResponse> {
-  const [overview, decisions, blockers, artifacts, protocol, rounds, agents, tasks, ledger] =
+  const [overview, decisions, blockerList, artifacts, protocol, rounds, agents, tasks, ledger] =
     await Promise.all([
       buildManagerProjectOverview({
         project: input.project,
@@ -5793,6 +5794,12 @@ async function buildManagerCommandFlow(
         now: input.now,
       }),
     ]);
+  const blockers = await reconcileManagerProjectRuntimeSignals({
+    project: input.project,
+    blockerStore: input.blockerStore,
+    blockers: blockerList,
+    now: input.now,
+  });
   const projectRounds = selectManagerProjectRounds(input.project, rounds);
   const projectRoundIds = new Set(projectRounds.map((round) => round.id));
   const projectAgents = selectManagerProjectAgents(input.project, projectRoundIds, agents);
@@ -6309,13 +6316,22 @@ function latestManagerWorkerRunsByTaskId(runs: ManagerWorkerRun[]): Map<string, 
 }
 
 const MANAGER_TOOLCHAIN_SETUP_WARNING = "A missing toolchain can be handled by workers.";
+const MANAGER_SMOKE_RUNTIME_ERROR_BLOCKER_KEY = "runtime-smoke-stderr-errors";
 
 function managerBlockerIsToolchainSetupCandidate(blocker: ManagerBlocker): boolean {
+  if (blocker.dedupeKey === MANAGER_SMOKE_RUNTIME_ERROR_BLOCKER_KEY) return false;
   const text = [blocker.title, blocker.detail, blocker.dedupeKey, blocker.owner, blocker.source]
     .filter(isPresent)
     .join("\n")
     .toLowerCase();
   if (!text) return false;
+  if (
+    text.includes("runtime/parser") ||
+    text.includes("parse error") ||
+    text.includes("failed to load script")
+  ) {
+    return false;
+  }
   if (text.includes("godot") && /(missing|not found|executable|runtime|toolchain)/.test(text)) {
     return true;
   }
@@ -6333,6 +6349,142 @@ function managerBlockerIsToolchainSetupCandidate(blocker: ManagerBlocker): boole
     "missing cli",
     "executable not found",
   ].some((needle) => text.includes(needle));
+}
+
+interface ManagerRuntimeSmokeAssessment {
+  verdict?: string | undefined;
+  executable?: string | undefined;
+  stderr?: string | undefined;
+  runtimeErrorLines: string[];
+  sourcePath: string;
+}
+
+async function readManagerRuntimeSmokeAssessment(
+  project: ManagerProject,
+): Promise<ManagerRuntimeSmokeAssessment | null> {
+  if (!project.cwd.trim()) return null;
+  const sourcePath = join(project.cwd, "SMOKE-RESULT.md");
+  const text = await readFile(sourcePath, "utf8").catch((error: unknown) => {
+    if (isRecord(error) && error.code === "ENOENT") return "";
+    throw error;
+  });
+  if (!text.trim()) return null;
+  const verdict = sectionLine(text, ["verdict", "\ud310\uc815"]);
+  const executable = sectionLine(text, [
+    "discovered godot executable",
+    "\ubc1c\uacac\ub41c godot",
+    "godot \uc2e4\ud589 \ud30c\uc77c",
+    "\uc2e4\ud589 \ud30c\uc77c",
+  ]);
+  const stderr = fencedSection(text, ["stderr"]);
+  return {
+    verdict,
+    executable,
+    stderr,
+    runtimeErrorLines: runtimeSmokeErrorLines(stderr ?? text),
+    sourcePath,
+  };
+}
+
+function sectionLine(text: string, headings: string[]): string | undefined {
+  const section = markdownSection(text, headings);
+  const lines = stripMarkdownFence(section ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines[0];
+}
+
+function fencedSection(text: string, headings: string[]): string | undefined {
+  const section = markdownSection(text, headings);
+  const value = stripMarkdownFence(section ?? "").trim();
+  return value || undefined;
+}
+
+function markdownSection(text: string, headings: string[]): string | undefined {
+  const matches = Array.from(text.matchAll(/^##\s*([^\r\n]+)\r?\n/gim));
+  for (const [index, match] of matches.entries()) {
+    const heading = match[1]?.trim().toLowerCase() ?? "";
+    if (!headings.some((needle) => heading.includes(needle.toLowerCase()))) continue;
+    const start = (match.index ?? 0) + match[0].length;
+    const end = matches[index + 1]?.index ?? text.length;
+    const body = text.slice(start, end).trim();
+    if (body) return body;
+  }
+  return undefined;
+}
+
+function stripMarkdownFence(text: string): string {
+  const match = /^\s*```[^\r\n]*\r?\n([\s\S]*?)\r?\n```\s*$/m.exec(text);
+  return match?.[1] ?? text;
+}
+
+function runtimeSmokeErrorLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) =>
+      /(?:SCRIPT ERROR|Parse Error|Failed to load script|Failed to instantiate|No loader found|ERROR:)/i.test(
+        line,
+      ),
+    )
+    .slice(0, 12);
+}
+
+function managerRuntimeSmokeHasToolchain(
+  assessment: ManagerRuntimeSmokeAssessment | null,
+): boolean {
+  if (!assessment) return false;
+  const verdict = assessment.verdict?.trim().toLowerCase();
+  if (verdict === "healthy" || verdict === "pass" || verdict === "passed") return true;
+  return Boolean(assessment.executable?.trim());
+}
+
+async function reconcileManagerProjectRuntimeSignals(input: {
+  project: ManagerProject;
+  blockerStore: ManagerBlockerStore;
+  blockers: ManagerBlockerListResult;
+  now: Date;
+}): Promise<ManagerBlockerListResult> {
+  const assessment = await readManagerRuntimeSmokeAssessment(input.project);
+  if (!assessment) return input.blockers;
+  let changed = false;
+  if (managerRuntimeSmokeHasToolchain(assessment)) {
+    for (const blocker of input.blockers.blockers) {
+      if (!managerBlockerIsToolchainSetupCandidate(blocker)) continue;
+      const resolved = await input.blockerStore.resolve(input.project.id, blocker.id, {
+        status: "resolved",
+        resolution: [
+          "Auto-resolved by DeskRelay runtime signal sync.",
+          `SMOKE-RESULT.md reports verdict=${assessment.verdict ?? "unknown"}.`,
+          assessment.executable ? `executable=${assessment.executable}` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
+      if (resolved) changed = true;
+    }
+  }
+  if (assessment.runtimeErrorLines.length > 0) {
+    const detail = [
+      "Godot smoke produced runtime/parser stderr even though the toolchain is callable.",
+      "Treat this as a project/runtime issue, not a missing toolchain issue.",
+      `Source: ${assessment.sourcePath}`,
+      "",
+      ...assessment.runtimeErrorLines,
+    ].join("\n");
+    const created = await input.blockerStore.create(input.project.id, {
+      title: "Godot smoke reported runtime/parser errors",
+      detail,
+      severity: "warning",
+      owner: "runtime-smoke",
+      requiredAction: "worker",
+      source: "manager",
+      dedupeKey: MANAGER_SMOKE_RUNTIME_ERROR_BLOCKER_KEY,
+    });
+    if (created.created) changed = true;
+  }
+  return changed ? input.blockerStore.list(input.project.id) : input.blockers;
 }
 
 function managerToolchainSetupBlockerSummary(blockers: ManagerBlocker[]): string {
@@ -10941,6 +11093,14 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Avoid asking the user to provide IDs, logs, or copied text when selected browser context or manager APIs can retrieve them.",
     "- Ask one concise clarification question only when the missing detail changes the target, safety boundary, or destructive scope.",
     "- Do not claim an autonomous loop is still running after your response ends unless you created an observable manager task that continues outside the response.",
+    "",
+    "## Self-Reflection Triggers",
+    "",
+    "- If your user-visible status label, assistant status report, command-flow state, approval gate, or task observation disagrees with the state you actually observe, stop before taking more action and reconcile the mismatch.",
+    "- If the user says you did not answer, or you notice your response did not directly handle the current user request, explicitly reflect before proceeding: restate the current request, identify the mismatch, read the narrowest relevant APIs, then answer or act on the corrected request.",
+    "- Do not hide a mismatch behind a generic `waiting`, `idle`, or `in progress` label. Report the concrete discrepancy, evidence source, and next corrective action.",
+    "- When correcting yourself, prefer fresh evidence from command-flow, assistant status reports, task observation, and project APIs over memory or prior chat history.",
+    "- If the mismatch requires a user-visible state change, post a short assistant status report with phase `observing`, `deciding`, `blocked`, or `reporting` before continuing.",
     "",
     "## Role Profiles",
     "",
