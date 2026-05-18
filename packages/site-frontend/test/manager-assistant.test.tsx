@@ -197,6 +197,120 @@ describe("ManagerAssistant", () => {
     expect(document.body.textContent).not.toContain("No response requested");
   });
 
+  test("shows the latest tool result when the manager has not produced a final reply yet", async () => {
+    setLocale("en");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-tool-result",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          method?: string;
+        };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-tool-result",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Manager",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          return Response.json({
+            result: {
+              sessionId: "manager-session-tool-result",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [
+                {
+                  type: "user",
+                  message: {
+                    role: "user",
+                    content: [{ type: "text", text: "니가 해결하렴" }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "알겠습니다. 작업자를 호출하겠습니다." }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [
+                      {
+                        type: "tool_use",
+                        id: "tool_1",
+                        name: "Agent",
+                        input: { description: "work" },
+                      },
+                    ],
+                  },
+                },
+                {
+                  type: "user",
+                  message: {
+                    role: "user",
+                    content: [
+                      {
+                        type: "tool_result",
+                        tool_use_id: "tool_1",
+                        content: "result: worker finished and all checks passed",
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("result: worker finished and all checks passed");
+    });
+    expect(document.body.textContent).toContain("마지막 도구 결과 요약");
+  });
+
   test("uses the normal remote-claude behavior session path instead of browser chat storage", async () => {
     const behaviorCalls: Array<{ method?: string; params?: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

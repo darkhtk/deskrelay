@@ -1808,6 +1808,76 @@ describe("manager task API", () => {
     expect(typeof storedTask?.acknowledgedAt).toBe("string");
   });
 
+  test("manager state ignores failed worker attempts superseded by a retry", async () => {
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+      managerOrchestrationStore,
+    });
+
+    const round = await managerOrchestrationStore.createRound({
+      title: "R-retried",
+      objective: "Only the latest worker attempt should drive current state.",
+    });
+    const agent = await managerOrchestrationStore.createAgent({
+      role: "implementer",
+      label: "Implementer",
+      roundId: round.id,
+    });
+    const failed = await managerTaskStore.create({
+      kind: "run-worker",
+      dryRun: true,
+      requestedBy: "manager-assistant",
+      params: { agentId: agent.id, roundId: round.id },
+      steps: [],
+    });
+    await managerTaskStore.update(failed.id, {
+      state: "failed",
+      error: "first attempt timed out",
+      completedAt: "2026-05-01T00:00:00.000Z",
+    });
+    const retry = await managerTaskStore.create({
+      kind: "run-worker",
+      dryRun: true,
+      requestedBy: "manager-assistant",
+      params: { agentId: agent.id, roundId: round.id },
+      steps: [],
+    });
+    await managerTaskStore.update(retry.id, {
+      state: "succeeded",
+      result: { stdout: "retry succeeded" },
+      completedAt: "2026-05-01T00:02:00.000Z",
+    });
+    await managerOrchestrationStore.updateAgent(agent.id, {
+      status: "completed",
+      taskId: retry.id,
+      lastOutput: "retry succeeded",
+    });
+    await managerOrchestrationStore.updateRound(round.id, {
+      status: "completed",
+      agentIds: [agent.id],
+      taskIds: [failed.id, retry.id],
+      summary: "Retry succeeded.",
+      error: "",
+    });
+
+    const state = await app.fetch(authedRequest("GET", "/api/manager/state"));
+    expect(state.status).toBe(200);
+    const body = (await state.json()) as {
+      counts?: { blockers?: number; failedTasks?: number };
+      blockers?: Array<{ taskId?: string }>;
+      current?: { taskId?: string; status?: string };
+    };
+    expect(body.counts?.blockers).toBe(0);
+    expect(body.counts?.failedTasks).toBe(0);
+    expect(body.blockers?.map((blocker) => blocker.taskId) ?? []).not.toContain(failed.id);
+    expect(body.current?.taskId).not.toBe(failed.id);
+    expect(body.current?.status).not.toBe("failed");
+  });
+
   test("manager acknowledgement rejects active work", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const app = createSiteApp({
@@ -4239,13 +4309,21 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
   test("manager round repair uses latest worker evidence instead of stale failed attempts", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const project = await managerProjectStore.create({
+      cwd: process.cwd(),
+      name: "Retry Repair Project",
+      goal: "Repair should unblock the active project when the retry succeeds.",
+    });
     const app = createSiteApp({
       registry: new InMemoryDeviceRegistry(),
       token: TOKEN,
       managerTaskStore,
       managerOrchestrationStore,
+      managerProjectStore,
     });
     const round = await managerOrchestrationStore.createRound({
+      projectId: project.id,
       title: "R-retry-ledger",
       objective: "Latest successful retry should clear old failed evidence.",
     });
@@ -4282,6 +4360,12 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       status: "failed",
       agentIds: [agent.id],
       taskIds: [failed.id],
+      error: "synthetic failure before retry",
+    });
+    await managerProjectStore.update(project.id, {
+      activeRoundId: round.id,
+      status: "blocked",
+      flowStage: "replanning",
       error: "synthetic failure before retry",
     });
 
@@ -4321,6 +4405,29 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     expect(repairBody.gate?.status).toBe("healthy");
     expect(repairBody.gate?.blockedRuns).toBe(0);
     expect(repairBody.gate?.completedRuns).toBe(1);
+    const repairedProject = await managerProjectStore.get(project.id);
+    expect(repairedProject?.status).toBe("reviewing");
+    expect(repairedProject?.flowStage).toBe("review");
+    expect(repairedProject?.activeRoundId).toBe(round.id);
+    expect(repairedProject?.error).toBeUndefined();
+
+    const flow = await app.fetch(
+      authedRequest("GET", `/api/manager/projects/${project.id}/command-flow`),
+    );
+    expect(flow.status).toBe(200);
+    const flowBody = (await flow.json()) as {
+      project?: { status?: string; flowStage?: string; error?: string };
+      judgments?: Array<{ verdict?: string; proposedActions?: Array<{ type?: string }> }>;
+    };
+    expect(flowBody.project?.status).toBe("reviewing");
+    expect(flowBody.project?.flowStage).toBe("review");
+    expect(flowBody.project?.error).toBeUndefined();
+    expect(flowBody.judgments?.some((judgment) => judgment.verdict === "retry")).toBe(false);
+    expect(
+      flowBody.judgments
+        ?.flatMap((judgment) => judgment.proposedActions ?? [])
+        .some((action) => action.type === "retry_task"),
+    ).toBe(false);
   });
 
   test("manager orchestration reuses role agents and resumes worker sessions across rounds", async () => {

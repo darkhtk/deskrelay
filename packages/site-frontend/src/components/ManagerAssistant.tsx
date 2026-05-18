@@ -697,10 +697,21 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   }
 
   function visibleClaudeEvents(nextEvents: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
-    return nextEvents.flatMap((event) => {
+    const visibleEvents: ClaudeStreamEvent[] = [];
+    let pendingToolResult = "";
+    for (const event of nextEvents) {
+      pendingToolResult = managerAssistantToolResultSummary(event) || pendingToolResult;
       const visible = claudeEventForTranscript(event);
-      return visible ? [visible] : [];
-    });
+      if (!visible) continue;
+      if (visible.type === "assistant" && isVisibleManagerAssistantReply(visible)) {
+        pendingToolResult = "";
+      }
+      visibleEvents.push(visible);
+    }
+    if (pendingToolResult) {
+      visibleEvents.push(managerAssistantToolResultFallbackEvent(pendingToolResult));
+    }
+    return visibleEvents;
   }
 
   const appendEvent = (event: ClaudeStreamEvent) => {
@@ -1596,6 +1607,12 @@ function managerAssistantSyntheticEvent(text: string): ClaudeStreamEvent {
   };
 }
 
+function managerAssistantToolResultFallbackEvent(summary: string): ClaudeStreamEvent {
+  return managerAssistantSyntheticEvent(
+    `관리자 Assistant가 도구 실행 결과를 받은 뒤 최종 답변을 아직 남기지 않았습니다.\n\n마지막 도구 결과 요약: ${summary}`,
+  );
+}
+
 function isVisibleManagerAssistantReply(event: ClaudeStreamEvent): boolean {
   if (event.type !== "assistant") return false;
   const text = managerAssistantDisplayText(event);
@@ -1707,6 +1724,24 @@ function managerAssistantEventText(event: ClaudeStreamEvent): string {
   const message = event.message;
   if (!message || typeof message !== "object") return "";
   return managerAssistantContentText((message as { content?: unknown }).content);
+}
+
+function managerAssistantToolResultSummary(event: ClaudeStreamEvent): string {
+  if (event.type !== "user") return "";
+  const message = event.message;
+  if (!message || typeof message !== "object") return "";
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  const text = content
+    .filter(
+      (block): block is Record<string, unknown> => Boolean(block) && typeof block === "object",
+    )
+    .filter((block) => block.type === "tool_result")
+    .map((block) => managerAssistantContentText(block.content))
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 1_200 ? `${text.slice(0, 1_200)}...` : text;
 }
 
 function managerAssistantContentText(value: unknown): string {

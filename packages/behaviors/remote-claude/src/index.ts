@@ -385,7 +385,7 @@ function managerAssistantFallbackEvent(lastToolResult: string): ClaudeStreamEven
       content: [
         {
           type: "text",
-          text: `관리자 Assistant가 도구 실행 후 최종 답변을 남기지 않고 종료되었습니다. 이 실행은 실패로 처리해야 합니다. 상태 조회나 작업 지시는 같은 질문을 다시 보내 재시도하세요.${detail}`,
+          text: `관리자 Assistant가 도구 실행 결과를 받은 뒤 최종 답변을 남기지 않고 종료되었습니다. 아래 결과를 먼저 확인하고, 필요하면 같은 질문을 다시 보내 이어가세요.${detail}`,
         },
       ],
     },
@@ -513,6 +513,7 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
   let firstEventWatchdogTriggered = false;
   let managerAssistantVisibleReplySeen = false;
   let managerAssistantLastToolResult = "";
+  let managerAssistantPendingToolResult = "";
   const firstEventTimeoutMs = chatFirstEventTimeoutMs(params);
   const firstEventWatchdog = setTimeout(() => {
     if (firstClaudeEventSeen || abort.signal.aborted) return;
@@ -575,9 +576,13 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
           const assistantText = managerAssistantVisibleText(event);
           if (assistantText && !isManagerAssistantNoResponseText(assistantText)) {
             managerAssistantVisibleReplySeen = true;
+            managerAssistantPendingToolResult = "";
           }
-          managerAssistantLastToolResult =
-            managerAssistantToolResultSummary(event) || managerAssistantLastToolResult;
+          const toolResult = managerAssistantToolResultSummary(event);
+          if (toolResult) {
+            managerAssistantLastToolResult = toolResult;
+            managerAssistantPendingToolResult = toolResult;
+          }
         }
         ctx.publish({ spaceId, kind: "claude.event", content: event });
       },
@@ -595,11 +600,17 @@ async function runQueuedChatItem(ctx: BehaviorContext, item: ChatQueueItem): Pro
       );
     }
     if (capturedSessionId) sessionByConversation.set(item.conversationKey, capturedSessionId);
-    if (managerMode && !managerAssistantVisibleReplySeen && !abort.signal.aborted) {
+    if (
+      managerMode &&
+      (!managerAssistantVisibleReplySeen || managerAssistantPendingToolResult) &&
+      !abort.signal.aborted
+    ) {
       ctx.publish({
         spaceId,
         kind: "claude.event",
-        content: managerAssistantFallbackEvent(managerAssistantLastToolResult),
+        content: managerAssistantFallbackEvent(
+          managerAssistantPendingToolResult || managerAssistantLastToolResult,
+        ),
       });
     }
     item.status = abort.signal.aborted ? "cancelled" : "done";

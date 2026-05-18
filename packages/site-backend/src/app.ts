@@ -2243,14 +2243,14 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       const roundId = c.req.param("id");
       const round = await managerOrchestrationStore.getRound(roundId);
       if (!round) return c.json({ error: "unknown round" }, 404);
-      return c.json(
-        await repairManagerRoundEvidence({
-          orchestrationStore: managerOrchestrationStore,
-          taskStore: managerTaskStore,
-          round,
-          now: new Date(),
-        }),
-      );
+      const repair = await repairManagerRoundEvidence({
+        orchestrationStore: managerOrchestrationStore,
+        taskStore: managerTaskStore,
+        round,
+        now: new Date(),
+      });
+      await updateManagerProjectFromRoundRepair(managerProjectStore, repair.round);
+      return c.json(repair);
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
     }
@@ -5906,8 +5906,11 @@ function managerProjectWithRoundCommandFlowState(
 ): ManagerProject {
   if (!activeRound) return project;
   if (project.status === "archived" || project.status === "completed") return project;
-  if (project.status === "blocked" || project.flowStage === "replanning") return project;
   if (activeRound.status === "planned") return project;
+  if (project.status === "blocked" && isBlockingManagerRoundStatus(activeRound.status)) {
+    return project;
+  }
+  if (project.status !== "blocked" && project.flowStage === "replanning") return project;
   const status = projectStatusFromRoundStatus(activeRound.status);
   const flowStage = projectFlowStageFromRoundStatus(activeRound.status);
   if (project.status === status && project.flowStage === flowStage) return project;
@@ -5916,6 +5919,10 @@ function managerProjectWithRoundCommandFlowState(
     status,
     flowStage,
   };
+}
+
+function isBlockingManagerRoundStatus(status: ManagerRoundStatus): boolean {
+  return status === "blocked" || status === "failed" || status === "cancelled";
 }
 
 function buildManagerRoundHealthGateFromFlow(input: {
@@ -8017,6 +8024,24 @@ async function repairManagerRoundEvidence(
   };
 }
 
+async function updateManagerProjectFromRoundRepair(
+  store: ManagerProjectStore,
+  round: ManagerRound,
+): Promise<void> {
+  if (!round.projectId) return;
+  const project = await store.get(round.projectId);
+  if (!project) return;
+  if (project.status === "archived" || project.status === "completed") return;
+  if (project.activeRoundId && project.activeRoundId !== round.id) return;
+  await store.update(project.id, {
+    activeRoundId: round.id,
+    status: projectStatusFromRoundStatus(round.status),
+    flowStage: projectFlowStageFromRoundStatus(round.status),
+    ...(round.summary ? { summary: round.summary } : {}),
+    ...(round.error ? { error: round.error } : { error: null }),
+  });
+}
+
 function buildManagerRoundHealthIssues(
   round: ManagerRound,
   agents: ManagerAgent[],
@@ -8594,10 +8619,14 @@ async function buildManagerStateView(
     input.taskStore.list(500),
   ]);
   const nowMs = input.now.getTime();
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
   const taskSummaries = tasks.map((task) => summarizeManagerStateTask(task, agents, rounds, nowMs));
-  const unacknowledgedTaskSummaries = taskSummaries.filter((task) => !task.acknowledgedAt);
+  const currentTaskSummaries = taskSummaries.filter(
+    (task) => !isSupersededManagerStateTask(task, agentById),
+  );
+  const unacknowledgedTaskSummaries = currentTaskSummaries.filter((task) => !task.acknowledgedAt);
   const staleTasks = unacknowledgedTaskSummaries.filter((task) => task.stale).slice(0, 20);
-  const runningTasks = taskSummaries
+  const runningTasks = currentTaskSummaries
     .filter((task) => !isManagerTaskTerminalState(task.state))
     .slice(0, 20);
   const roundSummaries = rounds.map((round) => summarizeManagerStateRound(round, agents, tasks));
@@ -8611,7 +8640,7 @@ async function buildManagerStateView(
   const blockers = buildManagerStateBlockers({
     rounds: roundSummaries,
     agents,
-    tasks: taskSummaries,
+    tasks: currentTaskSummaries,
   });
   const recoveryActions = buildManagerStateRecoveryActions({
     tasks: unacknowledgedTaskSummaries,
@@ -8730,9 +8759,14 @@ function summarizeManagerStateTask(
   rounds: ManagerRound[],
   nowMs: number,
 ): ManagerStateTaskSummary {
-  const agent = agents.find((item) => item.taskId === task.id);
+  const taskAgentId = stringValue(task.params?.agentId);
+  const taskRoundIdValue = taskRoundId(task);
+  const agent =
+    agents.find((item) => item.taskId === task.id) ??
+    (taskAgentId ? agents.find((item) => item.id === taskAgentId) : undefined);
   const round =
     (agent?.roundId ? rounds.find((item) => item.id === agent.roundId) : undefined) ??
+    (taskRoundIdValue ? rounds.find((item) => item.id === taskRoundIdValue) : undefined) ??
     rounds.find((item) => item.taskIds.includes(task.id));
   const staleReason = managerTaskStaleReason(task, nowMs);
   return {
@@ -8764,8 +8798,10 @@ function buildManagerStateBlockers(input: {
   tasks: ManagerStateTaskSummary[];
 }): ManagerStateBlocker[] {
   const blockers: ManagerStateBlocker[] = [];
+  const agentById = new Map(input.agents.map((agent) => [agent.id, agent]));
   for (const task of input.tasks) {
     if (task.acknowledgedAt) continue;
+    if (isSupersededManagerStateTask(task, agentById)) continue;
     if (task.stale) {
       blockers.push({
         id: `task-stale:${task.id}`,
@@ -8817,6 +8853,15 @@ function buildManagerStateBlockers(input: {
     });
   }
   return blockers.slice(0, 20);
+}
+
+function isSupersededManagerStateTask(
+  task: ManagerStateTaskSummary,
+  agentById: Map<string, ManagerAgent>,
+): boolean {
+  if (!task.agentId) return false;
+  const agent = agentById.get(task.agentId);
+  return Boolean(agent?.taskId && agent.taskId !== task.id);
 }
 
 function buildManagerStateRecoveryActions(input: {

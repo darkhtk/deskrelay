@@ -273,6 +273,44 @@ describe("remote-claude behavior chat request", () => {
     expect(fallback?.message?.content?.[0]?.text).toContain("HTTP 404");
   });
 
+  test("manager mode emits fallback when a tool result follows an earlier visible reply", async () => {
+    const { ctx, handlers, events } = makeCtx();
+    await behaviorDef.start(ctx);
+
+    const chat = handlers.get("chat");
+    if (!chat) throw new Error("chat handler missing");
+
+    const cwd = await mkdtemp(join(tmpdir(), "remote-claude-manager-preface-tool-only-"));
+    tempDirs.push(cwd);
+    const fixture = fileURLToPath(
+      new URL("./fixtures/fake-claude-manager-preface-tool-only.ts", import.meta.url),
+    );
+
+    await chat({
+      cwd,
+      message: "status",
+      runId: "manager_preface_tool_only",
+      managerMode: true,
+      command: ["bun", fixture],
+    });
+
+    await waitFor(() =>
+      events.some(
+        (event) =>
+          event.kind === "run.finished" && event.spaceId?.endsWith(":manager_preface_tool_only"),
+      ),
+    );
+
+    const fallbackEvents = events.filter(
+      (event) =>
+        event.kind === "claude.event" &&
+        event.spaceId?.endsWith(":manager_preface_tool_only") &&
+        JSON.stringify(event.content).includes("마지막 도구 결과 요약"),
+    );
+    expect(fallbackEvents).toHaveLength(1);
+    expect(JSON.stringify(fallbackEvents[0]?.content)).toContain("worker finished");
+  });
+
   test("interrupting the active run cancels queued follow-ups", async () => {
     const { ctx, handlers, events } = makeCtx();
     await behaviorDef.start(ctx);
