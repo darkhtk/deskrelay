@@ -3438,8 +3438,94 @@ async function openPathInFileManager(
   if (options.dryRun) {
     return { cwd, command, args, dryRun: true };
   }
-  await spawnDetached(command, args, { windowsHide: process.platform !== "win32" });
+  if (process.platform === "win32") {
+    await openWindowsFileManager(cwd);
+  } else {
+    await spawnDetached(command, args);
+  }
   return { cwd, command, args, dryRun: false };
+}
+
+async function openWindowsFileManager(cwd: string): Promise<void> {
+  const script = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    `$target = ${quotePs(cwd)}`,
+    "Start-Process -FilePath explorer.exe -ArgumentList @($target) -WindowStyle Normal | Out-Null",
+    "Start-Sleep -Milliseconds 350",
+    "$native = @'",
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public static class WindowTools {',
+    '  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);',
+    '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
+    '  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);',
+    '  [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);',
+    "}",
+    "'@",
+    "Add-Type -TypeDefinition $native | Out-Null",
+    "$shell = New-Object -ComObject Shell.Application",
+    "$wshell = New-Object -ComObject WScript.Shell",
+    "for ($i = 0; $i -lt 12; $i += 1) {",
+    "  $match = @($shell.Windows()) | Where-Object {",
+    "    try { $_.Document.Folder.Self.Path -eq $target } catch { $false }",
+    "  } | Select-Object -Last 1",
+    "  if ($match) {",
+    "    $hwnd = [IntPtr]([int64]$match.HWND)",
+    "    [WindowTools]::ShowWindowAsync($hwnd, 9) | Out-Null",
+    "    [WindowTools]::SetWindowPos($hwnd, [IntPtr]::new(-1), 0, 0, 0, 0, 0x0053) | Out-Null",
+    "    [WindowTools]::SetWindowPos($hwnd, [IntPtr]::new(-2), 0, 0, 0, 0, 0x0053) | Out-Null",
+    "    [WindowTools]::SetForegroundWindow($hwnd) | Out-Null",
+    "    [WindowTools]::SwitchToThisWindow($hwnd, $true)",
+    "    $wshell.AppActivate([int]$match.HWND) | Out-Null",
+    "    break",
+    "  }",
+    "  Start-Sleep -Milliseconds 250",
+    "}",
+  ].join("\n");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  try {
+    await spawnAndWait(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+      { timeoutMs: 6000, windowsHide: true },
+    );
+  } catch {
+    await spawnDetached("explorer.exe", [cwd], { windowsHide: false });
+  }
+}
+
+async function spawnAndWait(
+  command: string,
+  args: string[],
+  options: { timeoutMs?: number; windowsHide?: boolean } = {},
+): Promise<void> {
+  await new Promise<void>((resolveLaunch, rejectLaunch) => {
+    const child = spawn(command, args, {
+      stdio: "ignore",
+      windowsHide: options.windowsHide ?? true,
+    });
+    const timer = setTimeout(() => {
+      child.kill();
+      settle(new Error(`${command} timed out`));
+    }, options.timeoutMs ?? 5000);
+    const settle = (error?: Error) => {
+      clearTimeout(timer);
+      child.removeAllListeners("error");
+      child.removeAllListeners("exit");
+      if (error) rejectLaunch(error);
+      else resolveLaunch();
+    };
+    child.once("error", (error) => settle(error));
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        settle();
+        return;
+      }
+      settle(new Error(`${command} exited with ${signal ?? code ?? "unknown status"}`));
+    });
+  }).catch((error) => {
+    throw new OpenPathError(`failed to open folder: ${errorMessage(error)}`, 500);
+  });
 }
 
 async function spawnDetached(
