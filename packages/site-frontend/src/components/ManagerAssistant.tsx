@@ -409,6 +409,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     buildManagerAssistantTranscriptEntries(visibleEvents()),
   );
   const busy = createMemo(() => runIds().length > 0);
+  const lastTranscriptEntry = createMemo(() => managerAssistantTranscriptEntries().at(-1) ?? null);
+  const managerAssistantAwaitingReply = createMemo(
+    () => !busy() && lastTranscriptEntry()?.role === "user",
+  );
   const liveStateStatus = createMemo(() => managerStatusFromState(managerState()));
   const focusedProjectStatus = createMemo(() =>
     managerStatusFromProject(
@@ -421,6 +425,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const visibleStatus = createMemo<ManagerVisibleStatus>(() => {
     const currentStatus = status();
     if (currentStatus) return currentStatus;
+    if (managerAssistantAwaitingReply()) {
+      return {
+        tone: "warning",
+        main: "관리자 응답 필요",
+        detail: "마지막 지시에 대한 답변이 아직 보이지 않습니다.",
+      };
+    }
     const projectStatus = focusedProjectStatus();
     if (projectStatus) return projectStatus;
     const stateStatus = liveStateStatus();
@@ -454,8 +465,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     if (busy()) return { tone: "thinking", main: "관리자 실행 중" };
     return {
       tone: "ready",
-      main: "관리자 대기 중",
-      detail: "Orchestration 또는 직접 메시지 입력 가능",
+      main: "관리자 입력 가능",
+      detail: "Orchestration 또는 직접 지시를 보낼 수 있습니다.",
     };
   });
   const orchestrationStatus = createMemo(() =>
@@ -1791,11 +1802,11 @@ function statusLabel(status: string): string {
     case "cancelled":
       return "취소";
     case "idle":
-      return "대기";
+      return "유휴";
     case "assigned":
       return "배정됨";
     case "waiting":
-      return "대기 중";
+      return "결과 기다리는 중";
     case "stale":
       return "끊김";
     default:
@@ -1839,17 +1850,17 @@ function managerStatusFromEnvelope(
     if (status === "queued") {
       return {
         tone: "thinking",
-        main: "대기 중",
+        main: "요청 큐에 등록됨",
         ...(position ? { detail: `큐 ${position}번째` } : {}),
       };
     }
-    if (status === "running") return { tone: "thinking", main: "Assistant 실행 중" };
+    if (status === "running") return { tone: "thinking", main: "관리자 작업 실행 중" };
   }
-  if (kind === "run.started") return { tone: "thinking", main: "Assistant 실행 중" };
+  if (kind === "run.started") return { tone: "thinking", main: "관리자 작업 시작" };
   if (kind === "claude.event") {
     const action = describeCliActionFromClaudeEvent(content);
     if (action) return { tone: "thinking", main: action };
-    return { tone: "thinking", main: "응답 수신 중" };
+    return { tone: "thinking", main: "관리자 응답 확인 중" };
   }
   if (kind === "claude.stderr") {
     const line =
@@ -1864,14 +1875,14 @@ function managerStatusFromEnvelope(
 function managerComposerActionLabel(status: ManagerVisibleStatus): string {
   const text = status.main.trim();
   if (/오류|error|failed|실패/i.test(text)) return "오류";
+  if (/응답|답변/i.test(text) && status.tone === "warning") return "응답 필요";
   if (/승인|approval|permission/i.test(text)) return "승인 대기";
-  if (/요청|접수|queued/i.test(text)) return "요청 접수";
-  if (/대기|wait|idle/i.test(text)) return "대기 중";
-  if (/수신|응답|response/i.test(text)) return "응답 수신 중";
+  if (/요청|접수|큐|queued/i.test(text)) return "요청 접수";
+  if (/수신|응답|답변|response/i.test(text)) return "응답 확인 중";
   if (/실행|진행|running|thinking/i.test(text)) return "진행 중";
   if (status.tone === "warning") return "확인 필요";
   if (status.tone === "thinking") return "진행 중";
-  return "대기 중";
+  return "입력 가능";
 }
 
 function managerStatusFromReport(

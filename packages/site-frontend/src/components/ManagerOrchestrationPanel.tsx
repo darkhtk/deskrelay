@@ -107,6 +107,7 @@ interface ManagerOrchestrationPanelProps {
   approvalActionBusy?: boolean | undefined;
   approvalActionStatus?: string | null | undefined;
   approvalActionError?: string | null | undefined;
+  suppressedApprovalActionKeys?: string[] | undefined;
   standalone?: boolean | undefined;
   onAcknowledgeFailures?: (() => void) | undefined;
   onAcknowledgeRound?: ((roundId: string) => void) | undefined;
@@ -285,6 +286,12 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const effectiveOverview = createMemo<ManagerProjectOverviewResponse | null>(
     () => props.commandFlow?.overview ?? props.projectOverview ?? null,
   );
+  const displayCommandFlow = createMemo(() =>
+    filterManagerCommandFlowApprovalActions(
+      props.commandFlow,
+      new Set(props.suppressedApprovalActionKeys ?? []),
+    ),
+  );
   const effectiveNextAction = createMemo(() =>
     selectedProjectCompleted()
       ? null
@@ -309,7 +316,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
     buildManagerCurrentJudgmentBrief({
       project: displayProject(),
       overview: effectiveOverview(),
-      commandFlow: props.commandFlow,
+      commandFlow: displayCommandFlow(),
       latestReport: latestStatusReport(),
     }),
   );
@@ -347,7 +354,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
   const visibleJudgments = createMemo(() => {
     const project = displayProject();
     if (isManagerProjectCompleted(project)) return [];
-    return (props.commandFlow?.judgments ?? []).filter(
+    return (displayCommandFlow()?.judgments ?? []).filter(
       (judgment) => !dismissedJudgmentIds()[judgment.id],
     );
   });
@@ -1011,7 +1018,7 @@ const ManagerApprovalInbox: Component<{
   );
   const approvalCount = createMemo(() => approvalJudgments().length);
   return (
-    <Show when={props.judgments.length > 0}>
+    <Show when={props.judgments.length > 0 || Boolean(props.error || props.status)}>
       <section
         class="manager-approval-inbox"
         aria-label={t("manager.orchestration.approval.title")}
@@ -3714,6 +3721,65 @@ function managerProposedActionDismissEffect(action: ManagerProposedAction): stri
   return t("manager.orchestration.approval.dismiss-effect", {
     action: managerProposedActionLabel(action),
   });
+}
+
+function filterManagerCommandFlowApprovalActions(
+  commandFlow: ManagerCommandFlowResponse | null | undefined,
+  suppressedActionKeys: Set<string>,
+): ManagerCommandFlowResponse | null | undefined {
+  if (!commandFlow || suppressedActionKeys.size === 0) return commandFlow;
+  let changed = false;
+  const judgments = commandFlow.judgments
+    .map((judgment) => {
+      const proposedActions = judgment.proposedActions.filter((action) => {
+        const hidden =
+          action.requiresApproval && suppressedActionKeys.has(managerApprovalActionKey(action));
+        if (hidden) changed = true;
+        return !hidden;
+      });
+      return proposedActions.length === judgment.proposedActions.length
+        ? judgment
+        : { ...judgment, proposedActions };
+    })
+    .filter((judgment) => {
+      const keep =
+        judgment.priority !== "approval" ||
+        judgment.proposedActions.some((action) => action.requiresApproval);
+      if (!keep) changed = true;
+      return keep;
+    });
+  return changed ? { ...commandFlow, judgments } : commandFlow;
+}
+
+function managerApprovalActionKey(action: ManagerProposedAction): string {
+  return [
+    action.type,
+    action.projectId,
+    managerProposedActionRoundId(action),
+    managerProposedActionTargetId(action) || action.id,
+  ].join(":");
+}
+
+function managerProposedActionTargetId(action: ManagerProposedAction): string {
+  return (
+    managerProposedActionPayloadString(action.payload, "taskId") ??
+    action.taskId ??
+    managerProposedActionPayloadString(action.payload, "agentId") ??
+    action.agentId ??
+    ""
+  );
+}
+
+function managerProposedActionRoundId(action: ManagerProposedAction): string {
+  return managerProposedActionPayloadString(action.payload, "roundId") ?? action.roundId ?? "";
+}
+
+function managerProposedActionPayloadString(
+  payload: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function managerProposedActionPayloadBoolean(

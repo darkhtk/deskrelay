@@ -6284,6 +6284,18 @@ function managerWorkerRunHasRetryableTask(run: ManagerWorkerRun): boolean {
   );
 }
 
+function latestManagerWorkerRunsByTaskId(runs: ManagerWorkerRun[]): Map<string, ManagerWorkerRun> {
+  const latest = new Map<string, ManagerWorkerRun>();
+  for (const run of runs) {
+    if (!run.taskId) continue;
+    const current = latest.get(run.taskId);
+    if (!current || Date.parse(run.updatedAt) > Date.parse(current.updatedAt)) {
+      latest.set(run.taskId, run);
+    }
+  }
+  return latest;
+}
+
 function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJudgmentPacket[] {
   if (input.project.status === "completed" || input.project.flowStage === "completed") return [];
   const packets: ManagerJudgmentPacket[] = [];
@@ -6328,8 +6340,9 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
   );
   const createdAt = input.now.toISOString();
   const expiresAt = new Date(input.now.getTime() + 5 * 60_000).toISOString();
+  const latestRunByTaskId = latestManagerWorkerRunsByTaskId(input.runs);
   const retryableTaskIds = new Set(
-    input.runs
+    [...latestRunByTaskId.values()]
       .filter((run) => managerWorkerRunHasRetryableTask(run))
       .map((run) => run.taskId)
       .filter(isPresent),

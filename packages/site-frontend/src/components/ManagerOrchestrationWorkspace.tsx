@@ -103,6 +103,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [approvalActionBusy, setApprovalActionBusy] = createSignal(false);
   const [approvalActionStatus, setApprovalActionStatus] = createSignal<string | null>(null);
   const [approvalActionError, setApprovalActionError] = createSignal<string | null>(null);
+  const [suppressedApprovalActionKeys, setSuppressedApprovalActionKeys] = createSignal<
+    Record<string, true>
+  >({});
   const [cachedSnapshot, setCachedSnapshot] = createSignal(readManagerOrchestrationCache());
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
@@ -601,6 +604,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     setProjectFolderOpenError(null);
     setApprovalActionStatus(null);
     setApprovalActionError(null);
+    setSuppressedApprovalActionKeys({});
     setSelectedProjectId(projectId);
     writeSelectedManagerProjectId(projectId);
   }
@@ -898,6 +902,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     try {
       const preflight = await preflightApprovalAction(action, projectId);
       if (!preflight.ok) {
+        if (preflight.suppressActionKeys?.length) {
+          suppressApprovalActions(preflight.suppressActionKeys);
+        }
         await refreshAfterApprovalAction();
         setApprovalActionStatus(preflight.message);
         return;
@@ -927,7 +934,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     projectId: string,
   ): Promise<
     | { ok: true; action: ManagerProposedAction; commandFlow: ManagerCommandFlowResponse }
-    | { ok: false; message: string }
+    | { ok: false; message: string; suppressActionKeys?: string[] }
   > {
     const commandFlow = await api.managerProjectCommandFlow(projectId);
     if (
@@ -946,7 +953,11 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     const freshAction = findFreshApprovalAction(commandFlow, action);
     if (!freshAction) {
       await cleanupStaleApprovalAction(action, commandFlow);
-      return { ok: false, message: t("manager.orchestration.approval.stale-action-cleaned") };
+      return {
+        ok: false,
+        message: t("manager.orchestration.approval.stale-action-cleaned"),
+        suppressActionKeys: approvalActionSuppressionKeys(action),
+      };
     }
 
     if (freshAction.type !== "retry_task") return { ok: true, action: freshAction, commandFlow };
@@ -957,13 +968,18 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     const task = await readManagerTaskForPreflight(taskId);
     if (!task) {
       await cleanupStaleApprovalAction(freshAction, commandFlow);
-      return { ok: false, message: t("manager.orchestration.approval.stale-task-missing") };
+      return {
+        ok: false,
+        message: t("manager.orchestration.approval.stale-task-missing"),
+        suppressActionKeys: approvalActionSuppressionKeys(action, freshAction),
+      };
     }
     if (task.state === "succeeded") {
       await cleanupStaleApprovalAction(freshAction, commandFlow);
       return {
         ok: false,
         message: t("manager.orchestration.approval.stale-task-succeeded"),
+        suppressActionKeys: approvalActionSuppressionKeys(action, freshAction),
       };
     }
     if (task.state === "pending" || task.state === "running") {
@@ -972,6 +988,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
         message: t("manager.orchestration.approval.stale-task-active", {
           state: managerTaskStateLabel(task.state),
         }),
+        suppressActionKeys: approvalActionSuppressionKeys(action, freshAction),
       };
     }
 
@@ -984,6 +1001,14 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     } catch {
       return null;
     }
+  }
+
+  function suppressApprovalActions(keys: string[]) {
+    setSuppressedApprovalActionKeys((current) => {
+      const next = { ...current };
+      for (const key of keys) next[key] = true;
+      return next;
+    });
   }
 
   async function cleanupStaleApprovalAction(
@@ -1157,6 +1182,7 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           approvalActionBusy={approvalActionBusy()}
           approvalActionStatus={approvalActionStatus()}
           approvalActionError={approvalActionError()}
+          suppressedApprovalActionKeys={Object.keys(suppressedApprovalActionKeys())}
           onRefreshHygiene={() => void refetchSessionHygiene()}
           onCleanupHygiene={() => void cleanupSessionHygiene()}
           onRefreshProjectHygiene={() => void refetchProjectHygiene()}
@@ -1257,6 +1283,19 @@ function proposedActionTargetId(action: ManagerProposedAction): string {
 
 function proposedActionRoundId(action: ManagerProposedAction): string {
   return payloadString(action.payload, "roundId") ?? action.roundId ?? "";
+}
+
+function approvalActionSuppressionKeys(...actions: ManagerProposedAction[]): string[] {
+  return [...new Set(actions.map((action) => proposedActionApprovalKey(action)))];
+}
+
+function proposedActionApprovalKey(action: ManagerProposedAction): string {
+  return [
+    action.type,
+    action.projectId,
+    proposedActionRoundId(action),
+    proposedActionTargetId(action) || action.id,
+  ].join(":");
 }
 
 function managerTaskStateLabel(state: ManagerTask["state"]): string {
