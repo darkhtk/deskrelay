@@ -234,12 +234,26 @@ async function attachUpdateAvailability(
     readRemoteCommit(options.repoRoot, options.branch, options.timeoutMs, options.runner),
   ]);
   if (!localCommit || !remoteCommit) return status;
+  const updateAvailable = localCommit !== remoteCommit;
+  if (!updateAvailable && status.state === "failed" && isTrackedLocalChangesFailure(status.error)) {
+    return {
+      state: "idle",
+      localCommit,
+      remoteCommit,
+      updateAvailable,
+    };
+  }
   return {
     ...status,
     localCommit,
     remoteCommit,
-    updateAvailable: localCommit !== remoteCommit,
+    updateAvailable,
   };
+}
+
+function isTrackedLocalChangesFailure(error: string | undefined): boolean {
+  const text = error?.toLowerCase() ?? "";
+  return text.includes("tracked files have local changes") || text.includes("commit or stash");
 }
 
 async function readLocalCommit(

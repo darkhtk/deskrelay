@@ -166,4 +166,41 @@ describe("self server updater status recovery", () => {
       updateAvailable: true,
     });
   });
+
+  test("clears stale local-change failures once the repo is up to date", async () => {
+    const root = await mkdtemp(join(tmpdir(), "deskrelay-self-update-"));
+    const statusPath = join(root, "state", "self-server-update-status.json");
+    const commit = "a".repeat(40);
+    await mkdir(join(root, "state"), { recursive: true });
+    await writeFile(
+      statusPath,
+      JSON.stringify({
+        state: "failed",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        completedAt: "2026-01-01T00:00:01.000Z",
+        branch: "main",
+        before: "aaaaaaa",
+        changed: true,
+        error:
+          "Cannot update while tracked files have local changes. Commit or stash them, then retry.",
+      }),
+    );
+
+    const updater = createPowerShellSelfServerUpdater({
+      root,
+      repoRoot: root,
+      gitRunner: async (args) => {
+        if (args[0] === "rev-parse") return { stdout: `${commit}\n` };
+        if (args[0] === "ls-remote") return { stdout: `${commit}\trefs/heads/main\n` };
+        return { stdout: "" };
+      },
+    });
+
+    expect(await updater.status()).toEqual({
+      state: "idle",
+      localCommit: commit,
+      remoteCommit: commit,
+      updateAvailable: false,
+    });
+  });
 });
