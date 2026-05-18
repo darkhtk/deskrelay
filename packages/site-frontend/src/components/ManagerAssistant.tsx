@@ -2,6 +2,9 @@ import type {
   ManagerAgent,
   ManagerArtifactUpdateRequest,
   ManagerAssistantChatContext,
+  ManagerAssistantChatMessage,
+  ManagerAssistantStreamEvent,
+  ManagerAssistantStructuredState,
   ManagerBlockerCreateRequest,
   ManagerBlockerResolveRequest,
   ManagerCommandFlowResponse,
@@ -154,6 +157,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   );
   let transcriptScroller: HTMLDivElement | undefined;
   let eventRefreshTimer: number | undefined;
+  let managerAssistantAbort: AbortController | undefined;
 
   const orchestrationPanelEnabled = createMemo(() => props.showOrchestrationPanel !== false);
 
@@ -770,113 +774,63 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
     setError(null);
     setStatus({ tone: "thinking", main: "요청 접수" });
+    const previousEntries = managerAssistantTranscriptEntries();
+    const resumeSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
+    const history = managerAssistantChatHistory(previousEntries);
+    const assistantState = managerAssistantStructuredState(previousEntries, resumeSessionId);
     const userEvent = userTranscriptEvent(text);
     appendEvent(userEvent);
     setTranscriptAtBottom(true);
 
     const runId = `manager_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     setRunIds((currentIds) => [...currentIds, runId]);
-    const space = `remote-claude.run:${runId}`;
     const abort = new AbortController();
-    let streamSawRun = false;
-    let chatAccepted = false;
+    managerAssistantAbort = abort;
     let capturedSessionId: string | null = null;
+    let responseCwd = current.cwd;
     let visibleAssistantReplySeen = false;
-    const resumeSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
 
-    const streamPromise = (async () => {
-      try {
-        for await (const env of api.streamEvents(current.deviceId, space, {
-          signal: abort.signal,
-          onOpen: () => undefined,
-        })) {
-          const envelope = env as { kind?: string; content?: unknown };
-          const nextStatus = managerStatusFromEnvelope(envelope.kind, envelope.content);
+    try {
+      await api.managerAssistantChatStream(
+        {
+        message: text,
+          history,
+          context: props.context ?? undefined,
+          ...(assistantState ? { assistantState } : {}),
+        },
+        (event) => {
+          const nextStatus = managerStatusFromAssistantStreamEvent(event);
           if (nextStatus) setStatus(nextStatus);
-          if (
-            envelope.kind === "run.started" ||
-            envelope.kind === "claude.event" ||
-            envelope.kind === "run.finished" ||
-            envelope.kind === "run.error" ||
-            envelope.kind === "run.cancelled"
-          ) {
-            streamSawRun = true;
-          }
-          if (envelope.kind === "claude.event") {
-            const transcriptEvent = claudeEventForTranscript(envelope.content);
-            capturedSessionId = sessionIdFromClaudeEvent(transcriptEvent) ?? capturedSessionId;
+          if (event.type === "claude_event") {
+            capturedSessionId =
+              sessionIdFromClaudeEvent(event.event as ClaudeStreamEvent) ?? capturedSessionId;
+            const transcriptEvent = claudeEventForTranscript(event.event);
             if (transcriptEvent) {
               if (isVisibleManagerAssistantReply(transcriptEvent)) {
                 visibleAssistantReplySeen = true;
               }
               appendEvent(transcriptEvent);
             }
-          } else if (envelope.kind === "run.error") {
-            const message = runErrorMessage(envelope.content);
-            if (!visibleAssistantReplySeen) {
-              appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 실행 실패: ${message}`));
+          } else if (event.type === "message") {
+            responseCwd = event.cwd || responseCwd;
+            capturedSessionId = event.sessionId ?? capturedSessionId;
+            if (event.message.text.trim() && !visibleAssistantReplySeen) {
+              appendEvent(managerAssistantChatMessageEvent(event.message));
               visibleAssistantReplySeen = true;
             }
-            setError(message);
-            setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
-            abort.abort();
-            return;
-          } else if (envelope.kind === "run.cancelled") {
-            setStatus(null);
-            abort.abort();
-            return;
-          } else if (envelope.kind === "run.finished") {
+          } else if (event.type === "error") {
             if (!visibleAssistantReplySeen) {
-              appendEvent(
-                managerAssistantSyntheticEvent(
-                  "관리자 Assistant가 최종 답변 없이 종료되었습니다. 작업 상태를 확정할 수 없으므로 같은 질문을 다시 보내 재시도하세요.",
-                ),
-              );
+              appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 오류: ${event.error}`));
               visibleAssistantReplySeen = true;
             }
-            abort.abort();
-            return;
+            setError(event.error);
+            setStatus({ tone: "warning", main: "Assistant 오류", detail: event.error });
           }
-        }
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          const message = err instanceof Error ? err.message : String(err);
-          if (!visibleAssistantReplySeen) {
-            appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 스트림 오류: ${message}`));
-            visibleAssistantReplySeen = true;
-          }
-          setError(message);
-          setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
-        }
-      }
-    })();
-
-    try {
-      await Promise.race([
-        new Promise<void>((resolve) => setTimeout(resolve, STREAM_OPEN_GRACE_MS)),
-      ]);
-      const response = await api.callBehavior<{
-        ok: true;
-        runId: string;
-        accepted: true;
-        eventCount: number;
-      }>(current.deviceId, current.instanceId, "chat", {
-        cwd: current.cwd,
-        message: text,
-        runId,
-        managerMode: true,
-        managerBrowserContext: props.context ?? null,
-        permissionMode: "bypassPermissions",
-        conversationId: MANAGER_CONVERSATION_ID,
-        firstEventTimeoutMs: 600_000,
-        ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
-      });
-      if (response.error) {
-        throw new Error(response.error.message);
-      }
-      chatAccepted = true;
+        },
+        { signal: abort.signal },
+      );
     } catch (err) {
-      if (!streamSawRun) {
+      if ((err as Error).name !== "AbortError") {
         const message = err instanceof Error ? err.message : String(err);
         if (!visibleAssistantReplySeen) {
           appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 요청 실패: ${message}`));
@@ -884,23 +838,28 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         }
         setError(message);
         setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
-      } else {
-        chatAccepted = true;
       }
     } finally {
-      if (!chatAccepted && !streamSawRun) abort.abort();
-      await waitForManagerStreamClose(streamPromise, abort);
+      abort.abort();
+      if (managerAssistantAbort === abort) managerAssistantAbort = undefined;
       removeRun(runId);
-      if (capturedSessionId) await persistManagerSession(capturedSessionId, current.cwd);
+      if (capturedSessionId) await persistManagerSession(capturedSessionId, responseCwd);
       setStatus((currentStatus) => (currentStatus?.tone === "warning" ? currentStatus : null));
       setReloadSeq((seq) => seq + 1);
       void refetchConversationState();
+      window.setTimeout(() => setReloadSeq((seq) => seq + 1), 750);
     }
   };
 
   const interrupt = async () => {
     const current = runtime();
     const runId = runIds()[0];
+    if (managerAssistantAbort) {
+      managerAssistantAbort.abort();
+      setStatus(null);
+      if (runId) removeRun(runId);
+      return;
+    }
     if (!current || !runId) return;
     try {
       await api.callBehavior(current.deviceId, current.instanceId, "interrupt", { runId });
@@ -1607,6 +1566,44 @@ function managerAssistantSyntheticEvent(text: string): ClaudeStreamEvent {
   };
 }
 
+function managerAssistantChatMessageEvent(message: ManagerAssistantChatMessage): ClaudeStreamEvent {
+  return {
+    type: message.role === "user" ? "user" : "assistant",
+    message: {
+      role: message.role,
+      content: [{ type: "text", text: message.text }],
+    },
+  };
+}
+
+function managerAssistantChatHistory(
+  entries: ManagerAssistantTranscriptEntry[],
+): ManagerAssistantChatMessage[] {
+  const now = Date.now();
+  return entries
+    .filter((entry) => entry.text.trim())
+    .slice(-18)
+    .map((entry, index) => ({
+      id: `visible_${index}_${entry.id}`,
+      role: entry.role,
+      text: entry.text.slice(0, 20_000),
+      createdAt: new Date(now - (entries.length - index) * 1000).toISOString(),
+    }));
+}
+
+function managerAssistantStructuredState(
+  entries: ManagerAssistantTranscriptEntry[],
+  sessionId: string | null,
+): ManagerAssistantStructuredState | undefined {
+  const lastAssistant = [...entries]
+    .reverse()
+    .find((entry) => entry.role === "assistant" && entry.text.trim());
+  const state: ManagerAssistantStructuredState = {};
+  if (sessionId) state.sessionId = sessionId;
+  if (lastAssistant) state.lastAssistantText = lastAssistant.text.slice(0, 8_000);
+  return Object.keys(state).length > 0 ? state : undefined;
+}
+
 function managerAssistantToolResultFallbackEvent(summary: string): ClaudeStreamEvent {
   return managerAssistantSyntheticEvent(
     `관리자 Assistant가 도구 실행 결과를 받은 뒤 최종 답변을 아직 남기지 않았습니다.\n\n마지막 도구 결과 요약: ${summary}`,
@@ -1930,6 +1927,29 @@ function managerStatusFromEnvelope(
         ? (content as { line: string }).line
         : "";
     if (line) return { tone: "thinking", main: "Claude CLI 메시지", detail: line.slice(0, 160) };
+  }
+  return null;
+}
+
+function managerStatusFromAssistantStreamEvent(
+  event: ManagerAssistantStreamEvent,
+): ManagerVisibleStatus | null {
+  if (event.type === "status") {
+    return {
+      tone: event.status.tone === "warning" ? "warning" : "thinking",
+      main: event.status.main,
+      ...(event.status.detail ? { detail: event.status.detail } : {}),
+    };
+  }
+  if (event.type === "claude_event") {
+    const action = describeCliActionFromClaudeEvent(event.event);
+    return action ? { tone: "thinking", main: action } : null;
+  }
+  if (event.type === "message") {
+    return { tone: "thinking", main: "응답 반영 중" };
+  }
+  if (event.type === "error") {
+    return { tone: "warning", main: "Assistant 오류", detail: event.error };
   }
   return null;
 }

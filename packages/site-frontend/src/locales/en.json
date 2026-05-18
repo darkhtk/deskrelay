@@ -544,7 +544,7 @@
   "manager.orchestration.project.label": "Project",
   "manager.orchestration.project.none": "No project selected",
   "manager.orchestration.project.open-folder-error": "Could not open project folder: {error}",
-  "manager.orchestration.project.open-folder-done": "Sent the project folder open request: {cwd}",
+  "manager.orchestration.project.open-folder-done": "Opened the project folder: {cwd}",
   "manager.orchestration.project.summary-none": "No project is pinned yet. Current rounds are still visible, but they are not grouped by project.",
   "manager.orchestration.project-summary.goal": "Goal",
   "manager.orchestration.project-summary.next": "Next action",

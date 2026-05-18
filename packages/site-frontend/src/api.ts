@@ -574,7 +574,7 @@ async function requestEventStream<E>(
   path: string,
   body: unknown,
   onEvent: (event: E) => void,
-  options: { method?: "GET" | "POST" } = {},
+  options: { method?: "GET" | "POST"; signal?: AbortSignal } = {},
 ): Promise<void> {
   const method = options.method ?? "POST";
   const headers: Record<string, string> = {};
@@ -584,6 +584,7 @@ async function requestEventStream<E>(
   const res = await fetch(`${resolveBaseUrl()}${path}`, {
     method,
     headers,
+    ...(options.signal ? { signal: options.signal } : {}),
     ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
   });
   if (!res.ok) {
@@ -966,11 +967,13 @@ export const api = {
   managerAssistantChatStream: (
     input: ManagerAssistantChatRequest,
     onEvent: (event: ManagerAssistantStreamEvent) => void,
+    options?: { signal?: AbortSignal },
   ) =>
     requestEventStream<ManagerAssistantStreamEvent>(
       "/api/manager/assistant/chat/stream",
       input,
       onEvent,
+      options,
     ),
   cancelManagerTask: (id: string) =>
     request<ManagerTask>("POST", `/api/manager/tasks/${id}/cancel`),

@@ -943,7 +943,7 @@
   "manager.orchestration.project.label": "프로젝트",
   "manager.orchestration.project.none": "선택한 프로젝트 없음",
   "manager.orchestration.project.open-folder-error": "프로젝트 폴더를 열 수 없습니다: {error}",
-  "manager.orchestration.project.open-folder-done": "프로젝트 폴더 열기 요청을 보냈습니다: {cwd}",
+  "manager.orchestration.project.open-folder-done": "프로젝트 폴더를 열었습니다: {cwd}",
   "manager.orchestration.project.summary-none": "아직 고정된 프로젝트가 없습니다. 현재 라운드는 계속 보이지만 프로젝트별로 묶이지 않습니다.",
   "manager.orchestration.project-summary.goal": "목표",
   "manager.orchestration.project-summary.next": "다음 행동",
