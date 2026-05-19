@@ -12,6 +12,8 @@ import type {
   ManagerDecisionListResponse,
   ManagerDecisionUpdateRequest,
   ManagerDirectionChangeRequest,
+  ManagerOrchestrationAction,
+  ManagerOrchestrationSnapshot,
   ManagerProject,
   ManagerProjectCharterUpdateRequest,
   ManagerProjectCompleteRequest,
@@ -528,6 +530,25 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     onCleanup(() => window.clearInterval(timer));
   });
 
+  createEffect(() => {
+    const refreshVisibleWorkspace = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      setRefreshSeq((seq) => seq + 1);
+      void refetchManagerProjects();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshVisibleWorkspace();
+    };
+    window.addEventListener("focus", refreshVisibleWorkspace);
+    window.addEventListener("pageshow", refreshVisibleWorkspace);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    onCleanup(() => {
+      window.removeEventListener("focus", refreshVisibleWorkspace);
+      window.removeEventListener("pageshow", refreshVisibleWorkspace);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    });
+  });
+
   onCleanup(() => {
     if (eventRefreshTimer !== undefined) window.clearTimeout(eventRefreshTimer);
   });
@@ -1002,7 +1023,10 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       return { ok: false, message: t("manager.orchestration.approval.error.stale-round") };
     }
 
-    const freshAction = findFreshApprovalAction(commandFlow, action);
+    const currentSnapshot = await readManagerOrchestrationSnapshotForPreflight(projectId);
+    const freshAction =
+      findFreshApprovalAction(commandFlow, action) ??
+      findFreshSnapshotApprovalAction(currentSnapshot, action);
     if (!freshAction) {
       await cleanupStaleApprovalAction(action, commandFlow);
       return {
@@ -1045,6 +1069,16 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     }
 
     return { ok: true, action: freshAction, commandFlow };
+  }
+
+  async function readManagerOrchestrationSnapshotForPreflight(
+    projectId: string,
+  ): Promise<ManagerOrchestrationSnapshot | null> {
+    try {
+      return (await api.managerProjectOrchestration(projectId)).snapshot;
+    } catch {
+      return null;
+    }
   }
 
   async function readManagerTaskForPreflight(taskId: string): Promise<ManagerTask | null> {
@@ -1387,6 +1421,50 @@ function findFreshApprovalAction(
   );
 }
 
+function findFreshSnapshotApprovalAction(
+  snapshot: ManagerOrchestrationSnapshot | null,
+  staleAction: ManagerProposedAction,
+): ManagerProposedAction | undefined {
+  const approvalActions =
+    snapshot?.approvalActions.filter(
+      (action) => action.requiresApproval && action.status === "available",
+    ) ?? [];
+  const freshAction =
+    approvalActions.find((action) => action.id === staleAction.id) ??
+    approvalActions.find(
+      (action) =>
+        action.type === staleAction.type &&
+        action.target.projectId === staleAction.projectId &&
+        snapshotActionTargetId(action) === proposedActionTargetId(staleAction) &&
+        snapshotActionRoundId(action) === proposedActionRoundId(staleAction),
+    );
+  return freshAction ? proposedActionFromSnapshotAction(freshAction) : undefined;
+}
+
+function proposedActionFromSnapshotAction(action: ManagerOrchestrationAction): ManagerProposedAction {
+  return {
+    id: action.id,
+    projectId: action.target.projectId,
+    ...(action.target.roundId ? { roundId: action.target.roundId } : {}),
+    ...(action.target.taskId ? { taskId: action.target.taskId } : {}),
+    ...(action.target.agentId ? { agentId: action.target.agentId } : {}),
+    type: action.type,
+    risk: action.risk,
+    requiresApproval: action.requiresApproval,
+    title: action.title,
+    rationale: action.description || action.title,
+    payload: {
+      ...action.payload,
+      ...(action.target.roundId ? { roundId: action.target.roundId } : {}),
+      ...(action.target.taskId ? { taskId: action.target.taskId } : {}),
+      ...(action.target.agentId ? { agentId: action.target.agentId } : {}),
+    },
+    evidenceIds: action.evidenceIds,
+    agentResultIds: [],
+    protocolTraceIds: [],
+  };
+}
+
 function proposedActionTargetId(action: ManagerProposedAction): string {
   return (
     payloadString(action.payload, "taskId") ??
@@ -1399,6 +1477,14 @@ function proposedActionTargetId(action: ManagerProposedAction): string {
 
 function proposedActionRoundId(action: ManagerProposedAction): string {
   return payloadString(action.payload, "roundId") ?? action.roundId ?? "";
+}
+
+function snapshotActionTargetId(action: ManagerOrchestrationAction): string {
+  return action.target.taskId ?? action.target.agentId ?? "";
+}
+
+function snapshotActionRoundId(action: ManagerOrchestrationAction): string {
+  return action.target.roundId ?? "";
 }
 
 function approvalActionSuppressionKeys(...actions: ManagerProposedAction[]): string[] {

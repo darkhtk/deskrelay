@@ -316,6 +316,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       new Set(props.suppressedApprovalActionKeys ?? []),
     ),
   );
+  const displaySnapshot = createMemo(() =>
+    currentManagerOrchestrationSnapshot(props.orchestrationSnapshot ?? null, {
+      project: displayProject(),
+      overview: effectiveOverview(),
+      commandFlow: displayCommandFlow(),
+    }),
+  );
   const effectiveNextAction = createMemo(() =>
     selectedProjectCompleted()
       ? null
@@ -341,7 +348,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       project: displayProject(),
       overview: effectiveOverview(),
       commandFlow: displayCommandFlow(),
-      snapshot: props.orchestrationSnapshot ?? null,
+      snapshot: displaySnapshot(),
       latestReport: latestStatusReport(),
     }),
   );
@@ -577,7 +584,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             />
             <ManagerCurrentJudgmentCard brief={currentJudgmentBrief()} />
             <ManagerCenterlineCard
-              snapshot={props.orchestrationSnapshot ?? null}
+              snapshot={displaySnapshot()}
               loading={props.orchestrationSnapshotLoading}
             />
             <div class="manager-workboard-mode">
@@ -617,7 +624,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
             <ManagerApprovalInbox
               judgments={actionableApprovalJudgments()}
-              snapshot={props.orchestrationSnapshot ?? null}
+              snapshot={displaySnapshot()}
               busy={props.flowBusy || props.actionBusy || props.approvalActionBusy}
               status={props.approvalActionStatus}
               error={props.approvalActionError}
@@ -1212,6 +1219,9 @@ const ManagerApprovalInbox: Component<{
       )
       .slice(0, 4);
   });
+  const snapshotOnlyActions = createMemo(() =>
+    props.snapshot && visibleJudgments().length === 0 ? availableSnapshotActions() : [],
+  );
   const approvalCount = createMemo(() =>
     props.snapshot ? availableSnapshotActions().length : approvalJudgments().length,
   );
@@ -1246,7 +1256,14 @@ const ManagerApprovalInbox: Component<{
             })}
           </p>
         </Show>
-        <Show when={props.snapshot && approvalCount() > 0 && visibleJudgments().length === 0}>
+        <Show
+          when={
+            props.snapshot &&
+            approvalCount() > 0 &&
+            visibleJudgments().length === 0 &&
+            snapshotOnlyActions().length === 0
+          }
+        >
           <p class="manager-approval-feedback">
             {t("manager.orchestration.approval.syncing-actions")}
           </p>
@@ -1346,6 +1363,66 @@ const ManagerApprovalInbox: Component<{
                     >
                       {t("manager.orchestration.action.dismiss-proposal")}
                     </button>
+                  </div>
+                </article>
+              );
+            }}
+          </For>
+          <For each={snapshotOnlyActions()}>
+            {(snapshotAction) => {
+              const action = managerProposedActionFromSnapshotAction(snapshotAction);
+              return (
+                <article class="manager-approval-item manager-approval-item-approval manager-approval-verdict-continue">
+                  <div class="manager-approval-main">
+                    <div class="manager-approval-meta">
+                      <span>{managerJudgmentPriorityLabel("approval")}</span>
+                      <span>{managerCenterlineActionStatusLabel(snapshotAction.status)}</span>
+                    </div>
+                    <strong title={snapshotAction.title}>
+                      {clip(managerCenterlineActionLabel(snapshotAction), 120)}
+                    </strong>
+                    <p title={snapshotAction.description}>{clip(snapshotAction.description, 180)}</p>
+                    <div class="manager-approval-evidence">
+                      <span>
+                        {t("manager.orchestration.agent.evidence-count", {
+                          count: snapshotAction.evidenceIds.length,
+                        })}
+                      </span>
+                    </div>
+                    <div class="manager-approval-decision">
+                      <span>{t("manager.orchestration.approval.decision-title")}</span>
+                      <strong>{managerProposedActionLabel(action)}</strong>
+                    </div>
+                  </div>
+                  <div class="manager-approval-actions">
+                    <div class="manager-approval-action-card">
+                      <button
+                        type="button"
+                        disabled={props.busy || !props.onApprove}
+                        title={action.rationale}
+                        onClick={() => props.onApprove?.(action)}
+                      >
+                        {managerProposedActionLabel(action)}
+                      </button>
+                      <dl>
+                        <dt>{t("manager.orchestration.approval.approve-effect")}</dt>
+                        <dd>{managerProposedActionEffect(action)}</dd>
+                        <dt>{t("manager.orchestration.approval.ignore-effect")}</dt>
+                        <dd>{managerProposedActionDismissEffect(action)}</dd>
+                      </dl>
+                      <p>
+                        {t("manager.orchestration.approval.preflight-status")}:{" "}
+                        {managerCenterlineActionStatusLabel(snapshotAction.status)}
+                      </p>
+                      <Show when={action.rationale}>
+                        {(rationale) => (
+                          <p title={rationale()}>
+                            {t("manager.orchestration.approval.reason-label")}:{" "}
+                            {clip(rationale(), 140)}
+                          </p>
+                        )}
+                      </Show>
+                    </div>
                   </div>
                 </article>
               );
@@ -4253,6 +4330,32 @@ function managerCenterlineActionStatusLabel(
   return t(`manager.orchestration.centerline.action-status.${status}`);
 }
 
+function managerProposedActionFromSnapshotAction(
+  action: ManagerOrchestrationAction,
+): ManagerProposedAction {
+  return {
+    id: action.id,
+    projectId: action.target.projectId,
+    ...(action.target.roundId ? { roundId: action.target.roundId } : {}),
+    ...(action.target.taskId ? { taskId: action.target.taskId } : {}),
+    ...(action.target.agentId ? { agentId: action.target.agentId } : {}),
+    type: action.type,
+    risk: action.risk,
+    requiresApproval: action.requiresApproval,
+    title: action.title,
+    rationale: action.description || action.title,
+    payload: {
+      ...action.payload,
+      ...(action.target.roundId ? { roundId: action.target.roundId } : {}),
+      ...(action.target.taskId ? { taskId: action.target.taskId } : {}),
+      ...(action.target.agentId ? { agentId: action.target.agentId } : {}),
+    },
+    evidenceIds: action.evidenceIds,
+    agentResultIds: [],
+    protocolTraceIds: [],
+  };
+}
+
 function managerProposedActionLabel(action: ManagerProposedAction): string {
   if (action.type === "start_next_round") {
     return managerProposedActionPayloadBoolean(action.payload, "dryRun")
@@ -4302,8 +4405,57 @@ function filterManagerCommandFlowApprovalActions(
         judgment.proposedActions.some((action) => action.requiresApproval);
       if (!keep) changed = true;
       return keep;
-    });
+  });
   return changed ? { ...commandFlow, judgments } : commandFlow;
+}
+
+function currentManagerOrchestrationSnapshot(
+  snapshot: ManagerOrchestrationSnapshot | null | undefined,
+  input: {
+    project: ManagerProject | null;
+    overview: ManagerProjectOverviewResponse | null;
+    commandFlow: ManagerCommandFlowResponse | null | undefined;
+  },
+): ManagerOrchestrationSnapshot | null {
+  if (!snapshot) return null;
+  if (input.project?.id && snapshot.projectId !== input.project.id) return null;
+
+  const currentRoundId =
+    input.commandFlow?.activeRound?.id ??
+    input.overview?.activeRound?.id ??
+    input.project?.activeRoundId ??
+    null;
+  if (snapshot.activeRoundId && currentRoundId && snapshot.activeRoundId !== currentRoundId) {
+    return null;
+  }
+
+  const activeRoundStatus =
+    input.commandFlow?.activeRound?.status ?? input.overview?.activeRound?.status;
+  const commandFlowStage = input.commandFlow?.readiness.stage ?? input.project?.flowStage ?? null;
+  const snapshotHasLiveWorkers = snapshot.workers.some((worker) =>
+    ["queued", "starting", "active", "quiet_but_alive", "waiting_external"].includes(
+      worker.runtimeState,
+    ),
+  );
+  if (
+    snapshotHasLiveWorkers &&
+    (activeRoundStatus === "completed" ||
+      activeRoundStatus === "failed" ||
+      activeRoundStatus === "cancelled")
+  ) {
+    return null;
+  }
+
+  if (
+    ["running", "observing"].includes(snapshot.phase) &&
+    (commandFlowStage === "review" ||
+      commandFlowStage === "completed" ||
+      input.commandFlow?.nextAction.kind === "summarize")
+  ) {
+    return null;
+  }
+
+  return snapshot;
 }
 
 function managerApprovalActionKey(action: ManagerProposedAction): string {

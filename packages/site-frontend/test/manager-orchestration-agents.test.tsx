@@ -2,9 +2,11 @@ import type {
   ManagerAgent,
   ManagerCommandFlowResponse,
   ManagerOrchestrationSnapshot,
+  ManagerProject,
+  ManagerRound,
 } from "@deskrelay/shared";
 import { fireEvent, render, screen } from "@solidjs/testing-library";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ManagerOrchestrationPanel } from "../src/components/ManagerOrchestrationPanel.tsx";
 import { setLocale, t } from "../src/i18n.ts";
 
@@ -50,6 +52,237 @@ describe("ManagerOrchestrationPanel agents view", () => {
       'Confirm "Review round result" is the right step',
     );
     expect(currentJudgment.textContent).not.toContain("The manager's next action");
+  });
+
+  test("ignores a stale running snapshot when command flow has moved to review", () => {
+    const timestamp = "2026-05-18T00:10:00.000Z";
+    const selectedProject: ManagerProject = {
+      id: "project_review",
+      name: "Review project",
+      cwd: "C:\\work\\review",
+      goal: "Finish the current round",
+      status: "reviewing",
+      flowStage: "review",
+      activeRoundId: "round_current",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const activeRound: ManagerRound = {
+      id: "round_current",
+      projectId: selectedProject.id,
+      title: "Current completed round",
+      objective: "Finalize the build",
+      status: "completed",
+      phase: "implementation",
+      agentIds: [],
+      taskIds: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const commandFlow = {
+      generatedAt: timestamp,
+      project: selectedProject,
+      overview: {
+        generatedAt: timestamp,
+        project: selectedProject,
+        activeRound,
+        counts: {},
+        currentSignal: { tone: "success", title: "Round complete" },
+        nextAction: {
+          kind: "summarize",
+          label: "Summarize round result",
+        },
+        recentSignals: [],
+      },
+      activeRound,
+      decisions: [],
+      blockers: [],
+      artifacts: [],
+      rounds: [activeRound],
+      workerRuns: [],
+      evidence: [],
+      agentResults: [],
+      protocolTrace: [],
+      judgments: [],
+      readiness: {
+        ready: true,
+        stage: "review",
+        missingProtocolFiles: [],
+        warnings: [],
+        userCheckRequired: false,
+      },
+      nextAction: {
+        kind: "summarize",
+        label: "Summarize round result",
+      },
+    } as unknown as ManagerCommandFlowResponse;
+    const staleSnapshot: ManagerOrchestrationSnapshot = {
+      projectId: selectedProject.id,
+      phase: "observing",
+      currentLabel: "Observing",
+      currentReason: "Watching 2 worker runs.",
+      flowStage: "running",
+      activeRoundId: "round_old",
+      activeTaskIds: ["task_old"],
+      activeAgentIds: ["agent_old"],
+      approvalActions: [],
+      flow: [
+        { id: "flow.running", phase: "running", label: "Running", status: "done" },
+        { id: "flow.observing", phase: "observing", label: "Observing", status: "current" },
+        { id: "flow.needs_approval", phase: "needs_approval", label: "Approval", status: "pending" },
+      ],
+      workers: [
+        {
+          id: "task:task_old",
+          runtimeState: "active",
+          taskState: "running",
+          label: "Old worker",
+          taskId: "task_old",
+          roundId: "round_old",
+          updatedAt: timestamp,
+          integrity: [],
+        },
+      ],
+      blockers: [],
+      updatedAt: timestamp,
+    };
+
+    render(() => (
+      <ManagerOrchestrationPanel
+        projects={[selectedProject]}
+        selectedProject={selectedProject}
+        commandFlow={commandFlow}
+        orchestrationSnapshot={staleSnapshot}
+        rounds={[activeRound]}
+        agents={[]}
+        standalone
+      />
+    ));
+
+    const currentJudgment = screen.getByLabelText("Workboard current judgment");
+    expect(currentJudgment.textContent).toContain("Current step");
+    expect(currentJudgment.textContent).toContain("Summarize round result");
+    expect(currentJudgment.textContent).not.toContain("Observing");
+    expect(currentJudgment.textContent).not.toContain("Watching 2 worker runs");
+  });
+
+  test("renders available snapshot approval actions when judgment proposals are absent", () => {
+    const timestamp = "2026-05-18T00:10:00.000Z";
+    const selectedProject: ManagerProject = {
+      id: "project_snapshot_approval",
+      name: "Snapshot approval project",
+      cwd: "C:\\work\\snapshot-approval",
+      goal: "Continue from snapshot approval",
+      status: "reviewing",
+      flowStage: "review",
+      activeRoundId: "round_snapshot",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const activeRound: ManagerRound = {
+      id: "round_snapshot",
+      projectId: selectedProject.id,
+      title: "Snapshot round",
+      objective: "Approve the next step",
+      status: "completed",
+      phase: "implementation",
+      agentIds: [],
+      taskIds: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const commandFlow = {
+      generatedAt: timestamp,
+      project: selectedProject,
+      overview: {
+        generatedAt: timestamp,
+        project: selectedProject,
+        activeRound,
+        counts: {},
+        currentSignal: { tone: "success", title: "Approval ready" },
+        nextAction: { kind: "summarize", label: "Summarize round result" },
+        recentSignals: [],
+      },
+      activeRound,
+      decisions: [],
+      blockers: [],
+      artifacts: [],
+      rounds: [activeRound],
+      workerRuns: [],
+      evidence: [],
+      agentResults: [],
+      protocolTrace: [],
+      judgments: [],
+      readiness: {
+        ready: true,
+        stage: "review",
+        missingProtocolFiles: [],
+        warnings: [],
+        userCheckRequired: false,
+      },
+      nextAction: { kind: "summarize", label: "Summarize round result" },
+    } as unknown as ManagerCommandFlowResponse;
+    const snapshot: ManagerOrchestrationSnapshot = {
+      projectId: selectedProject.id,
+      phase: "needs_approval",
+      currentLabel: "Approval pending",
+      currentReason: "2 approvals are available.",
+      flowStage: "review",
+      activeRoundId: activeRound.id,
+      activeTaskIds: [],
+      activeAgentIds: [],
+      approvalActions: [
+        {
+          id: "approval_start_next",
+          type: "start_next_round",
+          title: "Start the next orchestration round",
+          description: "Continue from the accepted result.",
+          risk: "medium",
+          requiresApproval: true,
+          target: { projectId: selectedProject.id, roundId: activeRound.id },
+          status: "available",
+          preflight: {
+            valid: true,
+            validWhen: ["round is completed"],
+            checkedAt: timestamp,
+          },
+          payload: { dryRun: false, roundId: activeRound.id },
+          evidenceIds: [],
+          createdAt: timestamp,
+        },
+      ],
+      flow: [
+        { id: "flow.needs_approval", phase: "needs_approval", label: "Approval", status: "current" },
+      ],
+      workers: [],
+      blockers: [],
+      updatedAt: timestamp,
+    };
+    const approve = vi.fn();
+
+    render(() => (
+      <ManagerOrchestrationPanel
+        projects={[selectedProject]}
+        selectedProject={selectedProject}
+        commandFlow={commandFlow}
+        orchestrationSnapshot={snapshot}
+        rounds={[activeRound]}
+        agents={[]}
+        standalone
+        onApproveProposedAction={approve}
+      />
+    ));
+
+    expect(screen.queryByText("The snapshot has available approvals")).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Start next live round" });
+    fireEvent.click(button);
+    expect(approve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "start_next_round",
+        projectId: selectedProject.id,
+        roundId: activeRound.id,
+      }),
+    );
   });
 
   test("renders the authoritative orchestration snapshot as a localized flowchart", () => {
