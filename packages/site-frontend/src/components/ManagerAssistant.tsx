@@ -1649,6 +1649,53 @@ function managerAssistantFinalTextAlreadyVisible(
   return normalizeManagerAssistantComparableText(lastAssistant?.text ?? "") === normalizedFinal;
 }
 
+function shouldKeepLocalManagerAssistantEvents(
+  currentEvents: ClaudeStreamEvent[],
+  nextEvents: ClaudeStreamEvent[],
+): boolean {
+  if (currentEvents.length === 0 || nextEvents.length === 0) return false;
+  const currentEntries = buildManagerAssistantTranscriptEntries(currentEvents);
+  const nextEntries = buildManagerAssistantTranscriptEntries(nextEvents);
+  const lastLocalUserIndex = findLastManagerAssistantEntryIndex(
+    currentEntries,
+    (entry) => entry.role === "user",
+  );
+  if (lastLocalUserIndex < 0) return false;
+
+  const lastLocalUser = currentEntries[lastLocalUserIndex];
+  if (!lastLocalUser) return false;
+  const transcriptHasUser = managerAssistantEntriesInclude(nextEntries, lastLocalUser);
+  if (!transcriptHasUser) return true;
+
+  const localReply = currentEntries
+    .slice(lastLocalUserIndex + 1)
+    .find((entry) => entry.role === "assistant" && entry.text.trim());
+  return Boolean(localReply && !managerAssistantEntriesInclude(nextEntries, localReply));
+}
+
+function findLastManagerAssistantEntryIndex(
+  entries: ManagerAssistantTranscriptEntry[],
+  predicate: (entry: ManagerAssistantTranscriptEntry) => boolean,
+): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (predicate(entries[index])) return index;
+  }
+  return -1;
+}
+
+function managerAssistantEntriesInclude(
+  entries: ManagerAssistantTranscriptEntry[],
+  target: ManagerAssistantTranscriptEntry,
+): boolean {
+  const targetText = normalizeManagerAssistantComparableText(target.text);
+  if (!targetText) return true;
+  return entries.some(
+    (entry) =>
+      entry.role === target.role &&
+      normalizeManagerAssistantComparableText(entry.text) === targetText,
+  );
+}
+
 function normalizeManagerAssistantComparableText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }

@@ -221,6 +221,126 @@ describe("ManagerAssistant", () => {
     );
   });
 
+  test("keeps a streamed manager reply visible when the refreshed transcript is stale", async () => {
+    setLocale("ko");
+    let sessionReadCount = 0;
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-stale",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes("/api/manager/assistant/status")) {
+        return Response.json({ generatedAt: "2026-05-13T00:00:00.000Z", reports: [] });
+      }
+      if (url.includes("/api/manager/assistant/chat/stream") && init?.method === "POST") {
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              type: "status",
+              status: { phase: "running", tone: "thinking", main: "생각 중" },
+            })}`,
+            `data: ${JSON.stringify({
+              type: "message",
+              message: {
+                id: "manager-message-stale",
+                role: "assistant",
+                text: "즉시 보이는 새 응답",
+                createdAt: "2026-05-13T00:00:02.000Z",
+              },
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              command: "manager assistant",
+              durationMs: 12,
+              sessionId: "manager-session-stale",
+            })}`,
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as { method?: string };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-stale",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Session",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          sessionReadCount += 1;
+          return Response.json({
+            result: {
+              sessionId: "manager-session-stale",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "이전 관리자 응답" }],
+                  },
+                },
+              ],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    const input = await screen.findByPlaceholderText(/관리자에게 보내기/);
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("입력 가능");
+    });
+
+    fireEvent.input(input, { target: { value: "현재 상태 알려줘" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("즉시 보이는 새 응답");
+    });
+    await waitFor(() => {
+      expect(sessionReadCount).toBeGreaterThan(1);
+    });
+    expect(document.body.textContent).toContain("즉시 보이는 새 응답");
+  });
+
   test("shows a clear transcript entry when the manager returns no visible reply", async () => {
     setLocale("en");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
