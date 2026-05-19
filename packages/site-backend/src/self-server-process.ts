@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
@@ -76,6 +75,8 @@ export function createPowerShellSelfServerProcessController(
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const logPath = join(logDir, `self-server-restart-${stamp}.log`);
       const scriptPath = join(logDir, `self-server-restart-${stamp}.ps1`);
+      const launcherPath = join(logDir, `self-server-restart-${stamp}.launcher.ps1`);
+      const pidPath = join(logDir, `self-server-restart-${stamp}.pid`);
       const restartLogPath = join(logDir, "self-server-restart.log");
       const script = buildRestartScript({
         repoRoot: options.repoRoot,
@@ -84,32 +85,54 @@ export function createPowerShellSelfServerProcessController(
         currentPid: process.pid,
       });
       await writeFile(scriptPath, script, "utf8");
+      await writeFile(
+        launcherPath,
+        buildRestartLauncherScript({
+          repoRoot: options.repoRoot,
+          scriptPath,
+          pidPath,
+          restartLogPath,
+        }),
+        "utf8",
+      );
       try {
         const entry = JSON.stringify({
           ts: new Date().toISOString(),
           event: "restart-requested",
           pid: process.pid,
+          scriptPath,
+          launcherPath,
         }) + "\n";
         await appendFile(restartLogPath, entry, "utf8");
       } catch { /* never block restart on audit failure */ }
-      let logFd: number | undefined;
+      let child;
       try {
-        logFd = openSync(logPath, "a");
+        child = spawn("powershell.exe", restartScriptArgs(launcherPath), {
+          cwd: options.repoRoot,
+          stdio: "ignore",
+          windowsHide: true,
+        });
       } catch (err) {
-        console.warn("self-server-restart.log fd open failed:", (err as Error).message);
+        const message = `failed to launch self-server restart helper: ${(err as Error).message}`;
+        await appendFile(restartLogPath, JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "spawn-throw",
+          error: message,
+        }) + "\n", "utf8").catch(() => {});
+        return {
+          supported: true,
+          accepted: false,
+          message,
+          logPath,
+          previousPid: process.pid,
+        };
       }
-      const child = spawn("powershell.exe", restartScriptArgs(scriptPath), {
-        cwd: options.repoRoot,
-        stdio: logFd !== undefined ? ["ignore", logFd, logFd] : "ignore",
-        windowsHide: true,
-      });
       child.on("error", (err) => {
         appendFile(restartLogPath, JSON.stringify({
           ts: new Date().toISOString(),
           event: "spawn-error",
           error: err.message,
         }) + "\n", "utf8").catch(() => {});
-        if (logFd !== undefined) { try { closeSync(logFd); } catch { /* noop */ } }
       });
       child.on("exit", (code, signal) => {
         appendFile(restartLogPath, JSON.stringify({
@@ -118,15 +141,15 @@ export function createPowerShellSelfServerProcessController(
           code,
           signal,
         }) + "\n", "utf8").catch(() => {});
-        if (logFd !== undefined) { try { closeSync(logFd); } catch { /* noop */ } }
       });
       child.unref();
+      const helperPid = await readPidFile(pidPath, 1_200);
       return {
         supported: true,
         accepted: true,
         message: "self-server restart requested",
         logPath,
-        ...(child.pid ? { pid: child.pid } : {}),
+        ...(helperPid !== null ? { pid: helperPid } : child.pid ? { pid: child.pid } : {}),
         previousPid: process.pid,
       };
     },
@@ -248,8 +271,13 @@ function buildRestartScript(input: {
   const startScript = join(input.repoRoot, "scripts", "self-pc-server-start.ps1");
   return [
     "$ErrorActionPreference = 'Continue'",
+    `$restartLogPath = ${quotePowerShell(input.logPath)}`,
+    "function Invoke-LoggedScript {",
+    "  param([string]$ScriptPath, [string[]]$Arguments)",
+    "  & $ScriptPath @Arguments *>&1 | Out-File -Encoding utf8 -Append -FilePath $restartLogPath",
+    "}",
     `"[ $((Get-Date).ToUniversalTime().ToString('o')) ] restart helper started for current site-backend pid=${input.currentPid}" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
-    "Start-Sleep -Milliseconds 800",
+    "Start-Sleep -Milliseconds 2500",
     `$currentSiteBackendPid = ${input.currentPid}`,
     "if ($currentSiteBackendPid -gt 0) {",
     `  "[$((Get-Date).ToUniversalTime().ToString('o'))] stopping current site-backend pid=$currentSiteBackendPid" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
@@ -267,9 +295,27 @@ function buildRestartScript(input: {
     `    "[$((Get-Date).ToUniversalTime().ToString('o'))] current site-backend pid=$currentSiteBackendPid was already stopped" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
     "  }",
     "}",
-    `& ${quotePowerShell(stopScript)} -Root ${quotePowerShell(input.root)} -RepoRoot ${quotePowerShell(input.repoRoot)} *>> ${quotePowerShell(input.logPath)}`,
+    `Invoke-LoggedScript -ScriptPath ${quotePowerShell(stopScript)} -Arguments @('-Root', ${quotePowerShell(input.root)}, '-RepoRoot', ${quotePowerShell(input.repoRoot)})`,
     "Start-Sleep -Seconds 1",
-    `& ${quotePowerShell(startScript)} -Root ${quotePowerShell(input.root)} -RepoRoot ${quotePowerShell(input.repoRoot)} -NoOpenBrowser *>> ${quotePowerShell(input.logPath)}`,
+    `Invoke-LoggedScript -ScriptPath ${quotePowerShell(startScript)} -Arguments @('-Root', ${quotePowerShell(input.root)}, '-RepoRoot', ${quotePowerShell(input.repoRoot)}, '-NoOpenBrowser')`,
+    `"[ $((Get-Date).ToUniversalTime().ToString('o')) ] restart helper completed" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+  ].join("\n");
+}
+
+function buildRestartLauncherScript(input: {
+  repoRoot: string;
+  scriptPath: string;
+  pidPath: string;
+  restartLogPath: string;
+}): string {
+  const psArgs = restartScriptArgs(input.scriptPath).map((arg) => quotePowerShell(arg)).join(", ");
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$process = Start-Process -FilePath 'powershell.exe' -ArgumentList @(${psArgs}) -WorkingDirectory ${quotePowerShell(input.repoRoot)} -WindowStyle Hidden -PassThru`,
+    `$process.Id | Set-Content -Encoding utf8 -Path ${quotePowerShell(input.pidPath)}`,
+    `$entry = @{ ts = (Get-Date).ToUniversalTime().ToString('o'); event = 'helper-started'; pid = $process.Id; scriptPath = ${quotePowerShell(input.scriptPath)} } | ConvertTo-Json -Compress`,
+    `$entry | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.restartLogPath)}`,
+    "",
   ].join("\n");
 }
 
@@ -284,6 +330,21 @@ function restartScriptArgs(scriptPath: string): string[] {
     "-File",
     scriptPath,
   ];
+}
+
+async function readPidFile(path: string, timeoutMs: number): Promise<number | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const raw = (await readFile(path, "utf8")).replace(/^\uFEFF/, "").trim();
+      const pid = Number(raw);
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch {
+      // The launcher may not have written the helper pid yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
 }
 
 function quotePowerShell(value: string): string {
