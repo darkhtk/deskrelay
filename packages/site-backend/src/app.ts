@@ -1,8 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   type DiagnosticCheck,
   type DiagnosticReport,
@@ -29,6 +29,7 @@ import {
   type ManagerArtifactUpdateRequest,
   type ManagerArtifactUpsertInput,
   type ManagerAssistantChatContext,
+  type ManagerAssistantImageAttachment,
   type ManagerAssistantChatMessage,
   type ManagerAssistantChatRequest,
   type ManagerAssistantChatResponse,
@@ -272,6 +273,7 @@ export interface SiteAppOptions {
 
 export interface ManagerAssistantRunInput {
   message: string;
+  attachments?: ManagerAssistantImageAttachment[];
   history: ManagerAssistantChatMessage[];
   context: ManagerAssistantChatContext | undefined;
   assistantState?: ManagerAssistantStructuredState;
@@ -416,6 +418,14 @@ const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
 const MANAGER_ASSISTANT_STATUS_CURRENT_MS = 30 * 60_000;
 const MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS_DEFAULT = 15_000;
+const MANAGER_ASSISTANT_MAX_ATTACHMENTS = 8;
+const MANAGER_ASSISTANT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MANAGER_ASSISTANT_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
 const BROWSER_CLIENT_TTL_MS = 45_000;
 
 export function createSiteApp(options: SiteAppOptions): Hono {
@@ -10410,6 +10420,7 @@ async function runManagerAssistantChat(
     ((input: ManagerAssistantRunInput) => runDefaultManagerAssistantCli(input, options));
   const input: ManagerAssistantRunInput = {
     message: request.message.trim(),
+    ...(request.attachments?.length ? { attachments: request.attachments } : {}),
     history,
     context,
     cwd,
@@ -10508,6 +10519,7 @@ function streamManagerAssistantChat(
           const context = await enrichManagerAssistantContext(request.context, contextStores);
           const input: ManagerAssistantRunInput = {
             message: request.message.trim(),
+            ...(request.attachments?.length ? { attachments: request.attachments } : {}),
             history,
             context,
             cwd,
@@ -10615,7 +10627,12 @@ async function runDefaultManagerAssistantCli(
     input.managerSessionId,
   );
   const prompt = buildManagerAssistantPrompt(input);
-  const invocation = await prepareManagerAssistantInvocation(command, args, prompt);
+  const invocation = await prepareManagerAssistantInvocation(
+    command,
+    args,
+    prompt,
+    input.attachments,
+  );
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   try {
     proc = Bun.spawn([invocation.command, ...invocation.argv], {
@@ -10675,7 +10692,12 @@ async function runDefaultManagerAssistantCliStream(
     input.managerSessionId,
   );
   const prompt = buildManagerAssistantPrompt(input);
-  const invocation = await prepareManagerAssistantInvocation(command, args, prompt);
+  const invocation = await prepareManagerAssistantInvocation(
+    command,
+    args,
+    prompt,
+    input.attachments,
+  );
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   emit(
     managerAssistantStatusEvent({
@@ -10749,7 +10771,25 @@ async function prepareManagerAssistantInvocation(
   command: string,
   args: string[],
   prompt: string,
+  attachments: ManagerAssistantImageAttachment[] | undefined,
 ): Promise<ManagerAssistantCliInvocation> {
+  const imageAttachments = normalizeManagerAssistantRunAttachments(attachments);
+  const materialized =
+    imageAttachments.length > 0 && isDefaultClaudeCommand(command)
+      ? await materializeManagerAssistantImageAttachments(imageAttachments)
+      : undefined;
+  const cliArgs = materialized
+    ? [
+        ...args,
+        "--add-dir",
+        materialized.dir,
+        "--append-system-prompt",
+        buildManagerAssistantAttachmentSystemPrompt(materialized.files),
+      ]
+    : args;
+  const cleanupAttachments = async () => {
+    if (materialized) await removeManagerAssistantTempDirBestEffort(materialized.dir);
+  };
   if (process.platform === "win32" && isDefaultClaudeCommand(command)) {
     const payloadPath = join(
       tmpdir(),
@@ -10759,8 +10799,12 @@ async function prepareManagerAssistantInvocation(
       tmpdir(),
       `deskrelay-manager-${Date.now()}-${randomBytes(6).toString("hex")}.cmd`,
     );
-    const argv = managerAssistantStructuredInputArgs(args);
-    await writeFile(payloadPath, `${claudeStructuredPromptPayload(prompt)}\n`, "utf8");
+    const argv = managerAssistantStructuredInputArgs(cliArgs);
+    await writeFile(
+      payloadPath,
+      `${claudeStructuredPromptPayload(prompt, imageAttachments)}\n`,
+      "utf8",
+    );
     await writeFile(
       cmdPath,
       [
@@ -10776,23 +10820,25 @@ async function prepareManagerAssistantInvocation(
       command: "cmd.exe",
       argv: ["/d", "/s", "/c", cmdPath],
       stdin: "ignore",
-      displayCommand: `${command} ${args.join(" ")}`.trim(),
+      displayCommand: `${command} ${cliArgs.join(" ")}`.trim(),
       cleanup: async () => {
         await Promise.all([
           removeManagerAssistantTempFileBestEffort(payloadPath),
           removeManagerAssistantTempFileBestEffort(cmdPath),
+          cleanupAttachments(),
         ]);
       },
     };
   }
 
-  const argv = managerAssistantStructuredInputArgs(args);
+  const argv = managerAssistantStructuredInputArgs(cliArgs);
   return {
     command,
     argv,
     stdin: "pipe",
-    displayCommand: `${command} ${args.join(" ")}`.trim(),
-    writeInput: (proc) => writeClaudeStructuredPrompt(proc, prompt),
+    displayCommand: `${command} ${cliArgs.join(" ")}`.trim(),
+    writeInput: (proc) => writeClaudeStructuredPrompt(proc, prompt, imageAttachments),
+    cleanup: cleanupAttachments,
   };
 }
 
@@ -10810,6 +10856,24 @@ async function removeManagerAssistantTempFileBestEffort(path: string): Promise<v
 
   const timer = setTimeout(() => {
     void rm(path, { force: true }).catch(() => undefined);
+  }, 5_000);
+  timer.unref?.();
+}
+
+async function removeManagerAssistantTempDirBestEffort(path: string): Promise<void> {
+  const retryDelaysMs = [0, 100, 500, 1_500];
+  for (const delayMs of retryDelaysMs) {
+    if (delayMs > 0) await sleep(delayMs);
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!isRetryableTempCleanupError(error)) break;
+    }
+  }
+
+  const timer = setTimeout(() => {
+    void rm(path, { recursive: true, force: true }).catch(() => undefined);
   }, 5_000);
   timer.unref?.();
 }
@@ -10883,6 +10947,89 @@ function managerAssistantHasPrintArg(args: string[]): boolean {
   return args.some((arg) => arg === "-p" || arg === "--print" || arg.startsWith("--print="));
 }
 
+interface ManagerAssistantMaterializedAttachment {
+  path: string;
+  mimeType: string;
+  size: number;
+}
+
+function normalizeManagerAssistantRunAttachments(
+  attachments: ManagerAssistantImageAttachment[] | undefined,
+): ManagerAssistantImageAttachment[] {
+  return (attachments ?? []).filter(isValidManagerAssistantImageAttachment);
+}
+
+function isValidManagerAssistantImageAttachment(
+  value: ManagerAssistantImageAttachment | undefined,
+): value is ManagerAssistantImageAttachment {
+  if (!value || typeof value !== "object") return false;
+  if (!MANAGER_ASSISTANT_IMAGE_MIME_TYPES.has(value.mimeType.toLowerCase())) return false;
+  if (typeof value.dataBase64 !== "string" || !value.dataBase64.trim()) return false;
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(value.dataBase64)) return false;
+  const approximateBytes = Math.floor((value.dataBase64.replace(/\s+/g, "").length * 3) / 4);
+  if (approximateBytes > MANAGER_ASSISTANT_MAX_ATTACHMENT_BYTES) return false;
+  if (
+    value.size !== undefined &&
+    (!Number.isFinite(value.size) || value.size < 0 || value.size > MANAGER_ASSISTANT_MAX_ATTACHMENT_BYTES)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+async function materializeManagerAssistantImageAttachments(
+  attachments: ManagerAssistantImageAttachment[],
+): Promise<{ dir: string; files: ManagerAssistantMaterializedAttachment[] }> {
+  const dir = await mkdtemp(join(tmpdir(), "deskrelay-manager-attachments-"));
+  const files: ManagerAssistantMaterializedAttachment[] = [];
+  for (const [index, attachment] of attachments.entries()) {
+    const bytes = Buffer.from(attachment.dataBase64, "base64");
+    if (bytes.length === 0 || bytes.length > MANAGER_ASSISTANT_MAX_ATTACHMENT_BYTES) continue;
+    const path = join(dir, safeManagerAssistantAttachmentFileName(attachment, index));
+    await writeFile(path, bytes);
+    files.push({ path, mimeType: attachment.mimeType, size: bytes.length });
+  }
+  return { dir, files };
+}
+
+function safeManagerAssistantAttachmentFileName(
+  attachment: ManagerAssistantImageAttachment,
+  index: number,
+): string {
+  const rawName = typeof attachment.name === "string" ? basename(attachment.name) : "";
+  const sanitized = rawName
+    .replace(/[<>:"/\\|?*]+/g, "_")
+    .replace(/[\t\n\r]/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^\.+/, "")
+    .trim()
+    .slice(0, 80);
+  const inferred = managerAssistantAttachmentExtension(attachment.mimeType);
+  const base = sanitized || `attachment-${index + 1}${inferred}`;
+  return extname(base) ? `${index + 1}-${base}` : `${index + 1}-${base}${inferred}`;
+}
+
+function managerAssistantAttachmentExtension(mimeType: string): string {
+  const lower = mimeType.toLowerCase();
+  if (lower === "image/jpeg") return ".jpg";
+  if (lower === "image/webp") return ".webp";
+  if (lower === "image/gif") return ".gif";
+  return ".png";
+}
+
+function buildManagerAssistantAttachmentSystemPrompt(
+  files: ManagerAssistantMaterializedAttachment[],
+): string {
+  const lines = files.map(
+    (file, index) => `${index + 1}. ${file.path} (${file.mimeType}, ${file.size} bytes)`,
+  );
+  return [
+    "The user's browser image attachments are available both as image input blocks and as temporary local files for this turn.",
+    "If the user asks you to save, copy, inspect, transform, or otherwise operate on an attachment, use these local file paths before the command exits:",
+    ...lines,
+  ].join("\n");
+}
+
 function managerAssistantWindowsToolSafetyArgs(command: string, args: string[]): string[] {
   if (process.platform !== "win32" || !isDefaultClaudeCommand(command)) return args;
   const normalized: string[] = [];
@@ -10925,19 +11072,45 @@ function managerAssistantStructuredInputArgs(args: string[]): string[] {
 function writeClaudeStructuredPrompt(
   proc: Bun.Subprocess<"pipe", "pipe", "pipe">,
   prompt: string,
+  attachments: ManagerAssistantImageAttachment[] = [],
 ): void {
-  proc.stdin.write(`${claudeStructuredPromptPayload(prompt)}\n`);
+  proc.stdin.write(`${claudeStructuredPromptPayload(prompt, attachments)}\n`);
   proc.stdin.end();
 }
 
-function claudeStructuredPromptPayload(prompt: string): string {
+type ManagerAssistantInputContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+function claudeStructuredPromptPayload(
+  prompt: string,
+  attachments: ManagerAssistantImageAttachment[] = [],
+): string {
   return JSON.stringify({
     type: "user",
     message: {
       role: "user",
-      content: [{ type: "text", text: prompt }],
+      content: managerAssistantInputContent(prompt, attachments),
     },
   });
+}
+
+function managerAssistantInputContent(
+  prompt: string,
+  attachments: ManagerAssistantImageAttachment[],
+): ManagerAssistantInputContentBlock[] {
+  const blocks: ManagerAssistantInputContentBlock[] = [{ type: "text", text: prompt }];
+  for (const attachment of attachments) {
+    blocks.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: attachment.mimeType,
+        data: attachment.dataBase64,
+      },
+    });
+  }
+  return blocks;
 }
 
 function managerAssistantPermissionArgs(args: string[]): string[] {
@@ -13739,21 +13912,48 @@ function parseManagerAssistantChatRequest(
   input: unknown,
 ): { ok: true; value: ManagerAssistantChatRequest } | { ok: false; error: string } {
   if (!isRecord(input)) return { ok: false, error: "body must be an object" };
-  if (typeof input.message !== "string" || !input.message.trim()) {
-    return { ok: false, error: "message is required" };
+  if (input.message !== undefined && typeof input.message !== "string") {
+    return { ok: false, error: "message must be a string" };
   }
-  if (input.message.length > 20_000) return { ok: false, error: "message is too long" };
+  const message = typeof input.message === "string" ? input.message.trim() : "";
+  const attachments = normalizeManagerAssistantRequestAttachments(input.attachments);
+  if (!message && attachments.length === 0) return { ok: false, error: "message is required" };
+  if (message.length > 20_000) return { ok: false, error: "message is too long" };
   const context = normalizeAssistantContext(input.context);
   const assistantState = normalizeAssistantState(input.assistantState);
   return {
     ok: true,
     value: {
-      message: input.message.trim(),
+      message,
+      ...(attachments.length ? { attachments } : {}),
       history: normalizeAssistantHistory(input.history),
       ...(context ? { context } : {}),
       ...(assistantState ? { assistantState } : {}),
     },
   };
+}
+
+function normalizeManagerAssistantRequestAttachments(
+  input: unknown,
+): ManagerAssistantImageAttachment[] {
+  if (!Array.isArray(input)) return [];
+  const attachments: ManagerAssistantImageAttachment[] = [];
+  for (const raw of input.slice(0, MANAGER_ASSISTANT_MAX_ATTACHMENTS)) {
+    if (!isRecord(raw)) continue;
+    const mimeType = typeof raw.mimeType === "string" ? raw.mimeType.trim().toLowerCase() : "";
+    const dataBase64 = typeof raw.dataBase64 === "string" ? raw.dataBase64.trim() : "";
+    const size = typeof raw.size === "number" && Number.isFinite(raw.size) ? raw.size : undefined;
+    const candidate: ManagerAssistantImageAttachment = {
+      mimeType,
+      dataBase64,
+      ...(typeof raw.name === "string" && raw.name.trim()
+        ? { name: raw.name.trim().slice(0, 200) }
+        : {}),
+      ...(size !== undefined ? { size } : {}),
+    };
+    if (isValidManagerAssistantImageAttachment(candidate)) attachments.push(candidate);
+  }
+  return attachments;
 }
 
 function normalizeAssistantContext(input: unknown): ManagerAssistantChatContext | undefined {

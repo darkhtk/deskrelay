@@ -11,6 +11,24 @@ const SERVER_DEVICE = {
   connectionState: "online" as const,
 };
 
+function pngFile(name = "clip.png", size = 100): File {
+  return new File([new Uint8Array(size)], name, { type: "image/png" });
+}
+
+function pasteImage(target: Element, file: File) {
+  fireEvent.paste(target, {
+    clipboardData: {
+      items: [
+        {
+          kind: "file",
+          type: file.type,
+          getAsFile: () => file,
+        },
+      ],
+    },
+  });
+}
+
 beforeEach(() => {
   window.localStorage.clear();
 });
@@ -615,6 +633,123 @@ describe("ManagerAssistant", () => {
     });
     expect(document.body.textContent).not.toContain("Manager assistant CLI timed out");
     expect(document.body.textContent).not.toContain("관리자 Assistant 오류");
+  });
+
+  test("pastes image attachments into the manager composer and sends them", async () => {
+    setLocale("ko");
+    const capturedRequests: Array<{
+      message?: string;
+      attachments?: Array<{ name?: string }>;
+    }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-paste",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes("/api/manager/assistant/status")) {
+        return Response.json({ generatedAt: "2026-05-13T00:00:00.000Z", reports: [] });
+      }
+      if (url.includes("/api/manager/assistant/chat/stream") && init?.method === "POST") {
+        capturedRequests.push(JSON.parse(String(init.body ?? "{}")));
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              type: "message",
+              message: {
+                id: "manager-image-reply",
+                role: "assistant",
+                text: "이미지 확인했습니다.",
+                createdAt: "2026-05-13T00:00:02.000Z",
+              },
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              command: "manager assistant",
+              durationMs: 12,
+              sessionId: "manager-session-paste",
+            })}`,
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as { method?: string };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-paste",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Session",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          return Response.json({
+            result: {
+              sessionId: "manager-session-paste",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    const { container } = render(() => (
+      <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />
+    ));
+
+    const composer = await screen.findByPlaceholderText(/관리자에게 보내기/);
+    pasteImage(composer, pngFile("clipboard.png"));
+    await waitFor(() => {
+      expect(container.textContent).toContain("clipboard.png");
+    });
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "전송" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "전송" }));
+
+    await waitFor(() => {
+      expect(capturedRequests.at(-1)?.attachments?.[0]?.name).toBe("clipboard.png");
+    });
+    expect(capturedRequests.at(-1)?.message).toBe("");
+    await waitFor(() => {
+      expect(container.querySelector(".attachment-chip")).toBeNull();
+    });
+    expect(document.body.textContent).toContain("이미지 확인했습니다.");
   });
 
   test("keeps empty manager replies out of the transcript", async () => {

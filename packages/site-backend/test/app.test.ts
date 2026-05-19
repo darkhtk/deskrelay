@@ -2744,6 +2744,78 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     }
   });
 
+  test("manager assistant stream sends browser image attachments as structured input", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-image-"));
+    const scriptPath = join(cwd, "fake-claude-image.js");
+    writeFileSync(
+      scriptPath,
+      `
+const chunks = [];
+process.stdin.on("data", (chunk) => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const blocks = input.message.content;
+  const image = blocks.find((block) => block.type === "image");
+  console.log(JSON.stringify({
+    type: "result",
+    result: JSON.stringify({
+      blockTypes: blocks.map((block) => block.type),
+      textIncludesRequest: String(blocks[0]?.text ?? "").includes("이미지 확인"),
+      imageMime: image?.source?.media_type,
+      imageData: image?.source?.data
+    })
+  }));
+});
+`,
+      "utf8",
+    );
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          command: process.execPath,
+          args: [scriptPath],
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat/stream", {
+          message: "이미지 확인",
+          attachments: [
+            {
+              name: "clip.png",
+              mimeType: "image/png",
+              size: 3,
+              dataBase64: "AQID",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const events = parseSseEvents(await res.text());
+      const message = events.find((event) => event.type === "message") as
+        | { message?: { text?: string } }
+        | undefined;
+      const content = JSON.parse(message?.message?.text ?? "{}") as {
+        blockTypes?: string[];
+        textIncludesRequest?: boolean;
+        imageMime?: string;
+        imageData?: string;
+      };
+      expect(content).toEqual({
+        blockTypes: ["text", "image"],
+        textIncludesRequest: true,
+        imageMime: "image/png",
+        imageData: "AQID",
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager assistant chat creates managed Claude instructions outside user-editable scopes", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-managed-"));
     let captured:

@@ -1846,8 +1846,16 @@ export interface ManagerAssistantStructuredState {
   openQuestions?: string[];
 }
 
+export interface ManagerAssistantImageAttachment {
+  name?: string;
+  mimeType: string;
+  size?: number;
+  dataBase64: string;
+}
+
 export interface ManagerAssistantChatRequest {
   message: string;
+  attachments?: ManagerAssistantImageAttachment[];
   history?: ManagerAssistantChatMessage[];
   context?: ManagerAssistantChatContext;
   assistantState?: ManagerAssistantStructuredState;

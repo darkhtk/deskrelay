@@ -3,6 +3,7 @@ import type {
   ManagerArtifactUpdateRequest,
   ManagerAssistantChatContext,
   ManagerAssistantChatMessage,
+  ManagerAssistantImageAttachment,
   ManagerAssistantStreamEvent,
   ManagerAssistantStructuredState,
   ManagerBlockerCreateRequest,
@@ -63,6 +64,11 @@ import {
   readSelectedManagerProjectId,
   writeSelectedManagerProjectId,
 } from "../manager-project-selection.ts";
+import {
+  Attachments,
+  type AttachmentsAPI,
+  imagesFromClipboard,
+} from "./Attachments.tsx";
 import { Composer } from "./Composer.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 
@@ -186,6 +192,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [managerActionBusy, setManagerActionBusy] = createSignal(false);
   const [observeBusy, setObserveBusy] = createSignal(false);
   const [awaitingReplyRecoveryCount, setAwaitingReplyRecoveryCount] = createSignal(0);
+  const [attachmentCount, setAttachmentCount] = createSignal(0);
   const [observedTask, setObservedTask] = createSignal<ManagerTaskObservationResponse | null>(null);
   const [cachedOrchestrationSnapshot, setCachedOrchestrationSnapshot] = createSignal(
     readManagerOrchestrationCache(),
@@ -197,6 +204,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   let transcriptScroller: HTMLDivElement | undefined;
   let eventRefreshTimer: number | undefined;
   let managerAssistantAbort: AbortController | undefined;
+  let attachmentsApi: AttachmentsAPI | null = null;
 
   const orchestrationPanelEnabled = createMemo(() => props.showOrchestrationPanel !== false);
 
@@ -805,7 +813,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   const send = async (value: string) => {
     const text = value.trim();
-    if (!text) return;
+    const pendingAttachments = attachmentsApi?.list() ?? [];
+    if (!text && pendingAttachments.length === 0) return;
     const current = runtime();
     const notReady = readyError();
     if (!current || notReady) {
@@ -819,8 +828,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     const resumeSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
     const history = managerAssistantChatHistory(previousEntries);
     const assistantState = managerAssistantStructuredState(previousEntries, resumeSessionId);
-    const userEvent = userTranscriptEvent(text);
+    const userEvent = userTranscriptEvent(text, pendingAttachments);
     appendEvent(userEvent);
+    attachmentsApi?.clear();
     setTranscriptAtBottom(true);
 
     const runId = `manager_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -836,6 +846,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       await api.managerAssistantChatStream(
         {
           message: text,
+          ...(pendingAttachments.length > 0 ? { attachments: pendingAttachments } : {}),
           history,
           ...(props.context ? { context: props.context } : {}),
           ...(assistantState ? { assistantState } : {}),
@@ -1334,8 +1345,20 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     void send(ORCHESTRATION_PRESET_PROMPT);
   };
 
+  function handlePaste(event: ClipboardEvent) {
+    const files = imagesFromClipboard(event);
+    if (files.length > 0 && attachmentsApi) {
+      event.preventDefault();
+      void attachmentsApi.add(files);
+    }
+  }
+
+  function handleAttachClick() {
+    attachmentsApi?.openPicker();
+  }
+
   return (
-    <div class="manager-assistant manager-assistant-chat">
+    <div class="manager-assistant manager-assistant-chat" onPaste={handlePaste}>
       <Show when={orchestrationStatus()}>
         <ManagerOrchestrationPanel
           projects={managerProjects()?.projects ?? []}
@@ -1415,6 +1438,12 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       </Show>
 
       <div class="composer-shell manager-assistant-composer">
+        <Attachments
+          ref={(api) => {
+            attachmentsApi = api;
+          }}
+          onChange={(items) => setAttachmentCount(items.length)}
+        />
         <Show when={!transcriptAtBottom() && managerAssistantTranscriptEntries().length > 0}>
           <button
             type="button"
@@ -1451,6 +1480,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           inFlight={busy()}
           disabled={Boolean(readyError())}
           idPrefix="manager-assistant-composer"
+          hasExtraContent={() => attachmentCount() > 0}
+          onAttachClick={handleAttachClick}
           extraActions={
             <button
               type="button"
@@ -1932,8 +1963,21 @@ function managerAssistantContentText(value: unknown): string {
   if (!value || typeof value !== "object") return "";
   const record = value as Record<string, unknown>;
   if (typeof record.text === "string") return record.text;
+  if (record.type === "image") {
+    const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : "";
+    const size = typeof record.size === "number" && Number.isFinite(record.size) ? record.size : 0;
+    const meta = [name, size > 0 ? formatManagerAttachmentBytes(size) : ""].filter(Boolean);
+    return meta.length ? `이미지 첨부: ${meta.join(" · ")}` : "이미지 첨부";
+  }
   if (record.content !== undefined) return managerAssistantContentText(record.content);
   return "";
+}
+
+function formatManagerAttachmentBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MiB`;
 }
 
 function payloadString(payload: Record<string, unknown>, key: string): string | undefined {
@@ -2057,12 +2101,29 @@ function statusLabel(status: string): string {
   }
 }
 
-function userTranscriptEvent(text: string): ClaudeStreamEvent {
+function userTranscriptEvent(
+  text: string,
+  attachments: ManagerAssistantImageAttachment[] = [],
+): ClaudeStreamEvent {
+  const content = [
+    ...(text.trim() ? [{ type: "text", text }] : []),
+    ...attachments.map((attachment) => ({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: attachment.mimeType,
+        data: attachment.dataBase64,
+      },
+      name: attachment.name,
+      size: attachment.size,
+    })),
+  ];
   return {
     type: "user",
     message: {
       role: "user",
-      content: [{ type: "text", text }],
+      content:
+        content.length > 0 ? content : [{ type: "text", text: "이미지 첨부" }],
     },
   };
 }
