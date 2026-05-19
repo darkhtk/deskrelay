@@ -1088,6 +1088,10 @@ export interface ManagerAgentMessageRequest {
   profile?: string;
   cwd?: string;
   roundId?: string;
+  /** @deprecated Worker liveness is now progress-based (stdio + cwd mtime).
+   * The value is accepted for backwards compatibility but no longer enforces
+   * a primary kill. See DESIGN-DOCS/WORKER-LIVENESS-POLICY.md.
+   */
   timeoutMs?: number;
   dryRun?: boolean;
 }
@@ -1109,6 +1113,10 @@ export interface ManagerRoundAgentAssignment {
   profile?: string;
   cwd?: string;
   prompt: string;
+  /** @deprecated Worker liveness is now progress-based (stdio + cwd mtime).
+   * The value is accepted for backwards compatibility but no longer enforces
+   * a primary kill. See DESIGN-DOCS/WORKER-LIVENESS-POLICY.md.
+   */
   timeoutMs?: number;
 }
 

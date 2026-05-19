@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -11227,6 +11227,8 @@ interface ManagerWorkerCliRunInput {
   sessionId?: string;
 }
 
+type ManagerWorkerStopReason = "idle" | "hard-cap" | "crash" | "cancel";
+
 interface ManagerWorkerCliRunResult {
   profile: string;
   command: string;
@@ -11239,6 +11241,9 @@ interface ManagerWorkerCliRunResult {
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
   sessionId?: string;
+  reason?: ManagerWorkerStopReason;
+  idleDurationMs?: number;
+  error?: string;
 }
 
 async function runManagerWorkerCli(
@@ -11266,28 +11271,154 @@ async function runManagerWorkerCli(
     proc.stdin.write(managerWorkerStdinPayload(input.profile, input.prompt));
   }
   proc.stdin.end();
-  const stdout = readLimitedText(proc.stdout, 2_000_000);
-  const stderr = readLimitedText(proc.stderr, 500_000);
-  let timedOut = false;
-  const exitCode = await withTimeout(proc.exited, input.timeoutMs, () => {
-    timedOut = true;
-    proc.kill();
+  let lastActivityAt = Date.now();
+  const bumpActivity = () => {
+    lastActivityAt = Date.now();
+  };
+  const stdout = readLimitedText(proc.stdout, 2_000_000, bumpActivity);
+  const stderr = readLimitedText(proc.stderr, 500_000, bumpActivity);
+  const liveness = await awaitWorkerWithLiveness({
+    exited: proc.exited,
+    started,
+    getLastActivityAt: () => lastActivityAt,
+    cwd: input.cwd,
+    legacyTimeoutMs: input.timeoutMs,
+    onKill: () => {
+      try {
+        proc.kill();
+      } catch {
+        // best-effort kill
+      }
+    },
   });
   const [stdoutResult, stderrResult] = await Promise.all([stdout, stderr]);
   const sessionId = extractClaudeSessionIdFromJsonLines(stdoutResult.text);
+  const reason: ManagerWorkerStopReason | undefined =
+    liveness.reason === "exit" ? undefined : liveness.reason;
   return {
     profile: input.profile.id,
     command: managerWorkerCommandPreview(input.profile),
     cwd: input.cwd,
-    exitCode,
-    timedOut,
+    exitCode: liveness.exitCode,
+    timedOut: liveness.killed,
     durationMs: Date.now() - started,
     stdout: sanitizeManagerAssistantText(stdoutResult.text),
     stderr: sanitizeManagerAssistantText(stderrResult.text),
     stdoutTruncated: stdoutResult.truncated,
     stderrTruncated: stderrResult.truncated,
     ...(sessionId ? { sessionId } : {}),
+    ...(reason ? { reason } : {}),
+    ...(liveness.idleDurationMs !== undefined ? { idleDurationMs: liveness.idleDurationMs } : {}),
+    ...(liveness.error ? { error: liveness.error } : {}),
   };
+}
+
+interface WorkerLivenessInput {
+  exited: Promise<number>;
+  started: number;
+  getLastActivityAt: () => number;
+  cwd: string;
+  legacyTimeoutMs: number;
+  onKill: () => void;
+}
+
+interface WorkerLivenessResult {
+  exitCode: number;
+  killed: boolean;
+  reason: ManagerWorkerStopReason | "exit";
+  idleDurationMs?: number;
+  error?: string;
+}
+
+const WORKER_IDLE_MS_DEFAULT = 300_000;
+const WORKER_MAX_MS_DEFAULT = 3_600_000;
+const WORKER_LIVENESS_TICK_MS = 30_000;
+
+function readPositiveEnvMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+async function awaitWorkerWithLiveness(
+  input: WorkerLivenessInput,
+): Promise<WorkerLivenessResult> {
+  const idleMs = readPositiveEnvMs("DESKRELAY_WORKER_IDLE_MS", WORKER_IDLE_MS_DEFAULT);
+  // hard cap acts purely as an upper-bound safety net; legacy timeoutMs is
+  // accepted but never enforced as a primary kill signal.
+  const maxMs = readPositiveEnvMs("DESKRELAY_WORKER_MAX_MS", WORKER_MAX_MS_DEFAULT);
+  let killed = false;
+  let stopReason: ManagerWorkerStopReason | undefined;
+  let idleDurationMs: number | undefined;
+  let error: string | undefined;
+
+  const interval = setInterval(() => {
+    void (async () => {
+      if (killed) return;
+      const now = Date.now();
+      const sinceStart = now - input.started;
+      const stdioIdleMs = now - input.getLastActivityAt();
+      if (stdioIdleMs > idleMs) {
+        const fsIdleMs = await fileMtimeIdleMsSafe(input.cwd, now);
+        if (fsIdleMs > idleMs) {
+          stopReason = "idle";
+          idleDurationMs = Math.min(stdioIdleMs, fsIdleMs);
+          const seconds = Math.floor(idleDurationMs / 1000);
+          error = `Worker idle for ${seconds}s (no stdout/stderr/file activity)`;
+          killed = true;
+          clearInterval(interval);
+          input.onKill();
+          return;
+        }
+      }
+      if (sinceStart > maxMs) {
+        stopReason = "hard-cap";
+        error = `Manager assistant CLI timed out after ${maxMs}ms.`;
+        killed = true;
+        clearInterval(interval);
+        input.onKill();
+      }
+    })();
+  }, WORKER_LIVENESS_TICK_MS);
+  interval.unref?.();
+
+  let exitCode = -1;
+  try {
+    exitCode = await input.exited;
+  } finally {
+    clearInterval(interval);
+  }
+  if (!killed && exitCode !== 0) {
+    stopReason = "crash";
+  }
+  return {
+    exitCode,
+    killed,
+    reason: stopReason ?? "exit",
+    ...(idleDurationMs !== undefined ? { idleDurationMs } : {}),
+    ...(error ? { error } : {}),
+  };
+}
+
+async function fileMtimeIdleMsSafe(cwd: string, now: number): Promise<number> {
+  try {
+    let newest = 0;
+    const dirStat = await stat(cwd).catch(() => null);
+    if (dirStat) newest = Math.max(newest, dirStat.mtimeMs);
+    const entries = await readdir(cwd).catch(() => [] as string[]);
+    for (const entry of entries) {
+      const entryStat = await stat(`${cwd}/${entry}`).catch(() => null);
+      if (entryStat) newest = Math.max(newest, entryStat.mtimeMs);
+    }
+    if (newest === 0) return now;
+    return now - newest;
+  } catch {
+    // If the cwd can't be inspected, fall back to assuming no fs activity —
+    // the stdio idle check still gates the kill decision.
+    return now;
+  }
 }
 
 async function checkManagerWorkerProfile(
@@ -11383,6 +11514,7 @@ function extractClaudeSessionIdFromJsonLines(text: string): string | undefined {
 async function readLimitedText(
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
+  onActivity?: () => void,
 ): Promise<{ text: string; truncated: boolean }> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
@@ -11392,6 +11524,7 @@ async function readLimitedText(
     const { value, done } = await reader.read();
     if (done) break;
     if (!value) continue;
+    onActivity?.();
     const remaining = maxBytes - total;
     if (remaining <= 0) {
       truncated = true;
@@ -11825,7 +11958,7 @@ async function withTimeout<T>(
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => {
           onTimeout();
-          reject(new Error(`Manager assistant CLI timed out after ${timeoutMs}ms.`));
+          reject(new Error(`Process timed out after ${timeoutMs}ms.`));
         }, timeoutMs);
       }),
     ]);
@@ -12363,6 +12496,10 @@ async function executeRunWorkerTask(
     };
   }
 
+  // timeoutMs is accepted for backwards compatibility but no longer enforces
+  // a primary kill — see DESIGN-DOCS/WORKER-LIVENESS-POLICY.md. The value is
+  // still threaded through so legacy callers and result records keep their
+  // shape, but the actual kill decision is made by awaitWorkerWithLiveness.
   const timeoutMs = clampWorkerTimeoutMs(params.value.timeoutMs ?? profile.defaultTimeoutMs);
   const started = Date.now();
   const result = await runManagerWorkerCli({
@@ -12377,7 +12514,7 @@ async function executeRunWorkerTask(
   });
   const succeeded = result.exitCode === 0 && !result.timedOut;
   const summary = result.timedOut
-    ? `${profile.label} timed out after ${timeoutMs}ms.`
+    ? (result.error ?? `${profile.label} stopped (reason=${result.reason ?? "unknown"}).`)
     : succeeded
       ? `${profile.label} completed in ${Date.now() - started}ms.`
       : `${profile.label} exited with code ${result.exitCode}.`;
