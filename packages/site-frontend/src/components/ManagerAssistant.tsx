@@ -584,7 +584,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     const transcript = loadedTranscript();
     if (runIds().length > 0) return;
     const nextEvents = visibleClaudeEvents(transcript?.events ?? []);
+    const currentEvents = events();
     if (nextEvents.length > 0) {
+      if (shouldKeepLocalManagerAssistantEvents(currentEvents, nextEvents)) {
+        setAssistantHistory(rememberAssistantHistory({ events: currentEvents }));
+        queueMicrotask(scrollToBottomIfPinned);
+        return;
+      }
       setEvents(nextEvents);
       setAssistantHistory(rememberAssistantHistory({ events: nextEvents }));
     } else if (events().length === 0 && (assistantHistory()?.events.length ?? 0) > 0) {
