@@ -292,6 +292,7 @@ export interface ManagerAssistantOptions {
   cwd?: string;
   command?: string;
   args?: string[];
+  /** @deprecated Kept for config compatibility; manager assistant runs are not time-capped. */
   timeoutMs?: number;
   runner?: (input: ManagerAssistantRunInput) => Promise<ManagerAssistantRunResult>;
 }
@@ -333,8 +334,6 @@ export interface ManagerWorkerProfileConfig {
 
 const DEFAULT_CONNECTOR_PORT = 18091;
 const CONNECTOR_CLEANUP_TIMEOUT_MS = 5_000;
-const DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS = 600_000;
-const MAX_MANAGER_ASSISTANT_TIMEOUT_MS = 1_800_000;
 const MANAGER_ASSISTANT_DIR = ".deskrelay/manager-assistant";
 const MANAGER_PROJECTS_DIR = ".deskrelay/manager-projects";
 const MANAGER_DECISIONS_DIR = ".deskrelay/manager-decisions";
@@ -415,6 +414,7 @@ const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
 const MANAGER_ORCHESTRATION_FILE = "orchestration-state.json";
 const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
+const MANAGER_ASSISTANT_STATUS_CURRENT_MS = 30 * 60_000;
 const BROWSER_CLIENT_TTL_MS = 45_000;
 
 export function createSiteApp(options: SiteAppOptions): Hono {
@@ -9217,10 +9217,16 @@ async function buildManagerStateView(
     input.taskStore.list(500),
   ]);
   const nowMs = input.now.getTime();
+  const supersededRoundIds = supersededManagerStateRoundIds(rounds);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
   const taskSummaries = tasks.map((task) => summarizeManagerStateTask(task, agents, rounds, nowMs));
   const currentTaskSummaries = taskSummaries.filter(
-    (task) => !isSupersededManagerStateTask(task, agentById),
+    (task) =>
+      !isSupersededManagerStateTask(task, agentById) &&
+      !(task.roundId && supersededRoundIds.has(task.roundId)),
+  );
+  const currentAgents = agents.filter(
+    (agent) => !(agent.roundId && supersededRoundIds.has(agent.roundId)),
   );
   const unacknowledgedTaskSummaries = currentTaskSummaries.filter((task) => !task.acknowledgedAt);
   const staleTasks = unacknowledgedTaskSummaries.filter((task) => task.stale).slice(0, 20);
@@ -9228,25 +9234,29 @@ async function buildManagerStateView(
     .filter((task) => !task.acknowledgedAt && !isManagerTaskTerminalState(task.state))
     .slice(0, 20);
   const roundSummaries = rounds.map((round) => summarizeManagerStateRound(round, agents, tasks));
-  const unacknowledgedRoundSummaries = roundSummaries.filter((round) => !round.acknowledgedAt);
+  const currentLatestStatus = currentManagerAssistantStatus(input.latestStatus, input.now);
+  const currentRoundSummaries = roundSummaries.filter(
+    (round) => !supersededRoundIds.has(round.id) && isManagerStateRoundCurrentCandidate(round),
+  );
+  const unacknowledgedRoundSummaries = currentRoundSummaries.filter((round) => !round.acknowledgedAt);
   const activeRound = selectManagerStateActiveRound(
     unacknowledgedRoundSummaries,
     input.latestStatus,
   );
   const blockers = buildManagerStateBlockers({
-    rounds: roundSummaries,
-    agents,
+    rounds: currentRoundSummaries,
+    agents: currentAgents,
     tasks: currentTaskSummaries,
   });
   const recoveryActions = buildManagerStateRecoveryActions({
     tasks: unacknowledgedTaskSummaries,
     blockers,
-    latestStatus: input.latestStatus,
+    latestStatus: currentLatestStatus,
   });
-  const runningAgents = agents.filter((agent) =>
+  const runningAgents = currentAgents.filter((agent) =>
     ["assigned", "running", "waiting"].includes(agent.status),
   ).length;
-  const blockedAgents = agents.filter(
+  const blockedAgents = currentAgents.filter(
     (agent) => ["blocked", "failed", "stale"].includes(agent.status) && !agent.acknowledgedAt,
   ).length;
   const blockedTasks = unacknowledgedTaskSummaries.filter(
@@ -9255,7 +9265,7 @@ async function buildManagerStateView(
   const failedTasks = unacknowledgedTaskSummaries.filter((task) => task.state === "failed").length;
   const current = managerStateCurrent({
     activeRound,
-    latestStatus: input.latestStatus,
+    latestStatus: currentLatestStatus,
     runningTasks,
     staleTasks,
     blockers,
@@ -9264,10 +9274,10 @@ async function buildManagerStateView(
   });
   const status = managerStateStatusFromCurrent(current);
   const freshness = managerStateFreshness({
-    latestStatus: input.latestStatus,
-    tasks: taskSummaries,
-    rounds: roundSummaries,
-    agents,
+    latestStatus: currentLatestStatus,
+    tasks: currentTaskSummaries,
+    rounds: currentRoundSummaries,
+    agents: currentAgents,
     current,
     now: input.now,
   });
@@ -9278,7 +9288,7 @@ async function buildManagerStateView(
     status,
     counts: {
       rounds: rounds.length,
-      activeRounds: roundSummaries.filter(
+      activeRounds: currentRoundSummaries.filter(
         (round) => !isManagerRoundTerminalState(round.status) && !round.acknowledgedAt,
       ).length,
       agents: agents.length,
@@ -9460,6 +9470,45 @@ function isSupersededManagerStateTask(
   return Boolean(agent?.taskId && agent.taskId !== task.id);
 }
 
+function supersededManagerStateRoundIds(rounds: ManagerRound[]): Set<string> {
+  const progressStatuses = new Set<ManagerRoundStatus>([
+    "dispatching",
+    "running",
+    "collecting",
+    "reviewing",
+    "completed",
+  ]);
+  const latestProgressSequenceByProject = new Map<string, number>();
+  for (const round of rounds) {
+    if (!round.projectId || !progressStatuses.has(round.status)) continue;
+    const sequence = managerStateRoundSequenceMs(round);
+    if (!Number.isFinite(sequence)) continue;
+    const latest = latestProgressSequenceByProject.get(round.projectId);
+    if (latest === undefined || sequence > latest) {
+      latestProgressSequenceByProject.set(round.projectId, sequence);
+    }
+  }
+
+  const supersededIds = new Set<string>();
+  for (const round of rounds) {
+    if (!round.projectId) continue;
+    const latest = latestProgressSequenceByProject.get(round.projectId);
+    if (latest === undefined) continue;
+    const sequence = managerStateRoundSequenceMs(round);
+    if (Number.isFinite(sequence) && latest > sequence) supersededIds.add(round.id);
+  }
+  return supersededIds;
+}
+
+function managerStateRoundSequenceMs(round: ManagerRound): number {
+  for (const timestamp of [round.createdAt, round.startedAt, round.updatedAt]) {
+    if (!timestamp) continue;
+    const parsed = Date.parse(timestamp);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Number.NaN;
+}
+
 function buildManagerStateRecoveryActions(input: {
   tasks: ManagerStateTaskSummary[];
   blockers: ManagerStateBlocker[];
@@ -9548,7 +9597,9 @@ function managerStateCurrent(input: {
           ? "failed"
           : input.activeRound.status === "reviewing" || input.activeRound.status === "collecting"
             ? "waiting"
-            : "running";
+            : input.activeRound.status === "planned"
+              ? "waiting"
+              : "running";
     return {
       kind: "round",
       status,
@@ -9700,15 +9751,39 @@ function selectManagerStateActiveRound(
   ]);
   const candidates = rounds
     .filter((round) => activeStatuses.has(round.status))
+    .filter(isManagerStateRoundCurrentCandidate)
     .filter((round) => !managerStateRoundCoveredByLatestSuccess(round, latestStatus))
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   return candidates[0];
 }
 
+function isManagerStateRoundCurrentCandidate(round: ManagerStateRoundSummary): boolean {
+  if (round.acknowledgedAt) return false;
+  if (round.status === "blocked" || round.status === "failed") return true;
+  if (round.status === "dispatching" || round.status === "collecting" || round.status === "reviewing") {
+    return true;
+  }
+  if (round.status === "running") return managerStateRoundHasLiveWork(round);
+  if (round.status === "planned") return managerStateRoundHasLiveWork(round);
+  return false;
+}
+
 function managerStateRoundHasLiveWork(round: ManagerStateRoundSummary): boolean {
-  if (round.status === "planned" || round.status === "dispatching") return true;
+  if (round.status === "planned") return round.counts.runningAgents > 0 || round.counts.runningTasks > 0;
+  if (round.status === "dispatching") return true;
   if (round.status === "collecting" || round.status === "reviewing") return true;
   return round.counts.runningAgents > 0 || round.counts.runningTasks > 0;
+}
+
+function currentManagerAssistantStatus(
+  status: ManagerAssistantStatusReport | undefined,
+  now: Date,
+): ManagerAssistantStatusReport | undefined {
+  if (!status) return undefined;
+  const createdAt = Date.parse(status.createdAt);
+  if (!Number.isFinite(createdAt)) return undefined;
+  if (now.getTime() - createdAt > MANAGER_ASSISTANT_STATUS_CURRENT_MS) return undefined;
+  return status;
 }
 
 function managerStateRoundCoveredByLatestSuccess(
@@ -10503,7 +10578,6 @@ async function runDefaultManagerAssistantCli(
     ),
     input.managerSessionId,
   );
-  const timeoutMs = managerAssistantTimeoutMs(assistantOptions);
   const prompt = buildManagerAssistantPrompt(input);
   const invocation = await prepareManagerAssistantInvocation(command, args, prompt);
   let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
@@ -10530,9 +10604,7 @@ async function runDefaultManagerAssistantCli(
     invocation.writeInput?.(proc);
     const stdout = readManagerAssistantStdout(proc.stdout, () => undefined);
     const stderr = readManagerAssistantStderr(proc.stderr, () => undefined);
-    const exitCode = await withTimeout(proc.exited, timeoutMs, () => {
-      proc.kill();
-    });
+    const exitCode = await proc.exited;
     const [stdoutResult, err] = await Promise.all([stdout, stderr]);
     if (exitCode !== 0) {
       throw new Error(
@@ -10846,16 +10918,6 @@ function managerAssistantPermissionArgs(args: string[]): string[] {
   }
   normalized.push("--permission-mode", "bypassPermissions");
   return normalized;
-}
-
-function managerAssistantTimeoutMs(options: ManagerAssistantOptions | undefined): number {
-  const configured =
-    options?.timeoutMs ??
-    Number(
-      process.env.DESKRELAY_MANAGER_ASSISTANT_TIMEOUT_MS ?? DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS,
-    );
-  if (!Number.isFinite(configured)) return DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS;
-  return Math.max(5_000, Math.min(MAX_MANAGER_ASSISTANT_TIMEOUT_MS, Math.floor(configured)));
 }
 
 interface ManagerAssistantStdoutResult {

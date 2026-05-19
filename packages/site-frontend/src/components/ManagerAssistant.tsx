@@ -591,6 +591,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         queueMicrotask(scrollToBottomIfPinned);
         return;
       }
+      if (managerAssistantEventsEquivalent(currentEvents, nextEvents)) {
+        queueMicrotask(scrollToBottomIfPinned);
+        return;
+      }
       setEvents(nextEvents);
       setAssistantHistory(rememberAssistantHistory({ events: nextEvents }));
     } else if (events().length === 0 && (assistantHistory()?.events.length ?? 0) > 0) {
@@ -1673,12 +1677,32 @@ function shouldKeepLocalManagerAssistantEvents(
   return Boolean(localReply && !managerAssistantEntriesInclude(nextEntries, localReply));
 }
 
+function managerAssistantEventsEquivalent(
+  currentEvents: ClaudeStreamEvent[],
+  nextEvents: ClaudeStreamEvent[],
+): boolean {
+  if (currentEvents.length === 0 || currentEvents.length !== nextEvents.length) return false;
+  const currentEntries = buildManagerAssistantTranscriptEntries(currentEvents);
+  const nextEntries = buildManagerAssistantTranscriptEntries(nextEvents);
+  if (currentEntries.length !== nextEntries.length) return false;
+  return currentEntries.every((entry, index) => {
+    const nextEntry = nextEntries[index];
+    return (
+      nextEntry !== undefined &&
+      entry.role === nextEntry.role &&
+      normalizeManagerAssistantComparableText(entry.text) ===
+        normalizeManagerAssistantComparableText(nextEntry.text)
+    );
+  });
+}
+
 function findLastManagerAssistantEntryIndex(
   entries: ManagerAssistantTranscriptEntry[],
   predicate: (entry: ManagerAssistantTranscriptEntry) => boolean,
 ): number {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (predicate(entries[index])) return index;
+    const entry = entries[index];
+    if (entry && predicate(entry)) return index;
   }
   return -1;
 }

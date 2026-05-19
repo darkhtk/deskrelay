@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Hono } from "hono";
@@ -1883,6 +1883,67 @@ describe("manager task API", () => {
     expect(body.current?.status).not.toBe("failed");
   });
 
+  test("manager state ignores failed agents from project rounds superseded by later progress", async () => {
+    let currentNow = new Date("2026-05-19T00:00:00.000Z");
+    const now = () => currentNow;
+    const managerTaskStore = createInMemoryManagerTaskStore({ now });
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore({ now });
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerTaskStore,
+      managerOrchestrationStore,
+    });
+
+    const failedRound = await managerOrchestrationStore.createRound({
+      projectId: "project_timeout",
+      title: "Timed out manager round",
+      objective: "Old attempt should not block the current project state.",
+    });
+    const failedAgent = await managerOrchestrationStore.createAgent({
+      projectId: "project_timeout",
+      role: "implementer",
+      label: "Implementer",
+      roundId: failedRound.id,
+    });
+    await managerOrchestrationStore.updateAgent(failedAgent.id, {
+      status: "failed",
+      lastError: "Manager assistant CLI timed out after 600000ms.",
+    });
+    await managerOrchestrationStore.updateRound(failedRound.id, {
+      status: "failed",
+      agentIds: [failedAgent.id],
+      error: "Manager assistant CLI timed out after 600000ms.",
+    });
+
+    currentNow = new Date("2026-05-19T00:01:00.000Z");
+    const completedRound = await managerOrchestrationStore.createRound({
+      projectId: "project_timeout",
+      title: "Completed follow-up round",
+      objective: "A newer round made progress after the old failure.",
+    });
+    await managerOrchestrationStore.updateRound(completedRound.id, {
+      status: "completed",
+      completedAt: currentNow.toISOString(),
+      summary: "Later round completed successfully.",
+    });
+
+    const state = await app.fetch(authedRequest("GET", "/api/manager/state"));
+    expect(state.status).toBe(200);
+    const body = (await state.json()) as {
+      counts?: { blockers?: number; blockedAgents?: number };
+      current?: { status?: string; detail?: string; agentId?: string; roundId?: string };
+      blockers?: Array<{ detail?: string; agentId?: string; roundId?: string }>;
+      recentRounds?: Array<{ id?: string; error?: string }>;
+    };
+    expect(body.counts?.blockers).toBe(0);
+    expect(body.counts?.blockedAgents).toBe(0);
+    expect(body.current?.status).not.toBe("failed");
+    expect(body.current?.detail ?? "").not.toContain("600000ms");
+    expect(body.blockers).toEqual([]);
+    expect(body.recentRounds?.some((round) => round.id === failedRound.id)).toBe(true);
+  });
+
   test("manager project overview ignores failed worker attempts superseded by a retry", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-project-overview-retry-"));
     try {
@@ -2058,6 +2119,75 @@ describe("manager task API", () => {
     }
   });
 
+  test("manager state ignores dormant legacy rounds and stale assistant status", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-manager-state-dormant-"));
+    try {
+      const managerTaskStore = createInMemoryManagerTaskStore();
+      const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerTaskStore,
+        managerOrchestrationStore,
+        managerAssistant: { cwd },
+      });
+      const round = await managerOrchestrationStore.createRound({
+        title: "Unscoped",
+        objective: "Legacy unassigned orchestration.",
+      });
+      const idleAgent = await managerOrchestrationStore.createAgent({
+        role: "verifier",
+        label: "Idle verifier",
+        roundId: round.id,
+      });
+      await managerOrchestrationStore.updateRound(round.id, {
+        agentIds: [idleAgent.id],
+      });
+      const statusDir = join(cwd, ".deskrelay", "manager-assistant");
+      mkdirSync(statusDir, { recursive: true });
+      writeFileSync(
+        join(statusDir, "status-reports.json"),
+        `${JSON.stringify(
+          {
+            reports: [
+              {
+                id: "report_old_warning",
+                createdAt: "2026-05-19T04:29:10.402Z",
+                phase: "acting",
+                level: "warning",
+                message: "Old status should not drive current state.",
+              },
+            ],
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+
+      const state = await app.fetch(authedRequest("GET", "/api/manager/state"));
+      expect(state.status).toBe(200);
+      const body = (await state.json()) as {
+        current?: { source?: string; status?: string; title?: string; roundId?: string };
+        status?: { tone?: string; message?: string };
+        counts?: { activeRounds?: number; blockers?: number };
+        activeRound?: { id?: string };
+        latestStatus?: { id?: string };
+      };
+      expect(body.current?.source).toBe("system");
+      expect(body.current?.status).toBe("idle");
+      expect(body.current?.title).toBe("Manager is ready");
+      expect(body.current?.roundId).toBeUndefined();
+      expect(body.status?.tone).toBe("idle");
+      expect(body.counts?.activeRounds).toBe(0);
+      expect(body.counts?.blockers).toBe(0);
+      expect(body.activeRound).toBeUndefined();
+      expect(body.latestStatus?.id).toBe("report_old_warning");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager acknowledgement rejects active work", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const app = createSiteApp({
@@ -2222,6 +2352,14 @@ describe("manager task API", () => {
     const explicitPrint = buildManagerAssistantCliArgs("claude", ["--print"]);
     const printArgs = explicitPrint.filter((arg) => arg === "-p" || arg === "--print");
     expect(printArgs).toEqual(["--print"]);
+  });
+
+  test("manager assistant default CLI path has no hard process timeout", () => {
+    const source = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+
+    expect(source).not.toContain("DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS");
+    expect(source).not.toContain("DESKRELAY_MANAGER_ASSISTANT_TIMEOUT_MS");
+    expect(source).not.toContain("withTimeout(proc.exited, timeoutMs");
   });
 
   test("manager assistant preserves Korean prompt when invoking the CLI", async () => {

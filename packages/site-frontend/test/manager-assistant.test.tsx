@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ManagerAssistant } from "../src/components/ManagerAssistant.tsx";
 import { setLocale } from "../src/i18n.ts";
@@ -16,6 +16,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
   window.localStorage.clear();
   setLocale("ko");
@@ -223,6 +224,7 @@ describe("ManagerAssistant", () => {
 
   test("keeps a streamed manager reply visible when the refreshed transcript is stale", async () => {
     setLocale("ko");
+    let sessionsListCount = 0;
     let sessionReadCount = 0;
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -288,6 +290,7 @@ describe("ManagerAssistant", () => {
       ) {
         const body = JSON.parse(String(init.body ?? "{}")) as { method?: string };
         if (body.method === "sessions.list") {
+          sessionsListCount += 1;
           return Response.json({
             result: [
               {
@@ -328,8 +331,16 @@ describe("ManagerAssistant", () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain("입력 가능");
     });
+    await waitFor(() => {
+      expect(sessionsListCount).toBeGreaterThan(0);
+    });
 
     fireEvent.input(input, { target: { value: "현재 상태 알려줘" } });
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "전송" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
 
     await waitFor(() => {
