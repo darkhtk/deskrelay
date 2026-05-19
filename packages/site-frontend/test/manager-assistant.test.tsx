@@ -111,7 +111,7 @@ describe("ManagerAssistant", () => {
     expect(document.querySelector(".manager-assistant-dialogue-role")).toBeNull();
   });
 
-  test("keeps collapsed previews plain while rendering full manager markdown", async () => {
+  test("renders collapsed previews and full manager messages as markdown", async () => {
     setLocale("en");
     const markdownText = [
       "**Summary**",
@@ -207,12 +207,13 @@ describe("ManagerAssistant", () => {
     render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
 
     await waitFor(() => {
-      expect(document.querySelector(".manager-assistant-dialogue-preview")?.textContent).toContain(
-        "**Summary**",
-      );
+      expect(
+        document.querySelector(".manager-assistant-dialogue-preview strong")?.textContent,
+      ).toBe("Summary");
     });
     const preview = document.querySelector(".manager-assistant-dialogue-preview");
-    expect(preview?.querySelector("strong")).toBeNull();
+    expect(preview?.textContent).not.toContain("**Summary**");
+    expect(preview?.querySelectorAll("li")).toHaveLength(2);
     expect(
       document.querySelector(".manager-assistant-dialogue-full pre code")?.textContent,
     ).toContain("const answer: number = 42;");

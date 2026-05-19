@@ -1461,7 +1461,10 @@ const ManagerAssistantTranscript: Component<{
                   />
                 }
               >
-                <p class="manager-assistant-dialogue-preview">{entry.preview}</p>
+                <div
+                  class="manager-assistant-dialogue-markdown manager-assistant-dialogue-preview"
+                  innerHTML={renderManagerAssistantMarkdown(entry.preview)}
+                />
               </Show>
               <Show when={entry.collapsed}>
                 <details class="manager-assistant-dialogue-details">

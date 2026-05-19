@@ -9191,7 +9191,6 @@ body.manager-orchestration-resizing {
 .manager-assistant-dialogue-preview {
   margin: 0;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
   word-break: break-word;
 }
 .manager-assistant-dialogue-markdown p,
