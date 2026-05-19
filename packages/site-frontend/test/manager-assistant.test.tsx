@@ -752,6 +752,119 @@ describe("ManagerAssistant", () => {
     expect(document.body.textContent).toContain("이미지 확인했습니다.");
   });
 
+  test("reports when a manager run ends without a visible final answer", async () => {
+    setLocale("ko");
+    let behaviorRequests = 0;
+    let sessionsReadRequests = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-no-final",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes("/api/manager/assistant/status")) {
+        return Response.json({ generatedAt: "2026-05-13T00:00:00.000Z", reports: [] });
+      }
+      if (url.includes("/api/manager/assistant/chat/stream") && init?.method === "POST") {
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              type: "message",
+              message: {
+                id: "manager-no-final",
+                role: "assistant",
+                text: "No response requested.",
+                createdAt: "2026-05-13T00:00:02.000Z",
+              },
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              command: "manager assistant",
+              durationMs: 12,
+              sessionId: "manager-session-no-final",
+            })}`,
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        behaviorRequests += 1;
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as { method?: string };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-no-final",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Session",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          sessionsReadRequests += 1;
+          return Response.json({
+            result: {
+              sessionId: "manager-session-no-final",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    const input = await screen.findByPlaceholderText(/관리자에게 보내기/);
+    await waitFor(() => {
+      expect(behaviorRequests).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      expect(sessionsReadRequests).toBeGreaterThan(0);
+    });
+    fireEvent.input(input, { target: { value: "진행해" } });
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "전송" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "전송" }));
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("최종 보고 없이");
+    });
+    expect(document.body.textContent).not.toContain("No response requested");
+  });
+
   test("keeps empty manager replies out of the transcript", async () => {
     setLocale("en");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
