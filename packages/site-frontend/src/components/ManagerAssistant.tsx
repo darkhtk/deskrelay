@@ -84,10 +84,29 @@ const MANAGER_ASSISTANT_LOG_PATTERNS = [
 const MANAGER_ASSISTANT_INTERNAL_CHATTER_PATTERNS = [
   /^monitor\b/i,
   /^healthz\b/i,
+  /^poll(?:ing)?\b/i,
+  /\bpoll\b.*(?:진행|확인|대기|fallback|worker|status)/i,
+  /^폴링\b/i,
+  /^폴링\s*\d+\s*회/i,
+  /^state\s+확인\s+중/i,
+  /^헬스\s*체크\b/i,
+  /^하트비트\b/i,
+  /^(?:생각 중|작업 확인 중|worker 응답 대기|승인 대기|결과 정리 중)$/i,
+  /^(?:thinking|checking work|waiting for worker|waiting for approval|summarizing result)$/i,
+  /^\d+\s*(?:\/|of)\s*\d+.*(?:poll|timeout|확인|대기)/i,
   /^\d+\/\d+\s+모두\s+timeout/i,
   /^\d+차(?:\s*timeout|[.\s])/i,
+  /^\d+회(?:차)?\s*(?:폴링|확인|상태\s*확인|대기)/i,
+  /^task\s+상태\s+대기\.?$/i,
   /^bun\s+정리/i,
   /\bsite-backend\b.*(?:pid|port|healthz|stale|spawn)/i,
+  /\b(?:polling|heartbeat|health check|assistant\.status|live status)\b/i,
+  /\b(?:폴링|하트비트|헬스\s*체크|상태\s*폴링)\b/i,
+  /\bmonitor\b.*(?:종료|시작|대기|작동|확인|chain|running|dispatch)/i,
+  /(?:이전\s+monitor|새\s+chain\s+monitor|monitor\s+시작|이벤트\s+대기)/i,
+  /^acting\s+status\s+게시/i,
+  /(?:응답\s+빈\s+문자열|응답\s+빔|클라이언트\s+timeout|실제\s+dispatch\s+확인|dispatch\s+안\s+됨|dispatch\s+실패|round\s+id\s+탐색|accept\s+진행|body\s+작성)/i,
+  /(?:final-build\s+즉시\s+completed|FINAL\s+검증\s+단계\s+대기)/i,
   /^BUILD-RESULT\.md\s+인용\s+확인/i,
   /자동\s+accept.*dispatch\s+진행\s+중/i,
   /^(?:\/start\s+)?응답\s*timeout/i,
@@ -455,9 +474,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     if (currentStatus) return currentStatus;
     if (managerAssistantAwaitingReply()) {
       return {
-        tone: "warning",
-        main: "관리자 응답 필요",
-        detail: "마지막 지시에 대한 답변이 아직 보이지 않습니다.",
+        tone: "thinking",
+        main: "생각 중",
+        detail: "관리자 응답을 기다리는 중입니다.",
       };
     }
     const stateStatus = liveStateStatus();
@@ -732,30 +751,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   function visibleClaudeEvents(nextEvents: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
     const visibleEvents: ClaudeStreamEvent[] = [];
-    let pendingToolResult = "";
-    let sawUserRequest = false;
-    let sawAssistantEvent = false;
-    let sawVisibleAssistantReply = false;
     for (const event of nextEvents) {
-      pendingToolResult = managerAssistantToolResultSummary(event) || pendingToolResult;
       const visible = claudeEventForTranscript(event);
       if (!visible) continue;
-      if (visible.type === "user" && managerAssistantDisplayText(visible).trim()) {
-        sawUserRequest = true;
-      }
-      if (visible.type === "assistant") {
-        sawAssistantEvent = true;
-      }
-      if (visible.type === "assistant" && isVisibleManagerAssistantReply(visible)) {
-        sawVisibleAssistantReply = true;
-        pendingToolResult = "";
-      }
       visibleEvents.push(visible);
-    }
-    if (pendingToolResult) {
-      visibleEvents.push(managerAssistantToolResultFallbackEvent(pendingToolResult));
-    } else if (sawUserRequest && sawAssistantEvent && !sawVisibleAssistantReply) {
-      visibleEvents.push(managerAssistantNoReplyEvent());
     }
     return visibleEvents;
   }
@@ -859,6 +858,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             const finalText = event.message.text.trim();
             if (
               finalText &&
+              isVisibleManagerAssistantSummaryText(finalText) &&
               !managerAssistantFinalTextAlreadyVisible(
                 managerAssistantTranscriptEntries(),
                 finalText,
@@ -892,10 +892,6 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
       }
     } finally {
-      const wasAborted = abort.signal.aborted;
-      if (!wasAborted && !visibleAssistantReplySeen) {
-        appendEvent(managerAssistantNoReplyEvent());
-      }
       abort.abort();
       if (managerAssistantAbort === abort) managerAssistantAbort = undefined;
       removeRun(runId);
@@ -1488,15 +1484,6 @@ const ManagerAssistantTranscript: Component<{
                   innerHTML={renderManagerAssistantMarkdown(entry.preview)}
                 />
               </Show>
-              <Show when={entry.collapsed}>
-                <details class="manager-assistant-dialogue-details">
-                  <summary>{t("manager.assistant.transcript.details")}</summary>
-                  <div
-                    class="manager-assistant-dialogue-markdown manager-assistant-dialogue-full"
-                    innerHTML={renderManagerAssistantMarkdown(entry.text)}
-                  />
-                </details>
-              </Show>
             </div>
           </article>
         )}
@@ -1749,20 +1736,18 @@ function normalizeManagerAssistantComparableText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function managerAssistantToolResultFallbackEvent(summary: string): ClaudeStreamEvent {
-  return managerAssistantSyntheticEvent(
-    `관리자 Assistant가 도구 실행 결과를 받은 뒤 최종 답변을 아직 남기지 않았습니다.\n\n마지막 도구 결과 요약: ${summary}`,
-  );
-}
-
-function managerAssistantNoReplyEvent(): ClaudeStreamEvent {
-  return managerAssistantSyntheticEvent(t("manager.assistant.transcript.no-reply"));
-}
-
 function isVisibleManagerAssistantReply(event: ClaudeStreamEvent): boolean {
   if (event.type !== "assistant") return false;
   const text = managerAssistantDisplayText(event);
-  return text.length > 0 && !isManagerAssistantNoiseText(text);
+  return isVisibleManagerAssistantSummaryText(text);
+}
+
+function isVisibleManagerAssistantSummaryText(text: string): boolean {
+  return (
+    text.length > 0 &&
+    !isManagerAssistantNoiseText(text) &&
+    !isManagerAssistantTranscriptChatterText(text)
+  );
 }
 
 function buildManagerAssistantTranscriptEntries(
@@ -1779,12 +1764,14 @@ function buildManagerAssistantTranscriptEntries(
     if (noise) return [];
     const text = rawText;
     const collapsed = shouldCollapseManagerAssistantEntry(role, text);
+    const preview = collapsed ? managerAssistantPreviewText(text) : text;
+    if (!preview.trim()) return [];
     return [
       {
         id: `${role}-${index}-${text.slice(0, 20)}`,
         role,
         text,
-        preview: collapsed ? managerAssistantPreviewText(text) : text,
+        preview,
         collapsed,
       },
     ];
@@ -1877,8 +1864,8 @@ function managerAssistantPreviewText(text: string): string {
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => !looksLikeManagerAssistantDiagnosticLine(line));
-  const sourceLines = lines.length > 0 ? lines : [t("manager.assistant.transcript.log-collapsed")];
-  return clipManagerAssistantText(sourceLines.slice(0, 4).join("\n"));
+  if (lines.length === 0) return "";
+  return clipManagerAssistantText(lines.slice(0, 4).join("\n"));
 }
 
 function renderManagerAssistantMarkdown(text: string): string {
@@ -1913,24 +1900,6 @@ function managerAssistantEventText(event: ClaudeStreamEvent): string {
   const message = event.message;
   if (!message || typeof message !== "object") return "";
   return managerAssistantContentText((message as { content?: unknown }).content);
-}
-
-function managerAssistantToolResultSummary(event: ClaudeStreamEvent): string {
-  if (event.type !== "user") return "";
-  const message = event.message;
-  if (!message || typeof message !== "object") return "";
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) return "";
-  const text = content
-    .filter(
-      (block): block is Record<string, unknown> => Boolean(block) && typeof block === "object",
-    )
-    .filter((block) => block.type === "tool_result")
-    .map((block) => managerAssistantContentText(block.content))
-    .join("\n")
-    .replace(/\s+/g, " ")
-    .trim();
-  return text.length > 1_200 ? `${text.slice(0, 1_200)}...` : text;
 }
 
 function managerAssistantContentText(value: unknown): string {

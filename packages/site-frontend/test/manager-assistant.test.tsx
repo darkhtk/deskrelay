@@ -111,7 +111,7 @@ describe("ManagerAssistant", () => {
     expect(document.querySelector(".manager-assistant-dialogue-role")).toBeNull();
   });
 
-  test("renders collapsed previews and full manager messages as markdown", async () => {
+  test("renders collapsed manager previews as markdown without embedding detailed logs", async () => {
     setLocale("en");
     const markdownText = [
       "**Summary**",
@@ -214,13 +214,10 @@ describe("ManagerAssistant", () => {
     const preview = document.querySelector(".manager-assistant-dialogue-preview");
     expect(preview?.textContent).not.toContain("**Summary**");
     expect(preview?.querySelectorAll("li")).toHaveLength(2);
-    expect(
-      document.querySelector(".manager-assistant-dialogue-full pre code")?.textContent,
-    ).toContain("const answer: number = 42;");
-    expect(document.querySelector(".manager-assistant-dialogue-full table")).toBeTruthy();
-    expect(document.querySelector(".manager-assistant-dialogue-full strong")?.textContent).toBe(
-      "Summary",
-    );
+    expect(document.querySelector(".manager-assistant-dialogue-details")).toBeNull();
+    expect(document.querySelector(".manager-assistant-dialogue-full")).toBeNull();
+    expect(document.body.textContent).not.toContain("const answer: number = 42;");
+    expect(document.body.textContent).not.toContain("Markdown rendered");
   });
 
   test("hides internal task notifications and routine manager chatter", async () => {
@@ -309,6 +306,20 @@ describe("ManagerAssistant", () => {
                   type: "assistant",
                   message: {
                     role: "assistant",
+                    content: [{ type: "text", text: "2/10 polling: worker heartbeat 확인 중" }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "폴링 66회." }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
                     content: [{ type: "text", text: "1차 timeout." }],
                   },
                 },
@@ -369,6 +380,8 @@ describe("ManagerAssistant", () => {
     expect(document.body.textContent).not.toContain("task-notification");
     expect(document.body.textContent).not.toContain("Monitor 종료");
     expect(document.body.textContent).not.toContain("healthz polling");
+    expect(document.body.textContent).not.toContain("2/10 polling");
+    expect(document.body.textContent).not.toContain("폴링 66회");
     expect(document.body.textContent).not.toContain("1차 timeout");
     expect(document.body.textContent).not.toContain("10/10 모두 timeout");
     expect(document.body.textContent).not.toContain("round_abc123XYZ");
@@ -505,7 +518,7 @@ describe("ManagerAssistant", () => {
     expect(document.body.textContent).toContain("즉시 보이는 새 응답");
   });
 
-  test("shows a clear transcript entry when the manager returns no visible reply", async () => {
+  test("keeps empty manager replies out of the transcript", async () => {
     setLocale("en");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -587,12 +600,13 @@ describe("ManagerAssistant", () => {
     render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
 
     await waitFor(() => {
-      expect(document.body.textContent).toContain("The manager response was empty.");
+      expect(document.querySelector(".manager-assistant-transcript-empty")).toBeTruthy();
     });
+    expect(document.body.textContent).not.toContain("The manager response was empty.");
     expect(document.body.textContent).not.toContain("No response requested");
   });
 
-  test("shows the latest tool result when the manager has not produced a final reply yet", async () => {
+  test("does not surface tool results as manager dialogue summaries", async () => {
     setLocale("en");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -701,9 +715,10 @@ describe("ManagerAssistant", () => {
     render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
 
     await waitFor(() => {
-      expect(document.body.textContent).toContain("result: worker finished and all checks passed");
+      expect(document.body.textContent).toContain("알겠습니다. 작업자를 호출하겠습니다.");
     });
-    expect(document.body.textContent).toContain("마지막 도구 결과 요약");
+    expect(document.body.textContent).not.toContain("result: worker finished and all checks passed");
+    expect(document.body.textContent).not.toContain("마지막 도구 결과 요약");
   });
 
   test("uses the normal remote-claude behavior session path instead of browser chat storage", async () => {
