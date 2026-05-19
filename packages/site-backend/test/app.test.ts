@@ -3713,7 +3713,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(
         startBody.commandFlow?.judgments?.some((item) =>
           item.proposedActions?.some(
-            (action) => action.type === "review_round" && action.requiresApproval === true,
+            (action) => action.type === "review_round" && action.requiresApproval === false,
           ),
         ),
       ).toBe(true);
@@ -3777,7 +3777,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
           (judgment) =>
             judgment.priority === "notice" &&
             judgment.proposedActions?.some(
-              (action) => action.type === "review_round" && action.requiresApproval === true,
+              (action) => action.type === "review_round" && action.requiresApproval === false,
             ),
         ),
       ).toBe(true);
@@ -5399,6 +5399,7 @@ process.stdin.on("end", () => {
     expect(prompt).toContain("## Current User Request ASCII-Safe Copy");
     expect(prompt).toContain("\\ubaa8\\ub4e0");
     expect(prompt).toContain("decode this JSON string");
+    expect(prompt).toContain("answer the question first");
     expect(prompt).toContain("Do not use Bash for DeskRelay manager API calls");
     expect(prompt).toContain("batch-get");
   });
@@ -5419,6 +5420,13 @@ process.stdin.on("end", () => {
         activeRoundTitle: "R1 protocol hardening",
         activeRoundStatus: "running",
         projectCommandFlow: ["stage=running; ready=yes", "next=wait: Wait for worker results"],
+        projectStatePreflight: [
+          "source priority: command-flow > assistant status reports > manager chat history",
+          "current approval gate=none; approvalActions=0; approvalJudgments=0",
+        ],
+        projectStatusReports: [
+          "latest report (stale round=round_old): phase=blocked; level=warning; round=round_old; scope=orchestration; message=old failure",
+        ],
         projectDecisions: ["Use worker agents for implementation rounds"],
         projectBlockers: ["Firewall verification blocked (warning, action=manager, owner=manager)"],
         projectArtifacts: ["PROTOCOL.md (protocol, active, owner=protocol-agent)"],
@@ -5434,10 +5442,47 @@ process.stdin.on("end", () => {
     expect(prompt).toContain("- active round title: R1 protocol hardening");
     expect(prompt).toContain("- project command flow:");
     expect(prompt).toContain("stage=running; ready=yes");
+    expect(prompt).toContain("- current state preflight:");
+    expect(prompt).toContain("current approval gate=none");
+    expect(prompt).toContain("- assistant status reports:");
+    expect(prompt).toContain("stale round=round_old");
     expect(prompt).toContain("- active project decisions:");
     expect(prompt).toContain("Use worker agents for implementation rounds");
     expect(prompt).toContain("- open project blockers:");
     expect(prompt).toContain("- active project artifacts:");
+  });
+
+  test("manager assistant prompt makes command-flow fresher than stale chat", () => {
+    const prompt = buildManagerAssistantPrompt({
+      message: "관리자 대화 분석해봐",
+      history: [],
+      context: {
+        projectId: "proj_1",
+        projectName: "Orchestration Lab",
+        projectCommandFlow: ["stage=review; ready=yes", "approval gate=none; approvalActions=0"],
+        projectStatePreflight: [
+          "source priority: command-flow > assistant status reports > manager chat history",
+          "current stage=review; ready=yes; next=review: Check worker output",
+          "current approval gate=none; approvalActions=0; approvalJudgments=0",
+        ],
+        projectStatusReports: [
+          "latest report (active round=round_1): phase=done; level=success; round=round_1; scope=orchestration; message=승인 게이트 상태 기준 정리 완료",
+        ],
+      },
+      assistantState: {
+        lastAssistantText: "PowerShell을 직접 실행해야 합니다.",
+      },
+      cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+      repoRoot: "C:\\repo",
+      instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+      apiBaseUrl: "http://127.0.0.1:18193",
+    });
+
+    expect(prompt).toContain("## Current State Preflight Rule");
+    expect(prompt).toContain("command-flow state");
+    expect(prompt).toContain("current approval gate=none");
+    expect(prompt).toContain("Do not ask the user to run PowerShell");
+    expect(prompt).not.toContain("PowerShell을 직접 실행해야 합니다.");
   });
 
   test("manager assistant context warns when the selected project is stale", async () => {

@@ -438,10 +438,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         detail: "마지막 지시에 대한 답변이 아직 보이지 않습니다.",
       };
     }
-    const projectStatus = focusedProjectStatus();
-    if (projectStatus) return projectStatus;
     const stateStatus = liveStateStatus();
     if (stateStatus) return stateStatus;
+    const projectStatus = focusedProjectStatus();
+    if (projectStatus) return projectStatus;
     const reportStatus = latestReportStatus();
     if (reportStatus) return reportStatus;
     if (!serverDevice()) {
@@ -812,10 +812,17 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           } else if (event.type === "message") {
             responseCwd = event.cwd || responseCwd;
             capturedSessionId = event.sessionId ?? capturedSessionId;
-            if (event.message.text.trim() && !visibleAssistantReplySeen) {
+            const finalText = event.message.text.trim();
+            if (
+              finalText &&
+              !managerAssistantFinalTextAlreadyVisible(
+                managerAssistantTranscriptEntries(),
+                finalText,
+              )
+            ) {
               appendEvent(managerAssistantChatMessageEvent(event.message));
-              visibleAssistantReplySeen = true;
             }
+            if (finalText) visibleAssistantReplySeen = true;
           } else if (event.type === "error") {
             const visibleError = managerAssistantVisibleError(event.error);
             if (!visibleAssistantReplySeen) {
@@ -830,7 +837,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       );
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        const message = managerAssistantVisibleError(err instanceof Error ? err.message : String(err));
+        const message = managerAssistantVisibleError(
+          err instanceof Error ? err.message : String(err),
+        );
         if (!visibleAssistantReplySeen) {
           appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 요청 실패: ${message}`));
           visibleAssistantReplySeen = true;
@@ -1363,7 +1372,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         <Show when={visibleStatus()}>
           {(guidance) => (
             <output class={`composer-status composer-status-${guidance().tone}`} aria-live="polite">
-              <span class="composer-status-main">{managerComposerActionLabel(guidance())}</span>
+              <span class="composer-status-main">
+                {managerComposerActionLabel(guidance(), busy())}
+              </span>
             </output>
           )}
         </Show>
@@ -1581,6 +1592,22 @@ function managerAssistantStructuredState(
   if (sessionId) state.sessionId = sessionId;
   if (lastAssistant) state.lastAssistantText = lastAssistant.text.slice(0, 8_000);
   return Object.keys(state).length > 0 ? state : undefined;
+}
+
+function managerAssistantFinalTextAlreadyVisible(
+  entries: ManagerAssistantTranscriptEntry[],
+  text: string,
+): boolean {
+  const normalizedFinal = normalizeManagerAssistantComparableText(text);
+  if (!normalizedFinal) return true;
+  const lastAssistant = [...entries]
+    .reverse()
+    .find((entry) => entry.role === "assistant" && entry.text.trim());
+  return normalizeManagerAssistantComparableText(lastAssistant?.text ?? "") === normalizedFinal;
+}
+
+function normalizeManagerAssistantComparableText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function managerAssistantToolResultFallbackEvent(summary: string): ClaudeStreamEvent {
@@ -1931,15 +1958,16 @@ function managerStatusFromAssistantStreamEvent(
   return null;
 }
 
-function managerComposerActionLabel(status: ManagerVisibleStatus): string {
+function managerComposerActionLabel(status: ManagerVisibleStatus, inFlight = false): string {
   const text = status.main.trim();
-  if (status.tone === "thinking") return "생각 중";
+  if (status.tone === "thinking" && inFlight) return "생각 중";
   if (/오류|error|failed|실패/i.test(text)) return "오류";
   if (/응답|답변/i.test(text) && status.tone === "warning") return "응답 필요";
   if (/승인|approval|permission/i.test(text)) return "승인 대기";
   if (/요청|접수|큐|queued/i.test(text)) return "요청 접수";
   if (/수신|응답|답변|response/i.test(text)) return "응답 확인 중";
   if (/실행|진행|running|thinking/i.test(text)) return "진행 중";
+  if (status.tone === "thinking") return "입력 가능";
   if (status.tone === "warning") return "확인 필요";
   return "입력 가능";
 }

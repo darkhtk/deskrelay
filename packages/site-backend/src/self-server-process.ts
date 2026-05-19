@@ -21,6 +21,7 @@ export interface PowerShellSelfServerProcessControllerOptions {
   processFile?: string;
   logDir?: string;
   autostartStatus?: () => Promise<SelfServerAutostartStatus>;
+  gracefulShutdown?: () => void;
 }
 
 const SERVER_STARTED_AT = new Date().toISOString();
@@ -144,6 +145,7 @@ export function createPowerShellSelfServerProcessController(
       });
       child.unref();
       const helperPid = await readPidFile(pidPath, 1_200);
+      scheduleGracefulShutdown(options.gracefulShutdown, restartLogPath);
       return {
         supported: true,
         accepted: true,
@@ -267,38 +269,151 @@ function buildRestartScript(input: {
   logPath: string;
   currentPid: number;
 }): string {
-  const stopScript = join(input.repoRoot, "scripts", "self-pc-server-stop.ps1");
-  const startScript = join(input.repoRoot, "scripts", "self-pc-server-start.ps1");
+  const envFile = join(input.root, "dev.env.ps1");
+  const processFile = join(input.root, "state", "dev-processes.json");
+  const backendLog = join(input.root, "logs", "site-backend.log");
+  const backendRunner = join(input.root, "logs", "site-backend.runner.ps1");
+  const daemonLog = join(input.root, "logs", "daemon.log");
+  const daemonRunner = join(input.root, "logs", "daemon.runner.ps1");
+  const frontendLog = join(input.root, "logs", "site-frontend.log");
+  const frontendRunner = join(input.root, "logs", "site-frontend.runner.ps1");
   return [
     "$ErrorActionPreference = 'Continue'",
     `$restartLogPath = ${quotePowerShell(input.logPath)}`,
-    "function Invoke-LoggedScript {",
-    "  param([string]$ScriptPath, [string[]]$Arguments)",
-    "  & $ScriptPath @Arguments *>&1 | Out-File -Encoding utf8 -Append -FilePath $restartLogPath",
-    "}",
     `"[ $((Get-Date).ToUniversalTime().ToString('o')) ] restart helper started for current site-backend pid=${input.currentPid}" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
     "Start-Sleep -Milliseconds 2500",
     `$currentSiteBackendPid = ${input.currentPid}`,
     "if ($currentSiteBackendPid -gt 0) {",
-    `  "[$((Get-Date).ToUniversalTime().ToString('o'))] stopping current site-backend pid=$currentSiteBackendPid" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+    `  "[$((Get-Date).ToUniversalTime().ToString('o'))] waiting for current site-backend pid=$currentSiteBackendPid to stop" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
     "  $currentSiteBackend = Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue",
     "  if ($currentSiteBackend) {",
-    "    Stop-Process -Id $currentSiteBackendPid -Force -ErrorAction SilentlyContinue",
-    "    $deadline = (Get-Date).AddSeconds(10)",
+    "    $deadline = (Get-Date).AddSeconds(20)",
     "    while ((Get-Date) -lt $deadline -and (Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue)) {",
     "      Start-Sleep -Milliseconds 250",
     "    }",
     "    if (Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue) {",
-    "      throw \"Current site-backend pid=$currentSiteBackendPid is still running after restart stop request.\"",
+    `      "[$((Get-Date).ToUniversalTime().ToString('o'))] current site-backend pid=$currentSiteBackendPid did not stop gracefully; forcing stop" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+    "      Stop-Process -Id $currentSiteBackendPid -Force -ErrorAction SilentlyContinue",
+    "      $forceDeadline = (Get-Date).AddSeconds(10)",
+    "      while ((Get-Date) -lt $forceDeadline -and (Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue)) {",
+    "        Start-Sleep -Milliseconds 250",
+    "      }",
+    "      if (Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue) {",
+    "        throw \"Current site-backend pid=$currentSiteBackendPid is still running after forced restart stop request.\"",
+    "      }",
+    "    } else {",
+    `      "[$((Get-Date).ToUniversalTime().ToString('o'))] current site-backend pid=$currentSiteBackendPid stopped gracefully" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
     "    }",
     "  } else {",
     `    "[$((Get-Date).ToUniversalTime().ToString('o'))] current site-backend pid=$currentSiteBackendPid was already stopped" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
     "  }",
     "}",
-    `Invoke-LoggedScript -ScriptPath ${quotePowerShell(stopScript)} -Arguments @('-Root', ${quotePowerShell(input.root)}, '-RepoRoot', ${quotePowerShell(input.repoRoot)})`,
-    "Start-Sleep -Seconds 1",
-    `Invoke-LoggedScript -ScriptPath ${quotePowerShell(startScript)} -Arguments @('-Root', ${quotePowerShell(input.root)}, '-RepoRoot', ${quotePowerShell(input.repoRoot)}, '-NoOpenBrowser')`,
+    `$backendRunner = ${quotePowerShell(backendRunner)}`,
+    "if (-not (Test-Path -LiteralPath $backendRunner)) {",
+    "  throw \"site-backend runner not found: $backendRunner\"",
+    "}",
+    "$backendProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $backendRunner) -WindowStyle Hidden -PassThru",
+    `"[ $((Get-Date).ToUniversalTime().ToString('o')) ] started site-backend runner pid=$($backendProcess.Id)" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+    updateBackendProcessFileScript({
+      processFile,
+      backendLog,
+      backendRunner,
+      daemonLog,
+      daemonRunner,
+      frontendLog,
+      frontendRunner,
+    }),
+    `. ${quotePowerShell(envFile)}`,
+    "$siteHealthUrl = \"$env:CR_DEV_SITE_URL/healthz\"",
+    "$deadline = (Get-Date).AddSeconds(25)",
+    "$lastHealthError = $null",
+    "$siteReady = $false",
+    "while ((Get-Date) -lt $deadline) {",
+    "  try {",
+    "    Invoke-RestMethod -Method Get -Uri $siteHealthUrl -TimeoutSec 2 | Out-Null",
+    "    $siteReady = $true",
+    "    break",
+    "  } catch {",
+    "    $lastHealthError = $_.Exception.Message",
+    "    Start-Sleep -Milliseconds 500",
+    "  }",
+    "}",
+    "if (-not $siteReady) {",
+    "  throw \"Timed out waiting for restarted site-backend at $siteHealthUrl. Last error: $lastHealthError\"",
+    "}",
     `"[ $((Get-Date).ToUniversalTime().ToString('o')) ] restart helper completed" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+  ].join("\n");
+}
+
+function updateBackendProcessFileScript(input: {
+  processFile: string;
+  backendLog: string;
+  backendRunner: string;
+  daemonLog: string;
+  daemonRunner: string;
+  frontendLog: string;
+  frontendRunner: string;
+}): string {
+  return [
+    `$processFile = ${quotePowerShell(input.processFile)}`,
+    "$startedAt = (Get-Date).ToUniversalTime().ToString('o')",
+    "function Find-RunnerEntry {",
+    "  param([string]$Name, [string]$Command, [string]$LogPath, [string]$RunnerPath)",
+    "  $runnerProcess = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {",
+    "    $cmd = [string]$_.CommandLine",
+    "    $cmd -like \"*${RunnerPath}*\" -and $cmd -like '*-File*' -and $cmd -notlike '*-Command*' -and [int]$_.ProcessId -ne $PID",
+    "  } | Sort-Object CreationDate -Descending | Select-Object -First 1",
+    "  if (-not $runnerProcess) { return $null }",
+    "  return [pscustomobject]@{",
+    "    name = $Name",
+    "    pid = [int]$runnerProcess.ProcessId",
+    "    command = $Command",
+    "    log = $LogPath",
+    "    runner = $RunnerPath",
+    "    startedAt = $startedAt",
+    "  }",
+    "}",
+    "$backendEntry = [pscustomobject]@{",
+    "  name = 'site-backend'",
+    "  pid = $backendProcess.Id",
+    "  command = 'bun run packages/site-backend/src/bin.ts'",
+    `  log = ${quotePowerShell(input.backendLog)}`,
+    `  runner = ${quotePowerShell(input.backendRunner)}`,
+    "  startedAt = $startedAt",
+    "}",
+    `$daemonEntry = Find-RunnerEntry -Name 'daemon' -Command 'bun run packages/pc-connector-daemon/src/bin.ts' -LogPath ${quotePowerShell(input.daemonLog)} -RunnerPath ${quotePowerShell(input.daemonRunner)}`,
+    `$frontendEntry = Find-RunnerEntry -Name 'site-frontend' -Command 'bun --filter @deskrelay/site-frontend dev -- --host 0.0.0.0 --port 18193' -LogPath ${quotePowerShell(input.frontendLog)} -RunnerPath ${quotePowerShell(input.frontendRunner)}`,
+    "$entries = @()",
+    "if (Test-Path -LiteralPath $processFile) {",
+    "  try {",
+    "    $raw = Get-Content -Raw -LiteralPath $processFile",
+    "    if (-not [string]::IsNullOrWhiteSpace($raw)) {",
+    "      $parsed = ConvertFrom-Json -InputObject $raw",
+    "      $entries = @($parsed)",
+    "    }",
+    "  } catch {",
+    "    $entries = @()",
+    "  }",
+    "}",
+    "$entryMap = @{}",
+    "foreach ($entry in $entries) {",
+    "  if ($entry.name) {",
+    "    $entryMap[[string]$entry.name] = $entry",
+    "  }",
+    "}",
+    "if ($daemonEntry) { $entryMap['daemon'] = $daemonEntry }",
+    "$entryMap['site-backend'] = $backendEntry",
+    "if ($frontendEntry) { $entryMap['site-frontend'] = $frontendEntry }",
+    "$updated = @()",
+    "foreach ($name in @('daemon', 'site-backend', 'site-frontend')) {",
+    "  if ($entryMap.ContainsKey($name)) { $updated += $entryMap[$name] }",
+    "}",
+    "foreach ($entry in $entries) {",
+    "  if ($entry.name -and @('daemon', 'site-backend', 'site-frontend') -notcontains [string]$entry.name) {",
+    "    $updated += $entry",
+    "  }",
+    "}",
+    "ConvertTo-Json -InputObject @($updated) -Depth 4 | Set-Content -Encoding utf8 -Path $processFile",
   ].join("\n");
 }
 
@@ -345,6 +460,25 @@ async function readPidFile(path: string, timeoutMs: number): Promise<number | nu
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return null;
+}
+
+function scheduleGracefulShutdown(
+  gracefulShutdown: (() => void) | undefined,
+  restartLogPath: string,
+): void {
+  if (!gracefulShutdown) return;
+  const timer = setTimeout(() => {
+    try {
+      gracefulShutdown();
+    } catch (err) {
+      appendFile(restartLogPath, JSON.stringify({
+        ts: new Date().toISOString(),
+        event: "graceful-shutdown-error",
+        error: (err as Error).message,
+      }) + "\n", "utf8").catch(() => {});
+    }
+  }, 600);
+  (timer as { unref?: () => void }).unref?.();
 }
 
 function quotePowerShell(value: string): string {

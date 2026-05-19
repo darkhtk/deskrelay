@@ -551,6 +551,131 @@ describe("ManagerOrchestrationPanel project wizard", () => {
     ).toBeTruthy();
   });
 
+  test("does not show the approval gate for notice-only routine suggestions", () => {
+    const timestamp = "2026-05-17T00:00:00.000Z";
+    const selectedProject: ManagerProject = {
+      id: "project_1",
+      name: "Planner",
+      cwd: "C:\\work\\planner",
+      goal: "Build a planning dashboard",
+      status: "reviewing",
+      flowStage: "review",
+      activeRoundId: "round_1",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const overview: ManagerProjectOverviewResponse = {
+      generatedAt: timestamp,
+      project: selectedProject,
+      counts: {
+        rounds: 1,
+        agents: 1,
+        runningAgents: 0,
+        completedAgents: 1,
+        blockedAgents: 0,
+        tasks: 1,
+        runningTasks: 0,
+        failedTasks: 0,
+        workerRuns: 1,
+        artifacts: 0,
+      },
+      currentSignal: {
+        tone: "success",
+        title: "Round output is ready",
+        detail: "Routine review suggestion only.",
+      },
+      nextAction: {
+        kind: "summarize",
+        label: "Summarize round result",
+      },
+      recentSignals: [],
+      activeRound: {
+        id: "round_1",
+        projectId: selectedProject.id,
+        title: "R1",
+        objective: "Implement the first slice",
+        status: "completed",
+        phase: "implementation",
+        agentIds: [],
+        taskIds: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    };
+    const commandFlow = {
+      generatedAt: timestamp,
+      project: selectedProject,
+      charter: selectedProject.charter,
+      wizardEvents: [],
+      protocol: {},
+      overview,
+      decisions: [],
+      blockers: [],
+      artifacts: [],
+      rounds: [overview.activeRound],
+      activeRound: overview.activeRound,
+      workerRuns: [],
+      evidence: [],
+      agentResults: [],
+      protocolTrace: [],
+      judgments: [
+        {
+          id: "judgment_notice_review",
+          projectId: selectedProject.id,
+          roundId: "round_1",
+          verdict: "continue",
+          priority: "notice",
+          confidence: "high",
+          summary: "Round is ready for manager review.",
+          reason: "Routine review suggestion.",
+          evidenceIds: [],
+          agentResultIds: [],
+          protocolTraceIds: [],
+          proposedActions: [
+            {
+              id: "action_review_round",
+              projectId: selectedProject.id,
+              roundId: "round_1",
+              type: "review_round",
+              risk: "medium",
+              requiresApproval: true,
+              title: "Approve round result",
+              rationale: "Routine suggestion should not open the approval gate.",
+              payload: { roundId: "round_1", action: "accept" },
+              evidenceIds: [],
+              agentResultIds: [],
+              protocolTraceIds: [],
+            },
+          ],
+          createdAt: timestamp,
+          expiresAt: "2026-05-17T00:05:00.000Z",
+        },
+      ],
+      readiness: {
+        ready: true,
+        stage: "review",
+        missingProtocolFiles: [],
+        warnings: [],
+        userCheckRequired: false,
+      },
+      nextAction: overview.nextAction,
+    } as unknown as ManagerCommandFlowResponse;
+
+    render(() => (
+      <ManagerOrchestrationPanel
+        projects={[selectedProject]}
+        selectedProject={selectedProject}
+        commandFlow={commandFlow}
+        rounds={[]}
+        agents={[]}
+        standalone
+      />
+    ));
+
+    expect(screen.queryByLabelText(t("manager.orchestration.approval.title"))).toBeNull();
+    expect(screen.getByText(t("manager.orchestration.current-judgment.no-approval"))).toBeTruthy();
+  });
+
   test("separates selected project context from global manager status", () => {
     const selectedProject: ManagerProject = {
       id: "project_1",

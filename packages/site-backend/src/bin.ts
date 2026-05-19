@@ -59,6 +59,7 @@ const selfServerAutostart = createPowerShellSelfServerAutostartController({
   repoRoot: process.cwd(),
   root: selfServerRoot,
 });
+let triggerSelfRestartShutdown: (() => void) | undefined;
 
 const app = createSiteApp({
   registry,
@@ -79,6 +80,7 @@ const app = createSiteApp({
     processFile,
     logDir,
     autostartStatus: () => selfServerAutostart.status(),
+    gracefulShutdown: () => triggerSelfRestartShutdown?.(),
   }),
   selfServerUpdater: createPowerShellSelfServerUpdater({
     repoRoot: process.cwd(),
@@ -122,7 +124,10 @@ console.log(
   }),
 );
 
+let shuttingDown = false;
 const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   process.stderr.write(
     `${JSON.stringify({
       ts: new Date().toISOString(),
@@ -132,6 +137,9 @@ const shutdown = async (signal: string) => {
   );
   server.stop();
   process.exit(0);
+};
+triggerSelfRestartShutdown = () => {
+  setTimeout(() => void shutdown("self-restart"), 250);
 };
 
 process.on("SIGINT", () => void shutdown("SIGINT"));

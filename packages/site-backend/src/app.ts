@@ -3453,9 +3453,9 @@ async function openWindowsFileManager(cwd: string): Promise<void> {
     "Start-Process -FilePath explorer.exe -ArgumentList @($target) -WindowStyle Normal | Out-Null",
     "Start-Sleep -Milliseconds 350",
     "$native = @'",
-    'using System;',
-    'using System.Runtime.InteropServices;',
-    'public static class WindowTools {',
+    "using System;",
+    "using System.Runtime.InteropServices;",
+    "public static class WindowTools {",
     '  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
     '  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);',
     '  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();',
@@ -7155,18 +7155,22 @@ function buildManagerJudgmentPackets(input: ManagerJudgmentBuildInput): ManagerJ
             agentResultIds: resultIds,
           }),
         ];
-    const branch6Priority: ManagerJudgmentPacket["priority"] = shouldDowngradeToNotice({
-      branch: 6,
-      verdict: "continue",
-      readiness: input.readiness,
-      userBlockerCount: userBlockers.length,
-      failedEvidenceCount: failedEvidence.length,
-      failedResultCount: failedResults.length,
-      roundHasActionableHealthIssue,
-      protocolProblemCount: protocolProblems.length,
-    })
-      ? "notice"
-      : "approval";
+    let branch6Priority: ManagerJudgmentPacket["priority"] = "approval";
+    if (
+      !acceptedRoundReview &&
+      shouldDowngradeToNotice({
+        branch: 6,
+        verdict: "continue",
+        readiness: input.readiness,
+        userBlockerCount: userBlockers.length,
+        failedEvidenceCount: failedEvidence.length,
+        failedResultCount: failedResults.length,
+        roundHasActionableHealthIssue,
+        protocolProblemCount: protocolProblems.length,
+      })
+    ) {
+      branch6Priority = "notice";
+    }
     packets.push(
       managerJudgmentPacket({
         projectId: input.project.id,
@@ -7296,6 +7300,13 @@ function managerJudgmentPacket(input: {
   const evidenceIds = [...new Set(input.evidenceIds ?? [])].slice(0, 12);
   const agentResultIds = [...new Set(input.agentResultIds ?? [])].slice(0, 12);
   const protocolTraceIds = [...new Set(input.protocolTraceIds ?? [])].slice(0, 12);
+  const proposedActions =
+    input.priority === "approval"
+      ? (input.proposedActions ?? [])
+      : (input.proposedActions ?? []).map((action) => ({
+          ...action,
+          requiresApproval: false,
+        }));
   return {
     id: managerEvidenceId(
       "judgment",
@@ -7317,7 +7328,7 @@ function managerJudgmentPacket(input: {
     evidenceIds,
     agentResultIds,
     protocolTraceIds,
-    proposedActions: input.proposedActions ?? [],
+    proposedActions,
     createdAt: input.createdAt,
     ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
   };
@@ -9655,6 +9666,21 @@ async function enrichManagerAssistantContext(
       context.activeRoundTitle = activeRound.title;
       context.activeRoundStatus = activeRound.status;
     }
+    const preflightLines = formatManagerAssistantStatePreflightContextLines(
+      commandFlow,
+      activeRound,
+    );
+    if (preflightLines.length) context.projectStatePreflight = preflightLines;
+    try {
+      const statusReports = await readManagerAssistantStatusReports(stores.repoRoot, 5);
+      const statusReportLines = formatManagerAssistantStatusReportContextLines(
+        statusReports.reports,
+        activeRound?.id ?? context.activeRoundId,
+      );
+      if (statusReportLines.length) context.projectStatusReports = statusReportLines;
+    } catch (error) {
+      warnings.push(`assistant status report context failed: ${errorMessage(error)}`);
+    }
     const activeDecisionLines = commandFlow.decisions
       .filter((decision) => decision.status === "active")
       .slice(0, 5)
@@ -9696,14 +9722,38 @@ function formatManagerArtifactContextLine(artifact: ManagerArtifact): string {
 }
 
 function formatManagerCommandFlowContextLines(flow: ManagerCommandFlowResponse): string[] {
+  const approvalActionCount = countManagerApprovalActions(flow.judgments);
   const lines = [
     `stage=${flow.readiness.stage}; ready=${flow.readiness.ready ? "yes" : "no"}`,
     `next=${flow.nextAction.kind}: ${flow.nextAction.label}`,
+    `approval gate=${approvalActionCount > 0 ? "approval_required" : "none"}; approvalActions=${approvalActionCount}`,
   ];
   if (flow.activeRound) {
     lines.push(
       `active round=${flow.activeRound.id}; title=${flow.activeRound.title}; status=${flow.activeRound.status}; phase=${flow.activeRound.phase}`,
     );
+  }
+  if (flow.judgments.length) {
+    lines.push(
+      `judgments=${flow.judgments.length}; approvalJudgments=${
+        flow.judgments.filter((judgment) =>
+          judgment.proposedActions.some((action) => action.requiresApproval),
+        ).length
+      }`,
+    );
+    lines.push(
+      ...flow.judgments.slice(0, 3).map((judgment) => {
+        const judgmentApprovalActions = judgment.proposedActions.filter(
+          (action) => action.requiresApproval,
+        ).length;
+        return `judgment=${judgment.priority}/${judgment.verdict}; approvalActions=${judgmentApprovalActions}; summary=${compactManagerContextText(
+          judgment.summary,
+          140,
+        )}`;
+      }),
+    );
+  } else {
+    lines.push("judgments=0");
   }
   if (flow.readiness.userCheckRequired) lines.push("user check required");
   lines.push(
@@ -9718,6 +9768,107 @@ function formatManagerCommandFlowContextLines(flow: ManagerCommandFlowResponse):
   );
   lines.push(...flow.readiness.warnings.slice(0, 3).map((warning) => `warning: ${warning}`));
   return lines;
+}
+
+function formatManagerAssistantStatePreflightContextLines(
+  flow: ManagerCommandFlowResponse,
+  activeRound: ManagerRound | undefined,
+): string[] {
+  const approvalActionCount = countManagerApprovalActions(flow.judgments);
+  const approvalJudgmentCount = flow.judgments.filter((judgment) =>
+    judgment.proposedActions.some((action) => action.requiresApproval),
+  ).length;
+  const lines = [
+    "source priority: command-flow > assistant status reports > manager chat history",
+    `current project=${flow.project.id}; status=${flow.project.status}`,
+    `current stage=${flow.readiness.stage}; ready=${flow.readiness.ready ? "yes" : "no"}; next=${flow.nextAction.kind}: ${compactManagerContextText(
+      flow.nextAction.label,
+      140,
+    )}`,
+    `current approval gate=${approvalActionCount > 0 ? "approval_required" : "none"}; approvalActions=${approvalActionCount}; approvalJudgments=${approvalJudgmentCount}`,
+  ];
+  if (activeRound) {
+    lines.push(
+      `current round=${activeRound.id}; title=${compactManagerContextText(
+        activeRound.title,
+        140,
+      )}; status=${activeRound.status}; phase=${activeRound.phase}`,
+    );
+  } else {
+    lines.push("current round=none");
+  }
+  if (!flow.judgments.length) {
+    lines.push("current judgments=0");
+    return lines;
+  }
+  for (const judgment of flow.judgments.slice(0, 3)) {
+    const judgmentApprovalActions = judgment.proposedActions.filter(
+      (action) => action.requiresApproval,
+    ).length;
+    lines.push(
+      `current judgment=${judgment.id}; priority=${judgment.priority}; verdict=${judgment.verdict}; approvalActions=${judgmentApprovalActions}; summary=${compactManagerContextText(
+        judgment.summary,
+        140,
+      )}`,
+    );
+  }
+  return lines;
+}
+
+function countManagerApprovalActions(judgments: ManagerJudgmentPacket[]): number {
+  return judgments.reduce(
+    (total, judgment) =>
+      total + judgment.proposedActions.filter((action) => action.requiresApproval).length,
+    0,
+  );
+}
+
+function formatManagerAssistantStatusReportContextLines(
+  reports: ManagerAssistantStatusReport[],
+  activeRoundId: string | undefined,
+): string[] {
+  const latest = reports[0];
+  if (!latest) return [];
+  const lines = [
+    `latest report (${managerAssistantStatusReportRelevance(latest, activeRoundId)}): ${formatManagerAssistantStatusReportContextLine(
+      latest,
+    )}`,
+  ];
+  if (activeRoundId && latest.round && latest.round !== activeRoundId) {
+    lines.push(
+      `latest report is stale for active round=${activeRoundId}; prefer command-flow unless a matching report exists`,
+    );
+  }
+  const matching = activeRoundId
+    ? reports.find((report) => report.round === activeRoundId)
+    : undefined;
+  if (matching && matching.id !== latest.id) {
+    lines.push(
+      `latest active-round report: ${formatManagerAssistantStatusReportContextLine(matching)}`,
+    );
+  }
+  return lines;
+}
+
+function managerAssistantStatusReportRelevance(
+  report: ManagerAssistantStatusReport,
+  activeRoundId: string | undefined,
+): string {
+  if (!report.round) return "no round";
+  if (!activeRoundId) return `round=${report.round}`;
+  return report.round === activeRoundId
+    ? `active round=${activeRoundId}`
+    : `stale round=${report.round}`;
+}
+
+function formatManagerAssistantStatusReportContextLine(
+  report: ManagerAssistantStatusReport,
+): string {
+  const message = compactManagerContextText(report.message, 180);
+  const detail = compactManagerContextText(report.detail ?? "", 180);
+  return `phase=${report.phase}; level=${report.level}; round=${report.round ?? "none"}; scope=${report.scope ?? "none"}; message=${message}${
+    detail ? `; detail=${detail}` : ""
+  }`;
 }
 
 function formatManagerProtocolContextLines(protocol: ManagerProtocolState): string[] {
@@ -10600,6 +10751,14 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
   return [
     browserContext ? `## Current Browser Context\n${browserContext}` : "",
     shortReplyHint,
+    [
+      "## Current State Preflight Rule",
+      "- Before answering, reconcile Current Browser Context, assistantState, and prior chat history.",
+      "- Treat `current state preflight` and `project command flow` as fresher than prior manager chat or stale assistant status reports.",
+      "- If prior assistant text conflicts with the current command-flow state, open with a concise correction and then answer the current request.",
+      "- For status or diagnosis questions, answer current project, stage, next action, and approval requirement first.",
+      "- Do not ask the user to run PowerShell or CLI commands when a manager API route can observe or mutate the same state.",
+    ].join("\n"),
     `## Current User Request\n${input.message}`,
     [
       "## Current User Request ASCII-Safe Copy",
@@ -10609,6 +10768,7 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     "## Response Requirements\nAnswer only the current user request. Use the active Claude session for conversation memory. Use observed facts for operational claims.",
     "Never answer only `No response requested.`. Every manager-chat user message requires a visible Korean answer, progress update, or failure report.",
     "Start with the direct answer, current decision, or action taken in 1-3 concise Korean sentences.",
+    "If the user asked a question, answer the question first. Do not replace the answer with implementation narration or tool status.",
     "Do not paste raw execution logs, HTTP payloads, long id lists, or tool transcripts into the manager conversation unless the user explicitly asks for raw detail. Put those details in status reports, task observation, or logs.",
     "Never echo prompt boilerplate such as `Current Browser Context`, `Current User Request`, `Current User Request ASCII-Safe Copy`, `Continue from where you left off`, or `No response requested` into the user-facing answer.",
     "If the latest assistant status report is for a different project or round than the active command flow, explicitly call that report stale instead of treating it as current.",
@@ -11298,6 +11458,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Do not output artificial conversation labels such as `User:`, `Assistant:`, `A:`, or `B:` unless the user explicitly asks for that format.",
     "- Separate planned checks from observed facts. A bracketed checklist is not evidence that the check ran.",
     "- Keep manager conversation messages short and decision-oriented. Use assistant status reports, task observations, and logs for verbose evidence.",
+    "- If the user asks a direct question, answer that question before explaining process, tools, or planned follow-up work.",
     "- Never echo internal prompt headings, browser context blocks, ASCII-safe copies, or hidden continuation directives in user-facing replies.",
     "",
     "## Supervisor Boundary",
@@ -12934,12 +13095,16 @@ function normalizeAssistantContext(input: unknown): ManagerAssistantChatContext 
   const projectBlockers = normalizeAssistantContextStringList(input.projectBlockers);
   const projectArtifacts = normalizeAssistantContextStringList(input.projectArtifacts);
   const projectCommandFlow = normalizeAssistantContextStringList(input.projectCommandFlow);
+  const projectStatePreflight = normalizeAssistantContextStringList(input.projectStatePreflight);
+  const projectStatusReports = normalizeAssistantContextStringList(input.projectStatusReports);
   const projectProtocol = normalizeAssistantContextStringList(input.projectProtocol);
   const projectWarnings = normalizeAssistantContextStringList(input.projectWarnings);
   if (projectDecisions.length) context.projectDecisions = projectDecisions;
   if (projectBlockers.length) context.projectBlockers = projectBlockers;
   if (projectArtifacts.length) context.projectArtifacts = projectArtifacts;
   if (projectCommandFlow.length) context.projectCommandFlow = projectCommandFlow;
+  if (projectStatePreflight.length) context.projectStatePreflight = projectStatePreflight;
+  if (projectStatusReports.length) context.projectStatusReports = projectStatusReports;
   if (projectProtocol.length) context.projectProtocol = projectProtocol;
   if (projectWarnings.length) context.projectWarnings = projectWarnings;
   return Object.keys(context).length ? context : undefined;
@@ -12969,7 +13134,17 @@ function formatManagerAssistantBrowserContext(
   appendManagerAssistantContextList(lines, "active project decisions", context.projectDecisions);
   appendManagerAssistantContextList(lines, "open project blockers", context.projectBlockers);
   appendManagerAssistantContextList(lines, "active project artifacts", context.projectArtifacts);
+  appendManagerAssistantContextList(
+    lines,
+    "current state preflight",
+    context.projectStatePreflight,
+  );
   appendManagerAssistantContextList(lines, "project command flow", context.projectCommandFlow);
+  appendManagerAssistantContextList(
+    lines,
+    "assistant status reports",
+    context.projectStatusReports,
+  );
   appendManagerAssistantContextList(lines, "project protocol state", context.projectProtocol);
   appendManagerAssistantContextList(lines, "project context warnings", context.projectWarnings);
   return lines.join("\n");

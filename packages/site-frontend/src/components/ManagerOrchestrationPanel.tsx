@@ -376,6 +376,13 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       (judgment) => !dismissedJudgmentIds()[judgment.id],
     );
   });
+  const actionableApprovalJudgments = createMemo(() =>
+    visibleJudgments().filter(
+      (judgment) =>
+        judgment.priority === "approval" &&
+        judgment.proposedActions.some((action) => action.requiresApproval),
+    ),
+  );
   const visibleTabGroups = createMemo(() =>
     adminDetailOpen() ? ORCHESTRATION_INFO_TAB_GROUPS : USER_ORCHESTRATION_INFO_TAB_GROUPS,
   );
@@ -598,7 +605,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               />
             </Show>
             <ManagerApprovalInbox
-              judgments={visibleJudgments()}
+              judgments={actionableApprovalJudgments()}
               busy={props.flowBusy || props.actionBusy || props.approvalActionBusy}
               status={props.approvalActionStatus}
               error={props.approvalActionError}
@@ -1042,12 +1049,10 @@ const ManagerApprovalInbox: Component<{
   const approvalJudgments = createMemo(() =>
     props.judgments.filter((judgment) => judgment.priority === "approval"),
   );
-  const visibleJudgments = createMemo(() =>
-    (approvalJudgments().length > 0 ? approvalJudgments() : props.judgments).slice(0, 4),
-  );
+  const visibleJudgments = createMemo(() => approvalJudgments().slice(0, 4));
   const approvalCount = createMemo(() => approvalJudgments().length);
   return (
-    <Show when={props.judgments.length > 0 || Boolean(props.error || props.status)}>
+    <Show when={approvalCount() > 0 || Boolean(props.error || props.status)}>
       <section
         class="manager-approval-inbox"
         aria-label={t("manager.orchestration.approval.title")}

@@ -1682,6 +1682,8 @@ export interface ManagerAssistantChatContext {
   projectBlockers?: string[];
   projectArtifacts?: string[];
   projectCommandFlow?: string[];
+  projectStatePreflight?: string[];
+  projectStatusReports?: string[];
   projectProtocol?: string[];
   projectWarnings?: string[];
 }
