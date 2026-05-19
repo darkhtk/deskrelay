@@ -415,6 +415,7 @@ const MANAGER_ORCHESTRATION_FILE = "orchestration-state.json";
 const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
 const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
 const MANAGER_ASSISTANT_STATUS_CURRENT_MS = 30 * 60_000;
+const MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS_DEFAULT = 15_000;
 const BROWSER_CLIENT_TTL_MS = 45_000;
 
 export function createSiteApp(options: SiteAppOptions): Hono {
@@ -10447,19 +10448,49 @@ function streamManagerAssistantChat(
 ): Response {
   const encoder = new TextEncoder();
   let closed = false;
+  let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      let lastEmittedAt = Date.now();
       const emit = (event: ManagerAssistantStreamEvent) => {
         if (closed) return;
         try {
+          lastEmittedAt = Date.now();
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         } catch {
           closed = true;
         }
       };
+      const stopKeepalive = () => {
+        if (keepaliveTimer === undefined) return;
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = undefined;
+      };
+      const startKeepalive = (startedAt: number) => {
+        stopKeepalive();
+        const keepaliveMs = readPositiveEnvMs(
+          "DESKRELAY_MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS",
+          MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS_DEFAULT,
+        );
+        const idleThresholdMs = Math.max(1, Math.floor(keepaliveMs * 0.8));
+        keepaliveTimer = setInterval(() => {
+          if (closed) return;
+          if (Date.now() - lastEmittedAt < idleThresholdMs) return;
+          emit(
+            managerAssistantStatusEvent({
+              phase: "running",
+              tone: "thinking",
+              main: "생각 중",
+              detail: `응답 대기 ${formatManagerAssistantElapsedMs(Date.now() - startedAt)}`,
+            }),
+          );
+        }, keepaliveMs);
+        keepaliveTimer.unref?.();
+      };
 
       void (async () => {
         const started = Date.now();
+        startKeepalive(started);
         try {
           emit(
             managerAssistantStatusEvent({
@@ -10514,6 +10545,7 @@ function streamManagerAssistantChat(
         } catch (error) {
           emit({ type: "error", error: errorMessage(error) });
         } finally {
+          stopKeepalive();
           if (!closed) {
             closed = true;
             try {
@@ -10527,6 +10559,10 @@ function streamManagerAssistantChat(
     },
     cancel() {
       closed = true;
+      if (keepaliveTimer !== undefined) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = undefined;
+      }
     },
   });
 
@@ -11210,6 +11246,14 @@ function managerAssistantAssistantTextFromEvent(event: Record<string, unknown>):
 function truncateForStatus(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+}
+
+function formatManagerAssistantElapsedMs(valueMs: number): string {
+  const seconds = Math.max(1, Math.floor(valueMs / 1000));
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds > 0 ? `${minutes}분 ${remainingSeconds}초` : `${minutes}분`;
 }
 
 export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {

@@ -2541,6 +2541,56 @@ process.stdin.on("end", () => {
     expect(text).toContain("streamed 업데이트 상태 확인");
   });
 
+  test("manager assistant stream keeps the UI alive while waiting for a long response", async () => {
+    const cwd = join(tmpdir(), "deskrelay-assistant-keepalive-test");
+    const previousKeepaliveMs = process.env.DESKRELAY_MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS;
+    process.env.DESKRELAY_MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS = "5";
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: {
+        cwd,
+        runner: async (input) => {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          return {
+            command: "fake-claude -p",
+            text: `streamed ${input.message}`,
+          };
+        },
+      },
+    });
+
+    try {
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat/stream", {
+          message: "긴 응답 대기",
+          history: [],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const events = parseSseEvents(await res.text());
+      expect(
+        events.some((event) => {
+          const status = event.status as { main?: unknown; detail?: unknown } | undefined;
+          return (
+            event.type === "status" &&
+            status?.main === "생각 중" &&
+            typeof status.detail === "string" &&
+            status.detail.includes("응답 대기")
+          );
+        }),
+      ).toBe(true);
+      expect(events.some((event) => event.type === "message")).toBe(true);
+    } finally {
+      if (previousKeepaliveMs === undefined) {
+        delete process.env.DESKRELAY_MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS;
+      } else {
+        process.env.DESKRELAY_MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS = previousKeepaliveMs;
+      }
+    }
+  });
+
   test("manager assistant stream tolerates client cancellation", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-cancel-"));
     let runnerCompleted = false;

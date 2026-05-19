@@ -830,6 +830,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     let capturedSessionId: string | null = null;
     let responseCwd = current.cwd;
     let visibleAssistantReplySeen = false;
+    let keepAwaitingManagerReply = false;
 
     try {
       await api.managerAssistantChatStream(
@@ -869,6 +870,12 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             if (finalText) visibleAssistantReplySeen = true;
           } else if (event.type === "error") {
             const visibleError = managerAssistantVisibleError(event.error);
+            if (isManagerAssistantLongWaitError(event.error)) {
+              keepAwaitingManagerReply = true;
+              setError(null);
+              setStatus({ tone: "thinking", main: "생각 중", detail: visibleError });
+              return;
+            }
             if (!visibleAssistantReplySeen) {
               appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 오류: ${visibleError}`));
               visibleAssistantReplySeen = true;
@@ -881,9 +888,14 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       );
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        const message = managerAssistantVisibleError(
-          err instanceof Error ? err.message : String(err),
-        );
+        const rawMessage = err instanceof Error ? err.message : String(err);
+        const message = managerAssistantVisibleError(rawMessage);
+        if (isManagerAssistantLongWaitError(rawMessage)) {
+          keepAwaitingManagerReply = true;
+          setError(null);
+          setStatus({ tone: "thinking", main: "생각 중", detail: message });
+          return;
+        }
         if (!visibleAssistantReplySeen) {
           appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 요청 실패: ${message}`));
           visibleAssistantReplySeen = true;
@@ -896,7 +908,18 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       if (managerAssistantAbort === abort) managerAssistantAbort = undefined;
       removeRun(runId);
       if (capturedSessionId) await persistManagerSession(capturedSessionId, responseCwd);
-      setStatus((currentStatus) => (currentStatus?.tone === "warning" ? currentStatus : null));
+      setStatus((currentStatus) => {
+        if (keepAwaitingManagerReply) {
+          return (
+            currentStatus ?? {
+              tone: "thinking",
+              main: "생각 중",
+              detail: "관리자 응답을 기다리는 중입니다.",
+            }
+          );
+        }
+        return currentStatus?.tone === "warning" ? currentStatus : null;
+      });
       setReloadSeq((seq) => seq + 1);
       void refetchConversationState();
       window.setTimeout(() => setReloadSeq((seq) => seq + 1), 750);
@@ -2112,6 +2135,9 @@ function managerStatusFromAssistantStreamEvent(
     return { tone: "thinking", main: "응답 반영 중" };
   }
   if (event.type === "error") {
+    if (isManagerAssistantLongWaitError(event.error)) {
+      return { tone: "thinking", main: "생각 중", detail: managerAssistantVisibleError(event.error) };
+    }
     return { tone: "warning", main: "Assistant 오류", detail: event.error };
   }
   return null;
@@ -2123,20 +2149,29 @@ function managerComposerActionLabel(status: ManagerVisibleStatus, inFlight = fal
   if (/오류|error|failed|실패/i.test(text)) return "오류";
   if (/응답|답변/i.test(text) && status.tone === "warning") return "응답 필요";
   if (/승인|approval|permission/i.test(text)) return "승인 대기";
+  if (/생각|판단|작성|확인\s*중|대기|기다리는/i.test(text)) return "생각 중";
   if (/요청|접수|큐|queued/i.test(text)) return "요청 접수";
   if (/수신|응답|답변|response/i.test(text)) return "응답 확인 중";
   if (/실행|진행|running|thinking/i.test(text)) return "진행 중";
-  if (status.tone === "thinking") return "입력 가능";
+  if (status.tone === "thinking") return "진행 중";
   if (status.tone === "warning") return "확인 필요";
   return "입력 가능";
 }
 
 function managerAssistantVisibleError(error: string): string {
   const trimmed = error.trim();
-  if (/manager assistant cli timed out after \d+ms/i.test(trimmed)) {
+  if (isManagerAssistantLongWaitError(trimmed)) {
     return "관리자 응답이 오래 걸리고 있습니다. 답변이 올 때까지 생각 중 상태를 유지합니다.";
   }
   return trimmed || "관리자 Assistant 요청을 완료하지 못했습니다.";
+}
+
+function isManagerAssistantLongWaitError(error: string): boolean {
+  const trimmed = error.trim();
+  return (
+    /manager assistant cli timed out after \d+ms/i.test(trimmed) ||
+    /process timed out after \d+ms/i.test(trimmed)
+  );
 }
 
 function managerStatusFromReport(

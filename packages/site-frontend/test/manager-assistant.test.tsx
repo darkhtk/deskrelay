@@ -518,6 +518,105 @@ describe("ManagerAssistant", () => {
     expect(document.body.textContent).toContain("즉시 보이는 새 응답");
   });
 
+  test("keeps long manager waits as thinking status instead of transcript errors", async () => {
+    setLocale("ko");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-long-wait",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes("/api/manager/assistant/status")) {
+        return Response.json({ generatedAt: "2026-05-13T00:00:00.000Z", reports: [] });
+      }
+      if (url.includes("/api/manager/assistant/chat/stream") && init?.method === "POST") {
+        return new Response(
+          [
+            `data: ${JSON.stringify({
+              type: "status",
+              status: { phase: "running", tone: "thinking", main: "생각 중" },
+            })}`,
+            `data: ${JSON.stringify({
+              type: "error",
+              error: "Manager assistant CLI timed out after 600000ms.",
+            })}`,
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as { method?: string };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-long-wait",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Session",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          return Response.json({
+            result: {
+              sessionId: "manager-session-long-wait",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    const input = await screen.findByPlaceholderText(/관리자에게 보내기/);
+    fireEvent.input(input, { target: { value: "계속 진행" } });
+    await waitFor(() => {
+      expect((screen.getByRole("button", { name: "전송" }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("생각 중");
+    });
+    expect(document.body.textContent).not.toContain("Manager assistant CLI timed out");
+    expect(document.body.textContent).not.toContain("관리자 Assistant 오류");
+  });
+
   test("keeps empty manager replies out of the transcript", async () => {
     setLocale("en");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
