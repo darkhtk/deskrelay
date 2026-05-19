@@ -74,6 +74,11 @@ import {
   type ManagerNetworkAddress,
   type ManagerNetworkKind,
   type ManagerNetworkStatus,
+  type ManagerOrchestrationAction,
+  type ManagerOrchestrationActionStatus,
+  type ManagerOrchestrationFlowNode,
+  type ManagerOrchestrationPhase,
+  type ManagerOrchestrationSnapshotResponse,
   type ManagerProject,
   type ManagerProjectCharter,
   type ManagerProjectCharterResponse,
@@ -154,9 +159,11 @@ import {
   type ManagerWorkerCheckResult,
   type ManagerWorkerListResponse,
   type ManagerWorkerProfile,
+  type ManagerWorkerRuntimeState,
   type ManagerWorkerRun,
   type ManagerWorkerRunIntegrity,
   type ManagerWorkerRunLedgerResponse,
+  type ManagerWorkerView,
   type UpdateState,
   diagnosticStepFromCheck,
   normalizeDiagnosticStep,
@@ -863,6 +870,24 @@ export function createSiteApp(options: SiteAppOptions): Hono {
         now: new Date(),
       }),
     );
+  });
+
+  app.get("/api/manager/projects/:id/orchestration", async (c) => {
+    const project = await managerProjectStore.get(c.req.param("id"));
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    await syncManagerAgentsWithTasks(managerOrchestrationStore, managerTaskStore);
+    const flow = await buildManagerCommandFlow({
+      project,
+      orchestrationStore: managerOrchestrationStore,
+      taskStore: managerTaskStore,
+      decisionStore: managerDecisionStore,
+      blockerStore: managerBlockerStore,
+      artifactStore: managerArtifactStore,
+      protocolStore: managerProtocolStore,
+      repoRoot: managerRepoRoot,
+      now: new Date(),
+    });
+    return c.json(buildManagerOrchestrationSnapshot(flow, new Date(flow.generatedAt)));
   });
 
   app.get("/api/manager/projects/:id/evidence", async (c) => {
@@ -3618,6 +3643,11 @@ const SITE_ROUTE_CAPABILITIES = [
   },
   {
     method: "GET",
+    path: "/api/manager/projects/:id/orchestration",
+    description: "Read the canonical orchestration snapshot for one manager project.",
+  },
+  {
+    method: "GET",
     path: "/api/manager/projects/:id/evidence",
     description: "Read derived evidence items used for manager round judgment.",
   },
@@ -4251,6 +4281,7 @@ function serverCapabilities(options: SiteAppOptions): ManagerCapabilities {
       "manager.assistant-chat",
       "manager.projects",
       "manager.project-command-flow",
+      "manager.project-orchestration-snapshot",
       "manager.project-protocol",
       "manager.wizard-intent-events",
       "manager.orchestration-agents",
@@ -6023,6 +6054,385 @@ async function buildManagerCommandFlow(
   };
 }
 
+function buildManagerOrchestrationSnapshot(
+  flow: ManagerCommandFlowResponse,
+  now: Date,
+): ManagerOrchestrationSnapshotResponse {
+  const workers = flow.workerRuns.map((run) => managerWorkerViewFromRun(run, now));
+  const activeWorkers = workers.filter((worker) =>
+    ["queued", "starting", "active", "quiet_but_alive", "waiting_external"].includes(
+      worker.runtimeState,
+    ),
+  );
+  const approvalActions = buildManagerOrchestrationActions(flow, now);
+  const availableApprovalActions = approvalActions.filter(
+    (action) => action.status === "available" && action.requiresApproval,
+  );
+  const openBlockers = flow.blockers.filter((blocker) => blocker.status === "open");
+  const phase = managerOrchestrationPhase({
+    flow,
+    activeWorkerCount: activeWorkers.length,
+    availableApprovalCount: availableApprovalActions.length,
+    openBlockerCount: openBlockers.length,
+  });
+  const current = managerOrchestrationCurrentText({
+    phase,
+    flow,
+    activeWorkerCount: activeWorkers.length,
+    availableApprovalCount: availableApprovalActions.length,
+    openBlockerCount: openBlockers.length,
+  });
+  const activeTaskIds = workers
+    .filter((worker) =>
+      ["queued", "starting", "active", "quiet_but_alive", "waiting_external"].includes(
+        worker.runtimeState,
+      ),
+    )
+    .map((worker) => worker.taskId)
+    .filter(isPresent);
+  const activeAgentIds = workers
+    .filter((worker) =>
+      ["queued", "starting", "active", "quiet_but_alive", "waiting_external"].includes(
+        worker.runtimeState,
+      ),
+    )
+    .map((worker) => worker.agentId)
+    .filter(isPresent);
+  const snapshot = {
+    projectId: flow.project.id,
+    phase,
+    currentLabel: current.label,
+    currentReason: current.reason,
+    flowStage: flow.readiness.stage,
+    ...(flow.activeRound?.id ? { activeRoundId: flow.activeRound.id } : {}),
+    activeTaskIds: uniqueStrings(activeTaskIds),
+    activeAgentIds: uniqueStrings(activeAgentIds),
+    approvalActions,
+    flow: buildManagerOrchestrationFlowNodes(phase, flow),
+    workers,
+    blockers: openBlockers,
+    updatedAt: latestIsoString([
+      flow.generatedAt,
+      flow.project.updatedAt,
+      flow.activeRound?.updatedAt,
+      ...workers.map((worker) => worker.updatedAt),
+      ...openBlockers.map((blocker) => blocker.updatedAt),
+      ...flow.judgments.map((judgment) => judgment.createdAt),
+    ]) ?? flow.generatedAt,
+  };
+  return {
+    generatedAt: flow.generatedAt,
+    projectId: flow.project.id,
+    snapshot,
+  };
+}
+
+function managerOrchestrationPhase(input: {
+  flow: ManagerCommandFlowResponse;
+  activeWorkerCount: number;
+  availableApprovalCount: number;
+  openBlockerCount: number;
+}): ManagerOrchestrationPhase {
+  if (input.flow.project.status === "completed" || input.flow.readiness.stage === "completed") {
+    return "completed";
+  }
+  if (input.activeWorkerCount > 0 || input.flow.nextAction.kind === "wait") return "observing";
+  if (input.availableApprovalCount > 0) return "needs_approval";
+  if (
+    input.flow.project.status === "blocked" ||
+    ["blocked", "failed", "cancelled"].includes(input.flow.activeRound?.status ?? "") ||
+    input.openBlockerCount > 0
+  ) {
+    return "blocked";
+  }
+  if (input.flow.readiness.stage === "replanning") return "replanning";
+  if (input.flow.readiness.stage === "review") return "reviewing";
+  if (input.flow.readiness.stage === "running") return "running";
+  if (input.flow.readiness.stage === "ready_to_start") return "ready";
+  if (input.flow.readiness.stage === "draft" || input.flow.readiness.stage === "protocol_ready") {
+    return "planning";
+  }
+  return "idle";
+}
+
+function managerOrchestrationCurrentText(input: {
+  phase: ManagerOrchestrationPhase;
+  flow: ManagerCommandFlowResponse;
+  activeWorkerCount: number;
+  availableApprovalCount: number;
+  openBlockerCount: number;
+}): { label: string; reason: string } {
+  switch (input.phase) {
+    case "completed":
+      return {
+        label: "Orchestration completed",
+        reason: input.flow.project.summary ?? "The project is marked complete.",
+      };
+    case "observing":
+      return {
+        label: "Observing worker progress",
+        reason:
+          input.activeWorkerCount > 0
+            ? `${input.activeWorkerCount} worker run(s) are still active.`
+            : "The command flow recommends waiting for fresh worker signals.",
+      };
+    case "needs_approval":
+      return {
+        label: "Approval required",
+        reason: `${input.availableApprovalCount} approval action(s) are available after preflight.`,
+      };
+    case "blocked":
+      return {
+        label: "Blocked",
+        reason:
+          input.flow.activeRound?.error ??
+          input.flow.project.error ??
+          input.flow.blockers.find((blocker) => blocker.status === "open")?.detail ??
+          `${input.openBlockerCount} open blocker(s) require attention.`,
+      };
+    case "replanning":
+      return {
+        label: "Replanning",
+        reason:
+          input.flow.project.lastDirectionChange?.requestedChange ??
+          "The project is waiting for a revised direction.",
+      };
+    case "reviewing":
+      return {
+        label: "Reviewing round result",
+        reason: input.flow.activeRound?.summary ?? "The active round is ready for review.",
+      };
+    case "ready":
+      return {
+        label: "Ready to start",
+        reason: "Protocol and charter readiness checks passed.",
+      };
+    case "planning":
+      return {
+        label: "Planning",
+        reason:
+          input.flow.readiness.warnings[0] ??
+          input.flow.readiness.missingProtocolFiles[0] ??
+          "Project setup is still being prepared.",
+      };
+    case "running":
+      return {
+        label: "Running orchestration",
+        reason: input.flow.activeRound?.objective ?? "A round is currently running.",
+      };
+    case "applying_action":
+      return {
+        label: "Applying approved action",
+        reason: "An approved action is being applied.",
+      };
+    case "idle":
+    default:
+      return {
+        label: "Idle",
+        reason: "No active orchestration work is selected.",
+      };
+  }
+}
+
+function buildManagerOrchestrationActions(
+  flow: ManagerCommandFlowResponse,
+  now: Date,
+): ManagerOrchestrationAction[] {
+  const runByTaskId = new Map<string, ManagerWorkerRun>();
+  for (const run of flow.workerRuns) {
+    if (run.taskId) runByTaskId.set(run.taskId, run);
+  }
+  const actions: ManagerOrchestrationAction[] = [];
+  for (const judgment of flow.judgments) {
+    for (const action of judgment.proposedActions) {
+      if (!action.requiresApproval && judgment.priority !== "approval") continue;
+      const preflight = managerOrchestrationActionPreflight(action, judgment, runByTaskId, flow, now);
+      actions.push({
+        id: action.id,
+        sourceJudgmentId: judgment.id,
+        type: action.type,
+        title: action.title,
+        description: action.rationale,
+        risk: action.risk,
+        requiresApproval: action.requiresApproval,
+        target: {
+          projectId: action.projectId,
+          ...(action.roundId ? { roundId: action.roundId } : {}),
+          ...(action.taskId ? { taskId: action.taskId } : {}),
+          ...(action.agentId ? { agentId: action.agentId } : {}),
+        },
+        status: preflight.status,
+        preflight: {
+          valid: preflight.status === "available",
+          validWhen: preflight.validWhen,
+          checkedAt: now.toISOString(),
+          ...(preflight.failureReason ? { failureReason: preflight.failureReason } : {}),
+        },
+        payload: action.payload,
+        evidenceIds: action.evidenceIds,
+        createdAt: judgment.createdAt,
+        ...(judgment.expiresAt ? { expiresAt: judgment.expiresAt } : {}),
+      });
+    }
+  }
+  return actions.sort((left, right) => managerOrchestrationActionSort(left, right));
+}
+
+function managerOrchestrationActionPreflight(
+  action: ManagerProposedAction,
+  judgment: ManagerJudgmentPacket,
+  runByTaskId: Map<string, ManagerWorkerRun>,
+  flow: ManagerCommandFlowResponse,
+  now: Date,
+): {
+  status: ManagerOrchestrationActionStatus;
+  validWhen: string[];
+  failureReason?: string;
+} {
+  const validWhen = [`judgment:${judgment.verdict}`, `action:${action.type}`];
+  if (judgment.expiresAt && Date.parse(judgment.expiresAt) <= now.getTime()) {
+    return {
+      status: "expired",
+      validWhen,
+      failureReason: "The source judgment expired before this action was executed.",
+    };
+  }
+  if (action.type === "retry_task") {
+    if (!action.taskId) {
+      return {
+        status: "preflight_failed",
+        validWhen,
+        failureReason: "Retry action has no task target.",
+      };
+    }
+    const run = runByTaskId.get(action.taskId);
+    if (!run) {
+      return {
+        status: "stale",
+        validWhen,
+        failureReason: "The target task is no longer present in the worker ledger.",
+      };
+    }
+    if (!managerWorkerRunHasRetryableTask(run)) {
+      return {
+        status: "stale",
+        validWhen,
+        failureReason: `The target task is ${run.status}, so retry is not currently valid.`,
+      };
+    }
+  }
+  if (action.type === "review_round" && flow.activeRound?.status !== "completed") {
+    return {
+      status: "stale",
+      validWhen,
+      failureReason: "Round review is only valid after the active round completes.",
+    };
+  }
+  if (
+    (action.type === "start_next_round" || action.type === "complete_project") &&
+    flow.project.status === "completed"
+  ) {
+    return {
+      status: "stale",
+      validWhen,
+      failureReason: "The project is already completed.",
+    };
+  }
+  return { status: "available", validWhen };
+}
+
+function managerOrchestrationActionSort(
+  left: ManagerOrchestrationAction,
+  right: ManagerOrchestrationAction,
+): number {
+  const statusRank = (status: ManagerOrchestrationActionStatus) =>
+    status === "available" ? 0 : status === "running" ? 1 : status === "preflight_failed" ? 2 : 3;
+  return (
+    statusRank(left.status) - statusRank(right.status) ||
+    managerActionRiskRank(right.risk) - managerActionRiskRank(left.risk) ||
+    left.createdAt.localeCompare(right.createdAt)
+  );
+}
+
+function managerActionRiskRank(risk: ManagerProposedAction["risk"]): number {
+  if (risk === "high") return 3;
+  if (risk === "medium") return 2;
+  return 1;
+}
+
+function managerWorkerViewFromRun(run: ManagerWorkerRun, now: Date): ManagerWorkerView {
+  const label = run.agentLabel ?? run.agentRole ?? run.profile ?? run.taskId ?? run.id;
+  return {
+    id: run.id,
+    runtimeState: managerWorkerRuntimeState(run, now),
+    taskState: run.status,
+    label,
+    ...(run.taskId ? { taskId: run.taskId } : {}),
+    ...(run.roundId ? { roundId: run.roundId } : {}),
+    ...(run.agentId ? { agentId: run.agentId } : {}),
+    ...(run.agentRole ? { agentRole: run.agentRole } : {}),
+    ...(run.profile ? { profile: run.profile } : {}),
+    ...(run.cwd ? { cwd: run.cwd } : {}),
+    ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+    updatedAt: run.updatedAt,
+    ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+    ...(run.completedAt ? { completedAt: run.completedAt } : {}),
+    ...(run.outputPreview ? { outputPreview: run.outputPreview } : {}),
+    ...(run.error ? { error: run.error } : {}),
+    integrity: run.integrity,
+  };
+}
+
+function managerWorkerRuntimeState(run: ManagerWorkerRun, now: Date): ManagerWorkerRuntimeState {
+  if (run.status === "pending") return "queued";
+  if (run.status === "waiting_for_device" || run.status === "restart_required") {
+    return "waiting_external";
+  }
+  if (run.status === "running") {
+    const ageMs = now.getTime() - Date.parse(run.updatedAt);
+    const quietMs = readPositiveEnvMs("DESKRELAY_WORKER_IDLE_MS", WORKER_IDLE_MS_DEFAULT);
+    return Number.isFinite(ageMs) && ageMs > quietMs ? "quiet_but_alive" : "active";
+  }
+  if (run.status === "succeeded") return "completed";
+  if (run.status === "failed") return "failed";
+  if (run.status === "blocked") return "blocked";
+  if (run.status === "cancelled") return "cancelled";
+  return "stale_unknown";
+}
+
+function buildManagerOrchestrationFlowNodes(
+  phase: ManagerOrchestrationPhase,
+  flow: ManagerCommandFlowResponse,
+): ManagerOrchestrationFlowNode[] {
+  const phases: Array<{ phase: ManagerOrchestrationPhase; label: string }> = [
+    { phase: "planning", label: "Planning" },
+    { phase: "ready", label: "Ready" },
+    { phase: "running", label: "Running" },
+    { phase: "observing", label: "Observing" },
+    { phase: "needs_approval", label: "Approval" },
+    { phase: "applying_action", label: "Applying action" },
+    { phase: "reviewing", label: "Review" },
+    { phase: "replanning", label: "Replan" },
+    { phase: "completed", label: "Complete" },
+    { phase: "blocked", label: "Blocked" },
+  ];
+  const currentIndex = phases.findIndex((item) => item.phase === phase);
+  return phases.map((item, index) => ({
+    id: `flow.${item.phase}`,
+    phase: item.phase,
+    label: item.label,
+    status:
+      phase === "blocked" && index === Math.max(0, currentIndex)
+        ? "blocked"
+        : index === currentIndex
+          ? "current"
+          : currentIndex >= 0 && index < currentIndex
+            ? "done"
+            : "pending",
+    ...(item.phase === phase ? { detail: flow.nextAction.label } : {}),
+  }));
+}
+
 function managerProjectWithRoundCommandFlowState(
   project: ManagerProject,
   activeRound: ManagerRound | undefined,
@@ -7473,7 +7883,7 @@ function managerAgentResultRisks(
   }
   if (!run) risks.push("No worker run is linked to this agent.");
   if (evidence.length === 0) risks.push("No evidence item is linked to this role.");
-  if (run?.timedOut) risks.push("Worker timed out.");
+  if (run?.timedOut) risks.push("Worker has a legacy forced-stop flag.");
   return risks.slice(0, 6);
 }
 
@@ -7554,7 +7964,7 @@ function managerRunEvidenceDetail(run: ManagerWorkerRun): string {
     run.durationMs ? `${run.durationMs}ms` : "",
     typeof run.exitCode === "number" ? `exit ${run.exitCode}` : "",
     issues.length > 0 ? `integrity: ${issues.join(", ")}` : "integrity ok",
-    run.timedOut ? "timed out" : "",
+    run.timedOut ? "forced-stop flag" : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -8299,7 +8709,13 @@ function buildManagerRoundHealthIssues(
       );
     } else if (run.timedOut) {
       issues.push(
-        managerRoundRunIssue(run, "worker-timeout", "blocked", "Worker timed out.", "retry-worker"),
+        managerRoundRunIssue(
+          run,
+          "worker-stopped",
+          "blocked",
+          "Worker has a legacy forced-stop flag.",
+          "inspect-worker",
+        ),
       );
     } else if (
       ["pending", "running", "waiting_for_device", "restart_required"].includes(run.status)
@@ -9371,9 +9787,11 @@ function managerTaskStaleReason(task: ManagerTask, nowMs: number): string | unde
 }
 
 function managerTaskStaleThresholdMs(task: ManagerTask): number {
+  if (task.kind === "run-worker") {
+    return readPositiveEnvMs("DESKRELAY_WORKER_STALE_MS", 30 * 60_000);
+  }
   const timeoutMs = managerTaskTimeoutMs(task);
   if (timeoutMs > 0) return timeoutMs + 60_000;
-  if (task.kind === "run-worker") return DEFAULT_MANAGER_ASSISTANT_TIMEOUT_MS + 60_000;
   return 30 * 60_000;
 }
 
@@ -9506,8 +9924,6 @@ function streamManagerTaskObservation(store: ManagerTaskStore, taskId: string): 
   const encoder = new TextEncoder();
   let closed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
-  const started = Date.now();
-  const maxDurationMs = 120_000;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -9547,7 +9963,7 @@ function streamManagerTaskObservation(store: ManagerTaskStore, taskId: string): 
               observation,
             });
           }
-          if (observation.terminal || Date.now() - started > maxDurationMs) close();
+          if (observation.terminal) close();
         } catch (error) {
           emit({ type: "error", error: errorMessage(error) });
           close();
@@ -11220,14 +11636,14 @@ interface ManagerWorkerCliRunInput {
   profile: ManagerWorkerProfile;
   prompt: string;
   cwd: string;
-  timeoutMs: number;
   apiBaseUrl: string;
   repoRoot: string;
   token: string | undefined;
   sessionId?: string;
+  onObservation?: (snapshot: WorkerLivenessSnapshot) => void | Promise<void>;
 }
 
-type ManagerWorkerStopReason = "idle" | "hard-cap" | "crash" | "cancel";
+type ManagerWorkerStopReason = "crash" | "cancel";
 
 interface ManagerWorkerCliRunResult {
   profile: string;
@@ -11282,14 +11698,7 @@ async function runManagerWorkerCli(
     started,
     getLastActivityAt: () => lastActivityAt,
     cwd: input.cwd,
-    legacyTimeoutMs: input.timeoutMs,
-    onKill: () => {
-      try {
-        proc.kill();
-      } catch {
-        // best-effort kill
-      }
-    },
+    ...(input.onObservation ? { onObservation: input.onObservation } : {}),
   });
   const [stdoutResult, stderrResult] = await Promise.all([stdout, stderr]);
   const sessionId = extractClaudeSessionIdFromJsonLines(stdoutResult.text);
@@ -11318,8 +11727,15 @@ interface WorkerLivenessInput {
   started: number;
   getLastActivityAt: () => number;
   cwd: string;
-  legacyTimeoutMs: number;
-  onKill: () => void;
+  onObservation?: (snapshot: WorkerLivenessSnapshot) => void | Promise<void>;
+}
+
+interface WorkerLivenessSnapshot {
+  observedAt: number;
+  elapsedMs: number;
+  stdioIdleMs: number;
+  fsIdleMs: number;
+  quiet: boolean;
 }
 
 interface WorkerLivenessResult {
@@ -11331,8 +11747,7 @@ interface WorkerLivenessResult {
 }
 
 const WORKER_IDLE_MS_DEFAULT = 300_000;
-const WORKER_MAX_MS_DEFAULT = 3_600_000;
-const WORKER_LIVENESS_TICK_MS = 30_000;
+const WORKER_LIVENESS_TICK_MS_DEFAULT = 30_000;
 
 function readPositiveEnvMs(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -11346,48 +11761,50 @@ async function awaitWorkerWithLiveness(
   input: WorkerLivenessInput,
 ): Promise<WorkerLivenessResult> {
   const idleMs = readPositiveEnvMs("DESKRELAY_WORKER_IDLE_MS", WORKER_IDLE_MS_DEFAULT);
-  // hard cap acts purely as an upper-bound safety net; legacy timeoutMs is
-  // accepted but never enforced as a primary kill signal.
-  const maxMs = readPositiveEnvMs("DESKRELAY_WORKER_MAX_MS", WORKER_MAX_MS_DEFAULT);
+  const tickMs = readPositiveEnvMs(
+    "DESKRELAY_WORKER_LIVENESS_TICK_MS",
+    WORKER_LIVENESS_TICK_MS_DEFAULT,
+  );
   let killed = false;
   let stopReason: ManagerWorkerStopReason | undefined;
-  let idleDurationMs: number | undefined;
-  let error: string | undefined;
+  let latestIdleDurationMs: number | undefined;
+  let observing = false;
+  let finished = false;
 
-  const interval = setInterval(() => {
-    void (async () => {
-      if (killed) return;
+  const observe = async () => {
+    if (finished) return;
+    if (observing) return;
+    observing = true;
+    try {
+      if (finished) return;
       const now = Date.now();
-      const sinceStart = now - input.started;
       const stdioIdleMs = now - input.getLastActivityAt();
-      if (stdioIdleMs > idleMs) {
-        const fsIdleMs = await fileMtimeIdleMsSafe(input.cwd, now);
-        if (fsIdleMs > idleMs) {
-          stopReason = "idle";
-          idleDurationMs = Math.min(stdioIdleMs, fsIdleMs);
-          const seconds = Math.floor(idleDurationMs / 1000);
-          error = `Worker idle for ${seconds}s (no stdout/stderr/file activity)`;
-          killed = true;
-          clearInterval(interval);
-          input.onKill();
-          return;
-        }
-      }
-      if (sinceStart > maxMs) {
-        stopReason = "hard-cap";
-        error = `Manager assistant CLI timed out after ${maxMs}ms.`;
-        killed = true;
-        clearInterval(interval);
-        input.onKill();
-      }
-    })();
-  }, WORKER_LIVENESS_TICK_MS);
+      const fsIdleMs = await fileMtimeIdleMsSafe(input.cwd, now);
+      if (finished) return;
+      latestIdleDurationMs = Math.min(stdioIdleMs, fsIdleMs);
+      await input.onObservation?.({
+        observedAt: now,
+        elapsedMs: now - input.started,
+        stdioIdleMs,
+        fsIdleMs,
+        quiet: stdioIdleMs > idleMs && fsIdleMs > idleMs,
+      });
+    } finally {
+      observing = false;
+    }
+  };
+
+  void observe();
+  const interval = setInterval(() => {
+    void observe();
+  }, tickMs);
   interval.unref?.();
 
   let exitCode = -1;
   try {
     exitCode = await input.exited;
   } finally {
+    finished = true;
     clearInterval(interval);
   }
   if (!killed && exitCode !== 0) {
@@ -11397,8 +11814,7 @@ async function awaitWorkerWithLiveness(
     exitCode,
     killed,
     reason: stopReason ?? "exit",
-    ...(idleDurationMs !== undefined ? { idleDurationMs } : {}),
-    ...(error ? { error } : {}),
+    ...(latestIdleDurationMs !== undefined ? { idleDurationMs: latestIdleDurationMs } : {}),
   };
 }
 
@@ -11919,7 +12335,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- If the user explicitly requested the exact mutating action, perform the smallest matching API call and verify afterward.",
     '- Manager task body: `{ "kind": "diagnose|update-server|update-device|update-all|restart-server|restart-device|repair-registration|run-worker", "targetId": "optional-device-id", "dryRun": true, "requestedBy": "manager-assistant", "params": {} }`.',
     '- Shortcut task bodies accept `{ "dryRun": true, "requestedBy": "manager-assistant" }` when supported.',
-    '- Worker run body: `{ "profile": "claude-code", "prompt": "objective/scope/verification", "cwd": ".", "timeoutMs": 600000, "dryRun": false, "requestedBy": "manager-assistant" }`.',
+    '- Worker run body: `{ "profile": "claude-code", "prompt": "objective/scope/verification", "cwd": ".", "dryRun": false, "requestedBy": "manager-assistant" }`.',
     '- Agent body: `{ "role": "architect|implementer|verifier|critic|protocol|documenter", "profile": "claude-code", "cwd": "optional", "instruction": "optional" }`.',
     '- Round dispatch body: `{ "dryRun": false, "assignments": [{ "role": "architect", "profile": "claude-code", "prompt": "role-specific objective", "cwd": "." }] }`.',
     "",
@@ -12496,21 +12912,25 @@ async function executeRunWorkerTask(
     };
   }
 
-  // timeoutMs is accepted for backwards compatibility but no longer enforces
-  // a primary kill — see DESIGN-DOCS/WORKER-LIVENESS-POLICY.md. The value is
-  // still threaded through so legacy callers and result records keep their
-  // shape, but the actual kill decision is made by awaitWorkerWithLiveness.
-  const timeoutMs = clampWorkerTimeoutMs(params.value.timeoutMs ?? profile.defaultTimeoutMs);
+  // Legacy timeoutMs is accepted for compatibility, but it is no longer
+  // a primary kill; see DESIGN-DOCS/WORKER-LIVENESS-POLICY.md. The value is
+  // ignored while execution waits for process exit and records liveness observations.
   const started = Date.now();
   const result = await runManagerWorkerCli({
     profile,
     prompt: params.value.prompt,
     cwd: cwd.value,
-    timeoutMs,
     apiBaseUrl: managerAssistantApiBaseUrl(input.options, input.requestUrl),
     repoRoot: input.options.managerAssistant?.cwd ?? process.cwd(),
     token: input.options.token,
     ...(params.value.sessionId ? { sessionId: params.value.sessionId } : {}),
+    onObservation: (snapshot) =>
+      updateManagerWorkerLivenessStep({
+        input,
+        profile,
+        cwd: cwd.value,
+        snapshot,
+      }),
   });
   const succeeded = result.exitCode === 0 && !result.timedOut;
   const summary = result.timedOut
@@ -12518,11 +12938,13 @@ async function executeRunWorkerTask(
     : succeeded
       ? `${profile.label} completed in ${Date.now() - started}ms.`
       : `${profile.label} exited with code ${result.exitCode}.`;
+  const latestTask = await input.store.get(input.task.id);
+  const baseSteps = latestTask?.steps ?? input.task.steps;
   return {
     state: succeeded ? "succeeded" : "failed",
     targetLabel: profile.label,
-    steps: [
-      ...input.task.steps,
+    steps: upsertManagerTaskStep(
+      baseSteps,
       taskStep({
         id: "worker.completed",
         label: "Worker CLI",
@@ -12530,10 +12952,55 @@ async function executeRunWorkerTask(
         summary,
         evidence: [commandPreview, `cwd: ${cwd.value}`],
       }),
-    ],
+    ),
     result,
     ...(!succeeded ? { error: summary } : {}),
   };
+}
+
+async function updateManagerWorkerLivenessStep(input: {
+  input: ManagerTaskRunInput;
+  profile: ManagerWorkerProfile;
+  cwd: string;
+  snapshot: WorkerLivenessSnapshot;
+}): Promise<void> {
+  const task = await input.input.store.get(input.input.task.id);
+  if (!task || isManagerTaskTerminalState(task.state)) return;
+  const quietDurationMs = Math.min(input.snapshot.stdioIdleMs, input.snapshot.fsIdleMs);
+  const summary = input.snapshot.quiet
+    ? `${input.profile.label} is still running; no stdout/stderr or workspace changes for ${formatManagerDuration(quietDurationMs)}.`
+    : `${input.profile.label} is still running; last observed activity was ${formatManagerDuration(quietDurationMs)} ago.`;
+  const detail = [
+    `elapsed=${formatManagerDuration(input.snapshot.elapsedMs)}`,
+    `stdioIdle=${formatManagerDuration(input.snapshot.stdioIdleMs)}`,
+    `workspaceIdle=${formatManagerDuration(input.snapshot.fsIdleMs)}`,
+  ].join("; ");
+  await input.input.store.update(task.id, {
+    state: "running",
+    steps: upsertManagerTaskStep(
+      task.steps,
+      taskStep({
+        id: "worker.liveness",
+        label: "Worker liveness",
+        status: input.snapshot.quiet ? "warn" : "running",
+        summary,
+        detail,
+        evidence: [`cwd: ${input.cwd}`],
+        lastCheckedAt: new Date(input.snapshot.observedAt).toISOString(),
+      }),
+    ),
+  });
+}
+
+function upsertManagerTaskStep(
+  steps: ManagerTask["steps"],
+  step: ManagerTask["steps"][number],
+): ManagerTask["steps"] {
+  const index = steps.findIndex((item) => item.id === step.id);
+  if (index < 0) return [...steps, step];
+  const next = [...steps];
+  next[index] = step;
+  return next;
 }
 
 function dryRunTask(

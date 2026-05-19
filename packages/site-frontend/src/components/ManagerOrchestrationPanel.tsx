@@ -15,6 +15,10 @@ import type {
   ManagerDirectionChangeRequest,
   ManagerEvidenceItem,
   ManagerJudgmentPacket,
+  ManagerOrchestrationAction,
+  ManagerOrchestrationFlowNode,
+  ManagerOrchestrationPhase,
+  ManagerOrchestrationSnapshot,
   ManagerProject,
   ManagerProjectCharter,
   ManagerProjectCharterUpdateRequest,
@@ -70,6 +74,8 @@ interface ManagerOrchestrationPanelProps {
   archivedProjects?: ManagerProject[] | undefined;
   selectedProject?: ManagerProject | null | undefined;
   commandFlow?: ManagerCommandFlowResponse | null | undefined;
+  orchestrationSnapshot?: ManagerOrchestrationSnapshot | null | undefined;
+  orchestrationSnapshotLoading?: boolean | undefined;
   projectOverview?: ManagerProjectOverviewResponse | null | undefined;
   projectLoading?: boolean | undefined;
   projectBusy?: boolean | undefined;
@@ -335,6 +341,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
       project: displayProject(),
       overview: effectiveOverview(),
       commandFlow: displayCommandFlow(),
+      snapshot: props.orchestrationSnapshot ?? null,
       latestReport: latestStatusReport(),
     }),
   );
@@ -569,6 +576,10 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
               advanced={adminDetailOpen()}
             />
             <ManagerCurrentJudgmentCard brief={currentJudgmentBrief()} />
+            <ManagerCenterlineCard
+              snapshot={props.orchestrationSnapshot ?? null}
+              loading={props.orchestrationSnapshotLoading}
+            />
             <div class="manager-workboard-mode">
               <div>
                 <strong>
@@ -606,6 +617,7 @@ export const ManagerOrchestrationPanel: Component<ManagerOrchestrationPanelProps
             </Show>
             <ManagerApprovalInbox
               judgments={actionableApprovalJudgments()}
+              snapshot={props.orchestrationSnapshot ?? null}
               busy={props.flowBusy || props.actionBusy || props.approvalActionBusy}
               status={props.approvalActionStatus}
               error={props.approvalActionError}
@@ -1038,8 +1050,131 @@ const ManagerCurrentJudgmentCard: Component<{
   </Show>
 );
 
+const ManagerCenterlineCard: Component<{
+  snapshot: ManagerOrchestrationSnapshot | null;
+  loading?: boolean | undefined;
+}> = (props) => {
+  const activeWorkers = createMemo(
+    () =>
+      props.snapshot?.workers.filter((worker) =>
+        ["queued", "starting", "active", "quiet_but_alive", "waiting_external"].includes(
+          worker.runtimeState,
+        ),
+      ) ?? [],
+  );
+  const availableActions = createMemo(
+    () =>
+      props.snapshot?.approvalActions.filter(
+        (action) => action.requiresApproval && action.status === "available",
+      ) ?? [],
+  );
+  const staleActions = createMemo(
+    () =>
+      props.snapshot?.approvalActions.filter((action) =>
+        ["stale", "expired", "preflight_failed"].includes(action.status),
+      ) ?? [],
+  );
+
+  return (
+    <section
+      class="manager-centerline-card"
+      classList={{
+        "manager-centerline-card-loading": Boolean(props.loading && !props.snapshot),
+        [`manager-centerline-phase-${props.snapshot?.phase ?? "idle"}`]: true,
+      }}
+      aria-label={t("manager.orchestration.centerline.aria")}
+    >
+      <Show
+        when={props.snapshot}
+        fallback={
+          <div class="manager-centerline-empty">
+            {props.loading
+              ? t("manager.orchestration.centerline.loading")
+              : t("manager.orchestration.centerline.unavailable")}
+          </div>
+        }
+      >
+        {(snapshot) => (
+          <>
+            <header class="manager-centerline-head">
+              <div>
+                <span>{t("manager.orchestration.centerline.title")}</span>
+                <strong>{managerCenterlinePhaseLabel(snapshot().phase)}</strong>
+              </div>
+              <p>
+                <span>{t("manager.orchestration.centerline.updated")}</span>
+                <strong>{formatTime(snapshot().updatedAt)}</strong>
+              </p>
+            </header>
+            <ol class="manager-centerline-flow">
+              <For each={snapshot().flow}>
+                {(node) => (
+                  <li
+                    class="manager-centerline-node"
+                    classList={{
+                      "manager-centerline-node-done": node.status === "done",
+                      "manager-centerline-node-current": node.status === "current",
+                      "manager-centerline-node-blocked": node.status === "blocked",
+                      "manager-centerline-node-pending": node.status === "pending",
+                    }}
+                    aria-current={node.status === "current" || node.status === "blocked" ? "step" : undefined}
+                  >
+                    <span>{managerCenterlinePhaseLabel(node.phase)}</span>
+                    <small>{managerCenterlineNodeDetail(node, snapshot())}</small>
+                    <Show when={node.status === "current" || node.status === "blocked"}>
+                      <em>{t("manager.orchestration.centerline.current")}</em>
+                    </Show>
+                  </li>
+                )}
+              </For>
+            </ol>
+            <div class="manager-centerline-summary">
+              <div>
+                <span>{t("manager.orchestration.centerline.metric.action")}</span>
+                <strong>{managerCenterlineReason(snapshot())}</strong>
+              </div>
+              <div>
+                <span>{t("manager.orchestration.centerline.metric.approvals")}</span>
+                <strong>
+                  {t("manager.orchestration.centerline.metric.approvals-value", {
+                    available: availableActions().length,
+                    stale: staleActions().length,
+                  })}
+                </strong>
+              </div>
+              <div>
+                <span>{t("manager.orchestration.centerline.metric.workers")}</span>
+                <strong>{activeWorkers().length}</strong>
+              </div>
+              <div>
+                <span>{t("manager.orchestration.centerline.metric.blockers")}</span>
+                <strong>{snapshot().blockers.length}</strong>
+              </div>
+            </div>
+            <Show when={availableActions().length > 0}>
+              <div class="manager-centerline-actions">
+                <span>{t("manager.orchestration.centerline.actions")}</span>
+                <For each={availableActions().slice(0, 3)}>
+                  {(action) => (
+                    <small>
+                      {managerCenterlineActionLabel(action)}
+                      {" · "}
+                      {managerCenterlineActionStatusLabel(action.status)}
+                    </small>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </>
+        )}
+      </Show>
+    </section>
+  );
+};
+
 const ManagerApprovalInbox: Component<{
   judgments: ManagerJudgmentPacket[];
+  snapshot?: ManagerOrchestrationSnapshot | null | undefined;
   busy?: boolean | undefined;
   status?: string | null | undefined;
   error?: string | null | undefined;
@@ -1049,8 +1184,34 @@ const ManagerApprovalInbox: Component<{
   const approvalJudgments = createMemo(() =>
     props.judgments.filter((judgment) => judgment.priority === "approval"),
   );
-  const visibleJudgments = createMemo(() => approvalJudgments().slice(0, 4));
-  const approvalCount = createMemo(() => approvalJudgments().length);
+  const availableSnapshotActions = createMemo(
+    () =>
+      props.snapshot?.approvalActions.filter(
+        (action) => action.requiresApproval && action.status === "available",
+      ) ?? [],
+  );
+  const unavailableSnapshotActions = createMemo(
+    () =>
+      props.snapshot?.approvalActions.filter(
+        (action) => action.requiresApproval && action.status !== "available",
+      ) ?? [],
+  );
+  const visibleJudgments = createMemo(() => {
+    const judgments = approvalJudgments();
+    if (!props.snapshot) return judgments.slice(0, 4);
+    return judgments
+      .filter((judgment) =>
+        judgment.proposedActions.some(
+          (action) =>
+            action.requiresApproval &&
+            managerSnapshotActionForProposed(props.snapshot, action)?.status === "available",
+        ),
+      )
+      .slice(0, 4);
+  });
+  const approvalCount = createMemo(() =>
+    props.snapshot ? availableSnapshotActions().length : approvalJudgments().length,
+  );
   return (
     <Show when={approvalCount() > 0 || Boolean(props.error || props.status)}>
       <section
@@ -1075,14 +1236,28 @@ const ManagerApprovalInbox: Component<{
             </p>
           )}
         </Show>
+        <Show when={props.snapshot && unavailableSnapshotActions().length > 0}>
+          <p class="manager-approval-feedback">
+            {t("manager.orchestration.approval.unavailable-summary", {
+              count: unavailableSnapshotActions().length,
+            })}
+          </p>
+        </Show>
+        <Show when={props.snapshot && approvalCount() > 0 && visibleJudgments().length === 0}>
+          <p class="manager-approval-feedback">
+            {t("manager.orchestration.approval.syncing-actions")}
+          </p>
+        </Show>
         <div class="manager-approval-list">
           <For each={visibleJudgments()}>
             {(judgment) => {
               const summary = managerJudgmentDisplaySummary(judgment);
               const reason = managerJudgmentDisplayReason(judgment);
-              const approvalActions = judgment.proposedActions.filter(
-                (action) => action.requiresApproval,
-              );
+              const approvalActions = judgment.proposedActions.filter((action) => {
+                if (!action.requiresApproval) return false;
+                if (!props.snapshot) return true;
+                return managerSnapshotActionForProposed(props.snapshot, action)?.status === "available";
+              });
               return (
                 <article
                   class={`manager-approval-item manager-approval-item-${judgment.priority} manager-approval-verdict-${judgment.verdict}`}
@@ -1120,32 +1295,45 @@ const ManagerApprovalInbox: Component<{
                   </div>
                   <div class="manager-approval-actions">
                     <For each={approvalActions}>
-                      {(action) => (
-                        <div class="manager-approval-action-card">
-                          <button
-                            type="button"
-                            disabled={props.busy || !props.onApprove}
-                            title={action.rationale}
-                            onClick={() => props.onApprove?.(action)}
-                          >
-                            {managerProposedActionLabel(action)}
-                          </button>
-                          <dl>
-                            <dt>{t("manager.orchestration.approval.approve-effect")}</dt>
-                            <dd>{managerProposedActionEffect(action)}</dd>
-                            <dt>{t("manager.orchestration.approval.ignore-effect")}</dt>
-                            <dd>{managerProposedActionDismissEffect(action)}</dd>
-                          </dl>
-                          <Show when={action.rationale}>
-                            {(rationale) => (
-                              <p title={rationale()}>
-                                {t("manager.orchestration.approval.reason-label")}:{" "}
-                                {clip(rationale(), 140)}
-                              </p>
-                            )}
-                          </Show>
-                        </div>
-                      )}
+                      {(action) => {
+                        const snapshotAction = props.snapshot
+                          ? managerSnapshotActionForProposed(props.snapshot, action)
+                          : undefined;
+                        return (
+                          <div class="manager-approval-action-card">
+                            <button
+                              type="button"
+                              disabled={props.busy || !props.onApprove}
+                              title={action.rationale}
+                              onClick={() => props.onApprove?.(action)}
+                            >
+                              {managerProposedActionLabel(action)}
+                            </button>
+                            <dl>
+                              <dt>{t("manager.orchestration.approval.approve-effect")}</dt>
+                              <dd>{managerProposedActionEffect(action)}</dd>
+                              <dt>{t("manager.orchestration.approval.ignore-effect")}</dt>
+                              <dd>{managerProposedActionDismissEffect(action)}</dd>
+                            </dl>
+                            <Show when={snapshotAction}>
+                              {(current) => (
+                                <p>
+                                  {t("manager.orchestration.approval.preflight-status")}:{" "}
+                                  {managerCenterlineActionStatusLabel(current().status)}
+                                </p>
+                              )}
+                            </Show>
+                            <Show when={action.rationale}>
+                              {(rationale) => (
+                                <p title={rationale()}>
+                                  {t("manager.orchestration.approval.reason-label")}:{" "}
+                                  {clip(rationale(), 140)}
+                                </p>
+                              )}
+                            </Show>
+                          </div>
+                        );
+                      }}
                     </For>
                     <button
                       type="button"
@@ -3993,6 +4181,75 @@ function managerProposedActionTypeLabel(type: ManagerProposedAction["type"]): st
   return t(`manager.orchestration.proposed-action.${type}`);
 }
 
+function managerCenterlinePhaseLabel(phase: ManagerOrchestrationPhase): string {
+  return t(`manager.orchestration.centerline.phase.${phase}`);
+}
+
+function managerCenterlinePhaseHint(phase: ManagerOrchestrationPhase): string {
+  return t(`manager.orchestration.centerline.phase-hint.${phase}`);
+}
+
+function managerCenterlineNodeDetail(
+  node: ManagerOrchestrationFlowNode,
+  snapshot: ManagerOrchestrationSnapshot,
+): string {
+  if (node.status === "current" || node.status === "blocked") {
+    return managerCenterlineReason(snapshot);
+  }
+  return managerCenterlinePhaseHint(node.phase);
+}
+
+function managerCenterlineReason(snapshot: ManagerOrchestrationSnapshot): string {
+  const activeWorkers = snapshot.workers.filter((worker) =>
+    ["queued", "starting", "active", "quiet_but_alive", "waiting_external"].includes(
+      worker.runtimeState,
+    ),
+  ).length;
+  const availableApprovals = snapshot.approvalActions.filter(
+    (action) => action.requiresApproval && action.status === "available",
+  ).length;
+  switch (snapshot.phase) {
+    case "observing":
+      return t("manager.orchestration.centerline.reason.observing", { count: activeWorkers });
+    case "needs_approval":
+      return t("manager.orchestration.centerline.reason.needs_approval", {
+        count: availableApprovals,
+      });
+    case "blocked":
+      return (
+        snapshot.blockers[0]?.title ??
+        t("manager.orchestration.centerline.reason.blocked", { count: snapshot.blockers.length })
+      );
+    case "completed":
+      return t("manager.orchestration.centerline.reason.completed");
+    case "planning":
+    case "ready":
+    case "running":
+    case "applying_action":
+    case "reviewing":
+    case "replanning":
+    case "idle":
+      return t(`manager.orchestration.centerline.reason.${snapshot.phase}`);
+    default:
+      return snapshot.currentReason;
+  }
+}
+
+function managerCenterlineActionLabel(action: ManagerOrchestrationAction): string {
+  if (action.type === "start_next_round") {
+    return managerProposedActionPayloadBoolean(action.payload, "dryRun")
+      ? t("manager.orchestration.proposed-action.start_next_round.dry-run")
+      : t("manager.orchestration.proposed-action.start_next_round.live");
+  }
+  return managerProposedActionTypeLabel(action.type);
+}
+
+function managerCenterlineActionStatusLabel(
+  status: ManagerOrchestrationAction["status"],
+): string {
+  return t(`manager.orchestration.centerline.action-status.${status}`);
+}
+
 function managerProposedActionLabel(action: ManagerProposedAction): string {
   if (action.type === "start_next_round") {
     return managerProposedActionPayloadBoolean(action.payload, "dryRun")
@@ -4055,6 +4312,49 @@ function managerApprovalActionKey(action: ManagerProposedAction): string {
   ].join(":");
 }
 
+function managerSnapshotActionForProposed(
+  snapshot: ManagerOrchestrationSnapshot | null | undefined,
+  action: ManagerProposedAction,
+): ManagerOrchestrationAction | undefined {
+  if (!snapshot) return undefined;
+  return snapshot.approvalActions.find((candidate) =>
+    managerSnapshotActionMatchesProposed(candidate, action),
+  );
+}
+
+function managerSnapshotActionMatchesProposed(
+  snapshotAction: ManagerOrchestrationAction,
+  action: ManagerProposedAction,
+): boolean {
+  if (snapshotAction.id === action.id) return true;
+  if (snapshotAction.type !== action.type) return false;
+  if (snapshotAction.target.projectId !== action.projectId) return false;
+
+  const snapshotRoundId = managerSnapshotActionRoundId(snapshotAction);
+  const actionRoundId = managerProposedActionRoundId(action);
+  if (snapshotRoundId && actionRoundId && snapshotRoundId !== actionRoundId) return false;
+
+  const snapshotTargetId = managerSnapshotActionTargetId(snapshotAction);
+  const actionTargetId = managerProposedActionTargetId(action);
+  if (snapshotTargetId && actionTargetId && snapshotTargetId !== actionTargetId) return false;
+
+  return true;
+}
+
+function managerSnapshotActionRoundId(action: ManagerOrchestrationAction): string {
+  return managerProposedActionPayloadString(action.payload, "roundId") ?? action.target.roundId ?? "";
+}
+
+function managerSnapshotActionTargetId(action: ManagerOrchestrationAction): string {
+  return (
+    managerProposedActionPayloadString(action.payload, "taskId") ??
+    action.target.taskId ??
+    managerProposedActionPayloadString(action.payload, "agentId") ??
+    action.target.agentId ??
+    ""
+  );
+}
+
 function managerProposedActionTargetId(action: ManagerProposedAction): string {
   return (
     managerProposedActionPayloadString(action.payload, "taskId") ??
@@ -4085,14 +4385,91 @@ function managerProposedActionPayloadBoolean(
   return typeof value === "boolean" ? value : undefined;
 }
 
+function managerSnapshotJudgmentTone(
+  phase: ManagerOrchestrationPhase,
+): ManagerCurrentJudgmentBrief["tone"] {
+  switch (phase) {
+    case "needs_approval":
+    case "blocked":
+      return "warning";
+    case "running":
+    case "observing":
+    case "applying_action":
+    case "reviewing":
+    case "replanning":
+      return "thinking";
+    case "idle":
+    case "planning":
+    case "ready":
+    case "completed":
+      return "ready";
+    default:
+      return "ready";
+  }
+}
+
 function buildManagerCurrentJudgmentBrief(input: {
   project: ManagerProject | null;
   overview: ManagerProjectOverviewResponse | null | undefined;
   commandFlow: ManagerCommandFlowResponse | null | undefined;
+  snapshot?: ManagerOrchestrationSnapshot | null | undefined;
   latestReport: ManagerAssistantStatusReport | null | undefined;
 }): ManagerCurrentJudgmentBrief | null {
   const project = input.commandFlow?.project ?? input.overview?.project ?? input.project ?? null;
   const activeRound = input.commandFlow?.activeRound ?? input.overview?.activeRound;
+  const snapshot = input.snapshot ?? null;
+  if (snapshot) {
+    const phaseLabel = managerCenterlinePhaseLabel(snapshot.phase);
+    const availableActions = snapshot.approvalActions.filter(
+      (action) => action.requiresApproval && action.status === "available",
+    );
+    const primaryApproval = availableActions[0];
+    const currentRoundId = snapshot.activeRoundId ?? activeRound?.id ?? project?.activeRoundId ?? null;
+    const projectText = project
+      ? `${project.name} · ${phaseLabel}`
+      : `${snapshot.projectId} · ${phaseLabel}`;
+    const roundText = activeRound
+      ? `${activeRound.title} · ${statusLabel(activeRound.status)} · ${shortManagerId(activeRound.id)}`
+      : currentRoundId
+        ? t("manager.orchestration.current-judgment.active-round-id", {
+            id: shortManagerId(currentRoundId),
+          })
+        : t("manager.orchestration.current-judgment.no-round");
+    const reportTime = formatAssistantLedgerTime(snapshot.updatedAt);
+    const nextActionText = managerCenterlineReason(snapshot);
+    const recommendation = primaryApproval
+      ? t("manager.orchestration.current-judgment.recommend.approve", {
+          action: managerCenterlineActionLabel(primaryApproval),
+        })
+      : snapshot.phase === "completed"
+        ? t("manager.orchestration.current-judgment.recommend.completed")
+        : snapshot.phase === "idle"
+          ? t("manager.orchestration.current-judgment.recommend.ask-manager")
+          : t("manager.orchestration.current-judgment.recommend.next-action", {
+              action: nextActionText,
+            });
+
+    return {
+      tone: managerSnapshotJudgmentTone(snapshot.phase),
+      headline: phaseLabel,
+      project: projectText,
+      round: roundText,
+      nextAction: nextActionText,
+      approval:
+        availableActions.length > 0
+          ? t("manager.orchestration.current-judgment.pending-approval", {
+              count: availableActions.length,
+            })
+          : t("manager.orchestration.current-judgment.no-approval"),
+      report: t("manager.orchestration.current-judgment.snapshot-report", {
+        time: reportTime,
+      }),
+      recommendation,
+      reportIsStale: false,
+      approvalCount: availableActions.length,
+      updatedAt: reportTime,
+    };
+  }
   const projectCompleted = isManagerProjectCompleted(project);
   const nextAction = projectCompleted
     ? null

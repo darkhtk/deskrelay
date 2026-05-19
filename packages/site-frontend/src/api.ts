@@ -41,6 +41,7 @@ import type {
   ManagerJudgmentListResponse,
   ManagerLogResponse,
   ManagerNetworkStatus,
+  ManagerOrchestrationSnapshotResponse,
   ManagerProcessStatus,
   ManagerProject,
   ManagerProjectCharterResponse,
@@ -768,6 +769,11 @@ export const api = {
     request<ManagerCommandFlowResponse>(
       "GET",
       `/api/manager/projects/${encodeURIComponent(id)}/command-flow`,
+    ),
+  managerProjectOrchestration: (id: string) =>
+    request<ManagerOrchestrationSnapshotResponse>(
+      "GET",
+      `/api/manager/projects/${encodeURIComponent(id)}/orchestration`,
     ),
   managerProjectEvidence: (id: string) =>
     request<ManagerEvidenceListResponse>(

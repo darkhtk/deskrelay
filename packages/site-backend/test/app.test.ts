@@ -696,6 +696,11 @@ describe("API route inventory", () => {
           [404],
         ],
         [
+          "GET /api/manager/projects/:id/orchestration",
+          authedRequest("GET", "/api/manager/projects/missing/orchestration"),
+          [404],
+        ],
+        [
           "GET /api/manager/projects/:id/evidence",
           authedRequest("GET", "/api/manager/projects/missing/evidence"),
           [404],
@@ -2780,6 +2785,67 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
     }
   });
 
+  test("manager worker run ignores legacy timeout values and records liveness", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-liveness-"));
+    const previousMaxMs = process.env.DESKRELAY_WORKER_MAX_MS;
+    const previousIdleMs = process.env.DESKRELAY_WORKER_IDLE_MS;
+    const previousTickMs = process.env.DESKRELAY_WORKER_LIVENESS_TICK_MS;
+    process.env.DESKRELAY_WORKER_MAX_MS = "1";
+    process.env.DESKRELAY_WORKER_IDLE_MS = "1";
+    process.env.DESKRELAY_WORKER_LIVENESS_TICK_MS = "5";
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerWorkers: [
+        {
+          id: "slow",
+          label: "Slow worker",
+          description: "Test worker that finishes after the legacy timeout budget.",
+          command: process.execPath,
+          args: ["-e", "setTimeout(() => { console.log(Bun.argv.at(-1)); }, 80)"],
+          defaultTimeoutMs: 1,
+        },
+      ],
+    });
+
+    try {
+      const run = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "slow",
+          prompt: "slow worker finished",
+          timeoutMs: 1,
+          dryRun: false,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(run.status).toBe(202);
+      const body = (await run.json()) as {
+        state?: string;
+        error?: string;
+        result?: { timedOut?: boolean; stdout?: string; reason?: string };
+        steps?: Array<{ id?: string; summary?: string }>;
+      };
+      expect(body.state).toBe("succeeded");
+      expect(body.error).toBeUndefined();
+      expect(body.result?.timedOut).toBe(false);
+      expect(body.result?.reason).toBeUndefined();
+      expect(body.result?.stdout).toContain("slow worker finished");
+      expect(body.steps?.some((step) => step.id === "worker.liveness")).toBe(true);
+      expect(body.steps?.find((step) => step.id === "worker.liveness")?.summary).toContain(
+        "still running",
+      );
+    } finally {
+      if (previousMaxMs === undefined) delete process.env.DESKRELAY_WORKER_MAX_MS;
+      else process.env.DESKRELAY_WORKER_MAX_MS = previousMaxMs;
+      if (previousIdleMs === undefined) delete process.env.DESKRELAY_WORKER_IDLE_MS;
+      else process.env.DESKRELAY_WORKER_IDLE_MS = previousIdleMs;
+      if (previousTickMs === undefined) delete process.env.DESKRELAY_WORKER_LIVENESS_TICK_MS;
+      else process.env.DESKRELAY_WORKER_LIVENESS_TICK_MS = previousTickMs;
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager project scoped routes attach and filter orchestration records", async () => {
     const projectCreate = await setup.app.fetch(
       authedRequest("POST", "/api/manager/projects", {
@@ -3595,6 +3661,19 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(prepareBody.project?.flowStage).toBe("ready_to_start");
       expect(prepareBody.readiness?.ready).toBe(true);
 
+      const readySnapshot = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/orchestration`),
+      );
+      expect(readySnapshot.status).toBe(200);
+      const readySnapshotBody = (await readySnapshot.json()) as {
+        snapshot?: { phase?: string; currentLabel?: string; flow?: Array<{ status?: string }> };
+      };
+      expect(readySnapshotBody.snapshot?.phase).toBe("ready");
+      expect(readySnapshotBody.snapshot?.currentLabel).toContain("Ready");
+      expect(readySnapshotBody.snapshot?.flow?.some((node) => node.status === "current")).toBe(
+        true,
+      );
+
       const staleRound = await managerOrchestrationStore.createRound({
         projectId,
         title: "Stale failed round",
@@ -3843,6 +3922,34 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
         ),
       ).toBe(true);
 
+      const approvalSnapshot = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/orchestration`),
+      );
+      expect(approvalSnapshot.status).toBe(200);
+      const approvalSnapshotBody = (await approvalSnapshot.json()) as {
+        snapshot?: {
+          phase?: string;
+          approvalActions?: Array<{ type?: string; status?: string; requiresApproval?: boolean }>;
+          flow?: Array<{ phase?: string; status?: string }>;
+        };
+      };
+      expect(approvalSnapshotBody.snapshot?.phase).toBe("needs_approval");
+      expect(
+        approvalSnapshotBody.snapshot?.flow?.find((node) => node.phase === "needs_approval")
+          ?.status,
+      ).toBe("current");
+      expect(
+        approvalSnapshotBody.snapshot?.flow?.some((node) => node.phase === "blocked"),
+      ).toBe(true);
+      expect(
+        approvalSnapshotBody.snapshot?.approvalActions?.some(
+          (action) =>
+            action.type === "start_next_round" &&
+            action.status === "available" &&
+            action.requiresApproval === true,
+        ),
+      ).toBe(true);
+
       const duplicateAcceptReview = await app.fetch(
         authedRequest("POST", `/api/manager/projects/${projectId}/rounds/${roundId}/review`, {
           action: "accept",
@@ -3933,6 +4040,113 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
           (judgment) => judgment.proposedActions?.filter((action) => action.requiresApproval) ?? [],
         ) ?? [],
       ).toEqual([]);
+
+      const completedSnapshot = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${projectId}/orchestration`),
+      );
+      expect(completedSnapshot.status).toBe(200);
+      const completedSnapshotBody = (await completedSnapshot.json()) as {
+        snapshot?: { phase?: string; approvalActions?: unknown[] };
+      };
+      expect(completedSnapshotBody.snapshot?.phase).toBe("completed");
+      expect(completedSnapshotBody.snapshot?.approvalActions).toEqual([]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager project orchestration snapshot treats active workers as observation state", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-orchestration-snapshot-"));
+    const managerProjectStore = createInMemoryManagerProjectStore();
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const managerTaskStore = createInMemoryManagerTaskStore();
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerProjectStore,
+      managerOrchestrationStore,
+      managerTaskStore,
+      managerBlockerStore: createInMemoryManagerBlockerStore(),
+      managerDecisionStore: createInMemoryManagerDecisionStore(),
+      managerArtifactStore: createInMemoryManagerArtifactStore(),
+      managerProtocolStore: createInMemoryManagerProtocolStore(),
+    });
+
+    try {
+      const project = await managerProjectStore.create({
+        name: "Snapshot Active Worker",
+        cwd,
+        goal: "Observe active work before asking for approval.",
+        status: "running",
+        flowStage: "running",
+      });
+      const round = await managerOrchestrationStore.createRound({
+        projectId: project.id,
+        title: "R-active",
+        objective: "Keep observing active worker.",
+        phase: "implementation",
+      });
+      const agent = await managerOrchestrationStore.createAgent({
+        projectId: project.id,
+        roundId: round.id,
+        role: "implementer",
+        instruction: "Keep working.",
+      });
+      const task = await managerTaskStore.create({
+        kind: "run-worker",
+        projectId: project.id,
+        dryRun: false,
+        requestedBy: "manager-assistant",
+        params: {
+          profile: "claude-code",
+          prompt: "Keep working.",
+          agentId: agent.id,
+          agentRole: agent.role,
+          roundId: round.id,
+          projectId: project.id,
+        },
+        steps: [],
+      });
+      await managerTaskStore.update(task.id, {
+        state: "running",
+        startedAt: new Date().toISOString(),
+      });
+      await managerOrchestrationStore.updateAgent(agent.id, {
+        status: "running",
+        taskId: task.id,
+        lastHeartbeatAt: new Date().toISOString(),
+      });
+      await managerOrchestrationStore.updateRound(round.id, {
+        status: "running",
+        agentIds: [agent.id],
+        taskIds: [task.id],
+        startedAt: new Date().toISOString(),
+      });
+      await managerProjectStore.update(project.id, {
+        activeRoundId: round.id,
+        status: "running",
+        flowStage: "running",
+      });
+
+      const snapshot = await app.fetch(
+        authedRequest("GET", `/api/manager/projects/${project.id}/orchestration`),
+      );
+      expect(snapshot.status).toBe(200);
+      const body = (await snapshot.json()) as {
+        snapshot?: {
+          phase?: string;
+          activeTaskIds?: string[];
+          activeAgentIds?: string[];
+          workers?: Array<{ runtimeState?: string; taskId?: string }>;
+        };
+      };
+      expect(body.snapshot?.phase).toBe("observing");
+      expect(body.snapshot?.activeTaskIds).toContain(task.id);
+      expect(body.snapshot?.activeAgentIds).toContain(agent.id);
+      expect(body.snapshot?.workers?.find((worker) => worker.taskId === task.id)?.runtimeState).toBe(
+        "active",
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

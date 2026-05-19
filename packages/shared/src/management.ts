@@ -307,7 +307,7 @@ export type ManagerRoundHealthIssueCode =
   | "worker-failed"
   | "worker-blocked"
   | "worker-missing"
-  | "worker-timeout"
+  | "worker-stopped"
   | "worker-integrity"
   | "missing-session"
   | "round-failed"
@@ -1354,6 +1354,120 @@ export interface ManagerCommandFlowResponse {
   judgments: ManagerJudgmentPacket[];
   readiness: ManagerCommandFlowReadiness;
   nextAction: ManagerProjectOverviewAction;
+}
+
+export type ManagerOrchestrationPhase =
+  | "idle"
+  | "planning"
+  | "ready"
+  | "running"
+  | "observing"
+  | "needs_approval"
+  | "applying_action"
+  | "reviewing"
+  | "replanning"
+  | "completed"
+  | "blocked";
+
+export type ManagerOrchestrationFlowNodeStatus = "done" | "current" | "pending" | "blocked";
+
+export interface ManagerOrchestrationFlowNode {
+  id: string;
+  phase: ManagerOrchestrationPhase;
+  label: string;
+  status: ManagerOrchestrationFlowNodeStatus;
+  detail?: string;
+}
+
+export type ManagerOrchestrationActionStatus =
+  | "available"
+  | "running"
+  | "executed"
+  | "stale"
+  | "expired"
+  | "preflight_failed";
+
+export interface ManagerOrchestrationActionPreflight {
+  valid: boolean;
+  validWhen: string[];
+  checkedAt: string;
+  failureReason?: string;
+}
+
+export interface ManagerOrchestrationAction {
+  id: string;
+  sourceJudgmentId?: string;
+  type: ManagerProposedActionType;
+  title: string;
+  description: string;
+  risk: ManagerProposedActionRisk;
+  requiresApproval: boolean;
+  target: {
+    projectId: string;
+    roundId?: string;
+    taskId?: string;
+    agentId?: string;
+  };
+  status: ManagerOrchestrationActionStatus;
+  preflight: ManagerOrchestrationActionPreflight;
+  payload: Record<string, unknown>;
+  evidenceIds: string[];
+  createdAt: string;
+  expiresAt?: string;
+}
+
+export type ManagerWorkerRuntimeState =
+  | "queued"
+  | "starting"
+  | "active"
+  | "quiet_but_alive"
+  | "waiting_external"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "cancelled"
+  | "stale_unknown";
+
+export interface ManagerWorkerView {
+  id: string;
+  runtimeState: ManagerWorkerRuntimeState;
+  taskState: ManagerWorkerRunStatus;
+  label: string;
+  taskId?: string;
+  roundId?: string;
+  agentId?: string;
+  agentRole?: string;
+  profile?: string;
+  cwd?: string;
+  sessionId?: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  outputPreview?: string;
+  error?: string;
+  integrity: ManagerWorkerRunIntegrity[];
+}
+
+export interface ManagerOrchestrationSnapshot {
+  projectId: string;
+  phase: ManagerOrchestrationPhase;
+  currentLabel: string;
+  currentReason: string;
+  flowStage: ManagerCommandFlowStage;
+  activeRoundId?: string;
+  activeTaskIds: string[];
+  activeAgentIds: string[];
+  approvalActions: ManagerOrchestrationAction[];
+  flow: ManagerOrchestrationFlowNode[];
+  workers: ManagerWorkerView[];
+  blockers: ManagerBlocker[];
+  updatedAt: string;
+}
+
+export interface ManagerOrchestrationSnapshotResponse {
+  generatedAt: string;
+  projectId: string;
+  snapshot: ManagerOrchestrationSnapshot;
 }
 
 export interface ManagerProjectStartRequest {

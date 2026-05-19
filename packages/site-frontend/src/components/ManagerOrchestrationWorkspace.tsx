@@ -18,6 +18,7 @@ import type {
   ManagerProjectCreateRequest,
   ManagerProjectHygieneReport,
   ManagerProjectListResponse,
+  ManagerOrchestrationSnapshotResponse,
   ManagerProjectOverviewResponse,
   ManagerProjectStartRequest,
   ManagerProposedAction,
@@ -242,6 +243,22 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
       if (!input) return null;
       try {
         return await api.managerProjectCommandFlow(input.projectId);
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const [projectOrchestrationSnapshot] = createResource(
+    () => {
+      const projectId = currentProjectId();
+      const seq = refreshSeq();
+      return projectId ? { projectId, seq } : null;
+    },
+    async (input): Promise<ManagerOrchestrationSnapshotResponse | null> => {
+      if (!input) return null;
+      try {
+        return await api.managerProjectOrchestration(input.projectId);
       } catch {
         return null;
       }
@@ -1201,6 +1218,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
           archivedProjects={managerProjects()?.archived ?? []}
           selectedProject={selectedProject()}
           commandFlow={projectCommandFlow()}
+          orchestrationSnapshot={projectOrchestrationSnapshot()?.snapshot ?? null}
+          orchestrationSnapshotLoading={projectOrchestrationSnapshot.loading}
           projectOverview={projectOverview()}
           projectLoading={managerProjects.loading}
           projectBusy={projectActionBusy()}

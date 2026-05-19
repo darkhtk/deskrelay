@@ -5962,6 +5962,174 @@ dialog.approval-modal-root,
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
+.manager-centerline-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent-coral);
+  border-radius: 8px;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+}
+.manager-centerline-phase-observing,
+.manager-centerline-phase-running,
+.manager-centerline-phase-applying_action {
+  border-left-color: var(--accent);
+}
+.manager-centerline-phase-needs_approval,
+.manager-centerline-phase-reviewing {
+  border-left-color: var(--warning);
+}
+.manager-centerline-phase-completed {
+  border-left-color: var(--success);
+}
+.manager-centerline-phase-blocked {
+  border-left-color: var(--danger);
+}
+.manager-centerline-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.manager-centerline-head > div,
+.manager-centerline-head p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  min-width: 0;
+}
+.manager-centerline-head span,
+.manager-centerline-summary span,
+.manager-centerline-actions > span {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.manager-centerline-head strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.manager-centerline-head p {
+  flex: 0 0 auto;
+  text-align: right;
+}
+.manager-centerline-head p strong {
+  font-size: 12px;
+}
+.manager-centerline-flow {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  list-style: none;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+.manager-centerline-node {
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-height: 82px;
+  min-width: 0;
+  padding: 9px;
+}
+.manager-centerline-node span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-centerline-node small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.manager-centerline-node em {
+  align-self: end;
+  background: color-mix(in srgb, var(--accent-coral) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-coral) 42%, var(--border-subtle));
+  border-radius: 999px;
+  color: var(--accent-coral);
+  font-size: 10px;
+  font-style: normal;
+  justify-self: start;
+  padding: 2px 7px;
+}
+.manager-centerline-node-done {
+  border-color: color-mix(in srgb, var(--success) 36%, var(--border-subtle));
+}
+.manager-centerline-node-done span {
+  color: var(--success);
+}
+.manager-centerline-node-current {
+  background: color-mix(in srgb, var(--accent-coral) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-coral) 70%, var(--border-subtle));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-coral) 15%, transparent);
+}
+.manager-centerline-node-blocked {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 62%, var(--border-subtle));
+}
+.manager-centerline-node-blocked em {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border-subtle));
+  color: var(--danger);
+}
+.manager-centerline-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  min-width: 0;
+}
+.manager-centerline-summary div {
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-top: 8px;
+}
+.manager-centerline-summary strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.manager-centerline-actions {
+  align-items: center;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 8px;
+}
+.manager-centerline-actions small {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 4px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-centerline-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .manager-orchestration-panel-standalone .manager-orchestration-tab-panel {
   flex: 0 0 auto;
   min-height: auto;
