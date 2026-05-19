@@ -187,6 +187,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [error, setError] = createSignal<string | null>(null);
   const [status, setStatus] = createSignal<ManagerVisibleStatus | null>(null);
   const [statusReportSeq, setStatusReportSeq] = createSignal(0);
+  const [completionReportSince, setCompletionReportSince] = createSignal<string | null>(null);
+  const [visibleStatusReportIds, setVisibleStatusReportIds] = createSignal<string[]>([]);
   const [hygieneCleanupBusy, setHygieneCleanupBusy] = createSignal(false);
   const [acknowledgeBusy, setAcknowledgeBusy] = createSignal(false);
   const [managerActionBusy, setManagerActionBusy] = createSignal(false);
@@ -775,6 +777,23 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     });
   };
 
+  createEffect(() => {
+    const since = completionReportSince();
+    if (!since) return;
+    const report = latestTerminalManagerAssistantStatusReport(
+      statusReports()?.reports ?? [],
+      since,
+      visibleStatusReportIds(),
+    );
+    if (!report) return;
+    const text = formatManagerAssistantStatusReportForTranscript(report);
+    if (text && !managerAssistantFinalTextAlreadyVisible(managerAssistantTranscriptEntries(), text)) {
+      appendEvent(managerAssistantSyntheticEvent(text));
+    }
+    setVisibleStatusReportIds((current) => [...current, report.id].slice(-80));
+    setCompletionReportSince(null);
+  });
+
   function focusManagerProject(projectId: string | null) {
     const normalized = projectId?.trim() || null;
     setFocusedProjectId(normalized);
@@ -824,6 +843,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
     setError(null);
     setStatus({ tone: "thinking", main: "요청 접수" });
+    const requestStartedAt = new Date().toISOString();
+    setCompletionReportSince(requestStartedAt);
     const previousEntries = managerAssistantTranscriptEntries();
     const resumeSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
     const history = managerAssistantChatHistory(previousEntries);
@@ -868,9 +889,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             responseCwd = event.cwd || responseCwd;
             capturedSessionId = event.sessionId ?? capturedSessionId;
             const finalText = event.message.text.trim();
+            const finalTextVisible =
+              finalText.length > 0 && isVisibleManagerAssistantSummaryText(finalText);
             if (
-              finalText &&
-              isVisibleManagerAssistantSummaryText(finalText) &&
+              finalTextVisible &&
               !managerAssistantFinalTextAlreadyVisible(
                 managerAssistantTranscriptEntries(),
                 finalText,
@@ -878,7 +900,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             ) {
               appendEvent(managerAssistantChatMessageEvent(event.message));
             }
-            if (finalText) visibleAssistantReplySeen = true;
+            if (finalTextVisible) {
+              visibleAssistantReplySeen = true;
+              setCompletionReportSince(null);
+            }
           } else if (event.type === "error") {
             const visibleError = managerAssistantVisibleError(event.error);
             if (isManagerAssistantLongWaitError(event.error)) {
@@ -891,6 +916,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
               appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 오류: ${visibleError}`));
               visibleAssistantReplySeen = true;
             }
+            setCompletionReportSince(null);
             setError(visibleError);
             setStatus({ tone: "warning", main: "Assistant 오류", detail: visibleError });
           }
@@ -911,6 +937,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
           appendEvent(managerAssistantSyntheticEvent(`관리자 Assistant 요청 실패: ${message}`));
           visibleAssistantReplySeen = true;
         }
+        setCompletionReportSince(null);
         setError(message);
         setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
       }
@@ -919,6 +946,30 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       if (managerAssistantAbort === abort) managerAssistantAbort = undefined;
       removeRun(runId);
       if (capturedSessionId) await persistManagerSession(capturedSessionId, responseCwd);
+      if (!keepAwaitingManagerReply && !visibleAssistantReplySeen) {
+        const report = latestTerminalManagerAssistantStatusReport(
+          statusReports()?.reports ?? [],
+          requestStartedAt,
+          visibleStatusReportIds(),
+        );
+        if (report) {
+          const text = formatManagerAssistantStatusReportForTranscript(report);
+          if (
+            text &&
+            !managerAssistantFinalTextAlreadyVisible(managerAssistantTranscriptEntries(), text)
+          ) {
+            appendEvent(managerAssistantSyntheticEvent(text));
+          }
+          setVisibleStatusReportIds((current) => [...current, report.id].slice(-80));
+        } else {
+          appendEvent(
+            managerAssistantSyntheticEvent(
+              "관리자 Assistant가 최종 보고 없이 응답을 종료했습니다. 최신 작업 상태를 다시 확인해야 합니다.",
+            ),
+          );
+        }
+        setCompletionReportSince(null);
+      }
       setStatus((currentStatus) => {
         if (keepAwaitingManagerReply) {
           return (
@@ -1667,6 +1718,48 @@ function managerAssistantSyntheticEvent(text: string): ClaudeStreamEvent {
       content: [{ type: "text", text }],
     },
   };
+}
+
+function latestTerminalManagerAssistantStatusReport(
+  reports: ManagerAssistantStatusReport[],
+  sinceIso: string,
+  visibleIds: string[],
+): ManagerAssistantStatusReport | null {
+  const sinceMs = Date.parse(sinceIso);
+  const floor = Number.isFinite(sinceMs) ? sinceMs - 1_000 : 0;
+  return (
+    reports.find((report) => {
+      if (visibleIds.includes(report.id)) return false;
+      if (!isTerminalManagerAssistantStatusReport(report)) return false;
+      const createdMs = Date.parse(report.createdAt);
+      return !Number.isFinite(createdMs) || createdMs >= floor;
+    }) ?? null
+  );
+}
+
+function isTerminalManagerAssistantStatusReport(report: ManagerAssistantStatusReport): boolean {
+  return (
+    report.phase === "done" ||
+    report.phase === "blocked" ||
+    report.level === "error" ||
+    (report.phase === "reporting" && report.level !== "info")
+  );
+}
+
+function formatManagerAssistantStatusReportForTranscript(
+  report: ManagerAssistantStatusReport,
+): string {
+  const heading =
+    report.phase === "blocked" || report.level === "error"
+      ? "진행이 막혔습니다."
+      : report.phase === "done" || report.level === "success"
+        ? "완료했습니다."
+        : "보고합니다.";
+  const scope = [report.round, report.scope].filter(Boolean).join(" · ");
+  const title = scope ? `${heading} (${scope})` : heading;
+  return [title, report.message.trim(), report.detail?.trim() ?? ""]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function managerAssistantChatMessageEvent(message: ManagerAssistantChatMessage): ClaudeStreamEvent {

@@ -11277,11 +11277,24 @@ function chooseManagerAssistantFinalText(
     };
   }
 
-  if (resultText) return { ok: true, text: resultText };
-  if (assistantAfterTool) return { ok: true, text: assistantAfterTool };
-  if (!stdoutResult.sawToolUse && assistantText) return { ok: true, text: assistantText };
-  if (rawText) return { ok: true, text: rawText };
-  if (stderr) return { ok: true, text: stderr };
+  for (const candidate of [
+    resultText,
+    assistantAfterTool,
+    !stdoutResult.sawToolUse ? assistantText : "",
+    rawText,
+    stderr,
+  ]) {
+    if (!candidate) continue;
+    if (!isManagerAssistantNoResponseText(candidate)) return { ok: true, text: candidate };
+  }
+  if ([resultText, assistantAfterTool, assistantText, rawText, stderr].some(isManagerAssistantNoResponseText)) {
+    return {
+      ok: true,
+      text:
+        "관리자 Assistant가 최종 보고 없이 응답을 종료했습니다. " +
+        "방금 요청한 작업의 완료 여부는 작업 상태와 실행 기록을 다시 확인해야 합니다.",
+    };
+  }
   if (stdoutResult.sawToolUse) {
     return {
       ok: true,
@@ -11291,6 +11304,11 @@ function chooseManagerAssistantFinalText(
     };
   }
   return { ok: false, error: "Manager assistant CLI returned no output." };
+}
+
+function isManagerAssistantNoResponseText(value: string): boolean {
+  const normalized = value.trim().replace(/\s+/g, " ").toLowerCase();
+  return normalized === "no response requested." || normalized === "no response requested";
 }
 
 function sanitizeManagerAssistantText(value: string): string {
@@ -11464,6 +11482,7 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     "Never answer only `No response requested.`. Every manager-chat user message requires a visible Korean answer, progress update, or failure report.",
     "Start with the direct answer, current decision, or action taken in 1-3 concise Korean sentences.",
     "If the user asked a question, answer the question first. Do not replace the answer with implementation narration or tool status.",
+    "If you launched, observed, retried, approved, or otherwise caused work to run, do not end silently. When the work reaches a terminal state, report completion, blocker, or failure in the manager conversation without waiting for the user to ask.",
     "Do not paste raw execution logs, HTTP payloads, long id lists, or tool transcripts into the manager conversation unless the user explicitly asks for raw detail. Put those details in status reports, task observation, or logs.",
     "Never echo prompt boilerplate such as `Current Browser Context`, `Current User Request`, `Current User Request ASCII-Safe Copy`, `Continue from where you left off`, or `No response requested` into the user-facing answer.",
     "If the latest assistant status report is for a different project or round than the active command flow, explicitly call that report stale instead of treating it as current.",
@@ -12328,6 +12347,7 @@ function buildManagedManagerAssistantInstructions(input: {
     "- When action is required, act through the narrowest DeskRelay API or worker task that matches the scope.",
     "- Verify every mutation. A successful API response is not enough if a follow-up status read can confirm the visible result.",
     "- Keep the user informed through progress reports during multi-step work, but keep the final answer concise.",
+    "- After any user-requested work reaches a terminal state, report the result to the user proactively. Do not wait for the user to ask whether it finished.",
     "- Avoid asking the user to provide IDs, logs, or copied text when selected browser context or manager APIs can retrieve them.",
     "- Ask one concise clarification question only when the missing detail changes the target, safety boundary, or destructive scope.",
     "- Do not claim an autonomous loop is still running after your response ends unless you created an observable manager task that continues outside the response.",

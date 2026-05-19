@@ -2816,6 +2816,46 @@ process.stdin.on("end", () => {
     }
   });
 
+  test("manager assistant stream replaces no-response final text with a visible report", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-no-response-"));
+    const scriptPath = join(cwd, "fake-claude-no-response.js");
+    writeFileSync(
+      scriptPath,
+      `
+console.log(JSON.stringify({ type: "result", result: "No response requested." }));
+`,
+      "utf8",
+    );
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          command: process.execPath,
+          args: [scriptPath],
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat/stream", {
+          message: "작업 진행",
+          history: [],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const events = parseSseEvents(await res.text());
+      const message = events.find((event) => event.type === "message") as
+        | { message?: { text?: string } }
+        | undefined;
+      expect(message?.message?.text).toContain("최종 보고 없이");
+      expect(message?.message?.text).not.toBe("No response requested.");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager assistant chat creates managed Claude instructions outside user-editable scopes", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-managed-"));
     let captured:
