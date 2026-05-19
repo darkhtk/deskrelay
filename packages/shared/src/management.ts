@@ -88,6 +88,7 @@ export interface ManagerRestartResult {
   message: string;
   logPath?: string;
   pid?: number;
+  previousPid?: number;
   error?: string;
 }
 

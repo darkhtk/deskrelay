@@ -3705,6 +3705,9 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       );
       expect(startBody.commandFlow?.judgments?.length).toBeGreaterThan(0);
       expect(startBody.commandFlow?.judgments?.some((item) => item.priority === "approval")).toBe(
+        false,
+      );
+      expect(startBody.commandFlow?.judgments?.some((item) => item.priority === "notice")).toBe(
         true,
       );
       expect(
@@ -3772,7 +3775,7 @@ console.log(JSON.stringify({ type: "result", result: "Done after tool." }));
       expect(
         judgmentsBody.judgments?.some(
           (judgment) =>
-            judgment.priority === "approval" &&
+            judgment.priority === "notice" &&
             judgment.proposedActions?.some(
               (action) => action.type === "review_round" && action.requiresApproval === true,
             ),

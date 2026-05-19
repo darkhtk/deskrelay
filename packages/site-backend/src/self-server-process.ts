@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import type {
@@ -75,12 +75,15 @@ export function createPowerShellSelfServerProcessController(
       await mkdir(logDir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const logPath = join(logDir, `self-server-restart-${stamp}.log`);
+      const scriptPath = join(logDir, `self-server-restart-${stamp}.ps1`);
       const restartLogPath = join(logDir, "self-server-restart.log");
       const script = buildRestartScript({
         repoRoot: options.repoRoot,
         root: options.root,
         logPath,
+        currentPid: process.pid,
       });
+      await writeFile(scriptPath, script, "utf8");
       try {
         const entry = JSON.stringify({
           ts: new Date().toISOString(),
@@ -95,9 +98,8 @@ export function createPowerShellSelfServerProcessController(
       } catch (err) {
         console.warn("self-server-restart.log fd open failed:", (err as Error).message);
       }
-      const child = spawn("powershell.exe", restartBootstrapArgs(script), {
+      const child = spawn("powershell.exe", restartScriptArgs(scriptPath), {
         cwd: options.repoRoot,
-        detached: true,
         stdio: logFd !== undefined ? ["ignore", logFd, logFd] : "ignore",
         windowsHide: true,
       });
@@ -125,6 +127,7 @@ export function createPowerShellSelfServerProcessController(
         message: "self-server restart requested",
         logPath,
         ...(child.pid ? { pid: child.pid } : {}),
+        previousPid: process.pid,
       };
     },
   };
@@ -235,19 +238,42 @@ function probeTcpPort(host: string, port: number, timeoutMs: number): Promise<bo
   });
 }
 
-function buildRestartScript(input: { repoRoot: string; root: string; logPath: string }): string {
+function buildRestartScript(input: {
+  repoRoot: string;
+  root: string;
+  logPath: string;
+  currentPid: number;
+}): string {
   const stopScript = join(input.repoRoot, "scripts", "self-pc-server-stop.ps1");
   const startScript = join(input.repoRoot, "scripts", "self-pc-server-start.ps1");
   return [
     "$ErrorActionPreference = 'Continue'",
-    "Start-Sleep -Milliseconds 500",
+    `"[ $((Get-Date).ToUniversalTime().ToString('o')) ] restart helper started for current site-backend pid=${input.currentPid}" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+    "Start-Sleep -Milliseconds 800",
+    `$currentSiteBackendPid = ${input.currentPid}`,
+    "if ($currentSiteBackendPid -gt 0) {",
+    `  "[$((Get-Date).ToUniversalTime().ToString('o'))] stopping current site-backend pid=$currentSiteBackendPid" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+    "  $currentSiteBackend = Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue",
+    "  if ($currentSiteBackend) {",
+    "    Stop-Process -Id $currentSiteBackendPid -Force -ErrorAction SilentlyContinue",
+    "    $deadline = (Get-Date).AddSeconds(10)",
+    "    while ((Get-Date) -lt $deadline -and (Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue)) {",
+    "      Start-Sleep -Milliseconds 250",
+    "    }",
+    "    if (Get-Process -Id $currentSiteBackendPid -ErrorAction SilentlyContinue) {",
+    "      throw \"Current site-backend pid=$currentSiteBackendPid is still running after restart stop request.\"",
+    "    }",
+    "  } else {",
+    `    "[$((Get-Date).ToUniversalTime().ToString('o'))] current site-backend pid=$currentSiteBackendPid was already stopped" | Out-File -Encoding utf8 -Append -FilePath ${quotePowerShell(input.logPath)}`,
+    "  }",
+    "}",
     `& ${quotePowerShell(stopScript)} -Root ${quotePowerShell(input.root)} -RepoRoot ${quotePowerShell(input.repoRoot)} *>> ${quotePowerShell(input.logPath)}`,
     "Start-Sleep -Seconds 1",
     `& ${quotePowerShell(startScript)} -Root ${quotePowerShell(input.root)} -RepoRoot ${quotePowerShell(input.repoRoot)} -NoOpenBrowser *>> ${quotePowerShell(input.logPath)}`,
   ].join("\n");
 }
 
-function restartBootstrapArgs(script: string): string[] {
+function restartScriptArgs(scriptPath: string): string[] {
   return [
     "-NoProfile",
     "-NonInteractive",
@@ -255,8 +281,8 @@ function restartBootstrapArgs(script: string): string[] {
     "Bypass",
     "-WindowStyle",
     "Hidden",
-    "-EncodedCommand",
-    Buffer.from(script, "utf16le").toString("base64"),
+    "-File",
+    scriptPath,
   ];
 }
 
