@@ -110,6 +110,117 @@ describe("ManagerAssistant", () => {
     expect(document.querySelector(".manager-assistant-dialogue-role")).toBeNull();
   });
 
+  test("keeps collapsed previews plain while rendering full manager markdown", async () => {
+    setLocale("en");
+    const markdownText = [
+      "**Summary**",
+      "",
+      "- one",
+      "- two",
+      "",
+      '"```ts"',
+      "const answer: number = 42;",
+      '"```"',
+      "",
+      "| Axis | Result |",
+      "|---|---|",
+      "| Markdown | rendered |",
+      "",
+      "line 1",
+      "line 2",
+      "line 3",
+      "line 4",
+      "line 5",
+      "line 6",
+    ].join("\n");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-collapsed-md",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          method?: string;
+        };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-collapsed-md",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Session",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          return Response.json({
+            result: {
+              sessionId: "manager-session-collapsed-md",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: markdownText }],
+                  },
+                },
+              ],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    await waitFor(() => {
+      expect(document.querySelector(".manager-assistant-dialogue-preview")?.textContent).toContain(
+        "**Summary**",
+      );
+    });
+    const preview = document.querySelector(".manager-assistant-dialogue-preview");
+    expect(preview?.querySelector("strong")).toBeNull();
+    expect(
+      document.querySelector(".manager-assistant-dialogue-full pre code")?.textContent,
+    ).toContain("const answer: number = 42;");
+    expect(document.querySelector(".manager-assistant-dialogue-full table")).toBeTruthy();
+    expect(document.querySelector(".manager-assistant-dialogue-full strong")?.textContent).toBe(
+      "Summary",
+    );
+  });
+
   test("shows a clear transcript entry when the manager returns no visible reply", async () => {
     setLocale("en");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -448,25 +559,39 @@ describe("ManagerAssistant", () => {
           },
         ]);
       }
-      if (url.includes("/events/spaces/remote-claude.run%3A")) {
+      if (url.includes("/api/manager/assistant/chat/stream") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
+        behaviorCalls.push({ method: "chat", params: body });
         return new Response(
           [
             `data: ${JSON.stringify({
-              kind: "run.started",
-              content: { runId: "r1" },
+              type: "status",
+              status: { phase: "running", tone: "thinking", main: "thinking" },
             })}`,
             `data: ${JSON.stringify({
-              kind: "claude.event",
-              content: { type: "system", subtype: "init", session_id: "manager-session-1" },
+              type: "claude_event",
+              event: { type: "system", subtype: "init", session_id: "manager-session-1" },
             })}`,
             `data: ${JSON.stringify({
-              kind: "claude.event",
-              content: {
+              type: "claude_event",
+              event: {
                 type: "assistant",
                 message: { content: [{ type: "text", text: "관리자 응답" }] },
               },
             })}`,
-            `data: ${JSON.stringify({ kind: "run.finished", content: { exitCode: 0 } })}`,
+            `data: ${JSON.stringify({
+              type: "message",
+              message: {
+                id: "manager-message-1",
+                role: "assistant",
+                text: "관리자 응답",
+                createdAt: "2026-05-13T00:00:02.000Z",
+              },
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              command: "manager assistant",
+              durationMs: 12,
+              sessionId: "manager-session-1",
+            })}`,
             "",
           ].join("\n\n"),
           { status: 200, headers: { "content-type": "text/event-stream" } },
@@ -538,18 +663,10 @@ describe("ManagerAssistant", () => {
     });
 
     await waitFor(() => {
-      expect(
-        behaviorCalls.some((call) => call.method === "chat" && call.params?.managerMode === true),
-      ).toBe(true);
+      expect(behaviorCalls.filter((call) => call.method === "chat")).toHaveLength(2);
     });
-    const chatCall = behaviorCalls.find(
-      (call) => call.method === "chat" && call.params?.managerMode === true,
-    );
-    expect(chatCall?.params?.managerMode).toBe(true);
-    expect(chatCall?.params?.permissionMode).toBe("bypassPermissions");
-    expect(chatCall?.params?.conversationId).toBe("deskrelay-manager-assistant");
-    expect(chatCall?.params?.cwd).toBe("C:\\repo\\.deskrelay\\manager-assistant");
-    expect(chatCall?.params?.managerBrowserContext).toMatchObject({
+    const chatCall = behaviorCalls.filter((call) => call.method === "chat").at(-1);
+    expect(chatCall?.params?.context).toMatchObject({
       deviceId: "dev_selected",
       sessionId: "selected-session",
     });

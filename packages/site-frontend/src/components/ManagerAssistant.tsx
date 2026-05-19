@@ -701,17 +701,29 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   function visibleClaudeEvents(nextEvents: ClaudeStreamEvent[]): ClaudeStreamEvent[] {
     const visibleEvents: ClaudeStreamEvent[] = [];
     let pendingToolResult = "";
+    let sawUserRequest = false;
+    let sawAssistantEvent = false;
+    let sawVisibleAssistantReply = false;
     for (const event of nextEvents) {
       pendingToolResult = managerAssistantToolResultSummary(event) || pendingToolResult;
       const visible = claudeEventForTranscript(event);
       if (!visible) continue;
+      if (visible.type === "user" && managerAssistantDisplayText(visible).trim()) {
+        sawUserRequest = true;
+      }
+      if (visible.type === "assistant") {
+        sawAssistantEvent = true;
+      }
       if (visible.type === "assistant" && isVisibleManagerAssistantReply(visible)) {
+        sawVisibleAssistantReply = true;
         pendingToolResult = "";
       }
       visibleEvents.push(visible);
     }
     if (pendingToolResult) {
       visibleEvents.push(managerAssistantToolResultFallbackEvent(pendingToolResult));
+    } else if (sawUserRequest && sawAssistantEvent && !sawVisibleAssistantReply) {
+      visibleEvents.push(managerAssistantNoReplyEvent());
     }
     return visibleEvents;
   }
@@ -848,6 +860,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         setStatus({ tone: "warning", main: "Assistant 오류", detail: message });
       }
     } finally {
+      const wasAborted = abort.signal.aborted;
+      if (!wasAborted && !visibleAssistantReplySeen) {
+        appendEvent(managerAssistantNoReplyEvent());
+      }
       abort.abort();
       if (managerAssistantAbort === abort) managerAssistantAbort = undefined;
       removeRun(runId);
@@ -1419,23 +1435,30 @@ const ManagerAssistantTranscript: Component<{
     when={props.entries.length > 0}
     fallback={<p class="manager-assistant-transcript-empty">{t("tx.empty")}</p>}
   >
-    <div class="manager-assistant-dialogue">
+    <div class="manager-assistant-dialogue" onClick={handleManagerAssistantDialogueClick}>
       <For each={props.entries}>
         {(entry) => (
           <article
             class={`manager-assistant-dialogue-item manager-assistant-dialogue-${entry.role}`}
           >
             <div class="manager-assistant-dialogue-body">
-              <div
-                class="manager-assistant-dialogue-markdown"
-                innerHTML={renderMarkdown(entry.collapsed ? entry.preview : entry.text)}
-              />
+              <Show
+                when={entry.collapsed}
+                fallback={
+                  <div
+                    class="manager-assistant-dialogue-markdown"
+                    innerHTML={renderManagerAssistantMarkdown(entry.text)}
+                  />
+                }
+              >
+                <p class="manager-assistant-dialogue-preview">{entry.preview}</p>
+              </Show>
               <Show when={entry.collapsed}>
                 <details class="manager-assistant-dialogue-details">
                   <summary>{t("manager.assistant.transcript.details")}</summary>
                   <div
                     class="manager-assistant-dialogue-markdown manager-assistant-dialogue-full"
-                    innerHTML={renderMarkdown(entry.text)}
+                    innerHTML={renderManagerAssistantMarkdown(entry.text)}
                   />
                 </details>
               </Show>
@@ -1446,6 +1469,20 @@ const ManagerAssistantTranscript: Component<{
     </div>
   </Show>
 );
+
+function handleManagerAssistantDialogueClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (!target?.matches("button[data-copy]")) return;
+  const pre = target.closest("pre");
+  const code = pre?.querySelector("code");
+  if (!code?.textContent) return;
+  navigator.clipboard?.writeText(code.textContent).catch(() => undefined);
+  const original = target.textContent;
+  target.textContent = t("tx.copied");
+  window.setTimeout(() => {
+    target.textContent = original;
+  }, 1200);
+}
 
 export const ManagerAssistantLedger: Component<{
   project: ManagerProject | null;
@@ -1616,6 +1653,10 @@ function managerAssistantToolResultFallbackEvent(summary: string): ClaudeStreamE
   );
 }
 
+function managerAssistantNoReplyEvent(): ClaudeStreamEvent {
+  return managerAssistantSyntheticEvent(t("manager.assistant.transcript.no-reply"));
+}
+
 function isVisibleManagerAssistantReply(event: ClaudeStreamEvent): boolean {
   if (event.type !== "assistant") return false;
   const text = managerAssistantDisplayText(event);
@@ -1705,6 +1746,22 @@ function managerAssistantPreviewText(text: string): string {
     .filter((line) => !looksLikeManagerAssistantDiagnosticLine(line));
   const sourceLines = lines.length > 0 ? lines : [t("manager.assistant.transcript.log-collapsed")];
   return clipManagerAssistantText(sourceLines.slice(0, 4).join("\n"));
+}
+
+function renderManagerAssistantMarkdown(text: string): string {
+  return renderMarkdown(normalizeManagerAssistantMarkdown(text));
+}
+
+function normalizeManagerAssistantMarkdown(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const quotedFence = line.trim().match(/^["'“”‘’](```[^"'“”‘’]*)["'“”‘’]$/);
+      if (!quotedFence?.[1]) return line;
+      const indent = line.match(/^\s*/)?.[0] ?? "";
+      return `${indent}${quotedFence[1].trimEnd()}`;
+    })
+    .join("\n");
 }
 
 function looksLikeManagerAssistantDiagnosticLine(line: string): boolean {
