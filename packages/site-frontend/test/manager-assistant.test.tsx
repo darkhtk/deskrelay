@@ -223,6 +223,158 @@ describe("ManagerAssistant", () => {
     );
   });
 
+  test("hides internal task notifications and routine manager chatter", async () => {
+    setLocale("en");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          sessionId: "manager-session-filter-noise",
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body ?? "{}")) as {
+          method?: string;
+        };
+        if (body.method === "sessions.list") {
+          return Response.json({
+            result: [
+              {
+                sessionId: "manager-session-filter-noise",
+                cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+                title: "Session",
+                modifiedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (body.method === "sessions.read") {
+          return Response.json({
+            result: {
+              sessionId: "manager-session-filter-noise",
+              cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+              events: [
+                {
+                  type: "user",
+                  message: {
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text: '<task-notification><task-id>abc</task-id><summary>Monitor event: "internal"</summary><event>STEP=dispatch round task_abc123</event></task-notification>',
+                      },
+                    ],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "Monitor 종료 — worker background running." }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "healthz polling 시작 (10회)." }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "1차 timeout." }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "10/10 모두 timeout. 마지막 로그 대기." }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [
+                      {
+                        type: "text",
+                        text: "dispatch 성공 — round_abc123XYZ, task 상세 대기.",
+                      },
+                    ],
+                  },
+                },
+                {
+                  type: "user",
+                  message: {
+                    role: "user",
+                    content: [{ type: "text", text: "Next polish plan" }],
+                  },
+                },
+                {
+                  type: "assistant",
+                  message: {
+                    role: "assistant",
+                    content: [
+                      {
+                        type: "text",
+                        text: "## Plan\n\n- Add stage 6\n- Rebuild playable exe",
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          });
+        }
+        return Response.json({ result: {} });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Next polish plan");
+    });
+    expect(document.body.textContent).toContain("Add stage 6");
+    expect(document.querySelectorAll(".manager-assistant-dialogue-markdown li")).toHaveLength(2);
+    expect(document.body.textContent).not.toContain("task-notification");
+    expect(document.body.textContent).not.toContain("Monitor 종료");
+    expect(document.body.textContent).not.toContain("healthz polling");
+    expect(document.body.textContent).not.toContain("1차 timeout");
+    expect(document.body.textContent).not.toContain("10/10 모두 timeout");
+    expect(document.body.textContent).not.toContain("round_abc123XYZ");
+    expect(document.body.textContent).not.toContain("task 상세 대기");
+  });
+
   test("keeps a streamed manager reply visible when the refreshed transcript is stale", async () => {
     setLocale("ko");
     let sessionsListCount = 0;

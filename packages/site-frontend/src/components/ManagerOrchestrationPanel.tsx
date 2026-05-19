@@ -1044,7 +1044,10 @@ const ManagerCurrentJudgmentCard: Component<{
             <dd>{brief().report}</dd>
           </div>
         </dl>
-        <p>{brief().recommendation}</p>
+        <p class="manager-current-judgment-required">
+          <strong>{t("manager.orchestration.current-judgment.required-action")}</strong>
+          <span>{brief().recommendation}</span>
+        </p>
       </section>
     )}
   </Show>
@@ -4436,7 +4439,7 @@ function buildManagerCurrentJudgmentBrief(input: {
           })
         : t("manager.orchestration.current-judgment.no-round");
     const reportTime = formatAssistantLedgerTime(snapshot.updatedAt);
-    const nextActionText = managerCenterlineReason(snapshot);
+    const nextActionText = phaseLabel;
     const recommendation = primaryApproval
       ? t("manager.orchestration.current-judgment.recommend.approve", {
           action: managerCenterlineActionLabel(primaryApproval),
@@ -4500,7 +4503,9 @@ function buildManagerCurrentJudgmentBrief(input: {
     ? t("manager.orchestration.current-judgment.completed")
     : nextAction
       ? managerProjectOverviewActionLabel(nextAction)
-      : t("manager.orchestration.current-judgment.no-next-action");
+      : project
+        ? flowStage
+        : t("manager.orchestration.current-judgment.no-next-action");
   const projectText = project
     ? `${project.name} · ${flowStage}`
     : t("manager.orchestration.current-judgment.no-project");

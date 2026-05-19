@@ -5962,6 +5962,18 @@ dialog.approval-modal-root,
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
+.manager-current-judgment-required {
+  display: grid;
+  gap: 3px;
+}
+.manager-current-judgment-required strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.manager-current-judgment-required span {
+  color: var(--text-muted);
+}
 .manager-centerline-card {
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);

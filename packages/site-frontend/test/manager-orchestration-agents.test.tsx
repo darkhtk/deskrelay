@@ -19,6 +19,39 @@ afterEach(() => {
 });
 
 describe("ManagerOrchestrationPanel agents view", () => {
+  test("separates the current step from the required action in the judgment card", () => {
+    const commandFlow = {
+      generatedAt: "2026-05-18T00:10:00.000Z",
+      nextAction: { kind: "review", label: "Review round result" },
+      readiness: {
+        ready: true,
+        stage: "review",
+        missingProtocolFiles: [],
+        warnings: [],
+        userCheckRequired: false,
+      },
+      judgments: [],
+    } as unknown as ManagerCommandFlowResponse;
+
+    render(() => (
+      <ManagerOrchestrationPanel
+        rounds={[]}
+        agents={[]}
+        standalone
+        commandFlow={commandFlow}
+      />
+    ));
+
+    const currentJudgment = screen.getByLabelText("Workboard current judgment");
+    expect(currentJudgment.textContent).toContain("Current step");
+    expect(currentJudgment.textContent).toContain("Review round result");
+    expect(currentJudgment.textContent).toContain("Required action");
+    expect(currentJudgment.textContent).toContain(
+      'Confirm "Review round result" is the right step',
+    );
+    expect(currentJudgment.textContent).not.toContain("The manager's next action");
+  });
+
   test("renders the authoritative orchestration snapshot as a localized flowchart", () => {
     setLocale("ko");
     const now = "2026-05-18T00:10:00.000Z";

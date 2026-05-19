@@ -81,6 +81,28 @@ const MANAGER_ASSISTANT_LOG_PATTERNS = [
   /\b(?:project|round|agent|task|worker)_[A-Za-z0-9_-]{6,}\b/,
   /\b(?:projectId|roundId|taskId|agentId|workerRunId)\b/,
 ];
+const MANAGER_ASSISTANT_INTERNAL_CHATTER_PATTERNS = [
+  /^monitor\b/i,
+  /^healthz\b/i,
+  /^\d+\/\d+\s+모두\s+timeout/i,
+  /^\d+차(?:\s*timeout|[.\s])/i,
+  /^bun\s+정리/i,
+  /\bsite-backend\b.*(?:pid|port|healthz|stale|spawn)/i,
+  /^BUILD-RESULT\.md\s+인용\s+확인/i,
+  /자동\s+accept.*dispatch\s+진행\s+중/i,
+  /^(?:\/start\s+)?응답\s*timeout/i,
+  /응답\s*대기/i,
+  /^accept\s+호출\s+진행\s+중\.?$/i,
+  /^acting\s+status\s+게시됨/i,
+  /^todo\s+정리됐습니다\b/i,
+  /^dispatch\s+(?:응답|\/start|실제|성공|확인)/i,
+  /\bdispatch\s+실제\s+됐는지\s+확인/i,
+  /\btask\s+상세\s+대기/i,
+  /\bstream\s+ended\b/i,
+  /\bworker\s+백그라운드\s+진행\s+중/i,
+  /\b(?:builder|stage-content|effects-integrator|graphics-polish|vfx|playtest)-engineer\b.*성공/i,
+  /\bplaytest-verifier\b.*(?:running|실행 중)/i,
+];
 const ORCHESTRATION_PRESET_PROMPT = [
   "Start or continue a DeskRelay orchestration framework loop.",
   "",
@@ -1751,7 +1773,9 @@ function buildManagerAssistantTranscriptEntries(
     if (!role) return [];
     const rawText = managerAssistantDisplayText(event);
     if (!rawText) return [];
-    const noise = isManagerAssistantNoiseText(rawText);
+    const noise =
+      isManagerAssistantNoiseText(rawText) ||
+      (role === "assistant" && isManagerAssistantTranscriptChatterText(rawText));
     if (noise) return [];
     const text = rawText;
     const collapsed = shouldCollapseManagerAssistantEntry(role, text);
@@ -1782,6 +1806,8 @@ function managerAssistantDisplayText(event: ClaudeStreamEvent): string {
 }
 
 function extractManagerAssistantUserRequest(text: string): string {
+  if (isManagerAssistantTaskNotificationText(text)) return "";
+
   const browserRequest = /## My request for Codex:\s*\n([\s\S]*)$/i.exec(text);
   if (browserRequest?.[1]?.trim()) return browserRequest[1].trim();
 
@@ -1794,6 +1820,10 @@ function extractManagerAssistantUserRequest(text: string): string {
   return text;
 }
 
+function isManagerAssistantTaskNotificationText(text: string): boolean {
+  return /^<task-notification\b[\s\S]*<\/task-notification>\s*$/i.test(text.trim());
+}
+
 function isManagerAssistantNoiseText(text: string): boolean {
   const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
   return (
@@ -1803,6 +1833,29 @@ function isManagerAssistantNoiseText(text: string): boolean {
     normalized === "continue from where you left off." ||
     normalized === "continue from where you left off"
   );
+}
+
+function isManagerAssistantTranscriptChatterText(text: string): boolean {
+  const compact = text.trim().replace(/\s+/g, " ");
+  if (!compact) return true;
+  if (MANAGER_ASSISTANT_INTERNAL_CHATTER_PATTERNS.some((pattern) => pattern.test(compact))) {
+    return true;
+  }
+  if (
+    compact.length <= 520 &&
+    /\b(?:round|task|agent)_[A-Za-z0-9_-]{6,}\b/.test(compact) &&
+    /(?:dispatch|running|실행 중|상세 대기|응답 대기|확인)/i.test(compact)
+  ) {
+    return true;
+  }
+  if (compact.length > 360) {
+    return (
+      /\b(?:round|task|agent)_[A-Za-z0-9_-]{6,}\b/.test(compact) &&
+      /\b(?:dispatch|running|상세 대기|응답 대기|monitor)\b/i.test(compact) &&
+      !/[.!?。]\s*[A-Z가-힣].{120,}/.test(compact)
+    );
+  }
+  return false;
 }
 
 function shouldCollapseManagerAssistantEntry(
