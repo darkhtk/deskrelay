@@ -4929,6 +4929,70 @@ console.log(JSON.stringify({ type: "result", result: "No response requested." })
     }
   });
 
+  test("manager orchestration round creation reuses idle role agents", async () => {
+    const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();
+    const idleAgent = await managerOrchestrationStore.createAgent({
+      projectId: "project-reuse",
+      role: "implementer",
+      label: "Old implementer",
+      profile: "fake-worker",
+      cwd: "C:\\old\\workspace",
+    });
+    await managerOrchestrationStore.updateAgent(idleAgent.id, {
+      sessionId: "old-worker-session",
+    });
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd: "C:\\new\\workspace" },
+      managerOrchestrationStore,
+    });
+
+    const create = await app.fetch(
+      authedRequest("POST", "/api/manager/rounds", {
+        projectId: "project-reuse",
+        title: "Reuse R1",
+        objective: "Reuse an idle implementer instead of creating a disposable one.",
+        agents: [
+          {
+            role: "implementer",
+            label: "Gameplay implementer",
+            profile: "fake-worker",
+            cwd: "C:\\new\\workspace",
+            prompt: "Implement the next playable slice.",
+          },
+        ],
+      }),
+    );
+
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as {
+      round?: { agentIds?: string[] };
+      agents?: Array<{
+        id?: string;
+        label?: string;
+        cwd?: string;
+        status?: string;
+        taskId?: string;
+        sessionId?: string;
+        lastInstruction?: string;
+      }>;
+    };
+    expect(created.round?.agentIds).toEqual([idleAgent.id]);
+    expect(created.agents?.[0]?.id).toBe(idleAgent.id);
+    expect(created.agents?.[0]?.label).toBe("Gameplay implementer");
+    expect(created.agents?.[0]?.cwd).toBe("C:\\new\\workspace");
+    expect(created.agents?.[0]?.status).toBe("assigned");
+    expect(created.agents?.[0]?.taskId).toBe("");
+    expect(created.agents?.[0]?.sessionId).toBe("");
+    expect(created.agents?.[0]?.lastInstruction).toBe("Implement the next playable slice.");
+
+    const agents = await app.fetch(authedRequest("GET", "/api/manager/agents"));
+    expect(agents.status).toBe(200);
+    const agentList = (await agents.json()) as { agents?: Array<{ role?: string }> };
+    expect(agentList.agents?.filter((agent) => agent.role === "implementer")).toHaveLength(1);
+  });
+
   test("manager worker run ledger surfaces missing round task records", async () => {
     const managerTaskStore = createInMemoryManagerTaskStore();
     const managerOrchestrationStore = createInMemoryManagerOrchestrationStore();

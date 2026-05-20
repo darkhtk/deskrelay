@@ -219,6 +219,7 @@ import {
   withManagerTaskEvents,
 } from "./manager-event-bus.ts";
 import {
+  type ManagerAgentPatch,
   type ManagerOrchestrationStore,
   createJsonManagerOrchestrationStore,
 } from "./manager-orchestration-store.ts";
@@ -2129,14 +2130,18 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       });
     }
     const agents: ManagerAgent[] = [];
+    const existingAgents = await syncManagerAgentsWithTasks(
+      managerOrchestrationStore,
+      managerTaskStore,
+    );
+    const claimedAgentIds = new Set<string>();
     for (const assignment of parsed.value.agents ?? []) {
-      const agent = await managerOrchestrationStore.createAgent({
-        ...(round.projectId ? { projectId: round.projectId } : {}),
-        role: assignment.role,
-        ...(assignment.label ? { label: assignment.label } : {}),
-        ...(assignment.profile ? { profile: assignment.profile } : {}),
-        ...(assignment.cwd ? { cwd: assignment.cwd } : {}),
-        roundId: round.id,
+      const agent = await resolveOrCreateManagerRoundAgent({
+        store: managerOrchestrationStore,
+        existingAgents,
+        claimedAgentIds,
+        round,
+        assignment,
         ...(assignment.prompt ? { instruction: assignment.prompt } : {}),
       });
       agents.push(agent);
@@ -4589,6 +4594,7 @@ async function runManagerAgentMessage(
     input.message.projectId?.trim() || input.agent.projectId || round?.projectId || undefined;
   await input.store.updateAgent(input.agent.id, {
     status: "running",
+    taskId: "",
     ...(projectId ? { projectId } : {}),
     profile,
     ...(input.message.cwd ? { cwd: input.message.cwd } : {}),
@@ -4793,52 +4799,147 @@ async function resolveRoundAssignments(input: ManagerRoundDispatchInput): Promis
   }
   const out: Array<{ agent: ManagerAgent; assignment: ManagerRoundAgentAssignment }> = [];
   const existingAgents = await input.store.listAgents();
+  const claimedAgentIds = new Set<string>();
   for (const assignment of assignments) {
     let agent = assignment.agentId ? await input.store.getAgent(assignment.agentId) : undefined;
-    if (agent?.status === "stale") agent = undefined;
+    if (agent?.status === "stale") {
+      return {
+        ok: false,
+        error: `agent ${agent.id} is stale and cannot accept a new assignment`,
+      };
+    }
+    if (assignment.agentId && !agent) {
+      return {
+        ok: false,
+        error: `unknown agent ${assignment.agentId}`,
+      };
+    }
     if (agent?.projectId && input.round.projectId && agent.projectId !== input.round.projectId) {
       return {
         ok: false,
         error: `agent ${agent.id} belongs to a different project`,
       };
     }
-    if (!agent && !assignment.agentId) {
-      agent = findReusableManagerAgent(existingAgents, assignment, input.round.projectId);
+    if (agent && !isManagerAgentAssignable(agent)) {
+      return {
+        ok: false,
+        error: `agent ${agent.id} is ${agent.status} and cannot accept a new assignment`,
+      };
     }
-    if (!agent) {
-      agent = await input.store.createAgent({
-        ...(input.round.projectId ? { projectId: input.round.projectId } : {}),
-        role: assignment.role,
-        ...(assignment.label ? { label: assignment.label } : {}),
-        ...(assignment.profile ? { profile: assignment.profile } : {}),
-        ...(assignment.cwd ? { cwd: assignment.cwd } : {}),
-        roundId: input.round.id,
+    if (!agent && !assignment.agentId) {
+      agent = await resolveOrCreateManagerRoundAgent({
+        store: input.store,
+        existingAgents,
+        claimedAgentIds,
+        round: input.round,
+        assignment,
         instruction: assignment.prompt,
       });
-      existingAgents.unshift(agent);
+    } else if (agent) {
+      claimedAgentIds.add(agent.id);
+    }
+    if (!agent) {
+      return {
+        ok: false,
+        error: "round assignment could not resolve an agent",
+      };
     }
     out.push({ agent, assignment });
   }
   return { ok: true, value: out };
 }
 
+async function resolveOrCreateManagerRoundAgent(input: {
+  store: ManagerOrchestrationStore;
+  existingAgents: ManagerAgent[];
+  claimedAgentIds: Set<string>;
+  round: ManagerRound;
+  assignment: Omit<ManagerRoundAgentAssignment, "prompt"> & { prompt?: string };
+  instruction?: string;
+}): Promise<ManagerAgent> {
+  const reusable = findReusableManagerAgent(
+    input.existingAgents,
+    input.assignment,
+    input.round.projectId,
+    input.claimedAgentIds,
+  );
+  const requestedCwd = input.assignment.cwd?.trim();
+  const shouldClearSession =
+    reusable && requestedCwd && (reusable.cwd ?? "") !== requestedCwd;
+  const patch: ManagerAgentPatch = {
+    ...(input.round.projectId ? { projectId: input.round.projectId } : {}),
+    ...(input.assignment.label ? { label: input.assignment.label } : {}),
+    ...(input.assignment.profile ? { profile: input.assignment.profile } : {}),
+    ...(input.assignment.cwd ? { cwd: input.assignment.cwd } : {}),
+    ...(shouldClearSession ? { sessionId: "" } : {}),
+    roundId: input.round.id,
+    ...(input.instruction
+      ? { lastInstruction: input.instruction, status: "assigned", taskId: "" }
+      : {}),
+    acknowledgedAt: "",
+    acknowledgedBy: "",
+    acknowledgedReason: "",
+  };
+  if (reusable) {
+    const updated = (await input.store.updateAgent(reusable.id, patch)) ?? reusable;
+    replaceKnownManagerAgent(input.existingAgents, updated);
+    input.claimedAgentIds.add(updated.id);
+    return updated;
+  }
+  const created = await input.store.createAgent({
+    ...(input.round.projectId ? { projectId: input.round.projectId } : {}),
+    role: input.assignment.role,
+    ...(input.assignment.label ? { label: input.assignment.label } : {}),
+    ...(input.assignment.profile ? { profile: input.assignment.profile } : {}),
+    ...(input.assignment.cwd ? { cwd: input.assignment.cwd } : {}),
+    roundId: input.round.id,
+    ...(input.instruction ? { instruction: input.instruction } : {}),
+  });
+  input.existingAgents.unshift(created);
+  input.claimedAgentIds.add(created.id);
+  return created;
+}
+
+function replaceKnownManagerAgent(agents: ManagerAgent[], updated: ManagerAgent): void {
+  const index = agents.findIndex((agent) => agent.id === updated.id);
+  if (index >= 0) agents[index] = updated;
+  else agents.unshift(updated);
+}
+
 function findReusableManagerAgent(
   agents: ManagerAgent[],
-  assignment: ManagerRoundAgentAssignment,
+  assignment: Pick<ManagerRoundAgentAssignment, "role" | "profile" | "cwd" | "label">,
   projectId?: string,
+  claimedAgentIds: Set<string> = new Set(),
 ): ManagerAgent | undefined {
   const profile = assignment.profile?.trim() || "claude-code";
   const cwd = assignment.cwd?.trim() || "";
   const label = assignment.label?.trim();
-  return agents.find((agent) => {
+  const candidates = agents.filter((agent) => {
+    if (claimedAgentIds.has(agent.id)) return false;
     if (agent.status === "stale") return false;
     if ((agent.projectId ?? "") !== (projectId ?? "")) return false;
     if (agent.role !== assignment.role) return false;
     if ((agent.profile || "claude-code") !== profile) return false;
-    if ((agent.cwd ?? "") !== cwd) return false;
-    if (label && agent.label !== label) return false;
+    if (!isManagerAgentAssignable(agent)) return false;
     return true;
   });
+  return candidates
+    .map((agent) => ({
+      agent,
+      score:
+        (agent.status === "idle" ? 40 : 0) +
+        (agent.status === "completed" ? 30 : 0) +
+        ((agent.cwd ?? "") === cwd ? 12 : 0) +
+        (label && agent.label === label ? 8 : 0) +
+        (agent.lastOutput ? 2 : 0),
+    }))
+    .sort((left, right) => right.score - left.score)[0]?.agent;
+}
+
+function isManagerAgentAssignable(agent: ManagerAgent): boolean {
+  if (agent.status === "assigned") return !agent.taskId;
+  return agent.status === "idle" || agent.status === "completed";
 }
 
 async function assignmentsFromRoundAgents(
@@ -11493,6 +11594,7 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
       "- Keep the role internal unless naming it helps the user understand the result.",
       "- If the request blends roles, start with the least risky read-only role, then escalate only when the user's intent requires action.",
       "- For development or orchestration work, do not become the implementer. Supervise `claude-code` worker tasks and verify their outputs.",
+      "- Reuse existing idle or completed project agents by role before creating new agents.",
       "- If the user says continue, proceed, keep going, or loop, run the managed Autonomous Supervision Loop instead of returning only a plan.",
     ].join("\n"),
     [
@@ -12501,8 +12603,10 @@ function buildManagedManagerAssistantInstructions(input: {
     "- Delegate substantial implementation, repo edits, test runs, documentation edits, and multi-step repair work to a worker CLI instead of pretending you performed the work inline.",
     "- Use `GET /api/manager/workers` to discover worker profiles.",
     "- Use `GET /api/manager/agents` and `GET /api/manager/rounds` to observe persistent orchestration state.",
-    "- Use `POST /api/manager/agents` to create role agents such as architect, protocol, verifier, critic, implementer, or documenter.",
+    "- Treat agents as a persistent project team. Before creating a role agent, inspect `GET /api/manager/agents` and reuse an idle or completed agent with the same project, role, and profile whenever one exists.",
+    "- Use `POST /api/manager/agents` only when no reusable agent exists for the needed role, profile, and project.",
     "- Use `POST /api/manager/rounds` and `POST /api/manager/rounds/:id/dispatch` when the user wants multi-agent orchestration. A real orchestration round should dispatch at least two non-dry-run agents unless it is intentionally blocked.",
+    "- For round dispatch, prefer explicit `agentId` assignments for reusable idle or completed agents; otherwise the server will attempt reuse before creating a new agent.",
     "- Use `POST /api/manager/workers/:id/check` before non-dry-run delegation unless that worker was checked recently in the same task.",
     '- Use `POST /api/manager/workers/run` or `POST /api/manager/tasks` with `kind: "run-worker"` to launch a worker task.',
     "- Worker prompts must include the exact objective, allowed scope, files/modules to touch, forbidden actions, verification commands, and the expected final report.",

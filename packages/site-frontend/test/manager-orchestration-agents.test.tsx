@@ -49,7 +49,9 @@ describe("ManagerOrchestrationPanel agents view", () => {
     expect(currentJudgment.textContent).toContain("Review round result");
     expect(currentJudgment.textContent).toContain("Required action");
     expect(currentJudgment.textContent).toContain(
-      'Confirm "Review round result" is the right step',
+      t("manager.orchestration.current-judgment.recommend.next-action", {
+        action: "Review round result",
+      }),
     );
     expect(currentJudgment.textContent).not.toContain("The manager's next action");
   });

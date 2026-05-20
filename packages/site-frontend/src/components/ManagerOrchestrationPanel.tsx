@@ -3737,6 +3737,10 @@ const AgentsView: Component<{
                       value={[brief.role, brief.profile].filter(Boolean).join("\n")}
                     />
                     <AgentDetailField
+                      label={t("manager.orchestration.agent.availability")}
+                      value={brief.availability}
+                    />
+                    <AgentDetailField
                       label={t("manager.orchestration.agent.assignment")}
                       value={brief.assignment}
                     />
@@ -3813,6 +3817,10 @@ const AgentsView: Component<{
                 <AgentDetailField
                   label={t("manager.orchestration.field.profile")}
                   value={agent.profile}
+                />
+                <AgentDetailField
+                  label={t("manager.orchestration.agent.availability")}
+                  value={agentAvailabilityLabel(agent, undefined)}
                 />
                 <AgentDetailField
                   label={t("manager.orchestration.field.task")}
@@ -3983,6 +3991,7 @@ interface ManagerAgentRoleBrief {
   status: string;
   tone: Tone;
   taskId?: string | undefined;
+  availability: string;
   assignment: string;
   output: string;
   evidence: string;
@@ -4077,6 +4086,7 @@ function buildAgentRoleBrief(
     status,
     tone: statusTone(status),
     taskId,
+    availability: agentAvailabilityLabel(agent, run),
     assignment:
       result?.assignment ||
       (extractAgentAssignment(agent?.lastInstruction) ??
@@ -4814,6 +4824,28 @@ function agentRoleNextRequest(
   }
   if (!taskId) return t("manager.orchestration.agent.next.assign");
   return t("manager.orchestration.agent.next.summarize");
+}
+
+function agentAvailabilityLabel(
+  agent: ManagerAgent | undefined,
+  run: ManagerWorkerRun | undefined,
+): string {
+  const status = run?.status ?? agent?.status;
+  if (agent && isReusableManagerAgent(agent)) {
+    return t("manager.orchestration.agent.availability.available");
+  }
+  if (status && ["assigned", "running", "waiting", "pending"].includes(status)) {
+    return t("manager.orchestration.agent.availability.busy");
+  }
+  if (status && ["blocked", "failed", "cancelled", "stale"].includes(status)) {
+    return t("manager.orchestration.agent.availability.needs-attention");
+  }
+  return t("manager.orchestration.agent.availability.unavailable");
+}
+
+function isReusableManagerAgent(agent: ManagerAgent): boolean {
+  if (agent.status === "assigned") return !agent.taskId;
+  return agent.status === "idle" || agent.status === "completed";
 }
 
 function agentRoleMeta(agent: ManagerAgent | undefined, run: ManagerWorkerRun | undefined): string {
