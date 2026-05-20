@@ -129,6 +129,72 @@ describe("ManagerAssistant", () => {
     expect(document.querySelector(".manager-assistant-dialogue-role")).toBeNull();
   });
 
+  test("renders manager conversation messages stored by another browser", async () => {
+    setLocale("en");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          revision: 7,
+          updatedAt: "2026-05-13T00:00:00.000Z",
+          messages: [
+            {
+              id: "remote-user",
+              role: "user",
+              text: "Remote browser request",
+              createdAt: "2026-05-13T00:00:00.000Z",
+            },
+            {
+              id: "remote-assistant",
+              role: "assistant",
+              text: "**Remote answer**",
+              createdAt: "2026-05-13T00:00:01.000Z",
+            },
+          ],
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        return Response.json({ result: [] });
+      }
+      if (url.includes("/api/manager/assistant/status")) {
+        return Response.json({ generatedAt: "2026-05-13T00:00:00.000Z", reports: [] });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Remote browser request");
+    });
+    expect(document.querySelector(".manager-assistant-dialogue-markdown strong")?.textContent).toBe(
+      "Remote answer",
+    );
+  });
+
   test("renders collapsed manager previews as markdown without embedding detailed logs", async () => {
     setLocale("en");
     const markdownText = [

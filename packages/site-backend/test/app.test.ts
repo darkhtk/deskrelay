@@ -2314,23 +2314,35 @@ describe("manager task API", () => {
       expect(initial.status).toBe(200);
       expect(await initial.json()).toMatchObject({
         conversationId: "deskrelay-manager-assistant",
+        revision: 0,
+        messages: [],
       });
 
       const update = await app.fetch(
         authedRequest("PUT", "/api/manager/assistant/conversation", {
           sessionId: "manager-session-42",
           cwd: join(cwd, ".deskrelay", "manager-assistant"),
+          appendMessages: [
+            {
+              id: "remote-user-1",
+              role: "user",
+              text: "remote browser request",
+              createdAt: "2026-05-13T00:00:00.000Z",
+            },
+          ],
         }),
       );
       expect(update.status).toBe(200);
       expect(await update.json()).toMatchObject({
         conversationId: "deskrelay-manager-assistant",
         sessionId: "manager-session-42",
+        messages: [{ role: "user", text: "remote browser request" }],
       });
 
       const restored = await app.fetch(authedRequest("GET", "/api/manager/assistant/conversation"));
       expect(await restored.json()).toMatchObject({
         sessionId: "manager-session-42",
+        messages: [{ id: "remote-user-1", role: "user", text: "remote browser request" }],
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -2539,6 +2551,14 @@ process.stdin.on("end", () => {
     expect(text).toContain('"main":"Assistant 실행 중"');
     expect(text).toContain('"type":"message"');
     expect(text).toContain("streamed 업데이트 상태 확인");
+    const conversation = await app.fetch(
+      authedRequest("GET", "/api/manager/assistant/conversation"),
+    );
+    const body = (await conversation.json()) as {
+      messages?: Array<{ role?: string; text?: string }>;
+    };
+    expect(body.messages?.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(body.messages?.[1]?.text).toContain("streamed");
   });
 
   test("manager assistant stream keeps the UI alive while waiting for a long response", async () => {
