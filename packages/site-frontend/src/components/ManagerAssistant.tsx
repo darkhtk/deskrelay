@@ -1583,6 +1583,14 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 };
 
 type ManagerAssistantTranscriptRole = "assistant" | "user";
+type ManagerAssistantEventSource = "local" | "live" | "sync" | "status";
+
+interface ManagerAssistantEventMeta {
+  source?: ManagerAssistantEventSource;
+  messageId?: string;
+  createdAt?: string;
+  attachmentCount?: number;
+}
 
 interface ManagerAssistantTranscriptEntry {
   id: string;
@@ -1590,6 +1598,7 @@ interface ManagerAssistantTranscriptEntry {
   text: string;
   preview: string;
   collapsed: boolean;
+  tags: string[];
 }
 
 const ManagerAssistantTranscript: Component<{
@@ -1606,6 +1615,13 @@ const ManagerAssistantTranscript: Component<{
             class={`manager-assistant-dialogue-item manager-assistant-dialogue-${entry.role}`}
           >
             <div class="manager-assistant-dialogue-body">
+              <Show when={entry.tags.length > 0}>
+                <div class="manager-assistant-dialogue-tags" aria-label="메시지 특징">
+                  <For each={entry.tags}>
+                    {(tag) => <span class="manager-assistant-dialogue-tag">{tag}</span>}
+                  </For>
+                </div>
+              </Show>
               <Show
                 when={entry.collapsed}
                 fallback={
