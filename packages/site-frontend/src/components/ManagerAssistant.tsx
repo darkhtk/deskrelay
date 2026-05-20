@@ -1991,7 +1991,7 @@ function buildManagerAssistantTranscriptEntries(
     const collapsed = shouldCollapseManagerAssistantEntry(role, text);
     const preview = collapsed ? managerAssistantPreviewText(text) : text;
     if (!preview.trim()) return [];
-    const tags = managerAssistantTranscriptTags(event, role, text, collapsed);
+    const tags = managerAssistantTranscriptTags(event, text, collapsed);
     return [
       {
         id: `${role}-${index}-${text.slice(0, 20)}`,
@@ -2007,16 +2007,14 @@ function buildManagerAssistantTranscriptEntries(
 
 function managerAssistantTranscriptTags(
   event: ClaudeStreamEvent,
-  role: ManagerAssistantTranscriptRole,
   text: string,
   collapsed: boolean,
 ): string[] {
-  const tags: string[] = [role === "user" ? "요청" : "응답"];
+  const tags: string[] = [];
   const meta = managerAssistantEventMeta(event);
   if (meta?.source === "sync") tags.push("외부 브라우저");
   if (meta?.source === "local") tags.push("방금");
   if (meta?.source === "status") tags.push("상태");
-  if (!meta?.source) tags.push("세션 기록");
   if ((meta?.attachmentCount ?? 0) > 0 || managerAssistantTextLooksLikeAttachment(text)) {
     tags.push("첨부");
   }

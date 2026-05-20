@@ -198,6 +198,9 @@ describe("ManagerAssistant", () => {
     );
     expect(tags).toContain("외부 브라우저");
     expect(tags).toContain("Markdown");
+    expect(tags).not.toContain("요청");
+    expect(tags).not.toContain("응답");
+    expect(tags).not.toContain("세션 기록");
   });
 
   test("renders collapsed manager previews as markdown without embedding detailed logs", async () => {
