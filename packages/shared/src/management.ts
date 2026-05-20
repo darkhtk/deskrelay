@@ -1693,14 +1693,17 @@ export interface ManagerStateViewResponse {
 export interface ManagerAssistantConversationState {
   generatedAt: string;
   conversationId: string;
+  revision?: number;
   sessionId?: string;
   cwd?: string;
+  messages?: ManagerAssistantChatMessage[];
   updatedAt?: string;
 }
 
 export interface ManagerAssistantConversationStateInput {
   sessionId?: string | null;
   cwd?: string | null;
+  appendMessages?: ManagerAssistantChatMessage[];
   reset?: boolean;
 }
 
@@ -2089,6 +2092,7 @@ export type ManagerEventInput =
   | { type: "agent.updated"; agent: ManagerAgent }
   | { type: "task.created"; task: ManagerTask }
   | { type: "task.updated"; task: ManagerTask }
+  | { type: "assistant.conversation"; conversation: ManagerAssistantConversationState }
   | { type: "assistant.status"; report: ManagerAssistantStatusReport }
   | { type: "hygiene.updated"; report: ManagerSessionHygieneReport }
   | { type: "browser.refresh"; activeClients: number }
