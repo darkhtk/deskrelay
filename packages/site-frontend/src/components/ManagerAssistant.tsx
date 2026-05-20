@@ -663,7 +663,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   createEffect(() => {
     const messages = conversationState()?.messages ?? [];
     if (messages.length === 0) return;
-    const serverEvents = messages.map(managerAssistantChatMessageEvent);
+    const serverEvents = messages.map((message) =>
+      managerAssistantChatMessageEvent(message, { source: "sync" }),
+    );
     setEvents((currentEvents) => {
       const cachedEvents = untrack(() => assistantHistory()?.events ?? []);
       const baseEvents = currentEvents.length > 0 ? currentEvents : cachedEvents;
@@ -928,7 +930,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
                 finalText,
               )
             ) {
-              appendEvent(managerAssistantChatMessageEvent(event.message));
+              appendEvent(managerAssistantChatMessageEvent(event.message, { source: "live" }));
             }
             if (finalTextVisible) {
               visibleAssistantReplySeen = true;
