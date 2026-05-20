@@ -9190,6 +9190,26 @@ body.manager-orchestration-resizing {
   color: var(--text);
   max-width: min(92%, 520px);
 }
+.manager-assistant-dialogue-tags {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 4px;
+}
+.manager-assistant-dialogue-user .manager-assistant-dialogue-tags {
+  justify-content: flex-end;
+}
+.manager-assistant-dialogue-tag {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
 .manager-assistant-dialogue-markdown {
   overflow-wrap: anywhere;
   word-break: break-word;

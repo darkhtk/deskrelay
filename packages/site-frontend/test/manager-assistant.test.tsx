@@ -193,6 +193,11 @@ describe("ManagerAssistant", () => {
     expect(document.querySelector(".manager-assistant-dialogue-markdown strong")?.textContent).toBe(
       "Remote answer",
     );
+    const tags = Array.from(document.querySelectorAll(".manager-assistant-dialogue-tag")).map(
+      (tag) => tag.textContent,
+    );
+    expect(tags).toContain("외부 브라우저");
+    expect(tags).toContain("Markdown");
   });
 
   test("renders collapsed manager previews as markdown without embedding detailed logs", async () => {
