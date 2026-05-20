@@ -181,6 +181,7 @@ interface ManagerAssistantHistory {
 
 export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const [reloadSeq, setReloadSeq] = createSignal(0);
+  const [conversationSeq, setConversationSeq] = createSignal(0);
   const [events, setEvents] = createSignal<ClaudeStreamEvent[]>([]);
   const [runIds, setRunIds] = createSignal<string[]>([]);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
@@ -244,7 +245,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     conversationState,
     { mutate: mutateConversationState, refetch: refetchConversationState },
   ] = createResource(
-    () => reloadSeq(),
+    () => conversationSeq(),
     async () => {
       try {
         return await api.managerAssistantConversation();
@@ -253,6 +254,8 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       }
     },
   );
+  const conversationSessionId = createMemo(() => conversationState()?.sessionId ?? null);
+  const conversationLoaded = createMemo(() => Boolean(conversationState()));
   const [statusReports] = createResource(
     () => statusReportSeq(),
     async (): Promise<ManagerAssistantStatusReportResponse | null> => {
@@ -412,9 +415,11 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     () => {
       const current = runtime();
       const seq = reloadSeq();
-      const persistedSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
-      const conversationLoaded = Boolean(conversationState());
-      return current ? { ...current, persistedSessionId, conversationLoaded, seq } : null;
+      const persistedSessionId = sessionId() ?? conversationSessionId();
+      const isConversationLoaded = conversationLoaded();
+      return current
+        ? { ...current, persistedSessionId, conversationLoaded: isConversationLoaded, seq }
+        : null;
     },
     async (current) => {
       if (!current) return null;
@@ -438,7 +443,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
       if (
         current.conversationLoaded &&
         current.persistedSessionId !== summary.sessionId &&
-        conversationState()?.sessionId !== summary.sessionId
+        conversationSessionId() !== summary.sessionId
       ) {
         void persistManagerSession(summary.sessionId, summary.cwd);
       }
