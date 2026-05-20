@@ -10561,7 +10561,7 @@ async function runManagerAssistantChat(
   );
   const responseMessage =
     assistantMessage ??
-    createManagerAssistantConversationMessage("assistant", result.text, { allowEmpty: true });
+    createManagerAssistantConversationMessage("assistant", result.text, { allowEmpty: true })!;
   return {
     cwd,
     command: result.command,
@@ -10690,7 +10690,7 @@ function streamManagerAssistantChat(
               assistantMessage ??
               createManagerAssistantConversationMessage("assistant", result.text, {
                 allowEmpty: true,
-              }),
+              })!,
           });
         } catch (error) {
           emit({ type: "error", error: errorMessage(error) });
@@ -11820,12 +11820,13 @@ function createManagerAssistantConversationMessage(
   role: ManagerAssistantChatMessage["role"],
   text: string,
   options: { allowEmpty?: boolean } = {},
-): ManagerAssistantChatMessage {
+): ManagerAssistantChatMessage | null {
   const sanitized = sanitizeManagerAssistantText(text).slice(0, 20_000);
+  if (!sanitized && !options.allowEmpty) return null;
   return {
     id: `${role}_${randomBytes(10).toString("base64url")}`,
     role,
-    text: sanitized || (options.allowEmpty ? "" : "[empty message]"),
+    text: sanitized,
     createdAt: new Date().toISOString(),
   };
 }

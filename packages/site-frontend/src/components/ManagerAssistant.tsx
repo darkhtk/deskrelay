@@ -36,6 +36,7 @@ import {
   createResource,
   createSignal,
   onCleanup,
+  untrack,
 } from "solid-js";
 import {
   type ClaudeSessionSummary,
