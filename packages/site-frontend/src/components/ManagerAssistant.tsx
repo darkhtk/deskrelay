@@ -2027,7 +2027,7 @@ function managerAssistantTranscriptTags(
 
 function managerAssistantEventMeta(event: ClaudeStreamEvent): ManagerAssistantEventMeta | null {
   const raw = event.managerAssistantMeta;
-  if (!isRecord(raw)) return null;
+  if (!isManagerAssistantRecord(raw)) return null;
   const meta: ManagerAssistantEventMeta = {};
   if (isManagerAssistantEventSource(raw.source)) meta.source = raw.source;
   if (typeof raw.messageId === "string" && raw.messageId.trim()) {
@@ -2040,6 +2040,10 @@ function managerAssistantEventMeta(event: ClaudeStreamEvent): ManagerAssistantEv
     meta.attachmentCount = Math.max(0, Math.floor(raw.attachmentCount));
   }
   return Object.keys(meta).length > 0 ? meta : null;
+}
+
+function isManagerAssistantRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isManagerAssistantEventSource(value: unknown): value is ManagerAssistantEventSource {
