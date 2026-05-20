@@ -2523,41 +2523,45 @@ process.stdin.on("end", () => {
   });
 
   test("manager assistant stream reports status before final response", async () => {
-    const cwd = join(tmpdir(), "deskrelay-assistant-stream-test");
-    const app = createSiteApp({
-      registry: new InMemoryDeviceRegistry(),
-      token: TOKEN,
-      managerAssistant: {
-        cwd,
-        runner: async (input) => ({
-          command: "fake-claude -p",
-          text: `streamed ${input.message}`,
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-stream-test-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          runner: async (input) => ({
+            command: "fake-claude -p",
+            text: `streamed ${input.message}`,
+          }),
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat/stream", {
+          message: "업데이트 상태 확인",
+          history: [],
         }),
-      },
-    });
+      );
 
-    const res = await app.fetch(
-      authedRequest("POST", "/api/manager/assistant/chat/stream", {
-        message: "업데이트 상태 확인",
-        history: [],
-      }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/event-stream");
-    const text = await res.text();
-    expect(text).toContain('"type":"status"');
-    expect(text).toContain('"main":"Assistant 실행 중"');
-    expect(text).toContain('"type":"message"');
-    expect(text).toContain("streamed 업데이트 상태 확인");
-    const conversation = await app.fetch(
-      authedRequest("GET", "/api/manager/assistant/conversation"),
-    );
-    const body = (await conversation.json()) as {
-      messages?: Array<{ role?: string; text?: string }>;
-    };
-    expect(body.messages?.map((message) => message.role)).toEqual(["user", "assistant"]);
-    expect(body.messages?.[1]?.text).toContain("streamed");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const text = await res.text();
+      expect(text).toContain('"type":"status"');
+      expect(text).toContain('"main":"Assistant 실행 중"');
+      expect(text).toContain('"type":"message"');
+      expect(text).toContain("streamed 업데이트 상태 확인");
+      const conversation = await app.fetch(
+        authedRequest("GET", "/api/manager/assistant/conversation"),
+      );
+      const body = (await conversation.json()) as {
+        messages?: Array<{ role?: string; text?: string }>;
+      };
+      expect(body.messages?.map((message) => message.role)).toEqual(["user", "assistant"]);
+      expect(body.messages?.[1]?.text).toContain("streamed");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("manager assistant stream keeps the UI alive while waiting for a long response", async () => {
