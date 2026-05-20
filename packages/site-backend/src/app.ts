@@ -10513,6 +10513,7 @@ async function runManagerAssistantChat(
   options: SiteAppOptions,
   requestUrl: string,
   contextStores?: ManagerAssistantContextStores,
+  managerEventBus?: ManagerEventBus,
 ): Promise<ManagerAssistantChatResponse> {
   const started = Date.now();
   const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
@@ -10536,23 +10537,36 @@ async function runManagerAssistantChat(
   };
   if (request.assistantState?.sessionId) input.managerSessionId = request.assistantState.sessionId;
   if (request.assistantState) input.assistantState = request.assistantState;
-  const result = await runner(input);
-  if (result.sessionId) {
-    await writeManagerAssistantConversationState(repoRoot, {
-      sessionId: result.sessionId,
-      cwd,
-    });
+  const userMessage = createManagerAssistantConversationMessage(
+    "user",
+    managerAssistantRequestTranscriptText(request),
+  );
+  if (userMessage) {
+    await writeManagerAssistantConversationState(
+      repoRoot,
+      { appendMessages: [userMessage] },
+      managerEventBus,
+    );
   }
+  const result = await runner(input);
+  const assistantMessage = createManagerAssistantConversationMessage("assistant", result.text);
+  await writeManagerAssistantConversationState(
+    repoRoot,
+    {
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      cwd,
+      ...(assistantMessage ? { appendMessages: [assistantMessage] } : {}),
+    },
+    managerEventBus,
+  );
+  const responseMessage =
+    assistantMessage ??
+    createManagerAssistantConversationMessage("assistant", result.text, { allowEmpty: true });
   return {
     cwd,
     command: result.command,
     durationMs: Date.now() - started,
-    message: {
-      id: `assistant_${randomBytes(10).toString("base64url")}`,
-      role: "assistant",
-      text: result.text,
-      createdAt: new Date().toISOString(),
-    },
+    message: responseMessage,
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
   };
 }
@@ -10562,6 +10576,7 @@ function streamManagerAssistantChat(
   options: SiteAppOptions,
   requestUrl: string,
   contextStores?: ManagerAssistantContextStores,
+  managerEventBus?: ManagerEventBus,
 ): Response {
   const encoder = new TextEncoder();
   let closed = false;
@@ -10637,28 +10652,45 @@ function streamManagerAssistantChat(
             input.managerSessionId = request.assistantState.sessionId;
           }
           if (request.assistantState) input.assistantState = request.assistantState;
+          const userMessage = createManagerAssistantConversationMessage(
+            "user",
+            managerAssistantRequestTranscriptText(request),
+          );
+          if (userMessage) {
+            await writeManagerAssistantConversationState(
+              repoRoot,
+              { appendMessages: [userMessage] },
+              managerEventBus,
+            );
+          }
           const runner = options.managerAssistant?.runner;
           const result = runner
             ? await runCustomManagerAssistantRunner(input, runner, emit)
             : await runDefaultManagerAssistantCliStream(input, options, emit);
-          if (result.sessionId) {
-            await writeManagerAssistantConversationState(repoRoot, {
-              sessionId: result.sessionId,
+          const assistantMessage = createManagerAssistantConversationMessage(
+            "assistant",
+            result.text,
+          );
+          await writeManagerAssistantConversationState(
+            repoRoot,
+            {
+              ...(result.sessionId ? { sessionId: result.sessionId } : {}),
               cwd,
-            });
-          }
+              ...(assistantMessage ? { appendMessages: [assistantMessage] } : {}),
+            },
+            managerEventBus,
+          );
           emit({
             type: "message",
             cwd,
             command: result.command,
             durationMs: Date.now() - started,
             ...(result.sessionId ? { sessionId: result.sessionId } : {}),
-            message: {
-              id: `assistant_${randomBytes(10).toString("base64url")}`,
-              role: "assistant",
-              text: result.text,
-              createdAt: new Date().toISOString(),
-            },
+            message:
+              assistantMessage ??
+              createManagerAssistantConversationMessage("assistant", result.text, {
+                allowEmpty: true,
+              }),
           });
         } catch (error) {
           emit({ type: "error", error: errorMessage(error) });
