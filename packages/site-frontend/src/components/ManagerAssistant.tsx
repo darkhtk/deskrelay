@@ -1886,6 +1886,26 @@ function managerAssistantEventsEquivalent(
   });
 }
 
+function mergeManagerAssistantConversationEvents(
+  currentEvents: ClaudeStreamEvent[],
+  serverEvents: ClaudeStreamEvent[],
+): ClaudeStreamEvent[] {
+  if (serverEvents.length === 0) return currentEvents;
+  const nextEvents = [...currentEvents];
+  let nextEntries = buildManagerAssistantTranscriptEntries(nextEvents);
+  for (const event of serverEvents) {
+    const entries = buildManagerAssistantTranscriptEntries([event]);
+    if (entries.length === 0) continue;
+    const alreadyVisible = entries.every((entry) =>
+      managerAssistantEntriesInclude(nextEntries, entry),
+    );
+    if (alreadyVisible) continue;
+    nextEvents.push(event);
+    nextEntries = buildManagerAssistantTranscriptEntries(nextEvents);
+  }
+  return nextEvents.slice(-MANAGER_ASSISTANT_HISTORY_LIMIT);
+}
+
 function findLastManagerAssistantEntryIndex(
   entries: ManagerAssistantTranscriptEntry[],
   predicate: (entry: ManagerAssistantTranscriptEntry) => boolean,
