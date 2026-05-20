@@ -2433,6 +2433,106 @@ describe("manager task API", () => {
     }
   });
 
+  test("manager assistant chat reuses client message ids without duplicating pre-persisted user messages", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-message-id-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          runner: async (input) => ({
+            text: `받음: ${input.message}`,
+            command: "mock-manager",
+          }),
+        },
+      });
+      const userMessage = {
+        id: "user_client_1",
+        role: "user",
+        text: "다운로드 받은 에셋으로 전수 교체하고 직접 플레이 검수 시켜",
+        createdAt: "2026-05-20T06:00:00.000Z",
+      };
+
+      const update = await app.fetch(
+        authedRequest("PUT", "/api/manager/assistant/conversation", {
+          appendMessages: [userMessage],
+        }),
+      );
+      expect(update.status).toBe(200);
+      const updated = (await update.json()) as { revision?: number };
+
+      const chat = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat", {
+          message: userMessage.text,
+          clientMessageId: userMessage.id,
+          clientCreatedAt: userMessage.createdAt,
+          conversationRevision: updated.revision,
+          history: [],
+        }),
+      );
+      expect(chat.status).toBe(200);
+      const chatBody = (await chat.json()) as {
+        acceptedMessage?: { id?: string };
+        conversationRevision?: number;
+      };
+      expect(chatBody.acceptedMessage?.id).toBe("user_client_1");
+      expect(chatBody.conversationRevision).toBeGreaterThan(updated.revision ?? 0);
+
+      const restored = await app.fetch(authedRequest("GET", "/api/manager/assistant/conversation"));
+      const body = (await restored.json()) as {
+        messages?: Array<{ id?: string; role?: string; text?: string }>;
+      };
+      expect(body.messages?.filter((message) => message.id === "user_client_1")).toHaveLength(1);
+      expect(body.messages?.map((message) => message.role)).toEqual(["user", "assistant"]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager assistant sync guard treats user visible GUI failure as stronger than automated PASS", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-gui-evidence-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          runner: async () => ({
+            text: "코드·빌드·자동 검증은 모두 PASS입니다. 시각 확인만 남았습니다. 사용자가 다시 실행해서 결과를 알려주세요.",
+            command: "mock-manager",
+          }),
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat", {
+          message: "에셋 적용이 전혀 안됐는데?",
+          context: {
+            projectId: "project_1",
+            projectName: "Slingshot",
+            projectStatus: "reviewing",
+            activeRoundId: "round_1",
+            activeRoundTitle: "R-asset-reimport",
+            activeRoundStatus: "completed",
+            projectCommandFlow: [
+              "stage=review; ready=yes",
+              "next=summarize: Summarize round result",
+            ],
+          },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { message?: { text?: string } };
+      expect(body.message?.text).toContain("동기화 규칙");
+      expect(body.message?.text).toContain("User-visible GUI");
+      expect(body.message?.text).not.toContain("자동 검증은 모두 PASS입니다");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager assistant defaults Claude commands to print mode", () => {
     const args = buildManagerAssistantCliArgs("C:\\Users\\darkh\\.local\\bin\\claude.exe", [
       "--output-format",
@@ -2732,6 +2832,15 @@ process.stdin.on("end", () => {
     await reader?.cancel();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(runnerCompleted).toBe(true);
+
+    const conversation = await app.fetch(
+      authedRequest("GET", "/api/manager/assistant/conversation"),
+    );
+    const body = (await conversation.json()) as {
+      messages?: Array<{ role?: string; text?: string }>;
+    };
+    expect(body.messages?.some((message) => message.role === "user")).toBe(true);
+    expect(body.messages?.some((message) => message.text === "업데이트 상태 확인")).toBe(true);
   });
 
   test("manager assistant history drops synthetic tool transcript artifacts", async () => {

@@ -65,11 +65,7 @@ import {
   readSelectedManagerProjectId,
   writeSelectedManagerProjectId,
 } from "../manager-project-selection.ts";
-import {
-  Attachments,
-  type AttachmentsAPI,
-  imagesFromClipboard,
-} from "./Attachments.tsx";
+import { Attachments, type AttachmentsAPI, imagesFromClipboard } from "./Attachments.tsx";
 import { Composer } from "./Composer.tsx";
 import { ManagerOrchestrationPanel } from "./ManagerOrchestrationPanel.tsx";
 
@@ -98,7 +94,9 @@ const MANAGER_ASSISTANT_INTERNAL_CHATTER_PATTERNS = [
   /^state\s+확인\s+중/i,
   /^헬스\s*체크\b/i,
   /^하트비트\b/i,
-  /^(?:생각 중|작업 확인 중|worker 응답 대기|승인 대기|결과 정리 중)$/i,
+  /^(?:생각 중|진행 중|작업 확인 중|worker 응답 대기|승인 대기|결과 정리 중)\.?$/i,
+  /^\d+\s*분(?:\s*경과)?\.?$/i,
+  /^\d+\s*분(?:\s*경과)?[,.\s].*(?:활발|idle|workspaceIdle|진행 중|빌드|import)/i,
   /^(?:thinking|checking work|waiting for worker|waiting for approval|summarizing result)$/i,
   /^\d+\s*(?:\/|of)\s*\d+.*(?:poll|timeout|확인|대기)/i,
   /^\d+\/\d+\s+모두\s+timeout/i,
@@ -823,7 +821,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     );
     if (!report) return;
     const text = formatManagerAssistantStatusReportForTranscript(report);
-    if (text && !managerAssistantFinalTextAlreadyVisible(managerAssistantTranscriptEntries(), text)) {
+    if (
+      text &&
+      !managerAssistantFinalTextAlreadyVisible(managerAssistantTranscriptEntries(), text)
+    ) {
       appendEvent(managerAssistantSyntheticEvent(text));
     }
     setVisibleStatusReportIds((current) => [...current, report.id].slice(-80));
@@ -885,10 +886,47 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     const resumeSessionId = sessionId() ?? conversationState()?.sessionId ?? null;
     const history = managerAssistantChatHistory(previousEntries);
     const assistantState = managerAssistantStructuredState(previousEntries, resumeSessionId);
-    const userEvent = userTranscriptEvent(text, pendingAttachments);
-    appendEvent(userEvent);
-    attachmentsApi?.clear();
-    setTranscriptAtBottom(true);
+    const userMessage = createManagerAssistantUserMessage(
+      text,
+      pendingAttachments,
+      requestStartedAt,
+    );
+    const userEvent = userTranscriptEvent(text, pendingAttachments, {
+      source: "local",
+      messageId: userMessage.id,
+      createdAt: userMessage.createdAt,
+    });
+    try {
+      setStatus({ tone: "thinking", main: "요청 저장 중" });
+      const persisted = await api.updateManagerAssistantConversation({
+        appendMessages: [userMessage],
+      });
+      appendEvent(userEvent);
+      mutateConversationState(persisted);
+      attachmentsApi?.clear();
+      setTranscriptAtBottom(true);
+      setStatus({ tone: "thinking", main: "요청 전달 중" });
+    } catch (persistError) {
+      const message = managerAssistantVisibleError(
+        persistError instanceof Error ? persistError.message : String(persistError),
+      );
+      appendEvent(
+        userTranscriptEvent(text, pendingAttachments, {
+          source: "failed",
+          messageId: userMessage.id,
+          createdAt: userMessage.createdAt,
+        }),
+      );
+      appendEvent(
+        managerAssistantSyntheticEvent(
+          `관리자 Assistant 전송 실패: ${message}\n\n이 메시지는 서버 conversation에 저장되지 않았습니다. 연결 상태를 확인한 뒤 다시 보내야 합니다.`,
+        ),
+      );
+      setCompletionReportSince(null);
+      setError(message);
+      setStatus({ tone: "warning", main: "전송 실패", detail: message });
+      return;
+    }
 
     const runId = `manager_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     setRunIds((currentIds) => [...currentIds, runId]);
@@ -900,9 +938,13 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
     let keepAwaitingManagerReply = false;
 
     try {
+      const conversationRevision = conversationState()?.revision;
       await api.managerAssistantChatStream(
         {
           message: text,
+          clientMessageId: userMessage.id,
+          clientCreatedAt: userMessage.createdAt,
+          ...(conversationRevision !== undefined ? { conversationRevision } : {}),
           ...(pendingAttachments.length > 0 ? { attachments: pendingAttachments } : {}),
           history,
           ...(props.context ? { context: props.context } : {}),
@@ -1591,7 +1633,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 };
 
 type ManagerAssistantTranscriptRole = "assistant" | "user";
-type ManagerAssistantEventSource = "local" | "live" | "sync" | "status";
+type ManagerAssistantEventSource = "local" | "live" | "sync" | "status" | "failed";
 
 interface ManagerAssistantEventMeta {
   source?: ManagerAssistantEventSource;
@@ -1813,9 +1855,7 @@ function formatManagerAssistantStatusReportForTranscript(
         : "보고합니다.";
   const scope = [report.round, report.scope].filter(Boolean).join(" · ");
   const title = scope ? `${heading} (${scope})` : heading;
-  return [title, report.message.trim(), report.detail?.trim() ?? ""]
-    .filter(Boolean)
-    .join("\n\n");
+  return [title, report.message.trim(), report.detail?.trim() ?? ""].filter(Boolean).join("\n\n");
 }
 
 function managerAssistantChatMessageEvent(
@@ -1849,6 +1889,29 @@ function managerAssistantChatHistory(
       text: entry.text.slice(0, 20_000),
       createdAt: new Date(now - (entries.length - index) * 1000).toISOString(),
     }));
+}
+
+function createManagerAssistantUserMessage(
+  text: string,
+  attachments: ManagerAssistantImageAttachment[],
+  createdAt: string,
+): ManagerAssistantChatMessage {
+  return {
+    id: `user_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+    role: "user",
+    text: managerAssistantRequestTranscriptText(text, attachments),
+    createdAt,
+  };
+}
+
+function managerAssistantRequestTranscriptText(
+  text: string,
+  attachments: ManagerAssistantImageAttachment[],
+): string {
+  const trimmed = text.trim();
+  if (trimmed) return trimmed;
+  const count = attachments.length;
+  return count > 0 ? `[${count} image attachment${count === 1 ? "" : "s"}]` : "";
 }
 
 function managerAssistantStructuredState(
@@ -2035,6 +2098,7 @@ function managerAssistantTranscriptTags(
   const meta = managerAssistantEventMeta(event);
   if (meta?.source === "sync") tags.push("외부 브라우저");
   if (meta?.source === "local") tags.push("방금");
+  if (meta?.source === "failed") tags.push("미전송");
   if (meta?.source === "status") tags.push("상태");
   if ((meta?.attachmentCount ?? 0) > 0 || managerAssistantTextLooksLikeAttachment(text)) {
     tags.push("첨부");
@@ -2066,7 +2130,13 @@ function isManagerAssistantRecord(value: unknown): value is Record<string, unkno
 }
 
 function isManagerAssistantEventSource(value: unknown): value is ManagerAssistantEventSource {
-  return value === "local" || value === "live" || value === "sync" || value === "status";
+  return (
+    value === "local" ||
+    value === "live" ||
+    value === "sync" ||
+    value === "status" ||
+    value === "failed"
+  );
 }
 
 function dedupeManagerAssistantTags(tags: string[]): string[] {
@@ -2356,6 +2426,7 @@ function statusLabel(status: string): string {
 function userTranscriptEvent(
   text: string,
   attachments: ManagerAssistantImageAttachment[] = [],
+  meta: ManagerAssistantEventMeta = {},
 ): ClaudeStreamEvent {
   const content = [
     ...(text.trim() ? [{ type: "text", text }] : []),
@@ -2374,11 +2445,12 @@ function userTranscriptEvent(
     type: "user",
     message: {
       role: "user",
-      content:
-        content.length > 0 ? content : [{ type: "text", text: "이미지 첨부" }],
+      content: content.length > 0 ? content : [{ type: "text", text: "이미지 첨부" }],
     },
     managerAssistantMeta: {
-      source: "local",
+      source: meta.source ?? "local",
+      ...(meta.messageId ? { messageId: meta.messageId } : {}),
+      ...(meta.createdAt ? { createdAt: meta.createdAt } : {}),
       attachmentCount: attachments.length,
     } satisfies ManagerAssistantEventMeta,
   };
@@ -2453,7 +2525,11 @@ function managerStatusFromAssistantStreamEvent(
   }
   if (event.type === "error") {
     if (isManagerAssistantLongWaitError(event.error)) {
-      return { tone: "thinking", main: "생각 중", detail: managerAssistantVisibleError(event.error) };
+      return {
+        tone: "thinking",
+        main: "생각 중",
+        detail: managerAssistantVisibleError(event.error),
+      };
     }
     return { tone: "warning", main: "Assistant 오류", detail: event.error };
   }
@@ -2479,6 +2555,9 @@ function managerAssistantVisibleError(error: string): string {
   const trimmed = error.trim();
   if (isManagerAssistantLongWaitError(trimmed)) {
     return "관리자 응답이 오래 걸리고 있습니다. 답변이 올 때까지 생각 중 상태를 유지합니다.";
+  }
+  if (/failed to fetch|networkerror|load failed/i.test(trimmed)) {
+    return "관리자 서버에 연결하지 못했습니다. 메시지 저장 여부를 확인하고 다시 전송해야 합니다.";
   }
   return trimmed || "관리자 Assistant 요청을 완료하지 못했습니다.";
 }
@@ -2556,7 +2635,11 @@ function managerStateShouldOwnVisibleStatus(
 ): boolean {
   if (!state?.current) return false;
   if (state.current.status !== "idle" && state.current.status !== "acknowledged") return true;
-  if (state.current.tone === "running" || state.current.tone === "warning" || state.current.tone === "error") {
+  if (
+    state.current.tone === "running" ||
+    state.current.tone === "warning" ||
+    state.current.tone === "error"
+  ) {
     return true;
   }
   return Boolean(

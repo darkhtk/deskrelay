@@ -1858,6 +1858,9 @@ export interface ManagerAssistantImageAttachment {
 
 export interface ManagerAssistantChatRequest {
   message: string;
+  clientMessageId?: string;
+  clientCreatedAt?: string;
+  conversationRevision?: number;
   attachments?: ManagerAssistantImageAttachment[];
   history?: ManagerAssistantChatMessage[];
   context?: ManagerAssistantChatContext;
@@ -1866,6 +1869,8 @@ export interface ManagerAssistantChatRequest {
 
 export interface ManagerAssistantChatResponse {
   message: ManagerAssistantChatMessage;
+  acceptedMessage?: ManagerAssistantChatMessage;
+  conversationRevision?: number;
   cwd: string;
   command: string;
   durationMs: number;
@@ -1891,10 +1896,17 @@ export interface ManagerAssistantStreamStatus {
 
 export type ManagerAssistantStreamEvent =
   | { type: "status"; status: ManagerAssistantStreamStatus }
+  | {
+      type: "ack";
+      message: ManagerAssistantChatMessage;
+      conversationRevision: number;
+    }
   | { type: "claude_event"; event: unknown }
   | {
       type: "message";
       message: ManagerAssistantChatMessage;
+      acceptedMessage?: ManagerAssistantChatMessage;
+      conversationRevision?: number;
       cwd: string;
       command: string;
       durationMs: number;

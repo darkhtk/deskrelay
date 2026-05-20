@@ -316,6 +316,7 @@ interface ManagerAssistantSyncObligation {
     | "must_use_current_snapshot"
     | "must_answer_user"
     | "must_ack_problem_report"
+    | "must_prioritize_user_gui_evidence"
     | "must_report_completed_round"
     | "must_reconcile_project_state"
     | "must_preflight_action"
@@ -3532,35 +3533,24 @@ async function openPathInFileManager(
   if (options.dryRun) {
     return { cwd, command: launch.command, args: launch.args, dryRun: true };
   }
-  scheduleDetachedLaunch(launch);
+  spawnDetached(
+    launch.command,
+    launch.args,
+    launch.windowsHide === undefined ? {} : { windowsHide: launch.windowsHide },
+  );
   return { cwd, command: launch.command, args: launch.args, dryRun: false };
 }
 
 function fileManagerLaunch(cwd: string): DetachedLaunch {
   if (process.platform === "win32") {
     return {
-      command: "cmd.exe",
-      args: ["/d", "/c", "start", "", cwd],
-      windowsHide: true,
+      command: "explorer.exe",
+      args: [cwd],
+      windowsHide: false,
     };
   }
   if (process.platform === "darwin") return { command: "open", args: [cwd] };
   return { command: "xdg-open", args: [cwd] };
-}
-
-function scheduleDetachedLaunch(launch: DetachedLaunch): void {
-  const timer = setTimeout(() => {
-    try {
-      spawnDetached(
-        launch.command,
-        launch.args,
-        launch.windowsHide === undefined ? {} : { windowsHide: launch.windowsHide },
-      );
-    } catch (error) {
-      console.warn(`failed to launch file manager: ${errorMessage(error)}`);
-    }
-  }, 25);
-  timer.unref?.();
 }
 
 function spawnDetached(
@@ -10560,6 +10550,14 @@ async function runManagerAssistantChat(
   const history = normalizeAssistantHistory(request.history);
   const context = await enrichManagerAssistantContext(request.context, contextStores);
   const sync = buildManagerAssistantSyncSnapshot(request, context);
+  const userMessage = createManagerAssistantUserMessage(request);
+  const userConversation = userMessage
+    ? await writeManagerAssistantConversationState(
+        repoRoot,
+        { appendMessages: [userMessage] },
+        managerEventBus,
+      )
+    : await readManagerAssistantConversationState(repoRoot);
   const runner =
     options.managerAssistant?.runner ??
     ((input: ManagerAssistantRunInput) => runDefaultManagerAssistantCli(input, options));
@@ -10576,20 +10574,9 @@ async function runManagerAssistantChat(
   };
   if (request.assistantState?.sessionId) input.managerSessionId = request.assistantState.sessionId;
   if (request.assistantState) input.assistantState = request.assistantState;
-  const userMessage = createManagerAssistantConversationMessage(
-    "user",
-    managerAssistantRequestTranscriptText(request),
-  );
-  if (userMessage) {
-    await writeManagerAssistantConversationState(
-      repoRoot,
-      { appendMessages: [userMessage] },
-      managerEventBus,
-    );
-  }
   const result = enforceManagerAssistantSyncOnResult(await runner(input), input);
   const assistantMessage = createManagerAssistantConversationMessage("assistant", result.text);
-  await writeManagerAssistantConversationState(
+  const finalConversation = await writeManagerAssistantConversationState(
     repoRoot,
     {
       ...(result.sessionId ? { sessionId: result.sessionId } : {}),
@@ -10606,6 +10593,8 @@ async function runManagerAssistantChat(
     command: result.command,
     durationMs: Date.now() - started,
     message: responseMessage,
+    ...(userMessage ? { acceptedMessage: userMessage } : {}),
+    conversationRevision: finalConversation.revision ?? userConversation.revision ?? 0,
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
   };
 }
@@ -10678,6 +10667,21 @@ function streamManagerAssistantChat(
           const history = normalizeAssistantHistory(request.history);
           const context = await enrichManagerAssistantContext(request.context, contextStores);
           const sync = buildManagerAssistantSyncSnapshot(request, context);
+          const userMessage = createManagerAssistantUserMessage(request);
+          const userConversation = userMessage
+            ? await writeManagerAssistantConversationState(
+                repoRoot,
+                { appendMessages: [userMessage] },
+                managerEventBus,
+              )
+            : await readManagerAssistantConversationState(repoRoot);
+          if (userMessage) {
+            emit({
+              type: "ack",
+              message: userMessage,
+              conversationRevision: userConversation.revision ?? 0,
+            });
+          }
           const input: ManagerAssistantRunInput = {
             message: request.message.trim(),
             ...(request.attachments?.length ? { attachments: request.attachments } : {}),
@@ -10693,17 +10697,6 @@ function streamManagerAssistantChat(
             input.managerSessionId = request.assistantState.sessionId;
           }
           if (request.assistantState) input.assistantState = request.assistantState;
-          const userMessage = createManagerAssistantConversationMessage(
-            "user",
-            managerAssistantRequestTranscriptText(request),
-          );
-          if (userMessage) {
-            await writeManagerAssistantConversationState(
-              repoRoot,
-              { appendMessages: [userMessage] },
-              managerEventBus,
-            );
-          }
           const runner = options.managerAssistant?.runner;
           const result = enforceManagerAssistantSyncOnResult(
             runner
@@ -10715,7 +10708,7 @@ function streamManagerAssistantChat(
             "assistant",
             result.text,
           );
-          await writeManagerAssistantConversationState(
+          const finalConversation = await writeManagerAssistantConversationState(
             repoRoot,
             {
               ...(result.sessionId ? { sessionId: result.sessionId } : {}),
@@ -10730,6 +10723,8 @@ function streamManagerAssistantChat(
             command: result.command,
             durationMs: Date.now() - started,
             ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+            ...(userMessage ? { acceptedMessage: userMessage } : {}),
+            conversationRevision: finalConversation.revision ?? userConversation.revision ?? 0,
             message:
               assistantMessage ??
               createManagerAssistantConversationMessage("assistant", result.text, {
@@ -11709,6 +11704,14 @@ function buildManagerAssistantSyncSnapshot(
       message:
         "The latest user message is a problem report; acknowledge it as new evidence and do not say you are waiting for that same user result.",
     });
+    if (mentionsUserVisibleGuiFailure(message)) {
+      obligations.push({
+        code: "must_prioritize_user_gui_evidence",
+        level: "required",
+        message:
+          "User-visible GUI/play/asset failure is stronger evidence than headless smoke or import PASS; treat previous automated PASS as insufficient and move to reproduce, fix, or visual verification instead of asking for the same confirmation again.",
+      });
+    }
   }
   if (
     projectStatus === "reviewing" ||
@@ -11794,6 +11797,12 @@ function classifyManagerAssistantRequestIntent(message: string): ManagerAssistan
 
 function mentionsManagerProjectScope(message: string): boolean {
   return /(프로젝트|라운드|작업|오케스트레이션|관리자|worker|agent|round|project|task)/i.test(
+    message,
+  );
+}
+
+function mentionsUserVisibleGuiFailure(message: string): boolean {
+  return /(GUI|화면|검은\s*화면|타이틀|플레이|실행|게임|에셋|asset|sprite|sound|visual|보이|안\s*보|적용|전혀)/i.test(
     message,
   );
 }
@@ -11893,6 +11902,12 @@ function managerAssistantSyncViolation(
     return "the response does not answer the latest user question";
   }
   if (
+    obligationCodes.has("must_prioritize_user_gui_evidence") &&
+    managerAssistantDownplaysUserGuiEvidence(compact)
+  ) {
+    return "the response treats automated validation as enough even though the latest user message reported a visible GUI failure";
+  }
+  if (
     sync.forbiddenReplies.some((reply) => compact.toLowerCase().includes(reply.toLowerCase())) &&
     (obligationCodes.has("must_ack_problem_report") ||
       obligationCodes.has("must_report_completed_round"))
@@ -11911,6 +11926,22 @@ function managerAssistantLooksLikeStaleWaitingAnswer(text: string): boolean {
   const hasSubstantiveReport =
     /완료|실패|오류|문제|라운드|round|worker|task|검증|결과|요약|수정|빌드/i.test(text);
   return !hasSubstantiveReport || text.length < 180;
+}
+
+function managerAssistantDownplaysUserGuiEvidence(text: string): boolean {
+  const citesAutomatedPass =
+    /(?:자동\s*검증|smoke|headless|import|빌드|코드|검증).{0,30}(?:pass|통과|완료|정상)/i.test(
+      text,
+    ) || /(?:pass|통과).{0,30}(?:자동\s*검증|smoke|headless|import|빌드|검증)/i.test(text);
+  const asksUserToConfirmAgain =
+    /(?:사용자|직접|다시|결과).{0,40}(?:확인|알려|실행|더블클릭|검증)|시각\s*확인.*(?:남|필요)|플레이\s*결과\s*대기/i.test(
+      text,
+    );
+  const plansAction =
+    /(?:재현|수정|고치|교체|새\s*라운드|디스패치|worker|작업자|검수|스크린샷|실제\s*플레이)/i.test(
+      text,
+    );
+  return citesAutomatedPass && asksUserToConfirmAgain && !plansAction;
 }
 
 function buildManagerAssistantSyncGuardMessage(
@@ -12187,18 +12218,37 @@ async function readStoredManagerAssistantConversationState(
   }
 }
 
+function createManagerAssistantUserMessage(
+  request: ManagerAssistantChatRequest,
+): ManagerAssistantChatMessage | null {
+  const options: { id?: string; createdAt?: string } = {};
+  if (request.clientMessageId) options.id = request.clientMessageId;
+  if (request.clientCreatedAt) options.createdAt = request.clientCreatedAt;
+  return createManagerAssistantConversationMessage(
+    "user",
+    managerAssistantRequestTranscriptText(request),
+    options,
+  );
+}
+
 function createManagerAssistantConversationMessage(
   role: ManagerAssistantChatMessage["role"],
   text: string,
-  options: { allowEmpty?: boolean } = {},
+  options: { allowEmpty?: boolean; id?: string; createdAt?: string } = {},
 ): ManagerAssistantChatMessage | null {
   const sanitized = sanitizeManagerAssistantText(text).slice(0, 20_000);
   if (!sanitized && !options.allowEmpty) return null;
   return {
-    id: `${role}_${randomBytes(10).toString("base64url")}`,
+    id:
+      typeof options.id === "string" && options.id.trim()
+        ? options.id.trim().slice(0, 200)
+        : `${role}_${randomBytes(10).toString("base64url")}`,
     role,
     text: sanitized,
-    createdAt: new Date().toISOString(),
+    createdAt:
+      typeof options.createdAt === "string" && options.createdAt.trim()
+        ? options.createdAt.trim().slice(0, 80)
+        : new Date().toISOString(),
   };
 }
 
@@ -14540,10 +14590,25 @@ function parseManagerAssistantChatRequest(
   if (message.length > 20_000) return { ok: false, error: "message is too long" };
   const context = normalizeAssistantContext(input.context);
   const assistantState = normalizeAssistantState(input.assistantState);
+  const clientMessageId =
+    typeof input.clientMessageId === "string" && input.clientMessageId.trim()
+      ? input.clientMessageId.trim().slice(0, 200)
+      : undefined;
+  const clientCreatedAt =
+    typeof input.clientCreatedAt === "string" && input.clientCreatedAt.trim()
+      ? input.clientCreatedAt.trim().slice(0, 80)
+      : undefined;
+  const conversationRevision =
+    typeof input.conversationRevision === "number" && Number.isFinite(input.conversationRevision)
+      ? Math.max(0, Math.floor(input.conversationRevision))
+      : undefined;
   return {
     ok: true,
     value: {
       message,
+      ...(clientMessageId ? { clientMessageId } : {}),
+      ...(clientCreatedAt ? { clientCreatedAt } : {}),
+      ...(conversationRevision !== undefined ? { conversationRevision } : {}),
       ...(attachments.length ? { attachments } : {}),
       history: normalizeAssistantHistory(input.history),
       ...(context ? { context } : {}),
