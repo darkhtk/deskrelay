@@ -416,6 +416,7 @@ const MANAGER_PROJECT_HYGIENE_ISSUE_KINDS: ManagerProjectHygieneIssueKind[] = [
 const MANAGER_ASSISTANT_CONVERSATION_FILE = "conversation-state.json";
 const MANAGER_ORCHESTRATION_FILE = "orchestration-state.json";
 const MANAGER_ASSISTANT_CONVERSATION_ID = "deskrelay-manager-assistant";
+const MANAGER_ASSISTANT_CONVERSATION_MESSAGE_LIMIT = 200;
 const MANAGER_ASSISTANT_STATUS_LIMIT = 50;
 const MANAGER_ASSISTANT_STATUS_CURRENT_MS = 30 * 60_000;
 const MANAGER_ASSISTANT_STREAM_KEEPALIVE_MS_DEFAULT = 15_000;
@@ -610,7 +611,9 @@ export function createSiteApp(options: SiteAppOptions): Hono {
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     try {
       const repoRoot = options.managerAssistant?.cwd ?? process.cwd();
-      return c.json(await writeManagerAssistantConversationState(repoRoot, parsed.value));
+      return c.json(
+        await writeManagerAssistantConversationState(repoRoot, parsed.value, managerEventBus),
+      );
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
@@ -1945,6 +1948,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
           options,
           c.req.url,
           managerAssistantContextStores,
+          managerEventBus,
         ),
       );
     } catch (error) {
@@ -1966,6 +1970,7 @@ export function createSiteApp(options: SiteAppOptions): Hono {
       options,
       c.req.url,
       managerAssistantContextStores,
+      managerEventBus,
     );
   });
 
