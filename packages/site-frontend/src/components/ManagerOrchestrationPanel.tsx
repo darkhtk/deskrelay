@@ -1127,7 +1127,9 @@ const ManagerCenterlineCard: Component<{
                       "manager-centerline-node-blocked": node.status === "blocked",
                       "manager-centerline-node-pending": node.status === "pending",
                     }}
-                    aria-current={node.status === "current" || node.status === "blocked" ? "step" : undefined}
+                    aria-current={
+                      node.status === "current" || node.status === "blocked" ? "step" : undefined
+                    }
                   >
                     <span>{managerCenterlinePhaseLabel(node.phase)}</span>
                     <small>{managerCenterlineNodeDetail(node, snapshot())}</small>
@@ -1276,7 +1278,9 @@ const ManagerApprovalInbox: Component<{
               const approvalActions = judgment.proposedActions.filter((action) => {
                 if (!action.requiresApproval) return false;
                 if (!props.snapshot) return true;
-                return managerSnapshotActionForProposed(props.snapshot, action)?.status === "available";
+                return (
+                  managerSnapshotActionForProposed(props.snapshot, action)?.status === "available"
+                );
               });
               return (
                 <article
@@ -1381,7 +1385,9 @@ const ManagerApprovalInbox: Component<{
                     <strong title={snapshotAction.title}>
                       {clip(managerCenterlineActionLabel(snapshotAction), 120)}
                     </strong>
-                    <p title={snapshotAction.description}>{clip(snapshotAction.description, 180)}</p>
+                    <p title={snapshotAction.description}>
+                      {clip(snapshotAction.description, 180)}
+                    </p>
                     <div class="manager-approval-evidence">
                       <span>
                         {t("manager.orchestration.agent.evidence-count", {
@@ -3507,7 +3513,9 @@ const WorkerRunsView: Component<{
           <span title={workerRunResultTitle(run)}>{workerRunResultLabel(run)}</span>
           <span
             class="manager-worker-run-signal"
-            title={run.error || run.outputPreview || run.integrity.join(", ")}
+            title={safeManagerDisplayText(
+              run.error || run.outputPreview || run.integrity.join(", "),
+            )}
           >
             {workerRunSignal(run)}
             <Show when={run.taskId && Boolean(props.onInspectTask)}>
@@ -3892,14 +3900,15 @@ const AgentDetailField: Component<{ label: string; value?: string | null | undef
 );
 
 const AgentReadableContent: Component<{ value: string }> = (props) => {
-  const parsedJson = createMemo(() => parseReadableJson(props.value));
+  const displayValue = createMemo(() => safeManagerDisplayText(props.value));
+  const parsedJson = createMemo(() => parseReadableJson(displayValue()));
   return (
     <Show
       when={parsedJson()}
       fallback={
         <div
           class="manager-agent-readable manager-agent-markdown"
-          innerHTML={renderMarkdown(props.value)}
+          innerHTML={renderMarkdown(displayValue())}
         />
       }
     >
@@ -3970,7 +3979,7 @@ function formatJsonScalar(value: unknown): string {
   if (value === undefined) return "-";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return safeManagerDisplayText(value);
   return JSON.stringify(value);
 }
 
@@ -4334,9 +4343,7 @@ function managerCenterlineActionLabel(action: ManagerOrchestrationAction): strin
   return managerProposedActionTypeLabel(action.type);
 }
 
-function managerCenterlineActionStatusLabel(
-  status: ManagerOrchestrationAction["status"],
-): string {
+function managerCenterlineActionStatusLabel(status: ManagerOrchestrationAction["status"]): string {
   return t(`manager.orchestration.centerline.action-status.${status}`);
 }
 
@@ -4415,7 +4422,7 @@ function filterManagerCommandFlowApprovalActions(
         judgment.proposedActions.some((action) => action.requiresApproval);
       if (!keep) changed = true;
       return keep;
-  });
+    });
   return changed ? { ...commandFlow, judgments } : commandFlow;
 }
 
@@ -4507,7 +4514,9 @@ function managerSnapshotActionMatchesProposed(
 }
 
 function managerSnapshotActionRoundId(action: ManagerOrchestrationAction): string {
-  return managerProposedActionPayloadString(action.payload, "roundId") ?? action.target.roundId ?? "";
+  return (
+    managerProposedActionPayloadString(action.payload, "roundId") ?? action.target.roundId ?? ""
+  );
 }
 
 function managerSnapshotActionTargetId(action: ManagerOrchestrationAction): string {
@@ -4589,7 +4598,8 @@ function buildManagerCurrentJudgmentBrief(input: {
       (action) => action.requiresApproval && action.status === "available",
     );
     const primaryApproval = availableActions[0];
-    const currentRoundId = snapshot.activeRoundId ?? activeRound?.id ?? project?.activeRoundId ?? null;
+    const currentRoundId =
+      snapshot.activeRoundId ?? activeRound?.id ?? project?.activeRoundId ?? null;
     const projectText = project
       ? `${project.name} · ${phaseLabel}`
       : `${snapshot.projectId} · ${phaseLabel}`;
@@ -7170,15 +7180,73 @@ function firstAssistantReportMatch(
 }
 
 function clip(value: string | undefined, max: number): string {
-  const text = value?.replace(/\s+/g, " ").trim() ?? "";
+  const text = safeManagerDisplayText(value).replace(/\s+/g, " ").trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1)}...`;
 }
 
 function clipBlock(value: string, max: number): string {
-  const text = value.trim();
+  const text = safeManagerDisplayText(value).trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max - 3)}...`;
+}
+
+interface ManagerDisplayCorruptionReport {
+  replacementChars: number;
+  controlChars: number;
+  mojibakeMarkers: number;
+  corrupted: boolean;
+}
+
+function safeManagerDisplayText(value: string | undefined): string {
+  const text = value ?? "";
+  const report = managerDisplayCorruptionReport(text);
+  if (!report.corrupted) return text;
+  const details = [
+    report.replacementChars
+      ? t("manager.orchestration.corrupt-log.detail-replacement", {
+          count: report.replacementChars,
+        })
+      : "",
+    report.controlChars
+      ? t("manager.orchestration.corrupt-log.detail-control", { count: report.controlChars })
+      : "",
+    report.mojibakeMarkers
+      ? t("manager.orchestration.corrupt-log.detail-mojibake", {
+          count: report.mojibakeMarkers,
+        })
+      : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return t("manager.orchestration.corrupt-log.hidden", {
+    details: details || t("manager.orchestration.corrupt-log.detail-unreadable"),
+  });
+}
+
+function managerDisplayCorruptionReport(value: string): ManagerDisplayCorruptionReport {
+  const totalChars = value.length;
+  const replacementChars = countTextMatches(value, /\uFFFD/g);
+  const controlChars = countTextMatches(value, /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g);
+  const mojibakeMarkers = countTextMatches(value, /(?:ï¿½|Ã.|Â.|â[€™€œ€]?|ê|ë|ì)/g);
+  const denominator = Math.max(totalChars, 1);
+  return {
+    replacementChars,
+    controlChars,
+    mojibakeMarkers,
+    corrupted:
+      totalChars > 0 &&
+      (/\uFFFD{3,}/.test(value) ||
+        replacementChars >= 8 ||
+        replacementChars / denominator >= 0.015 ||
+        controlChars >= 8 ||
+        controlChars / denominator >= 0.01 ||
+        mojibakeMarkers >= 20),
+  };
+}
+
+function countTextMatches(value: string, pattern: RegExp): number {
+  return value.match(pattern)?.length ?? 0;
 }
 
 function mermaidText(value: string | undefined, max: number): string {

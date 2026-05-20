@@ -115,6 +115,8 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   const [eventState, setEventState] = createSignal<ManagerEventConnectionState>("connecting");
   const [eventStateDetail, setEventStateDetail] = createSignal<string | null>(null);
   let eventRefreshTimer: number | undefined;
+  let projectFolderOpenInFlight = false;
+  let projectFolderOpenBusyTimer: number | undefined;
 
   const [orchestration] = createResource(
     () => ({ seq: refreshSeq(), projectId: selectedProjectId() }),
@@ -551,6 +553,9 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
 
   onCleanup(() => {
     if (eventRefreshTimer !== undefined) window.clearTimeout(eventRefreshTimer);
+    if (projectFolderOpenBusyTimer !== undefined) {
+      window.clearTimeout(projectFolderOpenBusyTimer);
+    }
   });
 
   async function cleanupSessionHygiene() {
@@ -651,10 +656,15 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
   }
 
   async function openManagerProjectFolder(projectId: string) {
-    if (projectFolderOpenBusy()) return;
+    if (projectFolderOpenInFlight) return;
+    projectFolderOpenInFlight = true;
     setProjectFolderOpenBusy(true);
     setProjectFolderOpenError(null);
     setProjectFolderOpenStatus(null);
+    projectFolderOpenBusyTimer = window.setTimeout(() => {
+      projectFolderOpenBusyTimer = undefined;
+      setProjectFolderOpenBusy(false);
+    }, 300);
     try {
       const response = await api.openManagerProjectFolder(projectId);
       setProjectFolderOpenStatus(
@@ -663,6 +673,11 @@ export const ManagerOrchestrationWorkspace: Component<ManagerOrchestrationWorksp
     } catch (error) {
       setProjectFolderOpenError(error instanceof Error ? error.message : String(error));
     } finally {
+      if (projectFolderOpenBusyTimer !== undefined) {
+        window.clearTimeout(projectFolderOpenBusyTimer);
+        projectFolderOpenBusyTimer = undefined;
+      }
+      projectFolderOpenInFlight = false;
       setProjectFolderOpenBusy(false);
     }
   }
@@ -1441,7 +1456,9 @@ function findFreshSnapshotApprovalAction(
   return freshAction ? proposedActionFromSnapshotAction(freshAction) : undefined;
 }
 
-function proposedActionFromSnapshotAction(action: ManagerOrchestrationAction): ManagerProposedAction {
+function proposedActionFromSnapshotAction(
+  action: ManagerOrchestrationAction,
+): ManagerProposedAction {
   return {
     id: action.id,
     projectId: action.target.projectId,

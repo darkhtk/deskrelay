@@ -1,6 +1,16 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -278,6 +288,7 @@ export interface ManagerAssistantRunInput {
   history: ManagerAssistantChatMessage[];
   context: ManagerAssistantChatContext | undefined;
   assistantState?: ManagerAssistantStructuredState;
+  sync?: ManagerAssistantSyncSnapshot;
   managerSessionId?: string;
   cwd: string;
   repoRoot: string;
@@ -289,6 +300,43 @@ export interface ManagerAssistantRunResult {
   text: string;
   command: string;
   sessionId?: string;
+}
+
+type ManagerAssistantRequestIntent =
+  | "question"
+  | "problem_report"
+  | "approval"
+  | "direction_change"
+  | "status_request"
+  | "command"
+  | "other";
+
+interface ManagerAssistantSyncObligation {
+  code:
+    | "must_use_current_snapshot"
+    | "must_answer_user"
+    | "must_ack_problem_report"
+    | "must_report_completed_round"
+    | "must_reconcile_project_state"
+    | "must_preflight_action"
+    | "must_refresh_missing_context";
+  level: "required" | "warning";
+  message: string;
+}
+
+interface ManagerAssistantSyncSnapshot {
+  generatedAt: string;
+  intent: ManagerAssistantRequestIntent;
+  facts: string[];
+  obligations: ManagerAssistantSyncObligation[];
+  forbiddenReplies: string[];
+  projectId?: string;
+  projectName?: string;
+  projectStatus?: string;
+  projectStage?: string;
+  activeRoundId?: string;
+  activeRoundStatus?: string;
+  nextAction?: string;
 }
 
 export interface ManagerAssistantOptions {
@@ -3460,6 +3508,12 @@ interface OpenPathResult {
   dryRun: boolean;
 }
 
+interface DetachedLaunch {
+  command: string;
+  args: string[];
+  windowsHide?: boolean;
+}
+
 async function openPathInFileManager(
   value: string,
   options: { dryRun?: boolean } = {},
@@ -3474,51 +3528,57 @@ async function openPathInFileManager(
   if (!info.isDirectory()) {
     throw new OpenPathError(`project path is not a folder: ${cwd}`, 400);
   }
-  const command =
-    process.platform === "win32"
-      ? "explorer.exe"
-      : process.platform === "darwin"
-        ? "open"
-        : "xdg-open";
-  const args = [cwd];
+  const launch = fileManagerLaunch(cwd);
   if (options.dryRun) {
-    return { cwd, command, args, dryRun: true };
+    return { cwd, command: launch.command, args: launch.args, dryRun: true };
   }
+  scheduleDetachedLaunch(launch);
+  return { cwd, command: launch.command, args: launch.args, dryRun: false };
+}
+
+function fileManagerLaunch(cwd: string): DetachedLaunch {
   if (process.platform === "win32") {
-    await openWindowsFileManager(cwd);
-  } else {
-    await spawnDetached(command, args);
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/c", "start", "", cwd],
+      windowsHide: true,
+    };
   }
-  return { cwd, command, args, dryRun: false };
+  if (process.platform === "darwin") return { command: "open", args: [cwd] };
+  return { command: "xdg-open", args: [cwd] };
 }
 
-async function openWindowsFileManager(cwd: string): Promise<void> {
-  await spawnDetached("explorer.exe", [cwd], { windowsHide: false });
+function scheduleDetachedLaunch(launch: DetachedLaunch): void {
+  const timer = setTimeout(() => {
+    try {
+      spawnDetached(
+        launch.command,
+        launch.args,
+        launch.windowsHide === undefined ? {} : { windowsHide: launch.windowsHide },
+      );
+    } catch (error) {
+      console.warn(`failed to launch file manager: ${errorMessage(error)}`);
+    }
+  }, 25);
+  timer.unref?.();
 }
 
-async function spawnDetached(
+function spawnDetached(
   command: string,
   args: string[],
   options: { windowsHide?: boolean } = {},
-): Promise<void> {
-  await new Promise<void>((resolveLaunch, rejectLaunch) => {
+): void {
+  try {
     const child = spawn(command, args, {
       detached: true,
       stdio: "ignore",
       windowsHide: options.windowsHide ?? true,
     });
-    const settle = (error?: Error) => {
-      child.removeAllListeners("error");
-      child.removeAllListeners("spawn");
-      if (error) rejectLaunch(error);
-      else resolveLaunch();
-    };
-    child.once("error", (error) => settle(error));
-    child.once("spawn", () => settle());
+    child.once("error", () => undefined);
     child.unref();
-  }).catch((error) => {
+  } catch (error) {
     throw new OpenPathError(`failed to open folder: ${errorMessage(error)}`, 500);
-  });
+  }
 }
 
 const SITE_ROUTE_CAPABILITIES = [
@@ -4769,8 +4829,7 @@ async function resolveOrCreateManagerRoundAgent(input: {
     input.claimedAgentIds,
   );
   const requestedCwd = input.assignment.cwd?.trim();
-  const shouldClearSession =
-    reusable && requestedCwd && (reusable.cwd ?? "") !== requestedCwd;
+  const shouldClearSession = reusable && requestedCwd && (reusable.cwd ?? "") !== requestedCwd;
   const patch: ManagerAgentPatch = {
     ...(input.round.projectId ? { projectId: input.round.projectId } : {}),
     ...(input.assignment.label ? { label: input.assignment.label } : {}),
@@ -6128,14 +6187,15 @@ function buildManagerOrchestrationSnapshot(
     flow: buildManagerOrchestrationFlowNodes(phase, flow),
     workers,
     blockers: openBlockers,
-    updatedAt: latestIsoString([
-      flow.generatedAt,
-      flow.project.updatedAt,
-      flow.activeRound?.updatedAt,
-      ...workers.map((worker) => worker.updatedAt),
-      ...openBlockers.map((blocker) => blocker.updatedAt),
-      ...flow.judgments.map((judgment) => judgment.createdAt),
-    ]) ?? flow.generatedAt,
+    updatedAt:
+      latestIsoString([
+        flow.generatedAt,
+        flow.project.updatedAt,
+        flow.activeRound?.updatedAt,
+        ...workers.map((worker) => worker.updatedAt),
+        ...openBlockers.map((blocker) => blocker.updatedAt),
+        ...flow.judgments.map((judgment) => judgment.createdAt),
+      ]) ?? flow.generatedAt,
   };
   return {
     generatedAt: flow.generatedAt,
@@ -6263,7 +6323,13 @@ function buildManagerOrchestrationActions(
   for (const judgment of flow.judgments) {
     for (const action of judgment.proposedActions) {
       if (!action.requiresApproval && judgment.priority !== "approval") continue;
-      const preflight = managerOrchestrationActionPreflight(action, judgment, runByTaskId, flow, now);
+      const preflight = managerOrchestrationActionPreflight(
+        action,
+        judgment,
+        runByTaskId,
+        flow,
+        now,
+      );
       actions.push({
         id: action.id,
         sourceJudgmentId: judgment.id,
@@ -9255,7 +9321,9 @@ async function buildManagerStateView(
   const currentRoundSummaries = roundSummaries.filter(
     (round) => !supersededRoundIds.has(round.id) && isManagerStateRoundCurrentCandidate(round),
   );
-  const unacknowledgedRoundSummaries = currentRoundSummaries.filter((round) => !round.acknowledgedAt);
+  const unacknowledgedRoundSummaries = currentRoundSummaries.filter(
+    (round) => !round.acknowledgedAt,
+  );
   const activeRound = selectManagerStateActiveRound(
     unacknowledgedRoundSummaries,
     input.latestStatus,
@@ -9777,7 +9845,11 @@ function selectManagerStateActiveRound(
 function isManagerStateRoundCurrentCandidate(round: ManagerStateRoundSummary): boolean {
   if (round.acknowledgedAt) return false;
   if (round.status === "blocked" || round.status === "failed") return true;
-  if (round.status === "dispatching" || round.status === "collecting" || round.status === "reviewing") {
+  if (
+    round.status === "dispatching" ||
+    round.status === "collecting" ||
+    round.status === "reviewing"
+  ) {
     return true;
   }
   if (round.status === "running") return managerStateRoundHasLiveWork(round);
@@ -9786,7 +9858,8 @@ function isManagerStateRoundCurrentCandidate(round: ManagerStateRoundSummary): b
 }
 
 function managerStateRoundHasLiveWork(round: ManagerStateRoundSummary): boolean {
-  if (round.status === "planned") return round.counts.runningAgents > 0 || round.counts.runningTasks > 0;
+  if (round.status === "planned")
+    return round.counts.runningAgents > 0 || round.counts.runningTasks > 0;
   if (round.status === "dispatching") return true;
   if (round.status === "collecting" || round.status === "reviewing") return true;
   return round.counts.runningAgents > 0 || round.counts.runningTasks > 0;
@@ -9930,7 +10003,7 @@ function managerWorkerResultText(task: ManagerTask): string {
   const result = isRecord(task.result) ? task.result : null;
   const stdout = typeof result?.stdout === "string" ? result.stdout.trim() : "";
   const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
-  return truncateText(stdout || stderr, 2_000);
+  return truncateText(sanitizeManagerVisibleText(stdout || stderr, "저장된 작업 로그"), 2_000);
 }
 
 function managerWorkerSessionId(task: ManagerTask): string | undefined {
@@ -10105,7 +10178,7 @@ function sanitizeDiagnosticStepForAssistant(step: DiagnosticStep): DiagnosticSte
 }
 
 function redactManagerSensitiveValue<T>(value: T): T {
-  if (typeof value === "string") return redactManagerSensitiveText(value) as T;
+  if (typeof value === "string") return sanitizeManagerVisibleText(value, "저장된 작업 로그") as T;
   if (Array.isArray(value)) {
     return value.map((item) => redactManagerSensitiveValue(item)) as T;
   }
@@ -10127,6 +10200,69 @@ function redactManagerSensitiveText(value: string): string {
       /(["']?(?:siteToken|authToken|daemonToken|token)["']?\s*[:=]\s*["']?)[A-Za-z0-9._~+/=-]{16,}(["']?)/gi,
       "$1[redacted]$2",
     );
+}
+
+interface ManagerTextCorruptionReport {
+  replacementChars: number;
+  controlChars: number;
+  mojibakeMarkers: number;
+  totalChars: number;
+  corrupted: boolean;
+}
+
+const MANAGER_CORRUPT_TEXT_PLACEHOLDER = "인코딩 손상 로그 숨김";
+
+function sanitizeManagerVisibleText(value: string, sourceLabel: string): string {
+  return hideCorruptManagerText(redactManagerSensitiveText(value), sourceLabel);
+}
+
+function sanitizeManagerWorkerOutputText(value: string, sourceLabel: string): string {
+  return hideCorruptManagerText(
+    redactManagerSensitiveText(sanitizeManagerAssistantText(value)),
+    sourceLabel,
+  );
+}
+
+function hideCorruptManagerText(value: string, sourceLabel: string): string {
+  const report = managerTextCorruptionReport(value);
+  if (!report.corrupted) return value;
+  const details = [
+    report.replacementChars ? `깨진 문자 ${report.replacementChars}개` : "",
+    report.controlChars ? `제어문자 ${report.controlChars}개` : "",
+    report.mojibakeMarkers ? `오인코딩 패턴 ${report.mojibakeMarkers}개` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return `${MANAGER_CORRUPT_TEXT_PLACEHOLDER}: ${sourceLabel}에 ${
+    details || "표시하기 어려운 문자"
+  }가 포함되어 원문 표시를 생략했습니다. UTF-8 또는 CP949 등 실행 도구의 출력 인코딩을 확인해 주세요.`;
+}
+
+function managerTextCorruptionReport(value: string): ManagerTextCorruptionReport {
+  const totalChars = value.length;
+  const replacementChars = countTextMatches(value, /\uFFFD/g);
+  const controlChars = countTextMatches(value, /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g);
+  const mojibakeMarkers = countTextMatches(value, /(?:ï¿½|Ã.|Â.|â[€™€œ€]?|ê|ë|ì)/g);
+  const denominator = Math.max(totalChars, 1);
+  const corrupted =
+    totalChars > 0 &&
+    (/\uFFFD{3,}/.test(value) ||
+      replacementChars >= 8 ||
+      replacementChars / denominator >= 0.015 ||
+      controlChars >= 8 ||
+      controlChars / denominator >= 0.01 ||
+      mojibakeMarkers >= 20);
+  return {
+    replacementChars,
+    controlChars,
+    mojibakeMarkers,
+    totalChars,
+    corrupted,
+  };
+}
+
+function countTextMatches(value: string, pattern: RegExp): number {
+  return value.match(pattern)?.length ?? 0;
 }
 
 async function enrichManagerAssistantContext(
@@ -10423,6 +10559,7 @@ async function runManagerAssistantChat(
   const cwd = options.managerAssistant?.runner ? repoRoot : workspace.cwd;
   const history = normalizeAssistantHistory(request.history);
   const context = await enrichManagerAssistantContext(request.context, contextStores);
+  const sync = buildManagerAssistantSyncSnapshot(request, context);
   const runner =
     options.managerAssistant?.runner ??
     ((input: ManagerAssistantRunInput) => runDefaultManagerAssistantCli(input, options));
@@ -10431,6 +10568,7 @@ async function runManagerAssistantChat(
     ...(request.attachments?.length ? { attachments: request.attachments } : {}),
     history,
     context,
+    sync,
     cwd,
     repoRoot,
     instructionsPath: workspace.instructionsPath,
@@ -10449,7 +10587,7 @@ async function runManagerAssistantChat(
       managerEventBus,
     );
   }
-  const result = await runner(input);
+  const result = enforceManagerAssistantSyncOnResult(await runner(input), input);
   const assistantMessage = createManagerAssistantConversationMessage("assistant", result.text);
   await writeManagerAssistantConversationState(
     repoRoot,
@@ -10539,11 +10677,13 @@ function streamManagerAssistantChat(
           const cwd = options.managerAssistant?.runner ? repoRoot : workspace.cwd;
           const history = normalizeAssistantHistory(request.history);
           const context = await enrichManagerAssistantContext(request.context, contextStores);
+          const sync = buildManagerAssistantSyncSnapshot(request, context);
           const input: ManagerAssistantRunInput = {
             message: request.message.trim(),
             ...(request.attachments?.length ? { attachments: request.attachments } : {}),
             history,
             context,
+            sync,
             cwd,
             repoRoot,
             instructionsPath: workspace.instructionsPath,
@@ -10565,9 +10705,12 @@ function streamManagerAssistantChat(
             );
           }
           const runner = options.managerAssistant?.runner;
-          const result = runner
-            ? await runCustomManagerAssistantRunner(input, runner, emit)
-            : await runDefaultManagerAssistantCliStream(input, options, emit);
+          const result = enforceManagerAssistantSyncOnResult(
+            runner
+              ? await runCustomManagerAssistantRunner(input, runner, emit)
+              : await runDefaultManagerAssistantCliStream(input, options, emit),
+            input,
+          );
           const assistantMessage = createManagerAssistantConversationMessage(
             "assistant",
             result.text,
@@ -11009,7 +11152,9 @@ function isValidManagerAssistantImageAttachment(
   if (approximateBytes > MANAGER_ASSISTANT_MAX_ATTACHMENT_BYTES) return false;
   if (
     value.size !== undefined &&
-    (!Number.isFinite(value.size) || value.size < 0 || value.size > MANAGER_ASSISTANT_MAX_ATTACHMENT_BYTES)
+    (!Number.isFinite(value.size) ||
+      value.size < 0 ||
+      value.size > MANAGER_ASSISTANT_MAX_ATTACHMENT_BYTES)
   ) {
     return false;
   }
@@ -11326,7 +11471,11 @@ function chooseManagerAssistantFinalText(
     if (!candidate) continue;
     if (!isManagerAssistantNoResponseText(candidate)) return { ok: true, text: candidate };
   }
-  if ([resultText, assistantAfterTool, assistantText, rawText, stderr].some(isManagerAssistantNoResponseText)) {
+  if (
+    [resultText, assistantAfterTool, assistantText, rawText, stderr].some(
+      isManagerAssistantNoResponseText,
+    )
+  ) {
     return {
       ok: true,
       text:
@@ -11486,8 +11635,314 @@ function formatManagerAssistantElapsedMs(valueMs: number): string {
   return remainingSeconds > 0 ? `${minutes}분 ${remainingSeconds}초` : `${minutes}분`;
 }
 
+function buildManagerAssistantSyncSnapshot(
+  request: ManagerAssistantChatRequest,
+  context: ManagerAssistantChatContext | undefined,
+): ManagerAssistantSyncSnapshot {
+  const message = sanitizeManagerAssistantText(request.message);
+  const intent = classifyManagerAssistantRequestIntent(message);
+  const commandFlowText = (context?.projectCommandFlow ?? []).join("\n");
+  const preflightText = (context?.projectStatePreflight ?? []).join("\n");
+  const projectStage = firstManagerAssistantContextMatch(
+    `${commandFlowText}\n${preflightText}`,
+    /\bstage=([^;\n]+)/i,
+  );
+  const nextAction = firstManagerAssistantContextMatch(commandFlowText, /\bnext=([^;\n]+)/i);
+  const activeRoundStatus = context?.activeRoundStatus;
+  const projectStatus = context?.projectStatus;
+  const facts: string[] = [];
+  if (context?.projectId || context?.projectName || projectStatus) {
+    facts.push(
+      [
+        context?.projectName ? `project=${context.projectName}` : undefined,
+        context?.projectId ? `id=${context.projectId}` : undefined,
+        projectStatus ? `status=${projectStatus}` : undefined,
+        projectStage ? `stage=${projectStage}` : undefined,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join("; "),
+    );
+  }
+  if (context?.activeRoundId || context?.activeRoundTitle || activeRoundStatus) {
+    facts.push(
+      [
+        context?.activeRoundTitle ? `active round=${context.activeRoundTitle}` : undefined,
+        context?.activeRoundId ? `id=${context.activeRoundId}` : undefined,
+        activeRoundStatus ? `status=${activeRoundStatus}` : undefined,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join("; "),
+    );
+  }
+  if (nextAction) facts.push(`next action=${nextAction}`);
+  for (const line of (context?.projectStatePreflight ?? []).slice(0, 4)) {
+    facts.push(`preflight: ${line}`);
+  }
+
+  const obligations: ManagerAssistantSyncObligation[] = [
+    {
+      code: "must_use_current_snapshot",
+      level: "required",
+      message:
+        "Use the current sync facts and command-flow before prior manager chat or assistant status reports.",
+    },
+  ];
+  if (!context?.projectId && mentionsManagerProjectScope(message)) {
+    obligations.push({
+      code: "must_refresh_missing_context",
+      level: "warning",
+      message:
+        "The request appears project-scoped but no current project id is present; inspect or ask before acting.",
+    });
+  }
+  if (intent === "question" || intent === "status_request") {
+    obligations.push({
+      code: "must_answer_user",
+      level: "required",
+      message: "Answer the latest user question directly before narration or background status.",
+    });
+  }
+  if (intent === "problem_report") {
+    obligations.push({
+      code: "must_ack_problem_report",
+      level: "required",
+      message:
+        "The latest user message is a problem report; acknowledge it as new evidence and do not say you are waiting for that same user result.",
+    });
+  }
+  if (
+    projectStatus === "reviewing" ||
+    projectStage === "review" ||
+    activeRoundStatus === "completed" ||
+    /summarize|review|result|결과|검토|요약/i.test(nextAction ?? "")
+  ) {
+    obligations.push({
+      code: "must_report_completed_round",
+      level: "required",
+      message:
+        "A project round is ready for review or summary; report the completed result and next decision before saying idle or waiting.",
+    });
+  }
+  if (
+    projectStatus === "reviewing" ||
+    projectStage === "review" ||
+    (context?.projectCommandFlow ?? []).some((line) => /ready=yes|next=/i.test(line))
+  ) {
+    obligations.push({
+      code: "must_reconcile_project_state",
+      level: "required",
+      message:
+        "Reconcile global idle/ready wording with the selected project's active review state.",
+    });
+  }
+  if (intent === "approval" || /승인|재시도|retry|approve/i.test(message)) {
+    obligations.push({
+      code: "must_preflight_action",
+      level: "required",
+      message:
+        "Before treating approval/retry as valid, check the current task or round state and reject stale actions.",
+    });
+  }
+
+  const forbiddenReplies = [
+    "사용자 플레이 결과 대기 중입니다.",
+    "대기 중입니다.",
+    "Manager is ready",
+    "No response requested.",
+  ];
+  if (intent === "problem_report") {
+    forbiddenReplies.push("확인 후 알려주세요", "결과를 알려주시면", "waiting for user");
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    intent,
+    facts: dedupeManagerAssistantSyncStrings(facts).slice(0, 10),
+    obligations: dedupeManagerAssistantObligations(obligations),
+    forbiddenReplies,
+    ...(context?.projectId ? { projectId: context.projectId } : {}),
+    ...(context?.projectName ? { projectName: context.projectName } : {}),
+    ...(projectStatus ? { projectStatus } : {}),
+    ...(projectStage ? { projectStage } : {}),
+    ...(context?.activeRoundId ? { activeRoundId: context.activeRoundId } : {}),
+    ...(activeRoundStatus ? { activeRoundStatus } : {}),
+    ...(nextAction ? { nextAction } : {}),
+  };
+}
+
+function classifyManagerAssistantRequestIntent(message: string): ManagerAssistantRequestIntent {
+  const compact = message.trim();
+  if (!compact) return "other";
+  if (
+    /(안\s*돼|안되|안 됐|안됐|전혀|문제|오류|에러|실패|깨짐|깨진|막혀|이상|wrong|fail|failed|broken|not working)/i.test(
+      compact,
+    )
+  ) {
+    return "problem_report";
+  }
+  if (
+    /[?？]|\bwhy\b|\bwhat\b|\bhow\b|왜|뭐|무엇|어떻게|인가|냐고|나요|니\?|까\?|분석|현황|상태|됐어|완료|결과/i.test(
+      compact,
+    )
+  ) {
+    return /(분석|현황|상태|완료|결과|됐어)/i.test(compact) ? "status_request" : "question";
+  }
+  if (/(승인|허용|approve|retry|재시도)/i.test(compact)) return "approval";
+  if (/(바꿔|변경|수정|개선|방향|다시|고쳐)/i.test(compact)) return "direction_change";
+  if (/(진행|처리|해결|시작|실행)/i.test(compact)) return "command";
+  return "other";
+}
+
+function mentionsManagerProjectScope(message: string): boolean {
+  return /(프로젝트|라운드|작업|오케스트레이션|관리자|worker|agent|round|project|task)/i.test(
+    message,
+  );
+}
+
+function firstManagerAssistantContextMatch(value: string, pattern: RegExp): string | undefined {
+  const match = pattern.exec(value);
+  const result = match?.[1]?.trim();
+  return result || undefined;
+}
+
+function dedupeManagerAssistantSyncStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const compact = value.replace(/\s+/g, " ").trim();
+    if (!compact || seen.has(compact)) continue;
+    seen.add(compact);
+    result.push(compact);
+  }
+  return result;
+}
+
+function dedupeManagerAssistantObligations(
+  obligations: ManagerAssistantSyncObligation[],
+): ManagerAssistantSyncObligation[] {
+  const seen = new Set<string>();
+  const result: ManagerAssistantSyncObligation[] = [];
+  for (const obligation of obligations) {
+    if (seen.has(obligation.code)) continue;
+    seen.add(obligation.code);
+    result.push(obligation);
+  }
+  return result;
+}
+
+function formatManagerAssistantSyncContract(
+  sync: ManagerAssistantSyncSnapshot | undefined,
+): string {
+  if (!sync) return "";
+  const lines = [
+    "## Synchronization Contract",
+    "The server computed this snapshot immediately before this manager reply. It outranks older chat history, stale assistant status reports, and generic idle wording.",
+    `- intent: ${sync.intent}`,
+  ];
+  if (sync.facts.length) {
+    lines.push("- current facts:");
+    lines.push(...sync.facts.map((fact) => `  - ${fact}`));
+  }
+  if (sync.obligations.length) {
+    lines.push("- obligations:");
+    lines.push(
+      ...sync.obligations.map(
+        (obligation) => `  - ${obligation.level}:${obligation.code}: ${obligation.message}`,
+      ),
+    );
+  }
+  if (sync.forbiddenReplies.length) {
+    lines.push("- forbidden stale replies:");
+    lines.push(...sync.forbiddenReplies.map((reply) => `  - ${reply}`));
+  }
+  lines.push(
+    "If you cannot satisfy a required obligation, say so visibly in Korean and state the smallest safe next step. Do not answer with a waiting/idle message when a required obligation says to answer, acknowledge, report, or reconcile.",
+  );
+  return lines.join("\n");
+}
+
+function enforceManagerAssistantSyncOnResult(
+  result: ManagerAssistantRunResult,
+  input: ManagerAssistantRunInput,
+): ManagerAssistantRunResult {
+  const sync = input.sync;
+  if (!sync) return result;
+  const violation = managerAssistantSyncViolation(result.text, sync);
+  if (!violation) return result;
+  return {
+    ...result,
+    text: buildManagerAssistantSyncGuardMessage(sync, violation),
+  };
+}
+
+function managerAssistantSyncViolation(
+  text: string,
+  sync: ManagerAssistantSyncSnapshot | undefined,
+): string | undefined {
+  if (!sync) return undefined;
+  const compact = sanitizeManagerAssistantText(text).replace(/\s+/g, " ").trim();
+  if (!compact) return "empty response";
+  const waitingOnly = managerAssistantLooksLikeStaleWaitingAnswer(compact);
+  const obligationCodes = new Set(sync.obligations.map((obligation) => obligation.code));
+  if (obligationCodes.has("must_ack_problem_report") && waitingOnly) {
+    return "the response waits for user results even though the latest user message already reported a problem";
+  }
+  if (obligationCodes.has("must_report_completed_round") && waitingOnly) {
+    return "the response says idle/waiting while a completed or review-ready round must be reported";
+  }
+  if (obligationCodes.has("must_answer_user") && waitingOnly) {
+    return "the response does not answer the latest user question";
+  }
+  if (
+    sync.forbiddenReplies.some((reply) => compact.toLowerCase().includes(reply.toLowerCase())) &&
+    (obligationCodes.has("must_ack_problem_report") ||
+      obligationCodes.has("must_report_completed_round"))
+  ) {
+    return "the response contains a forbidden stale reply for the current sync state";
+  }
+  return undefined;
+}
+
+function managerAssistantLooksLikeStaleWaitingAnswer(text: string): boolean {
+  const hasWaiting =
+    /대기\s*중|기다리|알려주시면|확인\s*후|waiting for user|manager is ready|no response requested/i.test(
+      text,
+    );
+  if (!hasWaiting) return false;
+  const hasSubstantiveReport =
+    /완료|실패|오류|문제|라운드|round|worker|task|검증|결과|요약|수정|빌드/i.test(text);
+  return !hasSubstantiveReport || text.length < 180;
+}
+
+function buildManagerAssistantSyncGuardMessage(
+  sync: ManagerAssistantSyncSnapshot,
+  violation: string,
+): string {
+  const lines = [
+    "동기화 규칙이 이전 응답을 차단했습니다.",
+    `차단 이유: ${violation}.`,
+    "",
+    "현재 기준:",
+  ];
+  if (sync.facts.length) {
+    lines.push(...sync.facts.slice(0, 6).map((fact) => `- ${fact}`));
+  } else {
+    lines.push("- 최신 프로젝트/라운드 상태를 다시 읽어야 합니다.");
+  }
+  const required = sync.obligations.filter((obligation) => obligation.level === "required");
+  if (required.length) {
+    lines.push("", "지금 반드시 해야 할 일:");
+    lines.push(...required.map((obligation) => `- ${obligation.message}`));
+  }
+  lines.push(
+    "",
+    "따라서 이 턴의 올바른 다음 행동은 마지막 사용자 발화를 최신 의도로 인정하고, 완료/실패/대기 상태를 다시 맞춘 뒤 결과 또는 다음 조치를 보고하는 것입니다.",
+  );
+  return lines.join("\n");
+}
+
 export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): string {
   const browserContext = formatManagerAssistantBrowserContext(input.context);
+  const syncContract = formatManagerAssistantSyncContract(input.sync);
   const asciiSafeRequest = asciiSafeJsonString(input.message);
   const pendingDecision = isShortManagerAssistantReply(input.message)
     ? formatManagerAssistantPendingDecision(input.assistantState?.pendingDecision)
@@ -11502,6 +11957,7 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
     : "";
   return [
     browserContext ? `## Current Browser Context\n${browserContext}` : "",
+    syncContract,
     shortReplyHint,
     [
       "## Current State Preflight Rule",
@@ -11518,6 +11974,7 @@ export function buildManagerAssistantPrompt(input: ManagerAssistantRunInput): st
       "If the raw request above appears as question marks, mojibake, or otherwise corrupted, decode this JSON string and use it as the source of truth for intent.",
     ].join("\n"),
     "## Response Requirements\nAnswer only the current user request. Use the active Claude session for conversation memory. Use observed facts for operational claims.",
+    "The Synchronization Contract, when present, is mandatory. Satisfy every `required` obligation before adding optional explanation.",
     "Never answer only `No response requested.`. Every manager-chat user message requires a visible Korean answer, progress update, or failure report.",
     "Start with the direct answer, current decision, or action taken in 1-3 concise Korean sentences.",
     "If the user asked a question, answer the question first. Do not replace the answer with implementation narration or tool status.",
@@ -11672,13 +12129,26 @@ async function writeManagerAssistantConversationState(
     const cwd = input.cwd.trim();
     if (cwd) next.cwd = cwd.slice(0, 2_000);
   }
-  await writeFile(filePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  await writeManagerAssistantJsonFile(filePath, next);
   const state = {
     generatedAt: new Date().toISOString(),
     ...next,
   };
   managerEventBus?.emit({ type: "assistant.conversation", conversation: state });
   return state;
+}
+
+async function writeManagerAssistantJsonFile(filePath: string, value: unknown): Promise<void> {
+  const text = `${JSON.stringify(value, null, 2)}\n`;
+  JSON.parse(text);
+  const tempPath = `${filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tempPath, text, "utf8");
+  try {
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function readStoredManagerAssistantConversationState(
@@ -12138,8 +12608,8 @@ async function runManagerWorkerCli(
     exitCode: liveness.exitCode,
     timedOut: liveness.killed,
     durationMs: Date.now() - started,
-    stdout: sanitizeManagerAssistantText(stdoutResult.text),
-    stderr: sanitizeManagerAssistantText(stderrResult.text),
+    stdout: sanitizeManagerWorkerOutputText(stdoutResult.text, "worker stdout"),
+    stderr: sanitizeManagerWorkerOutputText(stderrResult.text, "worker stderr"),
     stdoutTruncated: stdoutResult.truncated,
     stderrTruncated: stderrResult.truncated,
     ...(sessionId ? { sessionId } : {}),
@@ -12184,9 +12654,7 @@ function readPositiveEnvMs(name: string, fallback: number): number {
   return Math.floor(parsed);
 }
 
-async function awaitWorkerWithLiveness(
-  input: WorkerLivenessInput,
-): Promise<WorkerLivenessResult> {
+async function awaitWorkerWithLiveness(input: WorkerLivenessInput): Promise<WorkerLivenessResult> {
   const idleMs = readPositiveEnvMs("DESKRELAY_WORKER_IDLE_MS", WORKER_IDLE_MS_DEFAULT);
   const tickMs = readPositiveEnvMs(
     "DESKRELAY_WORKER_LIVENESS_TICK_MS",

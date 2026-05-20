@@ -2348,6 +2348,91 @@ describe("manager task API", () => {
     }
   });
 
+  test("manager assistant conversation state round-trips Korean as UTF-8 JSON", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-utf8-conversation-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: { cwd },
+      });
+      const text = "관리자 동기화 확인: 에셋 적용이 전혀 안 됐는데?";
+
+      const update = await app.fetch(
+        authedRequest("PUT", "/api/manager/assistant/conversation", {
+          appendMessages: [
+            {
+              id: "korean-user-1",
+              role: "user",
+              text,
+              createdAt: "2026-05-20T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+      expect(update.status).toBe(200);
+
+      const raw = readFileSync(
+        join(cwd, ".deskrelay", "manager-assistant", "conversation-state.json"),
+        "utf8",
+      );
+      const parsed = JSON.parse(raw) as { messages?: Array<{ text?: string }> };
+      expect(parsed.messages?.[0]?.text).toBe(text);
+
+      const restored = await app.fetch(authedRequest("GET", "/api/manager/assistant/conversation"));
+      const body = (await restored.json()) as { messages?: Array<{ text?: string }> };
+      expect(body.messages?.[0]?.text).toBe(text);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("manager assistant sync guard blocks stale waiting replies to problem reports", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-assistant-sync-"));
+    try {
+      const app = createSiteApp({
+        registry: new InMemoryDeviceRegistry(),
+        token: TOKEN,
+        managerAssistant: {
+          cwd,
+          runner: async () => ({
+            text: "사용자 플레이 결과 대기 중입니다.",
+            command: "mock-manager",
+          }),
+        },
+      });
+
+      const res = await app.fetch(
+        authedRequest("POST", "/api/manager/assistant/chat", {
+          message: "에셋 적용이 전혀 안 됐는데?",
+          context: {
+            projectId: "project_1",
+            projectName: "Slingshot",
+            projectStatus: "reviewing",
+            activeRoundId: "round_1",
+            activeRoundTitle: "R-asset-reimport",
+            activeRoundStatus: "completed",
+            projectCommandFlow: [
+              "stage=review; ready=yes",
+              "next=summarize: Summarize round result",
+            ],
+            projectStatePreflight: [
+              "current stage=review; ready=yes; next=summarize: Summarize round result",
+            ],
+          },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { message?: { text?: string } };
+      expect(body.message?.text).toContain("동기화 규칙");
+      expect(body.message?.text).toContain("반드시");
+      expect(body.message?.text).not.toBe("사용자 플레이 결과 대기 중입니다.");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager assistant defaults Claude commands to print mode", () => {
     const args = buildManagerAssistantCliArgs("C:\\Users\\darkh\\.local\\bin\\claude.exe", [
       "--output-format",
@@ -3108,6 +3193,68 @@ console.log(JSON.stringify({ type: "result", result: "No response requested." })
     }
   });
 
+  test("manager worker APIs hide corrupted stdout and stderr text", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-corrupt-"));
+    const corruptScript = [
+      "const bad = 'raw ' + String.fromCharCode(0xfffd).repeat(24) + String.fromCharCode(1).repeat(12);",
+      "console.log(bad);",
+      "console.error(String.fromCharCode(0xfffd).repeat(12));",
+    ].join("");
+    const app = createSiteApp({
+      registry: new InMemoryDeviceRegistry(),
+      token: TOKEN,
+      managerAssistant: { cwd },
+      managerWorkers: [
+        {
+          id: "corrupt",
+          label: "Corrupt worker",
+          description: "Test worker with unreadable output",
+          command: process.execPath,
+          args: ["-e", corruptScript],
+          defaultTimeoutMs: 30_000,
+        },
+      ],
+    });
+
+    try {
+      const run = await app.fetch(
+        authedRequest("POST", "/api/manager/workers/run", {
+          profile: "corrupt",
+          prompt: "emit corrupted output",
+          dryRun: false,
+          requestedBy: "manager-assistant",
+        }),
+      );
+      expect(run.status).toBe(202);
+      const body = (await run.json()) as {
+        id?: string;
+        state?: string;
+        result?: { stdout?: string; stderr?: string };
+      };
+      expect(body.state).toBe("succeeded");
+      expect(body.result?.stdout).toContain("인코딩 손상 로그 숨김");
+      expect(body.result?.stderr).toContain("인코딩 손상 로그 숨김");
+      expect(body.result?.stdout).not.toContain("\uFFFD\uFFFD\uFFFD");
+      expect(body.result?.stderr).not.toContain("\uFFFD\uFFFD\uFFFD");
+
+      const observation = await app.fetch(
+        authedRequest("GET", `/api/manager/tasks/${body.id}/observe`),
+      );
+      expect(observation.status).toBe(200);
+      const observedText = JSON.stringify(await observation.json());
+      expect(observedText).toContain("인코딩 손상 로그 숨김");
+      expect(observedText).not.toContain("\uFFFD\uFFFD\uFFFD");
+
+      const logs = await app.fetch(authedRequest("GET", `/api/manager/tasks/${body.id}/logs`));
+      expect(logs.status).toBe(200);
+      const logText = JSON.stringify(await logs.json());
+      expect(logText).toContain("인코딩 손상 로그 숨김");
+      expect(logText).not.toContain("\uFFFD\uFFFD\uFFFD");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("manager worker run ignores legacy timeout values and records liveness", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "deskrelay-worker-liveness-"));
     const previousMaxMs = process.env.DESKRELAY_WORKER_MAX_MS;
@@ -3290,11 +3437,20 @@ console.log(JSON.stringify({ type: "result", result: "No response requested." })
       expect(body.projectId).toBe(projectId);
       expect(body.cwd).toBe(cwd);
       expect(body.command).toBeTruthy();
-      expect(body.args).toEqual([cwd]);
+      expect(body.args).toContain(cwd);
       expect(body.dryRun).toBe(true);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test("manager project open-folder dispatches file manager without waiting for spawn completion", () => {
+    const source = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+
+    expect(source).toContain("function spawnDetached(");
+    expect(source).toContain("function scheduleDetachedLaunch(");
+    expect(source).not.toContain("resolveLaunch");
+    expect(source).not.toContain('child.once("spawn"');
   });
 
   test("manager project decisions preserve revisions and exclude archived decisions by default", async () => {
@@ -4261,9 +4417,9 @@ console.log(JSON.stringify({ type: "result", result: "No response requested." })
         approvalSnapshotBody.snapshot?.flow?.find((node) => node.phase === "needs_approval")
           ?.status,
       ).toBe("current");
-      expect(
-        approvalSnapshotBody.snapshot?.flow?.some((node) => node.phase === "blocked"),
-      ).toBe(true);
+      expect(approvalSnapshotBody.snapshot?.flow?.some((node) => node.phase === "blocked")).toBe(
+        true,
+      );
       expect(
         approvalSnapshotBody.snapshot?.approvalActions?.some(
           (action) =>
@@ -4467,9 +4623,9 @@ console.log(JSON.stringify({ type: "result", result: "No response requested." })
       expect(body.snapshot?.phase).toBe("observing");
       expect(body.snapshot?.activeTaskIds).toContain(task.id);
       expect(body.snapshot?.activeAgentIds).toContain(agent.id);
-      expect(body.snapshot?.workers?.find((worker) => worker.taskId === task.id)?.runtimeState).toBe(
-        "active",
-      );
+      expect(
+        body.snapshot?.workers?.find((worker) => worker.taskId === task.id)?.runtimeState,
+      ).toBe("active");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -6084,6 +6240,53 @@ process.stdin.on("end", () => {
     expect(prompt).toContain("current approval gate=none");
     expect(prompt).toContain("Do not ask the user to run PowerShell");
     expect(prompt).not.toContain("PowerShell을 직접 실행해야 합니다.");
+  });
+
+  test("manager assistant prompt includes synchronization obligations", () => {
+    const prompt = buildManagerAssistantPrompt({
+      message: "에셋 적용이 전혀 안 됐는데?",
+      history: [],
+      context: {
+        projectId: "project_1",
+        projectName: "Slingshot",
+        projectStatus: "reviewing",
+        activeRoundId: "round_1",
+        activeRoundTitle: "R-asset-reimport",
+        activeRoundStatus: "completed",
+        projectCommandFlow: ["stage=review; ready=yes", "next=summarize: Summarize round result"],
+        projectStatePreflight: [
+          "current stage=review; ready=yes; next=summarize: Summarize round result",
+        ],
+      },
+      sync: {
+        generatedAt: "2026-05-20T00:00:00.000Z",
+        intent: "problem_report",
+        facts: ["project=Slingshot; id=project_1; status=reviewing; stage=review"],
+        obligations: [
+          {
+            code: "must_ack_problem_report",
+            level: "required",
+            message: "The latest user message is a problem report.",
+          },
+          {
+            code: "must_report_completed_round",
+            level: "required",
+            message: "A project round is ready for review or summary.",
+          },
+        ],
+        forbiddenReplies: ["사용자 플레이 결과 대기 중입니다."],
+      },
+      cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+      repoRoot: "C:\\repo",
+      instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+      apiBaseUrl: "http://127.0.0.1:18193",
+    });
+
+    expect(prompt).toContain("## Synchronization Contract");
+    expect(prompt).toContain("must_ack_problem_report");
+    expect(prompt).toContain("must_report_completed_round");
+    expect(prompt).toContain("forbidden stale replies");
+    expect(prompt).toContain("사용자 플레이 결과 대기 중입니다.");
   });
 
   test("manager assistant context warns when the selected project is stale", async () => {
