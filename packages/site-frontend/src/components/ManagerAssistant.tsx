@@ -1766,6 +1766,7 @@ function managerAssistantSyntheticEvent(text: string): ClaudeStreamEvent {
       role: "assistant",
       content: [{ type: "text", text }],
     },
+    managerAssistantMeta: { source: "status" } satisfies ManagerAssistantEventMeta,
   };
 }
 
@@ -1811,13 +1812,21 @@ function formatManagerAssistantStatusReportForTranscript(
     .join("\n\n");
 }
 
-function managerAssistantChatMessageEvent(message: ManagerAssistantChatMessage): ClaudeStreamEvent {
+function managerAssistantChatMessageEvent(
+  message: ManagerAssistantChatMessage,
+  meta: ManagerAssistantEventMeta = {},
+): ClaudeStreamEvent {
   return {
     type: message.role === "user" ? "user" : "assistant",
     message: {
       role: message.role,
       content: [{ type: "text", text: message.text }],
     },
+    managerAssistantMeta: {
+      source: meta.source ?? "live",
+      messageId: message.id,
+      createdAt: message.createdAt,
+    } satisfies ManagerAssistantEventMeta,
   };
 }
 
@@ -1982,6 +1991,7 @@ function buildManagerAssistantTranscriptEntries(
     const collapsed = shouldCollapseManagerAssistantEntry(role, text);
     const preview = collapsed ? managerAssistantPreviewText(text) : text;
     if (!preview.trim()) return [];
+    const tags = managerAssistantTranscriptTags(event, role, text, collapsed);
     return [
       {
         id: `${role}-${index}-${text.slice(0, 20)}`,
@@ -1989,9 +1999,66 @@ function buildManagerAssistantTranscriptEntries(
         text,
         preview,
         collapsed,
+        tags,
       },
     ];
   });
+}
+
+function managerAssistantTranscriptTags(
+  event: ClaudeStreamEvent,
+  role: ManagerAssistantTranscriptRole,
+  text: string,
+  collapsed: boolean,
+): string[] {
+  const tags: string[] = [role === "user" ? "요청" : "응답"];
+  const meta = managerAssistantEventMeta(event);
+  if (meta?.source === "sync") tags.push("외부 브라우저");
+  if (meta?.source === "local") tags.push("방금");
+  if (meta?.source === "status") tags.push("상태");
+  if (!meta?.source) tags.push("세션 기록");
+  if ((meta?.attachmentCount ?? 0) > 0 || managerAssistantTextLooksLikeAttachment(text)) {
+    tags.push("첨부");
+  }
+  if (collapsed) tags.push("긴 내용");
+  if (managerAssistantTextLooksLikeMarkdown(text)) tags.push("Markdown");
+  return dedupeManagerAssistantTags(tags).slice(0, 5);
+}
+
+function managerAssistantEventMeta(event: ClaudeStreamEvent): ManagerAssistantEventMeta | null {
+  const raw = event.managerAssistantMeta;
+  if (!isRecord(raw)) return null;
+  const meta: ManagerAssistantEventMeta = {};
+  if (isManagerAssistantEventSource(raw.source)) meta.source = raw.source;
+  if (typeof raw.messageId === "string" && raw.messageId.trim()) {
+    meta.messageId = raw.messageId.trim();
+  }
+  if (typeof raw.createdAt === "string" && raw.createdAt.trim()) {
+    meta.createdAt = raw.createdAt.trim();
+  }
+  if (typeof raw.attachmentCount === "number" && Number.isFinite(raw.attachmentCount)) {
+    meta.attachmentCount = Math.max(0, Math.floor(raw.attachmentCount));
+  }
+  return Object.keys(meta).length > 0 ? meta : null;
+}
+
+function isManagerAssistantEventSource(value: unknown): value is ManagerAssistantEventSource {
+  return value === "local" || value === "live" || value === "sync" || value === "status";
+}
+
+function dedupeManagerAssistantTags(tags: string[]): string[] {
+  return tags.filter((tag, index) => tag && tags.indexOf(tag) === index);
+}
+
+function managerAssistantTextLooksLikeAttachment(text: string): boolean {
+  return /(?:image attachment|이미지 첨부|첨부 이미지|\[[0-9]+ image attachment)/i.test(text);
+}
+
+function managerAssistantTextLooksLikeMarkdown(text: string): boolean {
+  return (
+    /(^|\n)\s{0,3}(?:#{1,3}\s+\S|- \S|\d+\.\s+\S|>\s+\S|```|\|.+\|)/.test(text) ||
+    /[*_`][^*_`\n]+[*_`]/.test(text)
+  );
 }
 
 function managerAssistantTranscriptRole(
@@ -2287,6 +2354,10 @@ function userTranscriptEvent(
       content:
         content.length > 0 ? content : [{ type: "text", text: "이미지 첨부" }],
     },
+    managerAssistantMeta: {
+      source: "local",
+      attachmentCount: attachments.length,
+    } satisfies ManagerAssistantEventMeta,
   };
 }
 
