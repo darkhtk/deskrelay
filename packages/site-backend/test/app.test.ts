@@ -1575,7 +1575,7 @@ describe("manager task API", () => {
     }
   });
 
-  test("manager state view surfaces stale worker tasks", async () => {
+  test("manager state view keeps long-running worker tasks active", async () => {
     const oldNow = () => new Date("2020-01-01T00:00:00.000Z");
     const managerTaskStore = createInMemoryManagerTaskStore({ now: oldNow });
     const managerOrchestrationStore = createInMemoryManagerOrchestrationStore({ now: oldNow });
@@ -1590,8 +1590,8 @@ describe("manager task API", () => {
     expect((await app.fetch(authedRequest("GET", "/api/manager/tasks"))).status).toBe(200);
 
     const round = await managerOrchestrationStore.createRound({
-      objective: "Verify stale worker visibility.",
-      title: "R-stale",
+      objective: "Verify long-running worker visibility.",
+      title: "R-running",
     });
     const agent = await managerOrchestrationStore.createAgent({
       role: "verifier",
@@ -1628,18 +1628,17 @@ describe("manager task API", () => {
       staleTasks?: Array<{ id?: string; stale?: boolean }>;
       activeRound?: { id?: string };
     };
-    expect(body.status?.tone).toBe("warning");
-    expect(body.status?.source).toBe("task");
-    expect(body.status?.message).toContain("needs attention");
-    expect(body.current?.status).toBe("stale");
-    expect(body.current?.taskId).toBe(task.id);
-    expect(body.current?.actions).toContain("refresh");
-    expect(body.current?.actions).toContain("acknowledge");
+    expect(body.status?.tone).toBe("running");
+    expect(body.status?.source).toBe("round");
+    expect(body.status?.message).toBe("R-running");
+    expect(body.current?.status).toBe("running");
+    expect(body.current?.taskId).toBeUndefined();
+    expect(body.current?.actions).toContain("cancel");
+    expect(body.current?.actions).not.toContain("acknowledge");
     expect(body.freshness?.source).toBe("poll");
-    expect(body.freshness?.stale).toBe(false);
+    expect(body.freshness?.stale).toBe(true);
     expect(body.freshness?.lastSignalAt).toBeTruthy();
-    expect(body.staleTasks?.[0]?.id).toBe(task.id);
-    expect(body.staleTasks?.[0]?.stale).toBe(true);
+    expect(body.staleTasks).toHaveLength(0);
     expect(body.activeRound?.id).toBe(round.id);
   });
 

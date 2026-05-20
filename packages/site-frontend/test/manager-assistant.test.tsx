@@ -203,6 +203,120 @@ describe("ManagerAssistant", () => {
     expect(tags).not.toContain("세션 기록");
   });
 
+  test("uses live manager state before stale assistant status reports", async () => {
+    setLocale("ko");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/manager/assistant/workspace")) {
+        return Response.json({
+          cwd: "C:\\repo\\.deskrelay\\manager-assistant",
+          instructionsPath: "C:\\repo\\.deskrelay\\manager-assistant\\CLAUDE.md",
+          repoRoot: "C:\\repo",
+          deviceId: SERVER_DEVICE.id,
+          deviceLabel: SERVER_DEVICE.label,
+        });
+      }
+      if (url.includes("/api/manager/assistant/conversation")) {
+        return Response.json({
+          conversationId: "deskrelay-manager-assistant",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+          messages: [],
+        });
+      }
+      if (url.includes("/api/manager/assistant/status")) {
+        return Response.json({
+          generatedAt: "2026-05-13T00:00:02.000Z",
+          latest: {
+            id: "old-report",
+            createdAt: "2026-05-13T00:00:01.000Z",
+            phase: "acting",
+            level: "info",
+            message: "Old report should not drive visible status.",
+          },
+          reports: [
+            {
+              id: "old-report",
+              createdAt: "2026-05-13T00:00:01.000Z",
+              phase: "acting",
+              level: "info",
+              message: "Old report should not drive visible status.",
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/manager/state")) {
+        return Response.json({
+          generatedAt: "2026-05-13T00:00:03.000Z",
+          freshness: {
+            source: "poll",
+            lastRefreshAt: "2026-05-13T00:00:03.000Z",
+            stale: false,
+          },
+          current: {
+            kind: "worker",
+            status: "running",
+            tone: "running",
+            source: "task",
+            title: "run-worker is running",
+            detail: "builder",
+            updatedAt: "2026-05-13T00:00:03.000Z",
+            taskId: "task_worker",
+            actionable: true,
+            actions: ["details", "cancel"],
+          },
+          status: {
+            tone: "running",
+            source: "task",
+            message: "run-worker is running",
+            detail: "builder",
+          },
+          counts: {
+            rounds: 1,
+            activeRounds: 1,
+            agents: 1,
+            runningAgents: 1,
+            blockedAgents: 0,
+            tasks: 1,
+            runningTasks: 1,
+            blockedTasks: 0,
+            failedTasks: 0,
+            staleTasks: 0,
+            blockers: 0,
+          },
+          recentRounds: [],
+          runningTasks: [],
+          staleTasks: [],
+          blockers: [],
+          recoveryActions: [],
+        });
+      }
+      if (url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors`) && init?.method !== "POST") {
+        return Response.json([
+          {
+            instanceId: "remote-claude",
+            name: "remote-claude",
+            version: "0.0.1",
+            loadedAt: "2026-05-13T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        url.includes(`/api/devices/${SERVER_DEVICE.id}/behaviors/remote-claude/request`) &&
+        init?.method === "POST"
+      ) {
+        return Response.json({ result: [] });
+      }
+      return Response.json({ ok: true });
+    });
+
+    render(() => <ManagerAssistant devices={[SERVER_DEVICE]} showOrchestrationPanel={false} />);
+
+    await waitFor(() => {
+      expect(document.querySelector(".composer-status-main")?.textContent).toBe("진행 중");
+    });
+    expect(document.body.textContent).not.toContain("Old report should not drive visible status.");
+  });
+
   test("renders collapsed manager previews as markdown without embedding detailed logs", async () => {
     setLocale("en");
     const markdownText = [
