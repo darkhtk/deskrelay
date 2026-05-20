@@ -1013,6 +1013,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         return currentStatus?.tone === "warning" ? currentStatus : null;
       });
       setReloadSeq((seq) => seq + 1);
+      setConversationSeq((seq) => seq + 1);
       void refetchConversationState();
       window.setTimeout(() => setReloadSeq((seq) => seq + 1), 750);
     }
