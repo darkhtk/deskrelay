@@ -740,7 +740,10 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
 
   createManagerEventSubscription({
     onEvent(event) {
-      if (event.type === "assistant.status") {
+      if (event.type === "assistant.conversation") {
+        mutateConversationState(event.conversation);
+        setConversationSeq((seq) => seq + 1);
+      } else if (event.type === "assistant.status") {
         scheduleManagerEventRefresh();
       } else if (orchestrationPanelEnabled() && isManagerOrchestrationEvent(event)) {
         if (event.type === "project.created") {
