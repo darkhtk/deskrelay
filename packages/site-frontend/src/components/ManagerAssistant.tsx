@@ -661,6 +661,21 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   });
 
   createEffect(() => {
+    const messages = conversationState()?.messages ?? [];
+    if (messages.length === 0) return;
+    const serverEvents = messages.map(managerAssistantChatMessageEvent);
+    setEvents((currentEvents) => {
+      const cachedEvents = untrack(() => assistantHistory()?.events ?? []);
+      const baseEvents = currentEvents.length > 0 ? currentEvents : cachedEvents;
+      const merged = mergeManagerAssistantConversationEvents(baseEvents, serverEvents);
+      if (managerAssistantEventsEquivalent(baseEvents, merged)) return currentEvents;
+      setAssistantHistory(rememberAssistantHistory({ events: merged }));
+      queueMicrotask(scrollToBottomIfPinned);
+      return merged;
+    });
+  });
+
+  createEffect(() => {
     const reports = statusReports()?.reports ?? [];
     if (reports.length === 0) return;
     const nextHistory = rememberAssistantHistory({
@@ -705,6 +720,12 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   createEffect(() => {
     const intervalMs = busy() ? 5_000 : 30_000;
     const timer = window.setInterval(() => setStatusReportSeq((seq) => seq + 1), intervalMs);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
+    const intervalMs = busy() || managerAssistantAwaitingReply() ? 3_000 : 8_000;
+    const timer = window.setInterval(() => setConversationSeq((seq) => seq + 1), intervalMs);
     onCleanup(() => window.clearInterval(timer));
   });
 
