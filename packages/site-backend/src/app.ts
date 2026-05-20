@@ -9970,6 +9970,7 @@ function latestManagerStateSignalAt(input: {
 
 function managerTaskStaleReason(task: ManagerTask, nowMs: number): string | undefined {
   if (isManagerTaskTerminalState(task.state)) return undefined;
+  if (task.kind === "run-worker") return undefined;
   const reference = Date.parse(task.startedAt ?? task.updatedAt ?? task.createdAt);
   if (!Number.isFinite(reference)) return undefined;
   const elapsedMs = nowMs - reference;
