@@ -11731,6 +11731,8 @@ async function readManagerAssistantConversationState(
   return {
     generatedAt: new Date().toISOString(),
     conversationId: MANAGER_ASSISTANT_CONVERSATION_ID,
+    revision: stored.revision ?? 0,
+    messages: stored.messages ?? [],
     ...stored,
   };
 }
@@ -11738,14 +11740,21 @@ async function readManagerAssistantConversationState(
 async function writeManagerAssistantConversationState(
   repoRoot: string,
   input: ManagerAssistantConversationStateInput,
+  managerEventBus?: ManagerEventBus,
 ): Promise<ManagerAssistantConversationState> {
   const dir = join(repoRoot, MANAGER_ASSISTANT_DIR);
   const filePath = join(dir, MANAGER_ASSISTANT_CONVERSATION_FILE);
   await mkdir(dir, { recursive: true });
   const current = input.reset ? {} : await readStoredManagerAssistantConversationState(filePath);
+  const messages = mergeManagerAssistantConversationMessages(
+    current.messages ?? [],
+    input.appendMessages ?? [],
+  );
   let next: Omit<ManagerAssistantConversationState, "generatedAt"> = {
     conversationId: MANAGER_ASSISTANT_CONVERSATION_ID,
     ...current,
+    revision: (current.revision ?? 0) + 1,
+    messages,
     updatedAt: new Date().toISOString(),
   };
   if (input.sessionId === null) {
@@ -11763,10 +11772,12 @@ async function writeManagerAssistantConversationState(
     if (cwd) next.cwd = cwd.slice(0, 2_000);
   }
   await writeFile(filePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  return {
+  const state = {
     generatedAt: new Date().toISOString(),
     ...next,
   };
+  managerEventBus?.emit({ type: "assistant.conversation", conversation: state });
+  return state;
 }
 
 async function readStoredManagerAssistantConversationState(
@@ -11792,6 +11803,10 @@ async function readStoredManagerAssistantConversationState(
     if (typeof parsed.cwd === "string" && parsed.cwd.trim()) {
       state.cwd = parsed.cwd.trim().slice(0, 2_000);
     }
+    if (typeof parsed.revision === "number" && Number.isFinite(parsed.revision)) {
+      state.revision = Math.max(0, Math.floor(parsed.revision));
+    }
+    state.messages = normalizeManagerAssistantConversationMessages(parsed.messages);
     if (typeof parsed.updatedAt === "string" && parsed.updatedAt.trim()) {
       state.updatedAt = parsed.updatedAt.trim();
     }
@@ -11799,6 +11814,73 @@ async function readStoredManagerAssistantConversationState(
   } catch {
     return {};
   }
+}
+
+function createManagerAssistantConversationMessage(
+  role: ManagerAssistantChatMessage["role"],
+  text: string,
+  options: { allowEmpty?: boolean } = {},
+): ManagerAssistantChatMessage {
+  const sanitized = sanitizeManagerAssistantText(text).slice(0, 20_000);
+  return {
+    id: `${role}_${randomBytes(10).toString("base64url")}`,
+    role,
+    text: sanitized || (options.allowEmpty ? "" : "[empty message]"),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function managerAssistantRequestTranscriptText(request: ManagerAssistantChatRequest): string {
+  const text = sanitizeManagerAssistantText(request.message);
+  if (text) return text;
+  const count = request.attachments?.length ?? 0;
+  if (count <= 0) return "";
+  return `[${count} image attachment${count === 1 ? "" : "s"}]`;
+}
+
+function normalizeManagerAssistantConversationMessages(
+  input: unknown,
+  limit = MANAGER_ASSISTANT_CONVERSATION_MESSAGE_LIMIT,
+): ManagerAssistantChatMessage[] {
+  if (!Array.isArray(input)) return [];
+  const messages: ManagerAssistantChatMessage[] = [];
+  for (const item of input) {
+    if (!isRecord(item)) continue;
+    if (item.role !== "user" && item.role !== "assistant" && item.role !== "system") continue;
+    if (typeof item.text !== "string") continue;
+    const text = sanitizeManagerAssistantText(item.text).slice(0, 20_000);
+    if (!text) continue;
+    messages.push({
+      id:
+        typeof item.id === "string" && item.id.trim()
+          ? item.id.trim().slice(0, 200)
+          : `message_${messages.length}`,
+      role: item.role,
+      text,
+      createdAt:
+        typeof item.createdAt === "string" && item.createdAt.trim()
+          ? item.createdAt.trim().slice(0, 80)
+          : new Date(0).toISOString(),
+    });
+  }
+  return messages.slice(-limit);
+}
+
+function mergeManagerAssistantConversationMessages(
+  current: ManagerAssistantChatMessage[],
+  appended: ManagerAssistantChatMessage[],
+): ManagerAssistantChatMessage[] {
+  const seenIds = new Set<string>();
+  const messages: ManagerAssistantChatMessage[] = [];
+  const add = (message: ManagerAssistantChatMessage) => {
+    const normalized = normalizeManagerAssistantConversationMessages([message], 1)[0];
+    if (!normalized || seenIds.has(normalized.id)) return;
+    seenIds.add(normalized.id);
+    messages.push(normalized);
+  };
+  for (const message of current) add(message);
+  for (const message of appended) add(message);
+  return messages.slice(-MANAGER_ASSISTANT_CONVERSATION_MESSAGE_LIMIT);
 }
 
 async function readManagerAssistantStatusReports(
@@ -11920,6 +12002,12 @@ function parseManagerAssistantConversationStateInput(
     input.cwd = value.cwd.trim();
   } else if (value.cwd !== undefined) {
     return { ok: false, error: "cwd must be a string or null" };
+  }
+  if (value.appendMessages !== undefined) {
+    if (!Array.isArray(value.appendMessages)) {
+      return { ok: false, error: "appendMessages must be an array" };
+    }
+    input.appendMessages = normalizeManagerAssistantConversationMessages(value.appendMessages);
   }
   return { ok: true, value: input };
 }
