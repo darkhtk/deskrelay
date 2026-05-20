@@ -487,7 +487,11 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
   const latestReportStatus = createMemo(() => managerStatusFromReport(statusReports()?.latest));
   const visibleStatus = createMemo<ManagerVisibleStatus>(() => {
     const currentStatus = status();
-    if (currentStatus) return currentStatus;
+    const currentState = managerState();
+    const stateStatus = liveStateStatus();
+    if (currentStatus && busy()) return currentStatus;
+    if (stateStatus && managerStateShouldOwnVisibleStatus(currentState)) return stateStatus;
+    if (currentStatus?.tone === "warning") return currentStatus;
     if (managerAssistantAwaitingReply()) {
       return {
         tone: "thinking",
@@ -495,7 +499,7 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
         detail: "관리자 응답을 기다리는 중입니다.",
       };
     }
-    const stateStatus = liveStateStatus();
+    if (currentStatus) return currentStatus;
     if (stateStatus) return stateStatus;
     const projectStatus = focusedProjectStatus();
     if (projectStatus) return projectStatus;
@@ -934,7 +938,9 @@ export const ManagerAssistant: Component<ManagerAssistantProps> = (props) => {
             }
             if (finalTextVisible) {
               visibleAssistantReplySeen = true;
-              setCompletionReportSince(null);
+              if (!managerAssistantFinalTextSuggestsOngoingWork(finalText)) {
+                setCompletionReportSince(null);
+              }
             }
           } else if (event.type === "error") {
             const visibleError = managerAssistantVisibleError(event.error);
@@ -1975,6 +1981,21 @@ function isVisibleManagerAssistantSummaryText(text: string): boolean {
   );
 }
 
+function managerAssistantFinalTextSuggestsOngoingWork(text: string): boolean {
+  const compact = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  return (
+    /\b(?:round|task|worker|agent)_[a-z0-9_-]{6,}\b/i.test(compact) ||
+    /\b(?:running|dispatched|started|waiting|in progress|background)\b/i.test(compact) ||
+    /(?:라운드|작업|worker|에이전트).*(?:시작|실행 중|진행 중|대기|확인 중|디스패치|배정)/i.test(
+      compact,
+    ) ||
+    /(?:시작했습니다|실행했습니다|진행 중입니다|기다리는 중입니다|돌고 있습니다|디스패치했습니다)/i.test(
+      compact,
+    )
+  );
+}
+
 function buildManagerAssistantTranscriptEntries(
   events: ClaudeStreamEvent[],
 ): ManagerAssistantTranscriptEntry[] {
@@ -2528,6 +2549,24 @@ function managerStatusFromState(
     main: state.current.title,
     ...(detail ? { detail } : {}),
   };
+}
+
+function managerStateShouldOwnVisibleStatus(
+  state: ManagerStateViewResponse | null | undefined,
+): boolean {
+  if (!state?.current) return false;
+  if (state.current.status !== "idle" && state.current.status !== "acknowledged") return true;
+  if (state.current.tone === "running" || state.current.tone === "warning" || state.current.tone === "error") {
+    return true;
+  }
+  return Boolean(
+    (state.counts?.runningTasks ?? 0) > 0 ||
+      (state.counts?.runningAgents ?? 0) > 0 ||
+      (state.counts?.blockedTasks ?? 0) > 0 ||
+      (state.counts?.failedTasks ?? 0) > 0 ||
+      (state.counts?.staleTasks ?? 0) > 0 ||
+      (state.counts?.blockers ?? 0) > 0,
+  );
 }
 
 function managerAssistantHistoryCacheKey(): string {
